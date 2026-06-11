@@ -12,6 +12,11 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
 - `MAX_AGENTS = 2` — 동시 in-flight(claim 상태) 이슈 상한
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
+- `VERIFIER = codex:codex-rescue` — 리뷰·교훈 추출용 검증자 서브에이전트 타입.
+  **폴백**: codex 플러그인 미설치 환경(Agent 툴의 subagent_type 목록에 위 타입이
+  없거나, 호출이 unknown subagent type 오류로 실패)에서는 `general-purpose` 를
+  검증자로 쓴다. 폴백 검증자도 **동일한 계약**을 따른다 — read-only(코드 변경 금지),
+  발견마다 BLOCKER/WARN/NIT 분류, 발견 없으면 'CLEAN', BLOCKER 는 게이트(해결 전 종료 금지).
 - 절대 금지: PR 머지, main 직접 push, 사람이 만든 브랜치 조작, agent-ready 라벨 임의 부착
 
 ## ① Reconcile
@@ -20,7 +25,8 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
 - `merged` — 성공 종료. **lessons 단계**: 해당 PR에 CHANGES_REQUESTED 리뷰가 있었거나
   CI 실패 이력이 있으면 (gh pr view <pr> --repo <repo> --json reviews 와
-  gh run list 로 확인), codex:codex-rescue 서브에이전트를 동기 호출해 교훈 한 줄을 받아라:
+  gh run list 로 확인), `VERIFIER` 서브에이전트(미설치 폴백 포함 — ## 상수)를
+  동기 호출해 교훈 한 줄을 받아라:
 
   > "PR #<pr> (<repo>)의 리뷰 코멘트와 CI 실패 로그를 읽고, 객관적 실패 사실에서
   > 재발 방지 교훈을 딱 1줄로: '<상황>일 때 <구체 행동>하라' 형식. 추측·일반론 금지.
@@ -65,6 +71,8 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
    c. `~/Projects/<repo-name>/.loop/lessons.md` 가 있으면 내용을 읽어 둔다.
    d. 아래 워커 템플릿으로 Agent 툴 백그라운드 디스패치. 템플릿의 `<DEFAULT_BRANCH>` 는
       `gh repo view <repo> --json defaultBranchRef -q .defaultBranchRef.name` 으로 채운다.
+      `<VERIFIER>` 는 ## 상수의 VERIFIER 를 폴백 규칙까지 적용해 채운다
+      (codex 미설치면 `general-purpose`).
 
 ### 워커 프롬프트 템플릿
 
@@ -99,16 +107,18 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사와 codex 리뷰
    주입이 누락된다.) 본문에 반드시 전용 라인 `Closes #<NUM>` 과 `## Test plan`
    섹션(수용 기준 기반 체크박스)을 포함하라.
-9. PR 생성 후 **codex 리뷰를 직접 스폰하라** (PostToolUse hook 의 codex 주입은
+9. PR 생성 후 **검증자 리뷰를 직접 스폰하라** (PostToolUse hook 의 codex 주입은
    서브에이전트 컨텍스트에 닿지 않는다 — 기다리지 말 것). Agent 툴 동기 호출:
-   subagent_type: "codex:codex-rescue", prompt:
+   subagent_type: "<VERIFIER>", prompt:
    "PR #<PR번호> (<REPO>) 코드 리뷰. `git -C <WT_PATH> diff <DEFAULT_BRANCH>...HEAD` 의
    변경을 읽고 검토: (1) correctness 버그 (2) 빠진 엣지 케이스 (3) 테스트 적정성
    (4) 명백한 over-engineering. 코드 변경 금지, read-only. 결과는 한국어로,
    발견마다 BLOCKER/WARN/NIT 분류. 발견 없으면 'CLEAN'."
-   codex 가 BLOCKER 를 보고하면 **반드시 해결 커밋 + push + 로컬 CI 재실행 후에만**
-   종료하라. BLOCKER 미해결 종료 금지. WARN/NIT 는 PR 본문에 "## Codex 리뷰" 섹션으로 요약.
-10. 종료 보고: PR 번호/URL, 테스트 결과, codex 리뷰 처리 내역, 남은 사항.
+   호출이 unknown subagent type 오류로 실패하면 subagent_type: "general-purpose" 로
+   **같은 프롬프트**를 재시도하라 (동일 계약 — read-only, BLOCKER/WARN/NIT, CLEAN).
+   검증자가 BLOCKER 를 보고하면 **반드시 해결 커밋 + push + 로컬 CI 재실행 후에만**
+   종료하라. BLOCKER 미해결 종료 금지. WARN/NIT 는 PR 본문에 "## 검증자 리뷰" 섹션으로 요약.
+10. 종료 보고: PR 번호/URL, 테스트 결과, 검증자 리뷰 처리 내역, 남은 사항.
 
 금지: 머지, main/master 직접 push, 이슈 라벨 변경, 다른 이슈 작업, <WT_PATH> 밖 수정.
 
