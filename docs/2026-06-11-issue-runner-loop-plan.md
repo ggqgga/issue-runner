@@ -753,8 +753,11 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 당신은 무인 이슈 구현 워커다. 작업 디렉토리: <WT_PATH> (이 밖을 수정하지 마라)
 대상: <REPO> 이슈 #<NUM> — <TITLE>
 
+중요: 셸 cwd 는 Bash 호출 간 유지되지 않는다. 모든 셸 명령은
+`cd <WT_PATH> && <명령>` 복합 형태로 실행하거나 절대 경로(`git -C <WT_PATH>`)를 써라.
+
 절차:
-1. cd <WT_PATH>. 레포의 CLAUDE.md 를 읽고 빌드/테스트 방법을 파악하라.
+1. <WT_PATH> 의 CLAUDE.md 를 읽고 빌드/테스트 방법을 파악하라.
 2. 아래 '과거 교훈'을 읽고 같은 실수를 피하라.
 3. `gh issue view <NUM> --repo <REPO>` 로 이슈 본문(수용 기준 체크박스)을 정독하라.
    본문이 모호해서 구현 방향을 정할 수 없으면 **작업하지 말고** 이슈에
@@ -959,4 +962,6 @@ cd ~/Projects && claude
 
 ## 검증 기록
 
-(Task 진행하며 여기에 기록)
+- **Task 1 (2026-06-11)**: 글로벌 PreToolUse hook은 **서브에이전트의 Bash 호출에도 발동한다** — require-issue-in-pr.sh가 서브에이전트의 `gh pr create`를 거부 메시지 전문과 함께 차단함 (gh 실행 전 차단 확인). 단 두 가지 부수 발견:
+  1. **서브에이전트 셸 cwd는 호출 간 유지되지 않고 매번 세션 디렉토리로 리셋**된다. → 워커는 `cd` 단독 호출에 의존하면 안 되고, 복합 명령(`cd <wt> && ...`) 또는 절대 경로(`git -C`)를 써야 한다. Task 8 워커 템플릿에 반영.
+  2. **quality-gate.sh는 워커 커밋을 사실상 보호하지 못한다** — cwd 기준으로 repo를 찾는데 hook 프로세스의 cwd는 세션 디렉토리(~/Projects, 비 git)라 발동해도 조용히 exit 0. 워커 템플릿 5번(커밋 전 lint/테스트 직접 실행)이 유일한 커밋 전 방어선이며, CI + codex가 백스톱. 1차 프로브(ruff F401 staged 후 커밋)는 이 cwd 문제로 교란되어 비결정적이었고, git 불필요한 require-issue hook으로 2차 프로브에서 발동을 확정했다.
