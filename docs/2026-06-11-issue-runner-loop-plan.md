@@ -965,3 +965,12 @@ cd ~/Projects && claude
 - **Task 1 (2026-06-11)**: 글로벌 PreToolUse hook은 **서브에이전트의 Bash 호출에도 발동한다** — require-issue-in-pr.sh가 서브에이전트의 `gh pr create`를 거부 메시지 전문과 함께 차단함 (gh 실행 전 차단 확인). 단 두 가지 부수 발견:
   1. **서브에이전트 셸 cwd는 호출 간 유지되지 않고 매번 세션 디렉토리로 리셋**된다. → 워커는 `cd` 단독 호출에 의존하면 안 되고, 복합 명령(`cd <wt> && ...`) 또는 절대 경로(`git -C`)를 써야 한다. Task 8 워커 템플릿에 반영.
   2. **quality-gate.sh는 워커 커밋을 사실상 보호하지 못한다** — cwd 기준으로 repo를 찾는데 hook 프로세스의 cwd는 세션 디렉토리(~/Projects, 비 git)라 발동해도 조용히 exit 0. 워커 템플릿 5번(커밋 전 lint/테스트 직접 실행)이 유일한 커밋 전 방어선이며, CI + codex가 백스톱. 1차 프로브(ruff F401 staged 후 커밋)는 이 cwd 문제로 교란되어 비결정적이었고, git 불필요한 require-issue hook으로 2차 프로브에서 발동을 확정했다.
+
+- **Task 10 E2E (2026-06-11)**: 3틱으로 전체 흐름 검증 완료. 두 이슈 모두 워커가 TDD로 구현 → PR → 사람 머지 → reconcile 정리. 최종 상태: 워트리/원격 브랜치/열린 이슈 모두 0, eligible `[]` (조용함 수렴).
+  - **틱 1**: #1 claim → 워트리 → 워커가 PR #3 (4 tests OK, `Closes #1` + Test plan). 발견 3건과 픽스:
+    (a) GitHub Actions가 계정 과금 문제로 시작 불가 → 샌드박스를 local-ci 옵트인(`bin/ci` + `config/ci.rb`)으로 전환하고 `run-local-ci.sh` 신설 — 워커 push는 local-ci.sh hook을 깨우지 못하므로(hook cwd가 비 git 세션 디렉토리) 워커가 push 후 직접 호출해 메인 레포 slug 캐시에 기록, 머지 게이트와 정렬.
+    (b) 워커가 `cd && gh pr create` 복합 명령 사용 → PR hook 미발동 → 단독 명령 강제로 템플릿 수정.
+    (c) 샌드박스 `.gitignore` 누락으로 추적된 pyc가 워트리를 더럽혀 rebase 차단 → 수정.
+  - **틱 2**: `merged` 이벤트 → 워트리·로컬 브랜치·claim 정리. **#2의 `Blocked by #1`이 자동 해제**되어 디스패치 — 의존성 스케줄링 검증. 워커가 PR #4 (7 tests, 로컬 CI pass 캐시). 발견: **PostToolUse additionalContext 주입은 단독 명령으로도 서브에이전트에 닿지 않음** (2회 관측) → codex 리뷰를 워커가 Agent 툴로 직접 스폰하도록 템플릿 전환. 디스패처가 PR #4 codex 리뷰 실행: CLEAN.
+  - **틱 3**: `merged` 이벤트 → 최종 정리. `delete-branch-on-merge`(setup-labels.sh에 추가됨) 작동 확인.
+  - 워커 품질 관찰: 두 워커 모두 TDD 순서 준수(red 확인 후 구현), 커밋에 pyc 미포함, 블로커 상태 자가 확인(#2 워커가 #1 CLOSED 검증 후 진행), 금지사항(머지·라벨 변경) 위반 없음.
