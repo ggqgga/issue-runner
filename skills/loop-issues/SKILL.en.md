@@ -9,6 +9,10 @@ description: Closing checklist before handing an issue to the issue-runner loop.
 
 # loop-issues — issue closing checklist
 
+There are two modes: **closing mode** (default — finalize the single issue at hand
+against the checklist) and **triage mode** (batch-analyze and classify the repo's
+existing open issues — see the "Triage mode" section below).
+
 Before handing an issue to the loop, confirm **all** of the items below, and attach
 `agent-ready` only to issues that pass. The worker shares none of this session's
 context — the issue body is the only spec.
@@ -66,3 +70,30 @@ context — the issue body is the only spec.
 All items pass → `gh issue edit <N> --repo <owner/repo> --add-label agent-ready` +
 a priority label. Any item fails → report what needs fixing to the user and do not
 attach the label.
+
+## Triage mode — batch analysis of existing issues
+
+Trigger: the user asks for a loop-suitability analysis of a repo's (or account's)
+existing issues ("analyze which issues can go on the loop", "analyze the issues and
+label them").
+
+1. **Collect targets**: from
+   `gh issue list --repo <owner/repo> --state open --json number,title,labels,body`,
+   exclude issues that already have the agent-ready, agent:claimed, or needs-human
+   label.
+2. **Classify**: check each issue against the 9 checklist items above and sort it
+   into one of three buckets:
+   - **READY** — passes the checklist. Include a proposed priority (P0/P1/P2) to
+     attach.
+   - **FIXABLE** — name the missing items (e.g. no Test plan, vague acceptance
+     criteria, missing Blocked by) and propose a body amendment.
+   - **UNFIT** — an epic (split first), needs a human decision, or requires a spec
+     rewrite. State the reason.
+3. **Report**: present the results as a table —
+   issue number / title / classification / reason·amendment / proposed priority.
+4. **Apply — only after user approval**: attach labels to READY; for FIXABLE, update
+   the body with the approved amendment and then attach the label. Leave UNFIT
+   untouched.
+   Before approval, modify no issue body and attach no label —
+   triage must not rewrite a human's spec on its own and push it into the loop.
+   As always, labels go only to issues that pass the checklist.
