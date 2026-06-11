@@ -4,6 +4,8 @@
 자동으로 집어, git worktree 격리 환경에서 구현하고 PR을 여는 자율 루프.
 **머지는 항상 사람이 한다 — 루프는 절대 머지하지 않는다.**
 
+> English: skill docs are available in English — [SKILL.en.md](SKILL.en.md) · [skills/issue-prep/SKILL.en.md](skills/issue-prep/SKILL.en.md) (한국어판이 원본).
+
 ## 개념
 
 단일 디스패처(`/issue-runner` 스킬)를 `/loop`로 주기 실행한다. 매 틱(tick)마다
