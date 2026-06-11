@@ -7,7 +7,9 @@ set -euo pipefail
 
 me=$(gh api user -q .login)
 
-cands=$(gh search issues "label:agent-ready" --owner "$me" --state open \
+# needs-human 은 서버 쿼리에서도 제외 — 클라이언트 필터만 쓰면 needs-human 이슈가
+# --limit 50 창을 채워 실제 eligible 이슈가 밀려날 수 있다
+cands=$(gh search issues "label:agent-ready -label:needs-human" --owner "$me" --state open \
   --json repository,number,title,labels,createdAt --limit 50)
 
 out="[]"
