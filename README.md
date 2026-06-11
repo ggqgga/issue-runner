@@ -4,7 +4,7 @@
 자동으로 집어, git worktree 격리 환경에서 구현하고 PR을 여는 자율 루프.
 **머지는 항상 사람이 한다 — 루프는 절대 머지하지 않는다.**
 
-> English: skill docs are available in English — [SKILL.en.md](SKILL.en.md) · [skills/issue-prep/SKILL.en.md](skills/issue-prep/SKILL.en.md) (한국어판이 원본).
+> English: skill docs are available in English — [SKILL.en.md](SKILL.en.md) · [skills/loop-issues/SKILL.en.md](skills/loop-issues/SKILL.en.md) (한국어판이 원본).
 
 ## 개념
 
@@ -60,7 +60,7 @@ git clone https://github.com/ggqgga/issue-runner ~/Projects/refs/issue-runner
 # 2. ~/.claude/skills 에 symlink (Claude Code가 스킬을 인식하는 경로)
 mkdir -p ~/.claude/skills
 ln -s ~/Projects/refs/issue-runner            ~/.claude/skills/issue-runner
-ln -s ~/Projects/refs/issue-runner/skills/issue-prep ~/.claude/skills/issue-prep
+ln -s ~/Projects/refs/issue-runner/skills/loop-issues ~/.claude/skills/loop-issues
 
 # 3. 루프에 참여시킬 각 레포에 라벨 세트 생성 (= 옵트인 신호)
 ~/.claude/skills/issue-runner/scripts/setup-labels.sh <owner/repo>
@@ -94,7 +94,7 @@ acme/webapp ~/Work/clients/acme-webapp
 
 | 라벨 | 의미 |
 |---|---|
-| `agent-ready` | 에이전트가 집어가도 되는 이슈. **스펙 완결 후 마지막에** 사람이(또는 `/issue-prep`로) 부착. 디스패처는 절대 임의로 붙이지 않는다 |
+| `agent-ready` | 에이전트가 집어가도 되는 이슈. **스펙 완결 후 마지막에** 사람이(또는 `/loop-issues`로) 부착. 디스패처는 절대 임의로 붙이지 않는다 |
 | `agent:claimed` | 디스패처가 점유 중. **수동 부착/제거 금지** — 루프가 라이프사이클을 관리한다 |
 | `P0` / `P1` / `P2` | 우선순위 (최우선/보통/낮음). 없으면 최하순위로 처리 |
 
@@ -150,7 +150,7 @@ acme/webapp ~/Work/clients/acme-webapp
 gh issue edit <N> --repo acme/webapp --add-label agent-ready --add-label P2
 ```
 
-Claude Code 기획 세션이라면 `/issue-prep`를 쓰면 마감 체크리스트(스펙 완결성·
+Claude Code 기획 세션이라면 `/loop-issues`를 쓰면 마감 체크리스트(스펙 완결성·
 의존성·우선순위·난이도 등 9항목)를 통과한 이슈에만 라벨이 붙는다.
 
 **5. 자격 확인 → 단발 틱 실행:**
@@ -246,7 +246,7 @@ scripts/
   reconcile.sh             # claim 전수 점검 → 이벤트 JSON + 안전 정리
   repo-dir.sh              # repos.conf / 기본 경로로 레포 로컬 경로 해석
   run-local-ci.sh          # worktree에서 bin/ci 실행 → local-ci 캐시 기록
-skills/issue-prep/SKILL.md # 기획 세션용 이슈 마감 체크리스트
+skills/loop-issues/SKILL.md # 기획 세션용 이슈 마감 체크리스트
 repos.conf.example         # 머신별 레포 경로 매핑 예시
 bin/ci                     # 이 레포 자체의 로컬 CI (셸 문법 검사 + 스모크 테스트)
 ```

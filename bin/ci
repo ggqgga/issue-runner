@@ -26,7 +26,7 @@ out=$(ISSUE_RUNNER_PROJECTS_ROOT=/tmp scripts/repo-dir.sh owner/some-repo)
 
 echo "[4/4] 한/영 SKILL 구조 동기화 검사 (## 헤더 개수·순서)"
 fail=0
-for pair in "SKILL.md:SKILL.en.md" "skills/issue-prep/SKILL.md:skills/issue-prep/SKILL.en.md" "references/worker-template.md:references/worker-template.en.md"; do
+for pair in "SKILL.md:SKILL.en.md" "skills/loop-issues/SKILL.md:skills/loop-issues/SKILL.en.md" "references/worker-template.md:references/worker-template.en.md"; do
   ko="${pair%%:*}"
   en="${pair#*:}"
   if [ ! -f "$ko" ] || [ ! -f "$en" ]; then

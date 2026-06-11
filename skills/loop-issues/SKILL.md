@@ -1,9 +1,9 @@
 ---
-name: issue-prep
-description: 이슈를 issue-runner 루프에 넘기기 전 마감 체크리스트. 기획 세션에서 이슈 작성을 끝낼 때, 또는 "이슈 마감", "agent-ready 붙여줘" 요청 시 사용. 체크리스트 통과 후에만 agent-ready 라벨을 부착한다.
+name: loop-issues
+description: 이슈를 issue-runner 루프에 넘기기 전 마감 체크리스트. 사용자가 "루프로 진행해줘", "루프에 넘겨줘", "루프 태워줘", "이슈 마감", "agent-ready 붙여줘" 라고 요청하면 사용. 체크리스트 통과 후에만 agent-ready 라벨을 부착한다.
 ---
 
-# issue-prep — 이슈 마감 체크리스트
+# loop-issues — 이슈 마감 체크리스트
 
 이슈를 루프에 넘기기 전 아래를 **모두** 확인하고, 통과한 이슈에만 `agent-ready` 를 붙인다.
 워커는 이 세션의 맥락을 전혀 공유하지 않는다 — 이슈 본문이 유일한 스펙이다.
