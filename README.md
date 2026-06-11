@@ -111,7 +111,63 @@ acme/webapp ~/Work/clients/acme-webapp
 이슈 자격 조건 정리: open + `agent-ready` + ¬`agent:claimed` + 모든 블로커 CLOSED.
 정렬: P0 > P1 > P2 > 라벨 없음, 동순위는 오래된 순 (`eligible-issues.sh`).
 
-## 구동법
+## 빠른 시작 — 첫 이슈 한 바퀴
+
+설치를 마쳤다면 작은 테스트 이슈 하나로 전체 사이클을 검증한다.
+
+**1. 대상 레포 옵트인** (설치 3단계를 했다면 skip):
+
+```bash
+~/.claude/skills/issue-runner/scripts/setup-labels.sh acme/webapp
+```
+
+**2. 대상 레포의 `CLAUDE.md`에 빌드/테스트 명령이 적혀 있는지 확인** —
+워커는 이것만 보고 검증 방법을 안다. 없으면 먼저 적는다.
+
+**3. 이슈 작성.** 워커는 기획 세션의 맥락을 전혀 공유하지 않는다 —
+**이슈 본문이 유일한 스펙**이다. 최소 형식:
+
+```markdown
+## 배경
+회원가입 폼에 이메일 형식 검증이 없어 잘못된 주소가 저장된다.
+
+## 작업
+- [ ] 이메일 필드에 형식 검증 추가 (간이 RFC 5322 패턴)
+- [ ] 검증 실패 시 인라인 에러 메시지 표시
+- [ ] 기존 가입 플로우 테스트 통과 유지
+
+## Test plan
+- `npm test -- signup` 통과
+- 잘못된 이메일("a@b")로 제출 → 에러 메시지 노출 확인
+```
+
+수용 기준은 `- [ ]` 체크박스로 구체적·검증가능하게 ("잘 동작" 같은 모호어 금지),
+`## Test plan`에 실행할 검증 명령을 적는다.
+
+**4. 라벨 부착:**
+
+```bash
+gh issue edit <N> --repo acme/webapp --add-label agent-ready --add-label P2
+```
+
+Claude Code 기획 세션이라면 `/issue-prep`를 쓰면 마감 체크리스트(스펙 완결성·
+의존성·우선순위 등 8항목)를 통과한 이슈에만 라벨이 붙는다.
+
+**5. 자격 확인 → 단발 틱 실행:**
+
+```bash
+~/.claude/skills/issue-runner/scripts/eligible-issues.sh   # 이슈가 보여야 한다
+```
+
+Claude Code에서 `/issue-runner` 를 1회 호출 → Report에 `신규 1` 확인.
+워커가 백그라운드에서 구현하고 push할 때마다 커밋이 원격 브랜치에 쌓인다.
+
+**6. 워커가 PR을 열면 리뷰 후 머지.** 다음 `/issue-runner` 호출의 Reconcile이
+worktree와 claim 라벨을 정리하면 한 바퀴 완료.
+
+## 사용법
+
+### 상시 구동
 
 Claude Code에서:
 
@@ -119,16 +175,64 @@ Claude Code에서:
 /loop 15m /issue-runner
 ```
 
-15분마다 디스패처 틱이 돈다. 단발 실행은 `/issue-runner` 한 번 호출.
+15분마다 디스패처 틱이 돈다. 기획(이슈 작성) 세션과 **별도의 터미널/세션**에서
+돌리는 것을 권장한다 — 기획 세션은 이슈만 만들고, 루프 세션이 소비한다.
+루프 중지는 루프 세션을 중단하면 된다 — 상태가 전부 GitHub에 있으므로
+언제 멈췄다 재개해도 다음 틱이 현실과 대조해 이어간다.
 
-이슈를 루프에 넘기는 쪽 워크플로:
+매 틱의 Report 한 줄 읽는 법:
 
-1. 기획 세션에서 이슈를 작성한다 — 워커는 세션 맥락을 전혀 공유하지 않으므로
-   **이슈 본문이 유일한 스펙**이다 (수용 기준 체크박스 + `## Test plan` 필수).
-2. `/issue-prep`로 마감 체크리스트를 통과시키고 `agent-ready` + 우선순위 라벨 부착.
-3. 다음 틱에 디스패처가 claim → worktree(`<레포>/.claude/worktrees/issue-<N>`,
-   브랜치 `agent/issue-<N>`) → 백그라운드 워커 투입 → 워커가 구현·push·PR 생성.
-4. 사람이 PR을 리뷰하고 머지한다. 다음 틱의 reconcile이 worktree와 claim을 정리한다.
+```
+정리 1 · 보수 0 · 신규 2 · 대기 3 · warn 0
+```
+
+| 항목 | 의미 |
+|---|---|
+| 정리 | 머지/거부된 PR 뒷정리 (worktree 제거, claim 해제, lessons 기록) |
+| 보수 | 열린 PR에 보수 워커 투입 (CI 실패 수리, 리뷰 코멘트 해결, rebase) |
+| 신규 | 새로 claim해 워커를 투입한 이슈 수 |
+| 대기 | 자격은 되지만 슬롯이 없어 다음 틱으로 미룬 이슈 수 |
+| warn | 사람 확인이 필요한 항목 — 본문에 사유가 함께 출력된다 |
+
+### 운영 중 개입 규칙
+
+- **PR에 할 말이 있으면 리뷰 코멘트를 남긴다** — 다음 틱의 Maintain이 보수
+  워커를 투입해 해결한다. 머지는 언제나 사람이 직접.
+- **거부하려면 PR을 머지 없이 닫는다** — reconcile이 `agent-ready`까지 제거해
+  같은 일을 다시 벌이지 않는다. 재시도시키려면 이슈 스펙을 보완한 뒤 사람이
+  `agent-ready`를 다시 붙인다.
+- **`agent:claimed` 라벨은 수동으로 만지지 않는다** — 루프가 라이프사이클을
+  관리한다. 강제로 회수하고 싶으면 루프를 멈춘 상태에서 라벨 제거 + worktree 정리.
+
+### 가드레일
+
+폭주 방지 장치 (상수는 SKILL.md 상단에서 조정):
+
+| 상수 | 기본값 | 동작 |
+|---|---|---|
+| `ISSUE_TIMEBOX_HOURS` | 1 | PR 없이 claim 1시간 초과한 워커는 중단하고 worktree를 폐기, claim을 해제한다. push된 커밋은 원격 브랜치에 보존되어 재디스패치가 이어받는다 |
+| `MAX_REPAIRS_PER_PR` | 3 | PR 1개당 보수 투입 상한. 초과하면 보수를 멈추고 이슈에 `needs-human` 라벨을 붙인다 (서킷 브레이커) |
+| `SOFT_TOKEN_BUDGET_PER_ISSUE` | 300k | 이슈당 토큰 사용량 관측치. 초과해도 중단하지 않고 Report에 승격 권고만 표시 |
+| `MAX_AGENTS` | 2 | 동시 in-flight 이슈 상한 |
+
+`needs-human` 라벨이 붙은 이슈는 루프가 손을 뗀 상태다 — 사람이 원인을 보고
+라벨을 제거해야 다시 흐른다.
+
+### lessons — 루프의 자기 개선
+
+PR이 머지/거부될 때 디스패처가 검증자(codex)로 객관적 실패 사실만 추출해
+대상 레포의 `.loop/lessons.md`(gitignore, 20줄 캡)에 기록하고, 이후 워커에게
+주입한다 — 같은 실수를 반복하지 않게 하는 장치다. lessons를 CLAUDE.md로
+승격하는 판단은 사람만 한다.
+
+### 트러블슈팅
+
+| 증상 | 확인 |
+|---|---|
+| 이슈가 안 집힌다 | `scripts/eligible-issues.sh` 직접 실행 — `agent-ready` 부착 여부, `agent:claimed` 잔존 여부, `Blocked by #N` 블로커가 전부 CLOSED인지. GitHub 검색 인덱스는 몇 분 지연될 수 있다 |
+| 워커가 죽고 PR이 없다 | 다음 틱 Reconcile이 회수한다 — push된 커밋이 있으면 보수로 이어받고, 없으면 claim을 풀어 재디스패치한다 |
+| worktree가 안 지워진다 | dirty이거나 미push 커밋이 있으면 reconcile이 **보존하고 warn**한다. 내용 확인 후 직접 `git worktree remove` |
+| PR에 CI 결과가 안 보인다 | `gh api` 인증으로 commit status를 게시한다 — `gh auth status` 확인. 게시 실패해도 로컬 캐시 판정에는 영향 없다 |
 
 ## 파일 구조
 
