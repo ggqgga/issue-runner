@@ -38,8 +38,10 @@
 선택:
 
 - **codex 플러그인** (`codex:codex-rescue` 서브에이전트) — 워커가 PR 생성 후
-  코드 리뷰를 스폰하고, 디스패처가 머지/거부된 PR에서 교훈을 추출할 때 사용.
-  없으면 해당 단계가 빠질 뿐 루프 자체는 동작한다.
+  코드 리뷰를 스폰하고(BLOCKER 발견 시 해결 전 종료 금지), 디스패처가
+  머지/거부된 PR에서 교훈(lessons)을 추출할 때 사용. 주의: SKILL.md의 워커/디스패처
+  계약에 이 단계들이 포함되어 있으므로, 플러그인 없이 운용하려면 SKILL.md에서
+  해당 단계(워커 9단계 codex 리뷰, Reconcile lessons)를 빼고 써야 한다.
 - **local-ci hook 세트** (`~/.claude/hooks/local-ci.sh`,
   `ci-gate-before-pr-merge.sh`) — GitHub Actions 없이 로컬 CI 결과를
   `~/.claude/.local-ci/` 캐시에 남기고, 사람이 `gh pr merge` 할 때 게이트로 읽는
@@ -54,6 +56,7 @@
 git clone https://github.com/ggqgga/issue-runner ~/Projects/refs/issue-runner
 
 # 2. ~/.claude/skills 에 symlink (Claude Code가 스킬을 인식하는 경로)
+mkdir -p ~/.claude/skills
 ln -s ~/Projects/refs/issue-runner            ~/.claude/skills/issue-runner
 ln -s ~/Projects/refs/issue-runner/skills/issue-prep ~/.claude/skills/issue-prep
 
@@ -69,10 +72,12 @@ ln -s ~/Projects/refs/issue-runner/skills/issue-prep ~/.claude/skills/issue-prep
 스크립트는 레포의 로컬 체크아웃을 기본적으로 `$HOME/Projects/<레포명>`에서 찾는다
 (루트는 `ISSUE_RUNNER_PROJECTS_ROOT` 환경변수로 변경 가능). 거기에 없으면
 `make-worktree.sh`가 그 위치로 clone한다. 다른 곳에 이미 체크아웃이 있다면
-`repos.conf`로 매핑한다:
+`repos.conf`로 매핑한다. `repos.conf`는 **이 레포의 루트**(clone한 위치)에
+있어야 한다 — `repo-dir.sh`가 자기 위치 기준으로 읽는다:
 
 ```bash
-cp repos.conf.example repos.conf   # repos.conf 는 gitignore — 머신별 설정
+cd ~/Projects/refs/issue-runner   # clone 한 위치
+cp repos.conf.example repos.conf  # repos.conf 는 gitignore — 머신별 설정
 ```
 
 형식은 한 줄에 `<owner/repo> <절대경로>` (공백 구분 — 경로에 공백 불가,
