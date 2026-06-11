@@ -6,6 +6,7 @@
 
 - 전체 CI (머지 전 필수, GitHub Actions 미사용): `bin/ci`
   — 모든 .sh 의 bash 문법 검사(bash -n) + shellcheck(설치 시) + repo-dir.sh 스모크 테스트
+  + 한/영 SKILL 구조 동기화 검사(`## ` 헤더 개수·순서)
 - 스크립트는 macOS bash 3.2 호환 필수 — mapfile/연관배열 등 bash4 문법 금지
 
 ## 규칙
