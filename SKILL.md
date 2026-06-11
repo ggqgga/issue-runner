@@ -89,14 +89,19 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    (글로벌 quality-gate hook 은 worktree 커밋을 보호하지 못한다 — 네가 유일한 방어선).
 6. **매 커밋 직후 `cd <WT_PATH> && git push -u origin agent/issue-<NUM>`** — 이 worktree 는
    언제든 버려질 수 있다. push 안 된 작업은 존재하지 않는 것과 같다.
-7. 전체 테스트 통과를 확인한 뒤 PR 을 열어라. **반드시 cd 없는 단독 명령으로**:
+7. 최종 push 후 로컬 CI 를 실행하라:
+   `~/.claude/skills/issue-runner/scripts/run-local-ci.sh <REPO> <NUM>`
+   (레포가 bin/ci 옵트인이 아니면 자동 skip.) fail 이면 고치고 재커밋/재push 후
+   다시 실행하라 — 이 결과 캐시를 사람의 머지 게이트가 읽는다. 이후 추가 커밋을
+   push 할 때마다 재실행해 최신 HEAD 의 결과를 남겨라.
+8. PR 을 열어라. **반드시 cd 없는 단독 명령으로**:
    `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`
    (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사와 codex 리뷰
    주입이 누락된다.) 본문에 반드시 전용 라인 `Closes #<NUM>` 과 `## Test plan`
    섹션(수용 기준 기반 체크박스)을 포함하라.
-8. PR 생성 직후 주입되는 codex 리뷰 지시를 따르라. codex 가 BLOCKER 를 보고하면
-   **반드시 해결 커밋 + push 후에만** 종료하라. BLOCKER 미해결 종료 금지.
-9. 종료 보고: PR 번호/URL, 테스트 결과, codex 리뷰 처리 내역, 남은 사항.
+9. PR 생성 직후 주입되는 codex 리뷰 지시를 따르라. codex 가 BLOCKER 를 보고하면
+   **반드시 해결 커밋 + push + 로컬 CI 재실행 후에만** 종료하라. BLOCKER 미해결 종료 금지.
+10. 종료 보고: PR 번호/URL, 테스트 결과, codex 리뷰 처리 내역, 남은 사항.
 
 금지: 머지, main/master 직접 push, 이슈 라벨 변경, 다른 이슈 작업, <WT_PATH> 밖 수정.
 
