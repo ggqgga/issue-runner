@@ -48,8 +48,16 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 - `warn` — dirty/unpushed worktree. **건드리지 말고** Report에 그대로 올려 사람이 보게 하라.
 - `pr_open` — ② Maintain 의 입력.
 - `working` — 워커 진행 중. TaskList 로 해당 백그라운드 에이전트가 실제 살아있는지
-  확인. 죽었고 push 된 커밋이 있으면 ② 의 보수 대상으로, 커밋이 전혀 없으면
-  worktree 제거 후 claim 해제 (재디스패치 가능 상태로 복귀).
+  확인. 죽었고 push 된 커밋이 있으면 ② 의 보수 대상으로. 커밋이 전혀 없으면
+  claim 해제 **전에** 이슈 최신 코멘트를 확인하라 —
+  `gh issue view <num> --repo <repo> --json comments --jq '.comments | last.body'`
+  가 `BLOCKED:` 로 시작하면 워커가 사람 개입이 필요해서 멈춘 것이다 (모호 스펙 /
+  계획-현실 불일치 / 동일 실패 반복): 재디스패치 복귀 대신
+  `gh issue edit <num> --repo <repo> --add-label needs-human` 으로 `needs-human`
+  을 부착하고, worktree 제거 + claim 해제 후 warn 으로 ④ Report 에 BLOCKED 사유를
+  올려라 (사람이 원인을 해소하고 needs-human 을 떼면 다시 흐른다 — README
+  '가드레일' 규약). BLOCKED 코멘트가 아니면 worktree 제거 후 claim 해제
+  (재디스패치 가능 상태로 복귀).
   **timebox (무진전 감지)**: 살아있어도 claim 경과 시간을 확인하라 —
   `gh api repos/<repo>/issues/<num>/timeline --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed")] | last.created_at'`
   로 claim 시각을 구하고 (빈 응답이면 worktree 디렉토리 생성 시각으로 대체),
@@ -123,10 +131,12 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 2. 아래 '과거 교훈'을 읽고 같은 실수를 피하라.
 3. `gh issue view <NUM> --repo <REPO>` 로 이슈 본문(수용 기준 체크박스)을 정독하라.
    본문이 모호해서 구현 방향을 정할 수 없으면 **작업하지 말고** 이슈에
-   `gh issue comment` 로 질문을 남기고 "BLOCKED: <사유>" 로 종료 보고하라.
+   `gh issue comment` 로 `BLOCKED: <사유>` 로 시작하는 코멘트(질문 포함)를 남긴 뒤
+   "BLOCKED: <사유>" 로 종료 보고하라.
 4. 이슈 본문에 `## Plan` 섹션이 있으면 **임의로 설계하지 말고** 그 task 순서를
    그대로 따르라. 계획과 현실이 충돌하면(명시된 파일이 없거나 전제가 깨졌으면)
-   추측으로 우회하지 말고 `gh issue comment` 로 충돌 내용을 남긴 뒤
+   추측으로 우회하지 말고 이슈에 `gh issue comment` 로
+   `BLOCKED: 계획-현실 불일치 — <내용>` 으로 시작하는 코멘트를 남긴 뒤
    "BLOCKED: 계획-현실 불일치 — <내용>" 으로 종료 보고하라.
 5. TDD로 구현하라. 다음 규율을 지켜라:
    - 테스트 없이 구현 코드를 먼저 작성하지 마라.
@@ -138,7 +148,11 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 6. 커밋 전 해당 스택의 lint 와 테스트를 직접 실행해 통과를 확인하라
    (글로벌 quality-gate hook 은 worktree 커밋을 보호하지 못한다 — 네가 유일한 방어선).
 7. 같은 테스트/빌드 실패가 3회 연속 반복되면 (같은 검사가 같은 원인으로 실패)
-   더 시도하지 말고 "BLOCKED: 동일 실패 반복 — <실패 내용>" 으로 종료 보고하라.
+   더 시도하지 말고 이슈에 `gh issue comment` 로
+   `BLOCKED: 동일 실패 반복 — <실패 내용>` 으로 시작하는 코멘트를 남긴 뒤
+   "BLOCKED: 동일 실패 반복 — <실패 내용>" 으로 종료 보고하라.
+   (모든 BLOCKED 종료는 이슈 코멘트가 의무다 — 디스패처가 이 코멘트를 보고
+   재디스패치 대신 needs-human 으로 승격한다.)
 8. **매 커밋 직후 `cd <WT_PATH> && git push -u origin agent/issue-<NUM>`** — 이 worktree 는
    언제든 버려질 수 있다. push 안 된 작업은 존재하지 않는 것과 같다.
 9. 최종 push 후 로컬 CI 를 실행하라:
