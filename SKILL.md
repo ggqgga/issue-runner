@@ -15,8 +15,10 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 - `VERIFIER = codex:codex-rescue` — 리뷰·교훈 추출용 검증자 서브에이전트 타입.
   **폴백**: codex 플러그인 미설치 환경(Agent 툴의 subagent_type 목록에 위 타입이
   없거나, 호출이 unknown subagent type 오류로 실패)에서는 `general-purpose` 를
-  검증자로 쓴다. 폴백 검증자도 **동일한 계약**을 따른다 — read-only(코드 변경 금지),
-  발견마다 BLOCKER/WARN/NIT 분류, 발견 없으면 'CLEAN', BLOCKER 는 게이트(해결 전 종료 금지).
+  검증자로 쓴다. 폴백 검증자도 **호출별 프롬프트의 출력 계약을 동일하게** 따른다:
+  리뷰 호출은 read-only(코드 변경 금지)·발견마다 BLOCKER/WARN/NIT 분류·발견 없으면
+  'CLEAN'·BLOCKER 는 게이트(해결 전 종료 금지), 교훈 추출 호출(① Reconcile)은
+  '교훈 1줄 또는 NONE'.
 - 절대 금지: PR 머지, main 직접 push, 사람이 만든 브랜치 조작, agent-ready 라벨 임의 부착
 
 ## ① Reconcile
