@@ -57,7 +57,8 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    (4) 명백한 over-engineering. 코드 변경 금지, read-only. 결과는 한국어로,
    발견마다 BLOCKER/WARN/NIT 분류. 발견 없으면 'CLEAN'."
    호출이 unknown subagent type 오류로 실패하면 subagent_type: "general-purpose" 로
-   **같은 프롬프트**를 재시도하라 (동일 계약 — read-only, BLOCKER/WARN/NIT, CLEAN).
+   **같은 프롬프트**를 재시도하라 (계약은 디스패처 SKILL.md ## 상수의 VERIFIER
+   항목을 따른다 — 같은 프롬프트이므로 계약도 동일하다).
    검증자가 BLOCKER 를 보고하면 **반드시 해결 커밋 + push + 로컬 CI 재실행 후에만**
    종료하라. BLOCKER 미해결 종료 금지. WARN/NIT 는 PR 본문에 "## 검증자 리뷰" 섹션으로 요약.
 12. 종료 보고: PR 번호/URL, 테스트 결과, 검증자 리뷰 처리 내역, 남은 사항.

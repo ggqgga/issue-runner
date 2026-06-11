@@ -68,8 +68,8 @@ Procedure:
    (4) obvious over-engineering. No code changes, read-only. Report in English,
    classifying each finding as BLOCKER/WARN/NIT. If there are no findings, output 'CLEAN'."
    If the call fails with an unknown subagent type error, retry **the same prompt**
-   with subagent_type: "general-purpose" (same contract — read-only,
-   BLOCKER/WARN/NIT, CLEAN).
+   with subagent_type: "general-purpose" (the contract follows the VERIFIER entry
+   in the dispatcher SKILL.md's ## Constants — same prompt, same contract).
    If the verifier reports a BLOCKER, finish **only after a fix commit + push +
    local CI re-run**. Never finish with an unresolved BLOCKER. Summarize WARN/NIT
    in the PR body under a "## Verifier review" section.
