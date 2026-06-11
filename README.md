@@ -43,7 +43,7 @@
   코드 리뷰를 스폰하고(BLOCKER 발견 시 해결 전 종료 금지), 디스패처가
   머지/거부된 PR에서 교훈(lessons)을 추출할 때 사용. 주의: SKILL.md의 워커/디스패처
   계약에 이 단계들이 포함되어 있으므로, 플러그인 없이 운용하려면 SKILL.md에서
-  해당 단계(워커 9단계 codex 리뷰, Reconcile lessons)를 빼고 써야 한다.
+  해당 단계(워커 11단계 codex 리뷰, Reconcile lessons)를 빼고 써야 한다.
 - **local-ci hook 세트** (`~/.claude/hooks/local-ci.sh`,
   `ci-gate-before-pr-merge.sh`) — GitHub Actions 없이 로컬 CI 결과를
   `~/.claude/.local-ci/` 캐시에 남기고, 사람이 `gh pr merge` 할 때 게이트로 읽는
