@@ -25,6 +25,28 @@ description: 이슈를 issue-runner 루프에 넘기기 전 마감 체크리스�
    먼저 보완하라.
 8. **충돌 예상**: 이미 agent-ready/claimed 인 다른 이슈와 같은 모듈을 건드리는가?
    그렇다면 Blocked by 로 직렬화를 고려하라.
+9. **난이도 평가**: 여러 파일/모듈을 동시에 건드리거나, 설계 선택지가 둘 이상이거나,
+   수용 기준만으로 구현 경로가 유일하게 정해지지 않으면 **high** 다.
+   high 이슈는 기획 세션(사람과 대화 가능한 유일한 지점)에서 스펙을 대화로 확정하고
+   (superpowers 사용자는 /superpowers:brainstorming 활용 가능 — 의존성은 아니다,
+   손으로 쓴 계획도 같은 효력), 이슈 본문에 `## Plan` 섹션을 첨부한다.
+   `## Plan` 필수 구성: 단계별 task 목록(각 task에 수정/생성할 파일 경로 명시) +
+   task별 검증 명령. task 순서가 곧 실행 순서다. 계획이 task 5개를 넘을 만큼 크면
+   첨부 대신 sub-issue 분해를 먼저 검토하라(5번 계층 항목과 연결).
+
+   `## Plan` 형식 예시:
+
+   ```markdown
+   ## Plan
+
+   1. scripts/foo.sh 에 --dry-run 플래그 추가 (인자 파싱 + 변경 없이 계획만 출력)
+      - 검증: `ISSUE_RUNNER_PROJECTS_ROOT=/tmp scripts/foo.sh --dry-run owner/repo`
+        출력에 "would clone" 포함, 파일시스템 변경 없음
+   2. SKILL.md 디스패처 Dispatch 단계에 dry-run 사용법 한 줄 추가
+      - 검증: `bin/ci` 통과
+   3. SKILL.en.md 에 동일 내용을 영어로 반영
+      - 검증: `bin/ci` 통과 (한/영 구조 동기화 검사 포함)
+   ```
 
 ## 마감
 

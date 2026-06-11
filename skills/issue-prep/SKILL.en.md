@@ -35,6 +35,31 @@ context — the issue body is the only spec.
    its work. Fix these first.
 8. **Conflict forecast**: does it touch the same module as another issue that is
    already agent-ready/claimed? If so, consider serializing with Blocked by.
+9. **Difficulty assessment**: if it touches multiple files/modules at once, has more
+   than one viable design choice, or the acceptance criteria alone do not pin down a
+   single implementation path, it is **high**.
+   For high issues, settle the spec through conversation in the planning session
+   (the only point where a human is available to talk to; superpowers users may use
+   /superpowers:brainstorming — it is not a dependency, a hand-written plan has the
+   same effect), and attach a `## Plan` section to the issue body.
+   Required `## Plan` structure: a step-by-step task list (each task names the file
+   paths to modify/create) + a verification command per task. Task order is the
+   execution order. If the plan grows beyond 5 tasks, consider splitting into
+   sub-issues first instead of attaching it (ties into hierarchy item 5).
+
+   `## Plan` format example:
+
+   ```markdown
+   ## Plan
+
+   1. Add a --dry-run flag to scripts/foo.sh (arg parsing + print plan without changes)
+      - Verify: `ISSUE_RUNNER_PROJECTS_ROOT=/tmp scripts/foo.sh --dry-run owner/repo`
+        output contains "would clone", no filesystem changes
+   2. Add one line about dry-run usage to the Dispatch step in SKILL.md
+      - Verify: `bin/ci` passes
+   3. Mirror the same content in English in SKILL.en.md
+      - Verify: `bin/ci` passes (including the KR/EN structure sync check)
+   ```
 
 ## Closing
 
