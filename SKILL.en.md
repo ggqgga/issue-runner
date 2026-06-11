@@ -86,7 +86,7 @@ For each `pr_open` event:
    like they will touch the same repo and the same module, pick only one this
    tick. If you cannot tell, pick it (a conflict gets resolved by the next tick's
    rebase).
-4. For the top slots candidates, from the top:
+4. For up to `slots` candidates in priority order:
    a. `$SCRIPTS/claim-issue.sh <repo> <num>` — on failure (already claimed, etc.)
       move on to the next candidate.
    b. `$SCRIPTS/make-worktree.sh <repo> <num>` — the last output line is the
