@@ -151,7 +151,7 @@ gh issue edit <N> --repo acme/webapp --add-label agent-ready --add-label P2
 ```
 
 Claude Code 기획 세션이라면 `/issue-prep`를 쓰면 마감 체크리스트(스펙 완결성·
-의존성·우선순위 등 8항목)를 통과한 이슈에만 라벨이 붙는다.
+의존성·우선순위·난이도 등 9항목)를 통과한 이슈에만 라벨이 붙는다.
 
 **5. 자격 확인 → 단발 틱 실행:**
 
