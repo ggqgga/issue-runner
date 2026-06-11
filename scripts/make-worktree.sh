@@ -6,8 +6,7 @@
 set -euo pipefail
 repo="${1:?usage: make-worktree.sh <owner/repo> <num>}"
 num="${2:?usage: make-worktree.sh <owner/repo> <num>}"
-name=${repo#*/}
-dir="$HOME/Projects/$name"
+dir="$("$(cd "$(dirname "$0")" && pwd)/repo-dir.sh" "$repo")"
 branch="agent/issue-$num"
 wt="$dir/.claude/worktrees/issue-$num"
 

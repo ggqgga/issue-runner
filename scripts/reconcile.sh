@@ -9,6 +9,7 @@
 #   warn     — dirty/unpushed worktree → 제거 보류, 사람 확인 필요
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 me=$(gh api user -q .login)
 
 # 주의: --state 미지정 = open+closed 모두 (merged PR 이 이슈를 자동으로 닫으므로 필수)
@@ -18,8 +19,7 @@ claimed=$(gh search issues "label:agent:claimed" --owner "$me" \
 printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
   repo=$(printf '%s' "$row" | jq -r '.repository.nameWithOwner')
   num=$(printf '%s' "$row" | jq -r '.number')
-  name=${repo#*/}
-  dir="$HOME/Projects/$name"
+  dir=$("$SCRIPT_DIR/repo-dir.sh" "$repo")
   branch="agent/issue-$num"
   wt="$dir/.claude/worktrees/issue-$num"
 

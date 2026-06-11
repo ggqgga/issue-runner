@@ -11,8 +11,7 @@
 set -uo pipefail
 repo="${1:?usage: run-local-ci.sh <owner/repo> <num>}"
 num="${2:?usage: run-local-ci.sh <owner/repo> <num>}"
-name=${repo#*/}
-dir="$HOME/Projects/$name"
+dir="$("$(cd "$(dirname "$0")" && pwd)/repo-dir.sh" "$repo")"
 wt="$dir/.claude/worktrees/issue-$num"
 
 [ -d "$wt" ] || { echo "run-local-ci: worktree 없음 ($wt)" >&2; exit 1; }
@@ -23,6 +22,8 @@ fi
 
 sha=$(git -C "$wt" rev-parse HEAD)
 short=$(printf '%s' "$sha" | cut -c1-8)
+# slug 는 물리 경로 기준 — repo-dir.sh 가 물리 경로로 정규화해 주므로 $dir 그대로 사용.
+# (사람이 실제 경로에서 머지할 때 게이트가 계산하는 slug 와 일치해야 한다.)
 slug=$(printf '%s' "$dir" | sed 's#[/ ]#_#g; s#^_##')
 out="$HOME/.claude/.local-ci/$slug"
 mkdir -p "$out"

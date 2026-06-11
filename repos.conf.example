@@ -1,0 +1,6 @@
+# repos.conf — 레포가 기본 위치($HOME/Projects/<레포명>)에 없을 때만 매핑을 적는다.
+# 형식: <owner/repo> <절대경로>   (공백 구분 — 경로에 공백이 있으면 안 된다)
+# 이 파일을 repos.conf 로 복사해 자기 머신에 맞게 수정 (repos.conf 는 gitignore됨).
+#
+# 예:
+# ggqgga/BodaT /Users/ggq/Projects/BODA/BoDAT
