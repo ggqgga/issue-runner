@@ -12,4 +12,7 @@ gh label create "P0" --repo "$repo" --color B60205 --force --description "최우
 gh label create "P1" --repo "$repo" --color FBCA04 --force --description "보통"
 gh label create "P2" --repo "$repo" --color C2E0C6 --force --description "낮음"
 
+# 머지된 head 브랜치 자동 삭제 — reconcile 이 로컬만 정리하므로 원격은 GitHub 가 맡는다
+gh repo edit "$repo" --delete-branch-on-merge
+
 echo "labels ready: $repo"
