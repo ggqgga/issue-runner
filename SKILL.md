@@ -99,8 +99,15 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사와 codex 리뷰
    주입이 누락된다.) 본문에 반드시 전용 라인 `Closes #<NUM>` 과 `## Test plan`
    섹션(수용 기준 기반 체크박스)을 포함하라.
-9. PR 생성 직후 주입되는 codex 리뷰 지시를 따르라. codex 가 BLOCKER 를 보고하면
-   **반드시 해결 커밋 + push + 로컬 CI 재실행 후에만** 종료하라. BLOCKER 미해결 종료 금지.
+9. PR 생성 후 **codex 리뷰를 직접 스폰하라** (PostToolUse hook 의 codex 주입은
+   서브에이전트 컨텍스트에 닿지 않는다 — 기다리지 말 것). Agent 툴 동기 호출:
+   subagent_type: "codex:codex-rescue", prompt:
+   "PR #<PR번호> (<REPO>) 코드 리뷰. `git -C <WT_PATH> diff <DEFAULT_BRANCH>...HEAD` 의
+   변경을 읽고 검토: (1) correctness 버그 (2) 빠진 엣지 케이스 (3) 테스트 적정성
+   (4) 명백한 over-engineering. 코드 변경 금지, read-only. 결과는 한국어로,
+   발견마다 BLOCKER/WARN/NIT 분류. 발견 없으면 'CLEAN'."
+   codex 가 BLOCKER 를 보고하면 **반드시 해결 커밋 + push + 로컬 CI 재실행 후에만**
+   종료하라. BLOCKER 미해결 종료 금지. WARN/NIT 는 PR 본문에 "## Codex 리뷰" 섹션으로 요약.
 10. 종료 보고: PR 번호/URL, 테스트 결과, codex 리뷰 처리 내역, 남은 사항.
 
 금지: 머지, main/master 직접 push, 이슈 라벨 변경, 다른 이슈 작업, <WT_PATH> 밖 수정.
