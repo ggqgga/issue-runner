@@ -1,6 +1,6 @@
 ---
 name: loop-issues
-description: Closing checklist before handing an issue to the issue-runner loop. Use on requests like "send this to the loop", "hand it to the loop", "put it on the loop", "finalize this issue", or "attach agent-ready". Attach the agent-ready label only after the checklist passes.
+description: Closing checklist before handing an issue to the issue-runner loop. Use on requests like "send this to the loop", "hand it to the loop", "put it on the loop", "finalize this issue", or "attach agent-ready". For batch-analysis requests over existing issues like "analyze which issues can go on the loop" or "analyze the issues and label them", use triage mode. Attach the agent-ready label only after the checklist passes.
 ---
 
 > English translation of [SKILL.md](SKILL.md). The Korean original is the source of
