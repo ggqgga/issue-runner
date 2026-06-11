@@ -15,6 +15,6 @@
 - 상태의 단일 진실 원천은 GitHub(라벨·assignee·PR). 스크립트에 로컬 상태 파일을 두지 않는다
   (예외: ~/.claude/.local-ci 캐시 — local-ci hook 계약).
 - repos.conf 는 머신별 설정(gitignore됨) — 코드에 개인 경로를 하드코딩하지 않는다.
-- SKILL.md 워커 템플릿 수정 시: 서브에이전트는 cwd가 호출 간 리셋되고, PostToolUse
+- 워커 템플릿(references/worker-template.md) 수정 시: 서브에이전트는 cwd가 호출 간 리셋되고, PostToolUse
   주입이 닿지 않으며, PR 생성은 cd 없는 단독 명령이어야 한다는 제약을 유지할 것
   (근거: Claude Code 하네스에서 실험으로 검증된 제약 — 서브에이전트 환경 특성).

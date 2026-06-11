@@ -26,7 +26,7 @@ out=$(ISSUE_RUNNER_PROJECTS_ROOT=/tmp scripts/repo-dir.sh owner/some-repo)
 
 echo "[4/4] 한/영 SKILL 구조 동기화 검사 (## 헤더 개수·순서)"
 fail=0
-for pair in "SKILL.md:SKILL.en.md" "skills/issue-prep/SKILL.md:skills/issue-prep/SKILL.en.md"; do
+for pair in "SKILL.md:SKILL.en.md" "skills/issue-prep/SKILL.md:skills/issue-prep/SKILL.en.md" "references/worker-template.md:references/worker-template.en.md"; do
   ko="${pair%%:*}"
   en="${pair#*:}"
   if [ ! -f "$ko" ] || [ ! -f "$en" ]; then
@@ -57,6 +57,15 @@ for pair in "SKILL.md:SKILL.en.md" "skills/issue-prep/SKILL.md:skills/issue-prep
       fail=1
     fi
   done < <(paste <(grep '^## ' "$ko") <(grep '^## ' "$en"))
+  # worker-template 쌍 한정: ## 헤더가 없는 파일이므로 절차 번호 줄(^N.) 개수도 검사
+  if [ "$ko" = "references/worker-template.md" ]; then
+    ko_steps=$(grep -c '^[0-9][0-9]*\.' "$ko" || true)
+    en_steps=$(grep -c '^[0-9][0-9]*\.' "$en" || true)
+    if [ "$ko_steps" != "$en_steps" ]; then
+      echo "  ✗ 절차 번호 줄 개수 불일치: $ko(${ko_steps}개) vs $en(${en_steps}개)"
+      fail=1
+    fi
+  fi
 done
 [ "$fail" = 0 ] || exit 1
 
