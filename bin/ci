@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# 로컬 CI — ~/.claude/hooks/local-ci.sh 계약 (GitHub Actions 미사용)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "[1/3] bash 문법 검사 (bash -n)"
+fail=0
+for f in scripts/*.sh bin/ci; do
+  if ! bash -n "$f"; then
+    echo "  ✗ $f"
+    fail=1
+  fi
+done
+[ "$fail" = 0 ] || exit 1
+
+echo "[2/3] shellcheck (설치 시)"
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck -S warning scripts/*.sh bin/ci
+else
+  echo "  shellcheck 미설치 — skip"
+fi
+
+echo "[3/3] repo-dir.sh 스모크 테스트"
+out=$(ISSUE_RUNNER_PROJECTS_ROOT=/tmp scripts/repo-dir.sh owner/some-repo)
+[ "$out" = "/tmp/some-repo" ] || { echo "  ✗ 기본 경로 해석 실패: $out"; exit 1; }
+
+echo "CI pass"
