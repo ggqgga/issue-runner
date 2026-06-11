@@ -63,7 +63,8 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
    a. `$SCRIPTS/claim-issue.sh <repo> <num>` — 실패(이미 claim 등)하면 다음 후보로.
    b. `$SCRIPTS/make-worktree.sh <repo> <num>` — 마지막 줄이 worktree 경로.
    c. `~/Projects/<repo-name>/.loop/lessons.md` 가 있으면 내용을 읽어 둔다.
-   d. 아래 워커 템플릿으로 Agent 툴 백그라운드 디스패치.
+   d. 아래 워커 템플릿으로 Agent 툴 백그라운드 디스패치. 템플릿의 `<DEFAULT_BRANCH>` 는
+      `gh repo view <repo> --json defaultBranchRef -q .defaultBranchRef.name` 으로 채운다.
 
 ### 워커 프롬프트 템플릿
 
@@ -88,9 +89,11 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    (글로벌 quality-gate hook 은 worktree 커밋을 보호하지 못한다 — 네가 유일한 방어선).
 6. **매 커밋 직후 `cd <WT_PATH> && git push -u origin agent/issue-<NUM>`** — 이 worktree 는
    언제든 버려질 수 있다. push 안 된 작업은 존재하지 않는 것과 같다.
-7. 전체 테스트 통과를 확인한 뒤 PR 을 열어라:
-   `cd <WT_PATH> && gh pr create --repo <REPO> ...` — 본문에 반드시 전용 라인
-   `Closes #<NUM>` 과 `## Test plan` 섹션(수용 기준 기반 체크박스)을 포함하라.
+7. 전체 테스트 통과를 확인한 뒤 PR 을 열어라. **반드시 cd 없는 단독 명령으로**:
+   `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`
+   (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사와 codex 리뷰
+   주입이 누락된다.) 본문에 반드시 전용 라인 `Closes #<NUM>` 과 `## Test plan`
+   섹션(수용 기준 기반 체크박스)을 포함하라.
 8. PR 생성 직후 주입되는 codex 리뷰 지시를 따르라. codex 가 BLOCKER 를 보고하면
    **반드시 해결 커밋 + push 후에만** 종료하라. BLOCKER 미해결 종료 금지.
 9. 종료 보고: PR 번호/URL, 테스트 결과, codex 리뷰 처리 내역, 남은 사항.
