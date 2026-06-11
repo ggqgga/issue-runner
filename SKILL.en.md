@@ -63,9 +63,19 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
 - `pr_open` — input to ② Maintain.
 - `working` — a worker is in progress. Use TaskList to check whether that
   background agent is actually alive. If it is dead and there are pushed commits,
-  treat it as a maintenance target for ②; if there are no commits at all, remove
-  the worktree and release the claim (returning the issue to a re-dispatchable
-  state).
+  treat it as a maintenance target for ②. If there are no commits at all, check
+  the issue's latest comment **before** releasing the claim —
+  `gh issue view <num> --repo <repo> --json comments --jq '.comments | last.body'`.
+  If it starts with `BLOCKED:`, the worker stopped because human intervention is
+  needed (ambiguous spec / plan-reality mismatch / same failure repeating):
+  instead of returning the issue to a re-dispatchable state, attach the
+  `needs-human` label with
+  `gh issue edit <num> --repo <repo> --add-label needs-human`, remove the
+  worktree, release the claim, and surface the BLOCKED reason as a warn in
+  ④ Report (once a human resolves the cause and removes needs-human, the issue
+  flows again — the README 'guardrails' convention). If the latest comment is not
+  a BLOCKED comment, remove the worktree and release the claim (returning the
+  issue to a re-dispatchable state).
   **Timebox (no-progress detection)**: even if it is alive, check the claim age —
   get the claim timestamp with
   `gh api repos/<repo>/issues/<num>/timeline --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed")] | last.created_at'`
@@ -155,13 +165,16 @@ Procedure:
 2. Read the 'Past lessons' below and avoid repeating the same mistakes.
 3. Read the issue body (acceptance-criteria checkboxes) carefully with
    `gh issue view <NUM> --repo <REPO>`. If the body is too ambiguous to determine
-   an implementation direction, **do not work** — leave a question on the issue
-   with `gh issue comment` and finish with the report "BLOCKED: <reason>".
+   an implementation direction, **do not work** — leave a comment starting with
+   `BLOCKED: <reason>` (including your question) on the issue with
+   `gh issue comment`, then finish with the report "BLOCKED: <reason>".
 4. If the issue body has a `## Plan` section, **do not design on your own** —
    follow its task order as written. If the plan conflicts with reality (a named
    file does not exist, or a premise no longer holds), do not work around it by
-   guessing — leave the conflict details on the issue with `gh issue comment` and
-   finish with the report "BLOCKED: plan-reality mismatch — <details>".
+   guessing — leave a comment starting with
+   `BLOCKED: plan-reality mismatch — <details>` on the issue with
+   `gh issue comment`, then finish with the report
+   "BLOCKED: plan-reality mismatch — <details>".
 5. Implement with TDD. Follow this discipline:
    - Do not write implementation code before a test exists.
    - Write a failing test first, and implement **only after confirming it fails
@@ -176,8 +189,12 @@ Procedure:
    (the global quality-gate hook does not protect worktree commits — you are the
    only line of defense).
 7. If the same test/build failure repeats 3 times in a row (the same check failing
-   for the same cause), stop trying and finish with the report
+   for the same cause), stop trying — leave a comment starting with
+   `BLOCKED: same failure repeating — <failure details>` on the issue with
+   `gh issue comment`, then finish with the report
    "BLOCKED: same failure repeating — <failure details>".
+   (Every BLOCKED exit must leave an issue comment — the dispatcher reads that
+   comment and escalates to needs-human instead of re-dispatching.)
 8. **Immediately after every commit, run `cd <WT_PATH> && git push -u origin agent/issue-<NUM>`** —
    this worktree can be discarded at any time. Unpushed work is as good as nonexistent.
 9. After the final push, run local CI:

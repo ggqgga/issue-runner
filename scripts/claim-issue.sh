@@ -14,6 +14,11 @@ state=$(printf '%s' "$pre" | jq -r '.state')
 if printf '%s' "$pre" | jq -e '.labels | map(.name) | index("agent:claimed")' >/dev/null; then
   echo "skip: $repo#$num already claimed" >&2; exit 1
 fi
+# needs-human 재확인 — eligible-issues.sh 이후 사람이 붙였거나 인덱스 지연으로
+# 후보에 남아 있어도, 사람이 라벨을 떼기 전에는 claim 금지
+if printf '%s' "$pre" | jq -e '.labels | map(.name) | index("needs-human")' >/dev/null; then
+  echo "skip: $repo#$num needs-human" >&2; exit 1
+fi
 
 gh issue edit "$num" --repo "$repo" --add-label "agent:claimed" --add-assignee "$me" >/dev/null
 
