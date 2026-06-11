@@ -87,7 +87,7 @@ cp repos.conf.example repos.conf  # repos.conf 는 gitignore — 머신별 설�
 
 ```
 # 예:
-ggqgga/BodaT /Users/ggq/Projects/BODA/BoDAT
+acme/webapp ~/Work/clients/acme-webapp
 ```
 
 ## 라벨 규약
