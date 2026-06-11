@@ -2,15 +2,21 @@
 # 계정 전체에서 디스패치 가능한 이슈를 우선순위 정렬 JSON 배열로 출력.
 # 자격: open + agent-ready + ¬agent:claimed + ¬needs-human + 모든 "Blocked by #N" 라인의 N이 CLOSED
 # 정렬: P0 > P1 > P2 > 없음, 동순위는 오래된 순.
-# 주의: gh search는 인덱스 지연이 있다 — 최종 재확인은 claim-issue.sh가 직접 API로 한다.
+# 주의: search API는 인덱스 지연이 있다 — 최종 재확인은 claim-issue.sh가 직접 API로 한다.
 set -euo pipefail
 
 me=$(gh api user -q .login)
 
 # needs-human 은 서버 쿼리에서도 제외 — 클라이언트 필터만 쓰면 needs-human 이슈가
-# --limit 50 창을 채워 실제 eligible 이슈가 밀려날 수 있다
-cands=$(gh search issues "label:agent-ready -label:needs-human" --owner "$me" --state open \
-  --json repository,number,title,labels,createdAt --limit 50)
+# per_page=50 창을 채워 실제 eligible 이슈가 밀려날 수 있다
+# 주의: gh search CLI 사용 금지 — 쿼리 문자열 내 부정 라벨(`label:X -label:Y`)을
+# 라벨명 하나("X -label:Y")로 오파싱해 항상 0건이 된다 (이슈 #21, GH_DEBUG=api 실측).
+# REST search/issues 직접 호출만 정상 동작. 출력은 기존 gh search --json 형태와
+# 동일하게 변환해 이후 파이프라인(repository.nameWithOwner/labels[].name/createdAt) 무수정.
+cands=$(gh api -X GET search/issues \
+  -f q="user:$me is:open is:issue label:agent-ready -label:needs-human" \
+  -f per_page=50 \
+  -q '[.items[] | {repository: {nameWithOwner: (.repository_url | sub(".*/repos/"; ""))}, number, title, labels: [.labels[] | {name}], createdAt: .created_at}]')
 
 out="[]"
 count=$(printf '%s' "$cands" | jq 'length')
