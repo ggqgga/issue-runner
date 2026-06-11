@@ -31,4 +31,16 @@ mkdir -p "$out"
 if (cd "$wt" && bin/ci >"$out/$sha.log" 2>&1); then verdict=pass; else verdict=fail; fi
 printf '%s\n' "$verdict" > "$out/$sha.result"
 echo "run-local-ci: $verdict ($short) → $out/$sha.result"
+
+# GitHub commit status 게시 — 웹 머지 UI에서도 local-ci 결과가 보이게 (#6).
+# 실패(네트워크, 미push SHA 등)는 경고만 — CI 판정/exit code 에 영향 없음.
+if [ "$verdict" = "pass" ]; then state=success; else state=failure; fi
+if gh api "repos/$repo/statuses/$sha" \
+     -f state="$state" -f context=local-ci \
+     -f description="bin/ci $verdict ($short)" >/dev/null 2>&1; then
+  echo "run-local-ci: commit status 게시됨 — local-ci=$state ($short)"
+else
+  echo "run-local-ci: 경고 — commit status 게시 실패 ($repo@$short), CI 판정에는 영향 없음" >&2
+fi
+
 [ "$verdict" = "pass" ]
