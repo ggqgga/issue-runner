@@ -25,14 +25,17 @@ maintenance must come before new work).
   budget API, so it cannot be enforced).
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
 - `VERIFIER = codex:codex-rescue` — verifier subagent type for reviews and lesson
-  extraction. **Fallback**: in environments without the codex plugin (the type above
-  is missing from the Agent tool's subagent_type list, or the call fails with an
-  unknown subagent type error), use `general-purpose` as the verifier. The fallback
-  verifier must follow **the same per-call output contract**: review calls are
-  read-only (no code changes), classify each finding as BLOCKER/WARN/NIT, output
-  'CLEAN' if there are no findings, and BLOCKERs are a gate (no finishing before
-  they are resolved); lesson-extraction calls (① Reconcile) output
-  'one lesson line or NONE'.
+  extraction. **Output contract (SSOT — everywhere else refers to this entry)**:
+  review calls are read-only (no code changes), classify each finding as
+  BLOCKER/WARN/NIT, output 'CLEAN' if there are no findings, and BLOCKERs are a
+  gate (no finishing before they are resolved); lesson-extraction calls
+  (① Reconcile) output 'one lesson line or NONE'. The verifier does not read
+  SKILL.md, so the call's prompt string must carry this contract verbatim — the
+  prompt is the only delivery path.
+  **Fallback**: in environments without the codex plugin (the type above is
+  missing from the Agent tool's subagent_type list, or the call fails with an
+  unknown subagent type error), use `general-purpose` as the verifier — it is
+  invoked with the same prompt, so the same contract applies.
 - Absolutely forbidden: merging PRs, pushing directly to main, touching
   human-created branches, attaching the agent-ready label on your own
 
@@ -43,8 +46,8 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
 - `merged` — successful completion. **Lessons step**: if the PR had a
   CHANGES_REQUESTED review or a history of CI failures (check with
   gh pr view <pr> --repo <repo> --json reviews and gh run list), synchronously
-  invoke the `VERIFIER` subagent (including the not-installed fallback —
-  see ## Constants) to get a one-line lesson:
+  invoke the `VERIFIER` subagent (following the VERIFIER contract and fallback
+  in ## Constants):
 
   > "Read the review comments and CI failure logs of PR #<pr> (<repo>), and from
   > the objective failure facts produce exactly one recurrence-prevention lesson
@@ -157,17 +160,11 @@ prompt, and increment N by exactly 1 per dispatch.
 
 One-line summary: `reconciled N · maintained N · new N · waiting(human review) N · warn N`.
 If there are warns, list the paths and reasons below it.
-**Token observation (soft budget)**: if any worker delivered a completion report
-this tick, add below it one line per issue —
-`tokens: <repo>#<num> <this report's count> (cumulative <sum>)` — where this
-report's count is subagent_tokens from the completion notification (if the
-figure is absent, write `?` and treat it as 0 in the cumulative sum), and the
-cumulative sum is the figures from **this loop session's previous tick Reports**
-(the `tokens:` lines for the same issue still in the conversation context) plus
-this report's count (if no previous line is in context, this report's count =
-the cumulative sum). If the cumulative sum is greater than
-`SOFT_TOKEN_BUDGET_PER_ISSUE`, state on that line **"soft budget exceeded —
-recommend escalating to needs-human"** (report only — it is a soft budget, so do
-not auto-attach the label or stop the worker).
+**Token observation (soft budget)**: if any worker delivered a completion report, add
+one line per issue — `tokens: <repo>#<num> <this report's count> (cumulative <sum>)`.
+This count is subagent_tokens from the completion notification (absent → `?`, counted as 0);
+cumulative = the same issue's `tokens:` figures from previous tick Reports visible in
+context + this count (none visible → just this count). If it exceeds `SOFT_TOKEN_BUDGET_PER_ISSUE`,
+state **"soft budget exceeded — recommend escalating to needs-human"** on that line (report only — never auto-label or stop workers).
 If every count is 0, output the single line "quiet".
 After 3 consecutive quiet ticks, from the next tick on do only reconcile and stop.

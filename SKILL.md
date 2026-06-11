@@ -18,12 +18,14 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   아니라 ④ Report 의 관측 기준 (Agent 호출에 예산 API 가 없어 강제는 불가).
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
 - `VERIFIER = codex:codex-rescue` — 리뷰·교훈 추출용 검증자 서브에이전트 타입.
+  **출력 계약 (SSOT — 다른 모든 곳은 이 항목을 참조한다)**: 리뷰 호출은
+  read-only(코드 변경 금지)·발견마다 BLOCKER/WARN/NIT 분류·발견 없으면 'CLEAN'·
+  BLOCKER 는 게이트(해결 전 종료 금지), 교훈 추출 호출(① Reconcile)은
+  '교훈 1줄 또는 NONE'. 검증자는 SKILL.md 를 읽지 않으므로 호출 프롬프트
+  문자열에는 이 계약이 그대로 담겨야 한다 — 프롬프트가 유일한 전달 경로다.
   **폴백**: codex 플러그인 미설치 환경(Agent 툴의 subagent_type 목록에 위 타입이
   없거나, 호출이 unknown subagent type 오류로 실패)에서는 `general-purpose` 를
-  검증자로 쓴다. 폴백 검증자도 **호출별 프롬프트의 출력 계약을 동일하게** 따른다:
-  리뷰 호출은 read-only(코드 변경 금지)·발견마다 BLOCKER/WARN/NIT 분류·발견 없으면
-  'CLEAN'·BLOCKER 는 게이트(해결 전 종료 금지), 교훈 추출 호출(① Reconcile)은
-  '교훈 1줄 또는 NONE'.
+  검증자로 쓴다 — 같은 프롬프트로 호출하므로 계약도 동일하게 적용된다.
 - 절대 금지: PR 머지, main 직접 push, 사람이 만든 브랜치 조작, agent-ready 라벨 임의 부착
 
 ## ① Reconcile
@@ -32,8 +34,8 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
 - `merged` — 성공 종료. **lessons 단계**: 해당 PR에 CHANGES_REQUESTED 리뷰가 있었거나
   CI 실패 이력이 있으면 (gh pr view <pr> --repo <repo> --json reviews 와
-  gh run list 로 확인), `VERIFIER` 서브에이전트(미설치 폴백 포함 — ## 상수)를
-  동기 호출해 교훈 한 줄을 받아라:
+  gh run list 로 확인), `VERIFIER` 서브에이전트(## 상수의 VERIFIER 계약·폴백을
+  따른다)를 동기 호출하라:
 
   > "PR #<pr> (<repo>)의 리뷰 코멘트와 CI 실패 로그를 읽고, 객관적 실패 사실에서
   > 재발 방지 교훈을 딱 1줄로: '<상황>일 때 <구체 행동>하라' 형식. 추측·일반론 금지.
@@ -123,13 +125,11 @@ N 도 디스패치당 1만 올린다.
 
 한 줄 요약: `정리 N · 보수 N · 신규 N · 대기(사람 리뷰) N · warn N`.
 warn 이 있으면 경로와 사유를 그 아래 나열.
-**토큰 관측 (소프트 예산)**: 이번 틱에 완료 보고를 낸 워커가 있으면 그 아래
-이슈별 한 줄 `토큰: <repo>#<num> <이번 보고치> (누적 <합>)` 을 추가하라 —
-이번 보고치는 완료 알림의 subagent_tokens (수치가 없으면 `?` 로 적고 누적 계산에서
-0 취급), 누적은 **이 루프 세션의 이전 틱 Report 들**(대화 컨텍스트에 남아 있는
-같은 이슈의 `토큰:` 줄)의 수치 + 이번 보고치 (이전 줄이 컨텍스트에 없으면
-이번 보고치 = 누적). 누적 합이 `SOFT_TOKEN_BUDGET_PER_ISSUE` 보다 크면 그 줄에
-**"소프트 예산 초과 — needs-human 승격 권고"** 를 명시하라 (보고만 한다 —
-소프트 예산이므로 라벨 자동 부착이나 워커 중단은 하지 않는다).
+**토큰 관측 (소프트 예산)**: 완료 보고를 낸 워커가 있으면 이슈별 한 줄
+`토큰: <repo>#<num> <이번 보고치> (누적 <합>)` 을 추가하라. 이번 보고치는 완료
+알림의 subagent_tokens (없으면 `?` — 누적에선 0 취급), 누적은 컨텍스트에 보이는
+이전 틱 Report 의 같은 이슈 `토큰:` 수치 + 이번 보고치 (안 보이면 이번 보고치 그대로).
+누적이 `SOFT_TOKEN_BUDGET_PER_ISSUE` 초과면 그 줄에 **"소프트 예산 초과 —
+needs-human 승격 권고"** 를 명시하라 (보고만 — 라벨 부착·워커 중단 등 자동 조치 금지).
 모든 카운트가 0이면 "조용함" 한 줄만.
 3틱 연속 조용하면 다음 틱부터는 reconcile 만 하고 끝내라.
