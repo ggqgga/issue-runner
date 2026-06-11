@@ -1,13 +1,13 @@
 ---
-name: issue-prep
-description: Closing checklist before handing an issue to the issue-runner loop. Use when finishing issue writing in a planning session, or on requests like "finalize this issue" or "attach agent-ready". Attach the agent-ready label only after the checklist passes.
+name: loop-issues
+description: Closing checklist before handing an issue to the issue-runner loop. Use on requests like "send this to the loop", "hand it to the loop", "put it on the loop", "finalize this issue", or "attach agent-ready". Attach the agent-ready label only after the checklist passes.
 ---
 
 > English translation of [SKILL.md](SKILL.md). The Korean original is the source of
 > truth — when the two diverge, follow SKILL.md and update this file to match.
 > To run this skill in English, replace SKILL.md with this file's contents.
 
-# issue-prep — issue closing checklist
+# loop-issues — issue closing checklist
 
 Before handing an issue to the loop, confirm **all** of the items below, and attach
 `agent-ready` only to issues that pass. The worker shares none of this session's

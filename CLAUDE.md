@@ -1,6 +1,6 @@
 # issue-runner
 
-루프 엔지니어링 디스패처 — agent-ready 이슈를 자동으로 집어 worktree에서 구현하고 PR을 여는 자율 루프. 본체는 SKILL.md(디스패처 틱)와 scripts/(결정론 셸 스크립트), skills/issue-prep(이슈 마감 체크리스트).
+루프 엔지니어링 디스패처 — agent-ready 이슈를 자동으로 집어 worktree에서 구현하고 PR을 여는 자율 루프. 본체는 SKILL.md(디스패처 틱)와 scripts/(결정론 셸 스크립트), skills/loop-issues(이슈 마감 체크리스트).
 
 ## 명령
 
