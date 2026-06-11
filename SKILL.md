@@ -55,8 +55,14 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   로 claim 시각을 구하고 (빈 응답이면 worktree 디렉토리 생성 시각으로 대체),
   현재 시각과의 차가 `ISSUE_TIMEBOX_HOURS` 를 초과하면 (`working` 은 정의상 PR 없음):
   ⓐ TaskStop 으로 워커를 중단하고 (push 된 커밋은 원격 브랜치에 보존된다),
-  ⓑ `gh issue edit <num> --repo <repo> --remove-label "agent:claimed"` 로 claim 을
-  해제한 뒤, ⓒ warn 으로 ④ Report 에 올려라.
+  ⓑ worktree 를 제거하라 — `git -C <repo-dir> worktree remove --force <wt>` 후
+  `git -C <repo-dir> branch -D agent/issue-<num>`. 미push 잔여물은 timebox 초과의
+  대가로 **의도적으로 폐기**한다 — 남겨두면 다음 디스패치의 make-worktree 가 중단된
+  워커의 중간 상태를 그대로 물려줘 worktree 격리가 깨진다 (dirty-warn 보류 규율은
+  원인 불명의 잔여물용이므로 이 의도적 중단에는 적용하지 않는다).
+  ⓒ `gh issue edit <num> --repo <repo> --remove-label "agent:claimed"` 로 claim 을
+  해제한 뒤, ⓓ warn 으로 ④ Report 에 올려라 (agent-ready 가 남아 있으므로 다음 틱이
+  원격 브랜치 위 새 worktree 에서 재디스패치한다).
 
 ## ② Maintain — 벌린 일 먼저 끝낸다
 
@@ -70,7 +76,9 @@ N ≥ `MAX_REPAIRS_PER_PR` 이면 **보수를 디스패치하지 않는다** —
 라벨을 부착하고 warn 으로 ④ Report 에 올려라. N 이 상한 미만이면 보수 에이전트를
 디스패치하면서 PR 본문의 주석을 `<!-- repair-count: N+1 -->` 로 갱신하라
 (`gh pr edit <pr> --repo <repo> --body ...` — 주석이 없었으면 본문 끝에 새로 추가,
-나머지 본문은 그대로 유지).
+나머지 본문은 그대로 유지). 같은 PR 에 1~3 의 사유가 여러 개 겹쳐도 **틱당 같은 PR
+의 보수 에이전트는 1개** — 모든 수리 지시를 그 한 에이전트의 프롬프트에 합치고,
+N 도 디스패치당 1만 올린다.
 
 1. `failing > 0` → 실패 로그를 확인하고 (gh run view --log-failed), 플레이크로 보이면
    re-run (gh run rerun), 진짜 실패면 아래 워커 템플릿으로 **보수 에이전트**를
@@ -158,8 +166,10 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 warn 이 있으면 경로와 사유를 그 아래 나열.
 **토큰 관측 (소프트 예산)**: 이번 틱에 완료 보고를 낸 워커가 있으면 그 아래
 이슈별 한 줄 `토큰: <repo>#<num> <이번 보고치> (누적 <합>)` 을 추가하라 —
-이번 보고치는 완료 알림의 subagent_tokens, 누적은 이전 틱 보고들에 적힌 같은
-이슈의 수치 합산. 누적이 `SOFT_TOKEN_BUDGET_PER_ISSUE` 초과로 보이면 그 줄에
+이번 보고치는 완료 알림의 subagent_tokens (수치가 없으면 `?` 로 적고 누적 계산에서
+0 취급), 누적은 **이 루프 세션의 이전 틱 Report 들**(대화 컨텍스트에 남아 있는
+같은 이슈의 `토큰:` 줄)의 수치 + 이번 보고치 (이전 줄이 컨텍스트에 없으면
+이번 보고치 = 누적). 누적 합이 `SOFT_TOKEN_BUDGET_PER_ISSUE` 보다 크면 그 줄에
 **"소프트 예산 초과 — needs-human 승격 권고"** 를 명시하라 (보고만 한다 —
 소프트 예산이므로 라벨 자동 부착이나 워커 중단은 하지 않는다).
 모든 카운트가 0이면 "조용함" 한 줄만.

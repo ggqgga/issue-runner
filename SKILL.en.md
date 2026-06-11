@@ -73,9 +73,18 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   If the difference from the current time exceeds `ISSUE_TIMEBOX_HOURS`
   (`working` by definition means there is no PR):
   ⓐ stop the worker with TaskStop (pushed commits are preserved on the remote
-  branch), ⓑ release the claim with
+  branch),
+  ⓑ remove the worktree — `git -C <repo-dir> worktree remove --force <wt>` then
+  `git -C <repo-dir> branch -D agent/issue-<num>`. Unpushed leftovers are
+  **deliberately discarded** as the price of exceeding the timebox — if left in
+  place, the next dispatch's make-worktree would hand the stopped worker's
+  intermediate state to a fresh worker, breaking worktree isolation (the
+  dirty-warn hold rule is for leftovers of unknown origin, so it does not apply
+  to this deliberate stop),
+  ⓒ release the claim with
   `gh issue edit <num> --repo <repo> --remove-label "agent:claimed"`, and
-  ⓒ surface it as a warn in ④ Report.
+  ⓓ surface it as a warn in ④ Report (agent-ready remains, so the next tick
+  re-dispatches in a fresh worktree on top of the remote branch).
 
 ## ② Maintain — finish what you started first
 
@@ -90,7 +99,10 @@ If N ≥ `MAX_REPAIRS_PER_PR`, **do not dispatch a repair** — attach the
 warn in ④ Report. If N is below the cap, dispatch the maintenance agent and at
 the same time update the comment in the PR body to `<!-- repair-count: N+1 -->`
 (`gh pr edit <pr> --repo <repo> --body ...` — if the comment was absent, append
-it at the end of the body, keeping the rest of the body unchanged).
+it at the end of the body, keeping the rest of the body unchanged). Even when
+several of the causes 1–3 apply to the same PR, dispatch **one maintenance agent
+per PR per tick** — merge all repair instructions into that single agent's
+prompt, and increment N by exactly 1 per dispatch.
 
 1. `failing > 0` → inspect the failure logs (gh run view --log-failed); if it
    looks like a flake, re-run (gh run rerun); if it is a real failure, dispatch a
@@ -197,11 +209,14 @@ If there are warns, list the paths and reasons below it.
 **Token observation (soft budget)**: if any worker delivered a completion report
 this tick, add below it one line per issue —
 `tokens: <repo>#<num> <this report's count> (cumulative <sum>)` — where this
-report's count is subagent_tokens from the completion notification and the
-cumulative sum adds the figures recorded for the same issue in previous tick
-reports. If the cumulative sum appears to exceed `SOFT_TOKEN_BUDGET_PER_ISSUE`,
-state on that line **"soft budget exceeded — recommend escalating to
-needs-human"** (report only — it is a soft budget, so do not auto-attach the
-label or stop the worker).
+report's count is subagent_tokens from the completion notification (if the
+figure is absent, write `?` and treat it as 0 in the cumulative sum), and the
+cumulative sum is the figures from **this loop session's previous tick Reports**
+(the `tokens:` lines for the same issue still in the conversation context) plus
+this report's count (if no previous line is in context, this report's count =
+the cumulative sum). If the cumulative sum is greater than
+`SOFT_TOKEN_BUDGET_PER_ISSUE`, state on that line **"soft budget exceeded —
+recommend escalating to needs-human"** (report only — it is a soft budget, so do
+not auto-attach the label or stop the worker).
 If every count is 0, output the single line "quiet".
 After 3 consecutive quiet ticks, from the next tick on do only reconcile and stop.
