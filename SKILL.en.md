@@ -130,7 +130,9 @@ prompt, and increment N by exactly 1 per dispatch.
    the template's "Procedure" with the concrete repair instructions, but keep
    everything else (compound commands, push discipline, prohibitions).
 2. Unresolved review comments → in the same way, instruct a maintenance agent to
-   resolve the comments.
+   resolve the comments. However, status comments left by the worker itself
+   (starting with `Merge verdict:`/`머지 판정:` or `Verifier review:`/`검증자 리뷰:`)
+   are not review comments — do not count them as repair triggers.
 3. Conflict with base → instruct a maintenance agent to rebase (merging is
    forbidden).
 4. CI green + no review comments → leave it alone. It is waiting for human review.

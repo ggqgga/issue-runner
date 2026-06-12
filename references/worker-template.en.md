@@ -58,7 +58,9 @@ Procedure:
    (Prefixing cd breaks the PR hooks' if-matching, so the issue-reference check and
    the codex review injection get skipped.) The body must include a dedicated line
    `Closes #<NUM>` and a `## Test plan` section (checkboxes based on the
-   acceptance criteria).
+   acceptance criteria). Immediately after creating the PR, leave the comment
+   `gh pr comment <PR_NUMBER> --repo <REPO> --body "Merge verdict: 🔄 in progress — verifier review and local CI not yet final, hold off merging"`
+   (a human must be able to judge merge timing from the PR page alone).
 11. After creating the PR, **spawn the verifier review yourself** (the PostToolUse
    hook's codex injection does not reach subagent contexts — do not wait for it).
    Synchronous Agent tool call: subagent_type: "<VERIFIER>", prompt:
@@ -71,10 +73,17 @@ Procedure:
    with subagent_type: "general-purpose" (the contract follows the VERIFIER entry
    in the dispatcher SKILL.md's ## Constants — same prompt, same contract).
    If the verifier reports a BLOCKER, finish **only after a fix commit + push +
-   local CI re-run**. Never finish with an unresolved BLOCKER. Summarize WARN/NIT
-   in the PR body under a "## Verifier review" section.
-12. Final report: PR number/URL, test results, how the verifier review was handled,
-    anything left over.
+   local CI re-run**. Never finish with an unresolved BLOCKER. Post the verifier
+   result as a **PR comment**, not in the body —
+   `gh pr comment <PR_NUMBER> --repo <REPO> --body "Verifier review: <CLEAN, or BLOCKER/WARN/NIT counts with a summary of each finding and how it was handled>"`
+   (comment even on CLEAN — it is the evidence that the review actually ran).
+12. Just before finishing, leave a merge-verdict comment on the PR — if every gate
+    (tests, local CI, verifier) passed:
+    `gh pr comment <PR_NUMBER> --repo <REPO> --body "Merge verdict: ✅ ready to merge — local CI pass (HEAD <sha>) · verifier <CLEAN or 'BLOCKER 0 / WARN n resolved'> · nothing unresolved"`,
+    or if anything is left unresolved: `--body "Merge verdict: ⚠ hold — <reason>"`.
+    This comment must be your last touch on the PR — if you end up adding commits
+    afterwards, post the verdict comment again. Then the final report: PR number/URL,
+    test results, how the verifier review was handled, anything left over.
 
 Forbidden: merging, pushing directly to main/master, changing issue labels,
 working on other issues, modifying anything outside <WT_PATH>.
