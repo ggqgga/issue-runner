@@ -4,7 +4,9 @@
 set -euo pipefail
 repo="${1:?usage: setup-labels.sh <owner/repo>}"
 
-gh label create "agent-ready"   --repo "$repo" --color 0E8A16 --force \
+# agent-ready 색은 의도적으로 요란한 딥핑크 — 흔한 초록(0E8A16)은 area/complexity
+# 라벨들과 겹쳐 식별 불가 (2026-06-13 Temphra 실사용 피드백)
+gh label create "agent-ready"   --repo "$repo" --color FF1493 --force \
   --description "에이전트가 집어가도 되는 이슈 (스펙 완결 후 마지막에 부착)"
 gh label create "agent:claimed" --repo "$repo" --color D93F0B --force \
   --description "디스패처가 점유 중 — 수동 부착/제거 금지"
