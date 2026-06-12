@@ -6,6 +6,32 @@
 
 > English: skill docs are available in English — [SKILL.en.md](SKILL.en.md) · [skills/loop-issues/SKILL.en.md](skills/loop-issues/SKILL.en.md) (한국어판이 원본).
 
+## 어떻게 쓰나 (한눈에)
+
+![issue-runner 사용 흐름](assets/usage-flow.svg)
+
+설치([§설치](#설치)) 후의 일상 사용은 세 step 이 전부다:
+
+| step | 하는 일 | 어떻게 |
+|---|---|---|
+| 1 | **이슈를 루프에 넘긴다** | 기획 세션에서 `/loop-issues` — 마감 체크리스트(스펙 완결성·의존성 등 9항목)를 통과한 이슈에 `agent-ready` + 우선순위 라벨이 붙는다 |
+| 2 | **루프를 돌린다** | **별도 세션**에서 `/loop 15m /issue-runner` — 매 틱 디스패처가 이슈를 집어 worktree에서 구현하고 PR을 연다 |
+| 3 | **PR 리뷰 → 머지** | 사람이 직접 `gh pr merge <N>` (로컬 CI 게이트가 판정). 고칠 게 있으면 리뷰 코멘트만 남기면 다음 틱이 보수 워커로 반영한다 |
+
+머지되면 다음 틱의 Reconcile이 worktree·claim을 정리하고 다음 이슈로 넘어간다 —
+사람이 루프 내부를 만질 일은 없다.
+
+**자연어로 쓰기** — Claude Code가 스킬 설명으로 라우팅하므로 명령 대신 말로 해도 된다:
+
+| 이렇게 말하면 | 일어나는 일 |
+|---|---|
+| "이 이슈 루프 태워줘" / "루프로 진행해줘" / "루프에 넘겨줘" | 해당 이슈를 마감 체크리스트로 검증 → `agent-ready` 부착 (step 1) |
+| "이슈 마감해줘" / "agent-ready 붙여줘" | 〃 |
+| "루프로 진행할 수 있는 이슈 분석해줘" / "이슈 분석하고 라벨 붙여줘" | **트리아지 모드** — 레포의 기존 open 이슈를 일괄 분석·분류 후 적합한 것만 마감 |
+| "루프 시작해줘" | `/loop 15m /issue-runner` 상시 구동 (step 2) |
+
+단계별 상세 절차는 [빠른 시작](#빠른-시작--첫-이슈-한-바퀴), 운영 규칙은 [사용법](#사용법) 참조.
+
 ## 개념
 
 단일 디스패처(`/issue-runner` 스킬)를 `/loop`로 주기 실행한다. 매 틱(tick)마다
