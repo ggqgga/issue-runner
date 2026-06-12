@@ -278,3 +278,20 @@ bin/ci                     # 이 레포 자체의 로컬 CI (셸 문법 검사 +
 - [ ] 테스트 이슈에 수용 기준 + Test plan 작성 → `agent-ready` + `P2` 부착
 - [ ] `scripts/eligible-issues.sh` 출력에 해당 이슈가 보이는지 확인
 - [ ] Claude Code에서 `/loop 15m /issue-runner` 시작 → 틱 Report 확인
+
+## 참고 자료
+
+이 루프를 설계할 때 참고한 문헌·담론:
+
+- [Keep Claude working toward a goal — Claude Code 공식 문서](https://code.claude.com/docs/en/goal)
+  — `/loop` 기반 자율 루프의 공식 패턴. 디스패처 틱(Reconcile → Dispatch → Report)
+  구조가 여기서 출발했다.
+- 루프 엔지니어링 담론 — Boris Cherny("프롬프트를 쓰지 않는다, 루프를 쓴다")와
+  Peter Steinberger(메인테이너 패턴: 사람은 이슈 큐레이션과 머지 판단만)의 작업
+  방식 논의: [Claude Code Creator: "Write Loops, Not Prompts" (YouTube)](https://www.youtube.com/watch?v=EH2MMQTaPEA),
+  [So is "loop engineering" the next AI dev buzzword? (Reddit)](https://www.reddit.com/r/myclaw/comments/1u047p8/so_is_loop_engineering_the_next_ai_dev_buzzword/)
+- [Claude Code agent loop internals 분석 (internals.laxmena.com)](https://internals.laxmena.com/p/why-claude-codes-agent-loop-is-over)
+  — 에이전트 루프 내부 동작 분석.
+- [Rails 8.1 release notes](https://guides.rubyonrails.org/8_1_release_notes.html)
+  — `bin/ci` 컨벤션의 원형. local-ci hook 계약은 이를 언어 무관으로 일반화한 것
+  (실행 가능한 `bin/ci` 만 요구, `config/ci.rb` 같은 스택 전용 마커는 요구하지 않음).
