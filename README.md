@@ -56,6 +56,16 @@
 
 ## 전제 조건
 
+**이 도구는 GitHub 위에서만 동작한다.** 이슈·라벨·assignee·PR이 루프 상태의
+단일 진실 원천이라 별도 DB가 없는 대신, 대상 레포가 반드시 GitHub에 있어야 한다
+(GitLab·Bitbucket·로컬 전용 레포 불가). 정리하면:
+
+- **GitHub 계정 + 대상 레포** — public/private 무관. 인증 계정이 대상 레포에
+  **이슈·라벨 편집, push, PR 생성** 권한을 가져야 한다 (협업 레포면 write 이상).
+- 이슈를 GitHub에 쓰는 문화가 전제다 — 이슈 본문이 워커의 유일한 스펙이다.
+- **GitHub Actions는 불필요** — CI는 로컬에서 돌고(local-ci), 결과만 commit
+  status(무료 REST API)로 게시된다. Actions 과금 없이 운용하는 것이 설계 의도.
+
 필수:
 
 - **`gh` CLI** — 인증 완료 상태 (`gh auth status`로 확인). 모든 스크립트가
