@@ -44,6 +44,13 @@
   머지/거부된 PR에서 교훈(lessons)을 추출할 때 사용. 주의: SKILL.md의 워커/디스패처
   계약에 이 단계들이 포함되어 있으므로, 플러그인 없이 운용하려면 SKILL.md에서
   해당 단계(워커 11단계 codex 리뷰, Reconcile lessons)를 빼고 써야 한다.
+- **[codegraph](https://github.com/colbymchenry/codegraph)** — 사전 인덱싱 코드
+  지식 그래프 CLI (100% 로컬, MIT). 루프에 참여시킬 레포에서 `codegraph init` 으로
+  `.codegraph/` 인덱스를 만들어 두면, 워커가 기존 코드 탐색 시 반복 grep/Read
+  스캔 대신 인덱스 조회(`codegraph query|callers|callees|impact|affected`)를
+  우선 사용해 토큰·툴콜을 크게 줄인다 (`references/worker-template.md` 탐색 도구
+  조항). 인덱스가 없는 레포에서는 자동으로 grep/Read 폴백 — 없어도 루프는 동작한다.
+  설치: `curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh`
 - **local-ci hook 세트** (`~/.claude/hooks/local-ci.sh`,
   `ci-gate-before-pr-merge.sh`) — GitHub Actions 없이 로컬 CI 결과를
   `~/.claude/.local-ci/` 캐시에 남기고, 사람이 `gh pr merge` 할 때 게이트로 읽는
