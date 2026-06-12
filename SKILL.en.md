@@ -15,7 +15,11 @@ maintenance must come before new work).
 
 ## Constants
 
-- `MAX_AGENTS = 2` — cap on concurrently in-flight (claimed) issues
+- `MAX_AGENTS = 2` — cap on concurrently in-flight issues (in-flight is defined
+  in ③-1 — PRs waiting for human review do not occupy a slot)
+- `MAX_OPEN_PRS = 10` — cap on total open PRs (backlog backpressure). When
+  reached, only new dispatches stop (maintenance continues) — prevents rebase
+  conflicts from multiplying across PRs while human merges lag
 - `MAX_REPAIRS_PER_PR = 3` — cap on maintenance dispatches per PR
   (② Maintain circuit breaker)
 - `ISSUE_TIMEBOX_HOURS = 1` — allowed claim age for a `working` issue with no PR
@@ -133,8 +137,15 @@ prompt, and increment N by exactly 1 per dispatch.
 
 ## ③ Dispatch — only as many as there are free slots
 
-1. Compute in-flight: the count of ①'s `working` + `pr_open` + whatever this tick
-   sent into ②. `slots = MAX_AGENTS - in-flight`. If slots ≤ 0, skip this phase.
+1. Compute in-flight: the count of ①'s `working` + whatever this tick sent
+   into ② + **red PRs** (`pr_open` with failing CI, unresolved review comments,
+   or a conflict — the targets of ② 1–3). **PRs that are CI green with no
+   comments (② 4, waiting for human review) do not occupy a slot** — they are
+   dormant with nothing for an agent to do, so they must not block new work.
+   `slots = MAX_AGENTS - in-flight`. If slots ≤ 0, skip this phase.
+   **Backlog backpressure**: if the total number of open PRs (regardless of
+   state) is ≥ `MAX_OPEN_PRS`, skip new dispatches and raise a
+   "merge backlog: N PRs" warn in ④ Report (maintenance keeps running in ②).
 2. Run `$SCRIPTS/eligible-issues.sh` → priority-sorted candidates.
 3. **LLM judgment (only toward picking less)**: if two or more candidates look
    like they will touch the same repo and the same module, pick only one this

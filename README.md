@@ -213,7 +213,8 @@ Claude Code에서:
 | `ISSUE_TIMEBOX_HOURS` | 1 | PR 없이 claim 1시간 초과한 워커는 중단하고 worktree를 폐기, claim을 해제한다. push된 커밋은 원격 브랜치에 보존되어 재디스패치가 이어받는다 |
 | `MAX_REPAIRS_PER_PR` | 3 | PR 1개당 보수 투입 상한. 초과하면 보수를 멈추고 이슈에 `needs-human` 라벨을 붙인다 (서킷 브레이커) |
 | `SOFT_TOKEN_BUDGET_PER_ISSUE` | 300k | 이슈당 토큰 사용량 관측치. 초과해도 중단하지 않고 Report에 승격 권고만 표시 |
-| `MAX_AGENTS` | 2 | 동시 in-flight 이슈 상한 |
+| `MAX_AGENTS` | 2 | 동시 in-flight 이슈 상한. in-flight = 작업 중 + 보수 중 + 빨간 PR(CI 실패·리뷰 코멘트·conflict) — CI green으로 사람 리뷰만 기다리는 PR은 슬롯을 점유하지 않는다 |
+| `MAX_OPEN_PRS` | 10 | 열린 PR 총수 적체 상한. 도달 시 신규 디스패치만 멈추고(보수는 계속) Report에 적체 warn을 올린다 — 머지가 밀릴 때의 배압 |
 
 `needs-human` 라벨이 붙은 이슈는 루프가 손을 뗀 상태다 — 사람이 원인을 보고
 라벨을 제거해야 다시 흐른다.

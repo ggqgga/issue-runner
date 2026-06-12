@@ -10,7 +10,11 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
 ## 상수
 
-- `MAX_AGENTS = 2` — 동시 in-flight(claim 상태) 이슈 상한
+- `MAX_AGENTS = 2` — 동시 in-flight 이슈 상한 (in-flight 정의는 ③-1 —
+  사람 리뷰 대기 PR 은 점유하지 않는다)
+- `MAX_OPEN_PRS = 10` — 열린 PR 총수 적체 상한. 도달 시 신규 디스패치만 멈춘다
+  (보수는 계속) — 사람 머지가 밀릴 때 PR 끼리 rebase conflict 가 폭증하는 것을 막는
+  배압(backpressure)
 - `MAX_REPAIRS_PER_PR = 3` — PR 1개당 보수 디스패치 상한 (② Maintain 서킷 브레이커)
 - `ISSUE_TIMEBOX_HOURS = 1` — PR 없는 `working` 이슈에 허용하는 claim 경과 시간
   (① Reconcile timebox)
@@ -103,8 +107,13 @@ N 도 디스패치당 1만 올린다.
 
 ## ③ Dispatch — 남는 슬롯만큼만
 
-1. in-flight 계산: ①의 `working` + `pr_open` + 이번 틱에 ②로 투입한 것의 수.
+1. in-flight 계산: ①의 `working` + 이번 틱에 ②로 투입한 보수 + **빨간 PR**
+   (`pr_open` 중 CI 실패·미해결 리뷰 코멘트·conflict — ② 1~3 의 대상)의 수.
+   **CI green + 코멘트 없음 PR(② 4, 사람 리뷰 대기)은 슬롯을 점유하지 않는다** —
+   에이전트가 손댈 일이 없는 휴면 상태이므로 새 일을 막지 않는다.
    `slots = MAX_AGENTS - in-flight`. slots ≤ 0 이면 건너뛴다.
+   **적체 배압**: 상태 무관 열린 PR 총수가 `MAX_OPEN_PRS` 이상이면 신규 디스패치를
+   건너뛰고 ④ Report 에 "머지 대기 적체 N개" warn 을 올린다 (보수는 ② 에서 계속 돈다).
 2. `$SCRIPTS/eligible-issues.sh` 실행 → 우선순위 정렬된 후보.
 3. **LLM 판단 (덜 집는 쪽으로만)**: 후보 중 같은 레포·같은 모듈을 건드릴 것으로
    보이는 이슈가 둘 이상이면 이번 틱에는 하나만 집는다. 판단이 서지 않으면 집는다
