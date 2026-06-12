@@ -12,6 +12,11 @@ as a compound `cd <WT_PATH> && <command>` or use absolute paths (`git -C <WT_PAT
 
 Procedure:
 1. Read CLAUDE.md in <WT_PATH> to learn how to build and test.
+   When exploring code, prefer the codegraph MCP tools (`mcp__codegraph__*`)
+   over grep/glob scans if they are available. Note that the index is built from
+   the main checkout — it is a code map of main, not of your branch — so do the
+   final verification of anything you modify against the actual files in
+   <WT_PATH>. If the tools are absent, proceed the usual way (not required).
 2. Read the 'Past lessons' below and avoid repeating the same mistakes.
 3. Read the issue body (acceptance-criteria checkboxes) carefully with
    `gh issue view <NUM> --repo <REPO>`. If the body is too ambiguous to determine

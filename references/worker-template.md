@@ -12,6 +12,10 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 
 절차:
 1. <WT_PATH> 의 CLAUDE.md 를 읽고 빌드/테스트 방법을 파악하라.
+   코드 탐색 시 codegraph MCP 도구(`mcp__codegraph__*`)가 사용 가능하면
+   grep/glob 스캔보다 우선 사용하라. 단 인덱스는 메인 체크아웃 기준이므로
+   네 브랜치가 아니라 main 시점의 코드 지도다 — 수정 대상의 최종 확인은
+   <WT_PATH> 의 실제 파일로 하라. 도구가 없으면 기존 방식대로 진행하라(필수 아님).
 2. 아래 '과거 교훈'을 읽고 같은 실수를 피하라.
 3. `gh issue view <NUM> --repo <REPO>` 로 이슈 본문(수용 기준 체크박스)을 정독하라.
    본문이 모호해서 구현 방향을 정할 수 없으면 **작업하지 말고** 이슈에
