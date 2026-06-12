@@ -20,13 +20,32 @@ printf '%s' "$cmd" \
   | grep -qE '(^|[[:space:];|&])gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)' \
   || exit 0
 
-# PR 번호 추출 — `gh pr merge <N>` 패턴.
-pr_num=$(printf '%s' "$cmd" | sed -n 's/.*gh[[:space:]]\+pr[[:space:]]\+merge[[:space:]]\+\([0-9]\+\).*/\1/p')
-# 번호 인자 없이 호출한 경우 — 현재 브랜치의 PR.
-if [ -z "$pr_num" ]; then
+# PR 대상 추출 — `gh pr merge` 는 <번호>·<URL>·<브랜치명> 을 모두 받는다.
+# "gh pr merge" 뒤 첫 비플래그 토큰이 대상 (플래그만 있으면 현재 브랜치 PR).
+target=$(printf '%s' "$cmd" | awk '{
+  for (i = 1; i <= NF - 2; i++)
+    if ($i ~ /(^|[;|&])gh$/ && $(i+1) == "pr" && $(i+2) == "merge") {
+      for (j = i + 3; j <= NF; j++)
+        if ($(j) !~ /^-/) { print $(j); exit }
+      exit
+    }
+}')
+if [ -n "$target" ]; then
+  case "$target" in
+    *[!0-9]*) # URL·브랜치명 — gh 로 PR 번호 해석 (gh pr view 도 세 형태 모두 받음)
+      pr_num=$(gh pr view "$target" --json number 2>/dev/null | jq -r '.number // empty') ;;
+    *) pr_num=$target ;;
+  esac
+else
+  # 대상 인자 없이 호출 — 현재 브랜치의 PR.
   pr_num=$(gh pr view --json number 2>/dev/null | jq -r '.number // empty')
 fi
-[ -z "$pr_num" ] && exit 0  # PR 식별 불가 — 게이트 적용 안 함.
+# PR 식별 불가 — fail-closed. (통과시키면 URL/브랜치 머지가 게이트를 우회한다.)
+if [ -z "$pr_num" ]; then
+  printf 'gh pr merge 대상(%s)의 PR 번호를 확인할 수 없어 게이트 판정 불가 — 차단합니다.\nPR 번호로 다시 시도하거나 네트워크/인증(gh auth status)을 확인하세요.\n' \
+    "${target:-현재 브랜치}" >&2
+  exit 2
+fi
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 

@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "[1/4] bash 문법 검사 (bash -n)"
+echo "[1/5] bash 문법 검사 (bash -n)"
 fail=0
 for f in scripts/*.sh hooks/*.sh bin/ci; do
   if ! bash -n "$f"; then
@@ -13,18 +13,18 @@ for f in scripts/*.sh hooks/*.sh bin/ci; do
 done
 [ "$fail" = 0 ] || exit 1
 
-echo "[2/4] shellcheck (설치 시)"
+echo "[2/5] shellcheck (설치 시)"
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S warning scripts/*.sh hooks/*.sh bin/ci
 else
   echo "  shellcheck 미설치 — skip"
 fi
 
-echo "[3/4] repo-dir.sh 스모크 테스트"
+echo "[3/5] repo-dir.sh 스모크 테스트"
 out=$(ISSUE_RUNNER_PROJECTS_ROOT=/tmp scripts/repo-dir.sh owner/some-repo)
 [ "$out" = "/tmp/some-repo" ] || { echo "  ✗ 기본 경로 해석 실패: $out"; exit 1; }
 
-echo "[4/4] 한/영 SKILL 구조 동기화 검사 (## 헤더 개수·순서)"
+echo "[4/5] 한/영 SKILL 구조 동기화 검사 (## 헤더 개수·순서)"
 fail=0
 for pair in "SKILL.md:SKILL.en.md" "skills/loop-issues/SKILL.md:skills/loop-issues/SKILL.en.md" "references/worker-template.md:references/worker-template.en.md"; do
   ko="${pair%%:*}"
@@ -77,6 +77,27 @@ for pair in "SKILL.md:SKILL.en.md" "skills/loop-issues/SKILL.md:skills/loop-issu
     done
   fi
 done
+[ "$fail" = 0 ] || exit 1
+
+echo "[5/5] 머지 게이트 PR 대상 파싱 스모크 테스트 (fail-closed)"
+# gh 가 전부 실패하는 환경에서 <번호>·<URL>·<브랜치> 세 형태 모두 게이트가
+# exit 2(차단)여야 한다 — 0 이면 식별 실패가 머지 우회로 새는 회귀.
+tmp=$(mktemp -d)
+mkdir "$tmp/stub"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/stub/gh"
+chmod +x "$tmp/stub/gh"
+gate="$PWD/hooks/ci-gate-before-pr-merge.sh"
+fail=0
+for form in "123" "https://github.com/o/r/pull/123" "feature-branch"; do
+  rc=0
+  printf '{"tool_input":{"command":"gh pr merge %s --squash"}}' "$form" \
+    | (cd "$tmp" && PATH="$tmp/stub:$PATH" bash "$gate") >/dev/null 2>&1 || rc=$?
+  if [ "$rc" != 2 ]; then
+    echo "  ✗ gh pr merge $form → exit $rc (기대: 2 — 게이트 우회 회귀)"
+    fail=1
+  fi
+done
+rm -rf "$tmp"
 [ "$fail" = 0 ] || exit 1
 
 echo "CI pass"
