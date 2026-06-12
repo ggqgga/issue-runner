@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# 로컬 CI — ~/.claude/hooks/local-ci.sh 계약 (GitHub Actions 미사용)
+# 로컬 CI — hooks/local-ci.sh 계약 (GitHub Actions 미사용. 설치는 README §설치 4단계)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "[1/4] bash 문법 검사 (bash -n)"
 fail=0
-for f in scripts/*.sh bin/ci; do
+for f in scripts/*.sh hooks/*.sh bin/ci; do
   if ! bash -n "$f"; then
     echo "  ✗ $f"
     fail=1
@@ -15,7 +15,7 @@ done
 
 echo "[2/4] shellcheck (설치 시)"
 if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck -S warning scripts/*.sh bin/ci
+  shellcheck -S warning scripts/*.sh hooks/*.sh bin/ci
 else
   echo "  shellcheck 미설치 — skip"
 fi

@@ -51,13 +51,14 @@
   우선 사용해 토큰·툴콜을 크게 줄인다 (`references/worker-template.md` 탐색 도구
   조항). 인덱스가 없는 레포에서는 자동으로 grep/Read 폴백 — 없어도 루프는 동작한다.
   설치: `curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh`
-- **local-ci hook 세트** (`~/.claude/hooks/local-ci.sh`,
-  `ci-gate-before-pr-merge.sh`) — GitHub Actions 없이 로컬 CI 결과를
-  `~/.claude/.local-ci/` 캐시에 남기고, 사람이 `gh pr merge` 할 때 게이트로 읽는
-  계약. 옵트인 레포는 실행 가능한 `bin/ci` 를 둔다 (hook 가드와 동일 — 언어 무관,
-  `config/ci.rb` 같은 추가 마커는 요구하지 않는다).
-  hook이 없어도 워커의 `run-local-ci.sh`는 결과 캐시를 기록한다.
+- **local-ci hook 세트** (이 레포 `hooks/` 에 동봉 — 설치는 §설치 4단계) —
+  GitHub Actions 없이 로컬 CI 결과를 `~/.claude/.local-ci/` 캐시에 남기고
+  (`local-ci.sh`, push 직후 백그라운드 실행), 사람이 `gh pr merge` 할 때
+  게이트로 읽는 (`ci-gate-before-pr-merge.sh`) 계약. 옵트인 레포는 실행 가능한
+  `bin/ci` 를 둔다 (hook 가드와 동일 — 언어 무관, `config/ci.rb` 같은 추가 마커는
+  요구하지 않는다). hook이 없어도 워커의 `run-local-ci.sh`는 결과 캐시를 기록한다.
 - **shellcheck** — 이 레포 자체의 `bin/ci`가 설치 시에만 실행 (미설치면 skip).
+  설치: `brew install shellcheck` (macOS) / `apt install shellcheck` (Linux).
 
 ## 설치
 
@@ -76,6 +77,35 @@ ln -s ~/Projects/refs/issue-runner/skills/loop-issues ~/.claude/skills/loop-issu
 
 `setup-labels.sh`는 라벨 생성과 함께 `gh repo edit --delete-branch-on-merge`를
 설정한다 (머지된 head 브랜치를 GitHub가 자동 삭제 — reconcile은 로컬만 정리한다).
+
+```bash
+# 4. (선택) local-ci hook 세트 설치 — push→캐시→머지 게이트 계약
+mkdir -p ~/.claude/hooks
+ln -s ~/Projects/refs/issue-runner/hooks/local-ci.sh                ~/.claude/hooks/
+ln -s ~/Projects/refs/issue-runner/hooks/ci-gate-before-pr-merge.sh ~/.claude/hooks/
+```
+
+symlink 후 `~/.claude/settings.json` 에 두 hook 을 등록한다 (Claude Code 하네스가
+실행하므로 **Claude Code 세션 안에서의** `git push` / `gh pr merge` 에만 발동한다):
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "~/.claude/hooks/local-ci.sh",
+          "if": "Bash(git push*)", "timeout": 20 }
+      ]}
+    ],
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "~/.claude/hooks/ci-gate-before-pr-merge.sh",
+          "if": "Bash(gh pr merge*)", "timeout": 30 }
+      ]}
+    ]
+  }
+}
+```
 
 ### repos.conf — 레포 경로 매핑 (필요할 때만)
 
@@ -255,6 +285,9 @@ scripts/
   reconcile.sh             # claim 전수 점검 → 이벤트 JSON + 안전 정리
   repo-dir.sh              # repos.conf / 기본 경로로 레포 로컬 경로 해석
   run-local-ci.sh          # worktree에서 bin/ci 실행 → local-ci 캐시 기록
+hooks/
+  local-ci.sh              # (선택 설치) push 직후 bin/ci 백그라운드 실행 → 캐시·commit status
+  ci-gate-before-pr-merge.sh # (선택 설치) gh pr merge 직전 캐시로 머지 게이트
 skills/loop-issues/SKILL.md # 기획 세션용 이슈 마감 체크리스트
 repos.conf.example         # 머신별 레포 경로 매핑 예시
 bin/ci                     # 이 레포 자체의 로컬 CI (셸 문법 검사 + 스모크 테스트)
@@ -275,6 +308,8 @@ bin/ci                     # 이 레포 자체의 로컬 CI (셸 문법 검사 +
 - [ ] 대상 레포에 `scripts/setup-labels.sh <owner/repo>` 실행 — "labels ready" 출력
 - [ ] 레포가 기본 위치(`~/Projects/<레포명>`) 밖이면 `repos.conf` 매핑 추가 후
       `scripts/repo-dir.sh <owner/repo>` 가 올바른 경로를 출력하는지 확인
+- [ ] (선택) hook 2종 symlink + settings.json 등록 — Claude Code 세션에서
+      `git push` 시 "로컬 CI 백그라운드 시작" 메시지가 뜨는지 확인
 - [ ] 테스트 이슈에 수용 기준 + Test plan 작성 → `agent-ready` + `P2` 부착
 - [ ] `scripts/eligible-issues.sh` 출력에 해당 이슈가 보이는지 확인
 - [ ] Claude Code에서 `/loop 15m /issue-runner` 시작 → 틱 Report 확인
