@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="940" height="430" viewBox="0 0 940 430" font-family="'Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="510" viewBox="0 0 940 510" font-family="'Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
@@ -6,10 +6,13 @@
     <marker id="arrow-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#9333ea"/>
     </marker>
+    <marker id="arrow-lesson" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#16a34a"/>
+    </marker>
   </defs>
 
   <!-- 배경 -->
-  <rect x="0" y="0" width="940" height="430" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="0" y="0" width="940" height="510" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
   <text x="470" y="34" text-anchor="middle" font-size="17" font-weight="700" fill="#0f172a">issue-runner 사용 흐름 — 사람은 이슈와 머지만, 나머지는 루프가</text>
 
   <!-- 레인: 사람 -->
@@ -60,6 +63,21 @@
   <text x="330" y="190" font-size="11" fill="#9333ea">머지되면 다음 틱 Reconcile 이</text>
   <text x="330" y="205" font-size="11" fill="#9333ea">worktree·claim 정리 → 다음 이슈 (dirty 면 보존·warn)</text>
 
+  <!-- lessons — 루프의 자기 개선 -->
+  <rect x="355" y="392" width="230" height="64" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="470" y="416" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">lessons — 루프의 자기 개선</text>
+  <text x="470" y="436" text-anchor="middle" font-size="11" fill="#334155">.loop/lessons.md (레포별 · 20줄 캡)</text>
+
+  <!-- 화살표: ② → lessons (머지/거부 시 교훈 추출) -->
+  <path d="M 240 356 C 240 400, 290 424, 351 424" fill="none" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-lesson)"/>
+  <text x="100" y="394" font-size="11" fill="#16a34a">머지/거부된 PR에서</text>
+  <text x="100" y="409" font-size="11" fill="#16a34a">검증자가 교훈 추출·기록</text>
+
+  <!-- 화살표: lessons → ③ (다음 워커에 주입) -->
+  <path d="M 589 424 C 650 424, 700 400, 700 360" fill="none" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-lesson)"/>
+  <text x="725" y="394" font-size="11" fill="#16a34a">다음 워커 투입 시</text>
+  <text x="725" y="409" font-size="11" fill="#16a34a">프롬프트에 주입</text>
+
   <!-- 하단 캡션 -->
-  <text x="470" y="404" text-anchor="middle" font-size="12" fill="#64748b">상태의 단일 진실 원천은 GitHub(라벨·assignee·PR) — 루프는 언제 멈췄다 재개해도 현실과 대조해 이어간다</text>
+  <text x="470" y="482" text-anchor="middle" font-size="12" fill="#64748b">상태의 단일 진실 원천은 GitHub(라벨·assignee·PR) — 루프는 언제 멈췄다 재개해도 현실과 대조해 이어간다</text>
 </svg>

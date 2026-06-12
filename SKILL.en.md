@@ -195,6 +195,11 @@ Non-operational notes — they do not affect tick execution.
 - Install model: as an account-wide dispatcher, the skill is installed at the user
   level (`~/.claude/skills`), while per-repo participation is a separate label
   opt-in (`setup-labels.sh`) — see README, Install.
+- Running loops in parallel: if the session cwd has a `.loop/repos` allowlist,
+  collection (eligible) and inspection (reconcile) are restricted to those repos —
+  for per-project loop sessions; without the file, the whole account is in scope.
+  The scripts apply this automatically, so the tick has nothing extra to do
+  (see README, Usage).
 - Recommended companion: [codegraph](https://github.com/colbymchenry/codegraph) —
   when a repo has a `.codegraph/` index, workers explore existing code via index
   queries instead of repeated grep/Read scans, cutting tokens and tool calls.

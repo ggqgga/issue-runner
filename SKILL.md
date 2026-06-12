@@ -158,6 +158,9 @@ needs-human 승격 권고"** 를 명시하라 (보고만 — 라벨 부착·워�
 - 설치 모델: 계정 전체 디스패처이므로 스킬은 사용자 레벨(`~/.claude/skills`)에
   전역 설치하고, 레포별 참여는 라벨 옵트인(`setup-labels.sh`)으로 분리한다 —
   README §설치.
+- 병행 운용: 세션 cwd 에 `.loop/repos` 허용목록이 있으면 수집(eligible)·점검
+  (reconcile)이 그 레포들로 제한된다 — 프로젝트별 루프 세션 분리용, 없으면 계정
+  전체. 스크립트가 자동 적용하므로 틱에서 따로 할 일은 없다 (README §사용법).
 - 병용 권장: [codegraph](https://github.com/colbymchenry/codegraph) — 레포에
   `.codegraph/` 인덱스가 있으면 워커가 반복 grep/Read 대신 인덱스 조회로 탐색해
   토큰·툴콜을 줄인다. 레포별 `codegraph init` 옵트인 — 없어도 루프는 동작한다
