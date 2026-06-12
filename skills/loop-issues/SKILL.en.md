@@ -77,10 +77,20 @@ Trigger: the user asks for a loop-suitability analysis of a repo's (or account's
 existing issues ("analyze which issues can go on the loop", "analyze the issues and
 label them").
 
-1. **Collect targets**: from
-   `gh issue list --repo <owner/repo> --state open --json number,title,labels,body`,
-   exclude issues that already have the agent-ready, agent:claimed, or needs-human
-   label.
+1. **Collect targets**: first decide the list of repos to walk —
+   - For a single-repo request, just that repo.
+   - **For an account-scoped request**, get the repo list with
+     `gh repo list <me> --no-archived --limit 200 --json nameWithOwner`
+     (or an equivalent method) and walk **only the repos where the agent-ready
+     label set exists (= opted in)**. Determine opt-in by whether agent-ready
+     appears in `gh label list --repo <repo>`.
+
+   In each repo, collect with
+   `gh issue list --repo <owner/repo> --state open --limit 200 --json number,title,labels,body`
+   and exclude issues that already have the agent-ready, agent:claimed, or
+   needs-human label. If the result count reaches the limit (200), flag the report
+   with a **"collection limit reached — possible omissions"** warning — no silent
+   truncation.
 2. **Classify**: check each issue against the 9 checklist items above and sort it
    into one of three buckets:
    - **READY** — passes the checklist. Include a proposed priority (P0/P1/P2) to
