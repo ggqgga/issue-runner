@@ -29,7 +29,7 @@
   <!-- ④ 리뷰·머지 -->
   <rect x="520" y="92" width="360" height="80" rx="8" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
   <text x="536" y="114" font-size="14" font-weight="700" fill="#0f172a">④ PR 리뷰 → 머지 (항상 사람이)</text>
-  <text x="536" y="134" font-size="12" fill="#334155">gh pr merge &lt;N&gt; — 로컬 CI 게이트가 pass/fail 판정</text>
+  <text x="536" y="134" font-size="12" fill="#334155">gh pr merge &lt;N&gt; — local-ci hook 설치 시 게이트가 판정</text>
   <text x="536" y="152" font-size="12" fill="#334155">할 말은 리뷰 코멘트로 — 다음 틱이 보수 워커로 반영</text>
 
   <!-- ② 디스패처 틱 -->
@@ -58,7 +58,7 @@
   <!-- 순환: ④ → ② (점선) -->
   <path d="M 520 132 C 420 132, 300 200, 252 272" fill="none" stroke="#9333ea" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrow-loop)"/>
   <text x="330" y="190" font-size="11" fill="#9333ea">머지되면 다음 틱 Reconcile 이</text>
-  <text x="330" y="205" font-size="11" fill="#9333ea">worktree·claim 정리 → 다음 이슈</text>
+  <text x="330" y="205" font-size="11" fill="#9333ea">worktree·claim 정리 → 다음 이슈 (dirty 면 보존·warn)</text>
 
   <!-- 하단 캡션 -->
   <text x="470" y="404" text-anchor="middle" font-size="12" fill="#64748b">상태의 단일 진실 원천은 GitHub(라벨·assignee·PR) — 루프는 언제 멈췄다 재개해도 현실과 대조해 이어간다</text>
