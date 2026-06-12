@@ -12,6 +12,15 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 me=$(gh api user -q .login)
 
+# 세션 레포 스코프 (#40): 실행 cwd 의 .loop/repos 가 있으면 그 목록(owner/repo,
+# 줄당 하나, # 주석·빈 줄 허용)의 레포만 점검한다. 없으면 계정 전체(기존 동작).
+# eligible-issues.sh 와 일관 적용 — 다른 세션 워커의 claim 에 불간섭.
+scope_file="$PWD/.loop/repos"
+in_scope() {
+  [ -f "$scope_file" ] || return 0
+  grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' | grep -qxF "$1"
+}
+
 # 주의: --state 미지정 = open+closed 모두 (merged PR 이 이슈를 자동으로 닫으므로 필수)
 claimed=$(gh search issues "label:agent:claimed" --owner "$me" \
   --json repository,number --limit 100)
@@ -19,6 +28,9 @@ claimed=$(gh search issues "label:agent:claimed" --owner "$me" \
 printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
   repo=$(printf '%s' "$row" | jq -r '.repository.nameWithOwner')
   num=$(printf '%s' "$row" | jq -r '.number')
+
+  # 세션 레포 스코프 밖이면 불간섭 (#40)
+  in_scope "$repo" || continue
   dir=$("$SCRIPT_DIR/repo-dir.sh" "$repo")
   branch="agent/issue-$num"
   wt="$dir/.claude/worktrees/issue-$num"

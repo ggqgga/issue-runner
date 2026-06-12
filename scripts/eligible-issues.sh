@@ -7,6 +7,14 @@ set -euo pipefail
 
 me=$(gh api user -q .login)
 
+# 세션 레포 스코프 (#40): 실행 cwd 의 .loop/repos 가 있으면 그 목록(owner/repo,
+# 줄당 하나, # 주석·빈 줄 허용)의 레포만 처리한다. 없으면 계정 전체(기존 동작).
+scope_file="$PWD/.loop/repos"
+in_scope() {
+  [ -f "$scope_file" ] || return 0
+  grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' | grep -qxF "$1"
+}
+
 # needs-human 은 서버 쿼리에서도 제외 — 클라이언트 필터만 쓰면 needs-human 이슈가
 # per_page=50 창을 채워 실제 eligible 이슈가 밀려날 수 있다
 # 주의: gh search CLI 사용 금지 — 쿼리 문자열 내 부정 라벨(`label:X -label:Y`)을
@@ -27,6 +35,9 @@ while [ "$i" -lt "$count" ]; do
   repo=$(printf '%s' "$row" | jq -r '.repository.nameWithOwner')
   num=$(printf '%s' "$row" | jq -r '.number')
   labels=$(printf '%s' "$row" | jq -r '[.labels[].name] | join(",")')
+
+  # 세션 레포 스코프 밖이면 제외 (#40)
+  in_scope "$repo" || continue
 
   # 이미 claim 된 것 제외
   case ",$labels," in *",agent:claimed,"*) continue ;; esac
