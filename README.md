@@ -102,6 +102,19 @@ ln -s ~/Projects/refs/issue-runner/skills/loop-issues ~/.claude/skills/loop-issu
 ~/.claude/skills/issue-runner/scripts/setup-labels.sh <owner/repo>
 ```
 
+**왜 프로젝트가 아니라 사용자 레벨(`~/.claude/skills`)에 설치하나** — 이 디스패처는
+특정 레포가 아니라 **계정 전체**를 대상으로 동작하기 때문이다:
+
+- 루프 세션은 어느 디렉토리에서든 뜰 수 있고, 매 틱 여러 레포의 이슈를 훑어 각
+  레포의 worktree로 워커를 보낸다. 프로젝트 로컬(레포 안 `.claude/skills`) 설치면
+  그 레포에서 작업할 때만 스킬이 보여 — 레포 횡단 디스패처라는 역할 자체가
+  성립하지 않는다.
+- 같은 이유로 local-ci hook 도 `~/.claude/hooks`(전역)에 둔다 — push/merge는 대상
+  레포 어디서든 일어나고, hook 의 `bin/ci` 옵트인 가드가 무관한 레포를 걸러낸다.
+- 대신 **레포별 제어는 스킬 설치가 아니라 옵트인 신호로** 분리돼 있다 — 라벨
+  세트(`setup-labels.sh`, 위 3단계)가 루프 참여 스위치, `repos.conf`가 머신별
+  경로 매핑이다. 전역 스킬 하나 + 레포별 옵트인이 이 도구의 설치 모델이다.
+
 `setup-labels.sh`는 라벨 생성과 함께 `gh repo edit --delete-branch-on-merge`를
 설정한다 (머지된 head 브랜치를 GitHub가 자동 삭제 — reconcile은 로컬만 정리한다).
 
