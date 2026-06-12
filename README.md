@@ -47,7 +47,8 @@
 - **local-ci hook 세트** (`~/.claude/hooks/local-ci.sh`,
   `ci-gate-before-pr-merge.sh`) — GitHub Actions 없이 로컬 CI 결과를
   `~/.claude/.local-ci/` 캐시에 남기고, 사람이 `gh pr merge` 할 때 게이트로 읽는
-  계약. 옵트인 레포는 실행 가능한 `bin/ci` + `config/ci.rb` 마커 파일을 둔다.
+  계약. 옵트인 레포는 실행 가능한 `bin/ci` 를 둔다 (hook 가드와 동일 — 언어 무관,
+  `config/ci.rb` 같은 추가 마커는 요구하지 않는다).
   hook이 없어도 워커의 `run-local-ci.sh`는 결과 캐시를 기록한다.
 - **shellcheck** — 이 레포 자체의 `bin/ci`가 설치 시에만 실행 (미설치면 skip).
 

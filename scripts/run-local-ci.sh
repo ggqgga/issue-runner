@@ -6,7 +6,10 @@
 #
 # 워커가 push 직후 직접 호출한다. push hook(local-ci.sh)은 워커 환경에서 cwd 문제로
 # 발동하지 못하므로(세션 cwd가 비 git 디렉토리) 이 스크립트가 그 역할을 대신한다.
-# 레포가 local-ci 옵트인(bin/ci + config/ci.rb)이 아니면 no-op.
+# 레포가 local-ci 옵트인(실행 가능한 bin/ci — 언어 무관)이 아니면 no-op.
+# 가드는 전역 hook(local-ci.sh / ci-gate-before-pr-merge.sh)과 동일해야 한다 —
+# hook 은 `[ -x bin/ci ]` 단독 가드라 config/ci.rb 를 추가로 요구하면
+# 비-Rails 레포(예: Python)에서 여기만 skip 되어 캐시가 안 남고 머지 게이트에 걸린다.
 # 종료 코드: pass=0, fail=1 (워커가 실패를 인지하고 고치도록).
 set -uo pipefail
 repo="${1:?usage: run-local-ci.sh <owner/repo> <num>}"
@@ -15,7 +18,7 @@ dir="$("$(cd "$(dirname "$0")" && pwd)/repo-dir.sh" "$repo")"
 wt="$dir/.claude/worktrees/issue-$num"
 
 [ -d "$wt" ] || { echo "run-local-ci: worktree 없음 ($wt)" >&2; exit 1; }
-if [ ! -x "$wt/bin/ci" ] || [ ! -f "$wt/config/ci.rb" ]; then
+if [ ! -x "$wt/bin/ci" ]; then
   echo "run-local-ci: 레포가 local-ci 옵트인이 아님 — skip"
   exit 0
 fi
