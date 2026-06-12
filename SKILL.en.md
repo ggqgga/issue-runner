@@ -184,3 +184,18 @@ context + this count (none visible → just this count). If it exceeds `SOFT_TOK
 state **"soft budget exceeded — recommend escalating to needs-human"** on that line (report only — never auto-label or stop workers).
 If every count is 0, output the single line "quiet".
 After 3 consecutive quiet ticks, from the next tick on do only reconcile and stop.
+
+## References
+
+Non-operational notes — they do not affect tick execution.
+
+- Recommended companion: [codegraph](https://github.com/colbymchenry/codegraph) —
+  when a repo has a `.codegraph/` index, workers explore existing code via index
+  queries instead of repeated grep/Read scans, cutting tokens and tool calls.
+  Opt-in per repo with `codegraph init` — the loop works fine without it
+  (see README, Prerequisites).
+- Sources consulted for the design: [Keep Claude working toward a goal — official Claude Code docs](https://code.claude.com/docs/en/goal) ·
+  [loop-engineering discourse (YouTube)](https://www.youtube.com/watch?v=EH2MMQTaPEA) ·
+  [Reddit discussion](https://www.reddit.com/r/myclaw/comments/1u047p8/so_is_loop_engineering_the_next_ai_dev_buzzword/) ·
+  [agent loop internals analysis](https://internals.laxmena.com/p/why-claude-codes-agent-loop-is-over) ·
+  [Rails 8.1 release notes — origin of the `bin/ci` convention](https://guides.rubyonrails.org/8_1_release_notes.html)

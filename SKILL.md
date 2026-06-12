@@ -147,3 +147,17 @@ warn 이 있으면 경로와 사유를 그 아래 나열.
 needs-human 승격 권고"** 를 명시하라 (보고만 — 라벨 부착·워커 중단 등 자동 조치 금지).
 모든 카운트가 0이면 "조용함" 한 줄만.
 3틱 연속 조용하면 다음 틱부터는 reconcile 만 하고 끝내라.
+
+## 참고 자료
+
+비운영 참고 — 틱 수행에는 영향 없다.
+
+- 병용 권장: [codegraph](https://github.com/colbymchenry/codegraph) — 레포에
+  `.codegraph/` 인덱스가 있으면 워커가 반복 grep/Read 대신 인덱스 조회로 탐색해
+  토큰·툴콜을 줄인다. 레포별 `codegraph init` 옵트인 — 없어도 루프는 동작한다
+  (README §전제 조건).
+- 설계에 참고한 문헌: [Claude Code goal 공식 문서](https://code.claude.com/docs/en/goal) ·
+  [루프 엔지니어링 담론 (YouTube)](https://www.youtube.com/watch?v=EH2MMQTaPEA) ·
+  [Reddit 토론](https://www.reddit.com/r/myclaw/comments/1u047p8/so_is_loop_engineering_the_next_ai_dev_buzzword/) ·
+  [agent loop internals 분석](https://internals.laxmena.com/p/why-claude-codes-agent-loop-is-over) ·
+  [Rails 8.1 release notes — `bin/ci` 원형](https://guides.rubyonrails.org/8_1_release_notes.html)
