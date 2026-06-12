@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="430" viewBox="0 0 940 430" font-family="'Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9333ea"/>
+    </marker>
+  </defs>
+
+  <!-- 배경 -->
+  <rect x="0" y="0" width="940" height="430" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="470" y="34" text-anchor="middle" font-size="17" font-weight="700" fill="#0f172a">issue-runner 사용 흐름 — 사람은 이슈와 머지만, 나머지는 루프가</text>
+
+  <!-- 레인: 사람 -->
+  <rect x="24" y="56" width="892" height="130" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="40" y="80" font-size="12" font-weight="700" fill="#1d4ed8">사람 (기획 · 리뷰 세션)</text>
+
+  <!-- 레인: 루프 -->
+  <rect x="24" y="240" width="892" height="130" rx="10" fill="#faf5ff" stroke="#e9d5ff"/>
+  <text x="40" y="264" font-size="12" font-weight="700" fill="#7e22ce">루프 (자동 — 별도 세션)</text>
+
+  <!-- ① 이슈 작성·마감 -->
+  <rect x="60" y="92" width="360" height="80" rx="8" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="76" y="114" font-size="14" font-weight="700" fill="#0f172a">① 이슈 작성 → 루프에 넘기기</text>
+  <text x="76" y="134" font-size="12" fill="#334155">자연어: "이 이슈 루프 태워줘" / "루프로 진행해줘"</text>
+  <text x="76" y="152" font-size="12" fill="#334155">→ /loop-issues 마감 체크리스트 → agent-ready + P라벨</text>
+
+  <!-- ④ 리뷰·머지 -->
+  <rect x="520" y="92" width="360" height="80" rx="8" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="536" y="114" font-size="14" font-weight="700" fill="#0f172a">④ PR 리뷰 → 머지 (항상 사람이)</text>
+  <text x="536" y="134" font-size="12" fill="#334155">gh pr merge &lt;N&gt; — local-ci hook 설치 시 게이트가 판정</text>
+  <text x="536" y="152" font-size="12" fill="#334155">할 말은 리뷰 코멘트로 — 다음 틱이 보수 워커로 반영</text>
+
+  <!-- ② 디스패처 틱 -->
+  <rect x="60" y="276" width="360" height="80" rx="8" fill="#ffffff" stroke="#a855f7" stroke-width="1.5"/>
+  <text x="76" y="298" font-size="14" font-weight="700" fill="#0f172a">② 디스패처 틱 — /loop 15m /issue-runner</text>
+  <text x="76" y="318" font-size="12" fill="#334155">매 틱: Reconcile → Maintain → Dispatch → Report</text>
+  <text x="76" y="336" font-size="12" fill="#334155">agent-ready 이슈를 claim → worktree 생성 → 워커 투입</text>
+
+  <!-- ③ 워커 -->
+  <rect x="520" y="276" width="360" height="80" rx="8" fill="#ffffff" stroke="#a855f7" stroke-width="1.5"/>
+  <text x="536" y="298" font-size="14" font-weight="700" fill="#0f172a">③ 워커 (git worktree 격리)</text>
+  <text x="536" y="318" font-size="12" fill="#334155">구현 → 커밋마다 push → bin/ci(로컬 CI) → PR 오픈</text>
+  <text x="536" y="336" font-size="12" fill="#334155">검증자 리뷰 통과까지 보수 — 머지는 하지 않음</text>
+
+  <!-- 화살표: ① → ② (아래로) -->
+  <line x1="240" y1="172" x2="240" y2="272" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="252" y="218" font-size="11" fill="#475569">agent-ready 라벨 = 옵트인</text>
+
+  <!-- 화살표: ② → ③ (오른쪽) -->
+  <line x1="424" y1="316" x2="516" y2="316" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- 화살표: ③ → ④ (위로) -->
+  <line x1="700" y1="272" x2="700" y2="176" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="712" y="218" font-size="11" fill="#475569">PR 오픈 알림</text>
+
+  <!-- 순환: ④ → ② (점선) -->
+  <path d="M 520 132 C 420 132, 300 200, 252 272" fill="none" stroke="#9333ea" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrow-loop)"/>
+  <text x="330" y="190" font-size="11" fill="#9333ea">머지되면 다음 틱 Reconcile 이</text>
+  <text x="330" y="205" font-size="11" fill="#9333ea">worktree·claim 정리 → 다음 이슈 (dirty 면 보존·warn)</text>
+
+  <!-- 하단 캡션 -->
+  <text x="470" y="404" text-anchor="middle" font-size="12" fill="#64748b">상태의 단일 진실 원천은 GitHub(라벨·assignee·PR) — 루프는 언제 멈췄다 재개해도 현실과 대조해 이어간다</text>
+</svg>
