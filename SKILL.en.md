@@ -189,6 +189,12 @@ After 3 consecutive quiet ticks, from the next tick on do only reconcile and sto
 
 Non-operational notes — they do not affect tick execution.
 
+- Prerequisite: this loop works **only on GitHub** — issues, labels, assignees, and
+  PRs are the single source of truth for loop state, and GitHub Actions is not
+  required (the local-ci design). See README, Prerequisites, for required permissions.
+- Install model: as an account-wide dispatcher, the skill is installed at the user
+  level (`~/.claude/skills`), while per-repo participation is a separate label
+  opt-in (`setup-labels.sh`) — see README, Install.
 - Recommended companion: [codegraph](https://github.com/colbymchenry/codegraph) —
   when a repo has a `.codegraph/` index, workers explore existing code via index
   queries instead of repeated grep/Read scans, cutting tokens and tool calls.

@@ -152,6 +152,12 @@ needs-human 승격 권고"** 를 명시하라 (보고만 — 라벨 부착·워�
 
 비운영 참고 — 틱 수행에는 영향 없다.
 
+- 전제: 이 루프는 **GitHub 위에서만** 동작한다 — 이슈·라벨·assignee·PR이 상태의
+  단일 진실 원천이며 GitHub Actions 는 불필요(local-ci 설계). 필요 권한 등 상세는
+  README §전제 조건.
+- 설치 모델: 계정 전체 디스패처이므로 스킬은 사용자 레벨(`~/.claude/skills`)에
+  전역 설치하고, 레포별 참여는 라벨 옵트인(`setup-labels.sh`)으로 분리한다 —
+  README §설치.
 - 병용 권장: [codegraph](https://github.com/colbymchenry/codegraph) — 레포에
   `.codegraph/` 인덱스가 있으면 워커가 반복 grep/Read 대신 인덱스 조회로 탐색해
   토큰·툴콜을 줄인다. 레포별 `codegraph init` 옵트인 — 없어도 루프는 동작한다
