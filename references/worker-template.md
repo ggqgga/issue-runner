@@ -10,6 +10,14 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 중요: 셸 cwd 는 Bash 호출 간 유지되지 않는다. 모든 셸 명령은
 `cd <WT_PATH> && <명령>` 복합 형태로 실행하거나 절대 경로(`git -C <WT_PATH>`)를 써라.
 
+탐색 도구: <REPO_DIR>/.codegraph 인덱스가 있으면 기존 코드 탐색에 반복 grep/Read
+스캔 대신 codegraph CLI 를 우선 사용하라 (PATH: ~/.local/bin) —
+`codegraph query|callers|callees|impact -p <REPO_DIR> <심볼>`,
+변경 파일의 영향 테스트는 `codegraph affected -p <REPO_DIR> <파일...>`.
+인덱스는 메인 체크아웃(<REPO_DIR>) 기준이라 너의 worktree 변경분은 반영돼 있지
+않다 — 탐색 보조로만 쓰고 최종 확인은 <WT_PATH> 실파일로 하라.
+인덱스가 없으면 이 단락은 무시하라.
+
 절차:
 1. <WT_PATH> 의 CLAUDE.md 를 읽고 빌드/테스트 방법을 파악하라.
    코드 탐색 시 codegraph MCP 도구(`mcp__codegraph__*`)가 사용 가능하면

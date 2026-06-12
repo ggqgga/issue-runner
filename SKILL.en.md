@@ -162,10 +162,13 @@ prompt, and increment N by exactly 1 per dispatch.
    d. Right before dispatching, read
       `~/.claude/skills/issue-runner/references/worker-template.en.md`, fill the
       placeholders (`<WT_PATH>` `<REPO>` `<NUM>` `<TITLE>` `<DEFAULT_BRANCH>`
-      `<VERIFIER>` `<LESSONS_OR_"none">`), and dispatch it (background Agent tool
-      call — the call signature is at the top of the template file). Fill
+      `<REPO_DIR>` `<VERIFIER>` `<LESSONS_OR_"none">`), and dispatch it (background
+      Agent tool call — the call signature is at the top of the template file). Fill
       `<DEFAULT_BRANCH>` from
       `gh repo view <repo> --json defaultBranchRef -q .defaultBranchRef.name`.
+      Fill `<REPO_DIR>` with the output of `$SCRIPTS/repo-dir.sh <repo>` (the main
+      checkout's absolute path) — the worker's codegraph exploration (`-p`) reads
+      the index at this path.
       Fill `<VERIFIER>` from ## Constants with the fallback rule applied
       (`general-purpose` if codex is not installed).
 

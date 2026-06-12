@@ -126,9 +126,12 @@ N 도 디스패치당 1만 올린다.
    c. `~/Projects/<repo-name>/.loop/lessons.md` 가 있으면 내용을 읽어 둔다.
    d. 디스패치 직전 `~/.claude/skills/issue-runner/references/worker-template.md` 를
       읽고 placeholder(`<WT_PATH>` `<REPO>` `<NUM>` `<TITLE>` `<DEFAULT_BRANCH>`
-      `<VERIFIER>` `<LESSONS_OR_"없음">`)를 채워 투입하라 (Agent 툴 백그라운드
-      디스패치 — 호출 시그니처는 템플릿 파일 상단에 있다). `<DEFAULT_BRANCH>` 는
+      `<REPO_DIR>` `<VERIFIER>` `<LESSONS_OR_"없음">`)를 채워 투입하라 (Agent 툴
+      백그라운드 디스패치 — 호출 시그니처는 템플릿 파일 상단에 있다).
+      `<DEFAULT_BRANCH>` 는
       `gh repo view <repo> --json defaultBranchRef -q .defaultBranchRef.name` 으로 채운다.
+      `<REPO_DIR>` 는 `$SCRIPTS/repo-dir.sh <repo>` 출력(메인 체크아웃 절대경로)으로
+      채운다 — 워커의 codegraph 탐색(`-p`)이 이 경로의 인덱스를 읽는다.
       `<VERIFIER>` 는 ## 상수의 VERIFIER 를 폴백 규칙까지 적용해 채운다
       (codex 미설치면 `general-purpose`).
 

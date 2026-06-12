@@ -10,6 +10,14 @@ Target: <REPO> issue #<NUM> — <TITLE>
 Important: the shell cwd does not persist between Bash calls. Run every shell command
 as a compound `cd <WT_PATH> && <command>` or use absolute paths (`git -C <WT_PATH>`).
 
+Exploration tools: if a <REPO_DIR>/.codegraph index exists, prefer the codegraph CLI
+over repeated grep/Read scans when exploring existing code (PATH: ~/.local/bin) —
+`codegraph query|callers|callees|impact -p <REPO_DIR> <symbol>`, and
+`codegraph affected -p <REPO_DIR> <files...>` for tests affected by changed files.
+The index reflects the main checkout (<REPO_DIR>), not your worktree changes —
+use it as a navigation aid only and verify against the actual files in <WT_PATH>.
+If there is no index, ignore this paragraph.
+
 Procedure:
 1. Read CLAUDE.md in <WT_PATH> to learn how to build and test.
    When exploring code, prefer the codegraph MCP tools (`mcp__codegraph__*`)
