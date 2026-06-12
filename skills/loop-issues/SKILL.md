@@ -61,8 +61,18 @@ description: 이슈를 issue-runner 루프에 넘기기 전 마감 체크리스�
 발동: 사용자가 레포(또는 계정)의 기존 이슈들에 대한 루프 적합성 분석을 요청할 때
 ("루프로 진행할 수 있는 이슈 분석해줘", "이슈 분석하고 라벨 붙여줘").
 
-1. **대상 수집**: `gh issue list --repo <owner/repo> --state open --json number,title,labels,body`
-   결과에서 agent-ready·agent:claimed·needs-human 라벨이 이미 있는 이슈를 제외한다.
+1. **대상 수집**: 먼저 순회할 레포 목록을 정한다 —
+   - 단일 레포 요청이면 그 레포 하나.
+   - **계정 범위 요청이면** `gh repo list <me> --no-archived --limit 200 --json nameWithOwner`
+     (또는 동등한 방법)로 레포 목록을 얻어, **agent-ready 라벨 세트가 존재하는
+     (=옵트인된) 레포만** 순회한다. 옵트인 여부는 `gh label list --repo <repo>` 에
+     agent-ready 가 존재하는지로 판정한다.
+
+   각 레포에서
+   `gh issue list --repo <owner/repo> --state open --limit 200 --json number,title,labels,body`
+   로 수집하고, 결과에서 agent-ready·agent:claimed·needs-human 라벨이 이미 있는
+   이슈를 제외한다. 수집 결과 건수가 limit(200)에 도달하면 보고서에
+   **"수집 상한 도달 — 누락 가능"** 경고를 표기한다 — 조용한 누락 금지.
 2. **분류**: 각 이슈를 위 체크리스트 9항목에 대조해 셋 중 하나로 분류한다:
    - **READY** — 체크리스트 통과. 부착할 우선순위(P0/P1/P2) 제안을 포함한다.
    - **FIXABLE** — 부족 항목을 명시하고(예: Test plan 없음, 수용 기준 모호,
