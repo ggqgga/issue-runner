@@ -33,4 +33,16 @@ if git -C "$dir" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
 else
   git -C "$dir" worktree add "$wt" -b "$branch" "origin/$default" >/dev/null
 fi
+
+# 로컬 전용 gitignore 설정(.env·credentials key 등)을 worktree 에 심링크 —
+# git 추적 안 되는 파일이라 worktree 체크아웃에 안 깔린다. 메인 한 곳만 관리하고
+# worktree 가 그것을 참조 → 워커가 foreman run·credentials 의존 테스트를 메인과
+# 동일하게 돌릴 수 있다. 해당 파일이 없는 레포에선 각 항목이 자동 no-op.
+for f in .env config/master.key; do
+  if [ -f "$dir/$f" ] && [ ! -e "$wt/$f" ]; then
+    mkdir -p "$(dirname "$wt/$f")"
+    ln -s "$dir/$f" "$wt/$f"
+  fi
+done
+
 echo "$wt"
