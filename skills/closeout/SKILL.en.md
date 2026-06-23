@@ -97,10 +97,13 @@ merges PRs in repos outside cwd, so the ci-gate hook must query that repo via
 2026-06-24: in a BoDAT cwd session, merging an issue-runner PR was blocked because the
 hook queried the cwd repo). Gate conditions: `$SCRIPTS/closeout-ci-pass.sh <repo> <pr>`
 (exit 0) + the worker's `검증자 리뷰:` comment shows BLOCKER 0 + recheck
-`gh pr view <pr> --repo <repo> --json mergeable` ≠ CONFLICTING. If all pass, **push the
-step-3 commit first**, then `gh pr merge <pr> --repo <repo> --squash` (the ci-gate hook
-judges once more). If CONFLICTING, remove `harvesting` and skip (issue-runner Maintain
-rebases).
+`gh pr view <pr> --repo <repo> --json mergeable` ≠ CONFLICTING. If all pass, **perform step 3 (doc reconcile) right
+here** to create the doc commit on the PR branch and push it — so the squash merge
+includes that doc reconcile — then `gh pr merge <pr> --repo <repo> --squash` (the
+ci-gate hook judges once more). That is: the step numbering is 1→2→3, but the step-3
+commit is slotted in just before the step-2 merge ("before merge" in the step-3 header
+marks this slot-in point). If CONFLICTING, remove `harvesting` and skip (issue-runner
+Maintain rebases).
 
 **Step 3 — doc reconcile (before merge, PR-branch commit).** Change the `- [ ]` to
 `- [x]` in the plan-doc section that step 1 confirmed implemented. Commit and push
@@ -157,6 +160,7 @@ Non-operational notes — they do not affect tick execution.
 - Operation: run closeout as a `/loop` session separate from issue-runner
   (e.g. `/loop 20m /closeout`) — the two coordinate occupation purely by label.
 - Dependencies: the deterministic helpers (`closeout-reconcile.sh`·
-  `closeout-eligible.sh`·`closeout-ci-pass.sh`) and the 3 references
-  (`verifier-prompt.md`·`deploy-check-issue.md`·`spinoff-issue.md`) live under the
-  same `skills/closeout/`.
+  `closeout-eligible.sh`·`closeout-ci-pass.sh`) live in `$SCRIPTS`
+  (=`~/.claude/skills/issue-runner/scripts`), and the 3 references
+  (`verifier-prompt.md`·`deploy-check-issue.md`·`spinoff-issue.md`) live in
+  `skills/closeout/references/`.

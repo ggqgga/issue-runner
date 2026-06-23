@@ -82,9 +82,12 @@ closeout 은 cwd 밖 레포의 PR 을 머지하므로 ci-gate 훅이 `--repo` �
 cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차단됨). 게이트 통과
 조건: `$SCRIPTS/closeout-ci-pass.sh <repo> <pr>` (exit 0) + 워커가 남긴
 `검증자 리뷰:` 코멘트가 BLOCKER 0 + `gh pr view <pr> --repo <repo> --json mergeable`
-≠ CONFLICTING 재확인. 모두 통과면 **먼저 3단계 커밋을 push** 한 뒤
-`gh pr merge <pr> --repo <repo> --squash` (ci-gate 훅이 한 번 더 판정한다).
-CONFLICTING 이면 `harvesting` 을 제거하고 skip 한다 (issue-runner Maintain 이 rebase).
+≠ CONFLICTING 재확인. 모두 통과면 **여기서 3단계(문서 reconcile)를 먼저 수행**해 PR 브랜치에 문서 커밋을
+만들고 push 한 뒤 — squash 머지가 그 문서 반영을 포함하도록 — `gh pr merge <pr>
+--repo <repo> --squash` (ci-gate 훅이 한 번 더 판정한다). 즉 단계 번호는 1→2→3
+순서지만, 2단계의 머지 직전에 3단계 커밋을 끼워 넣는다 (3단계 헤더의 "머지 전"이
+이 끼워넣기 지점이다). CONFLICTING 이면 `harvesting` 을 제거하고 skip 한다
+(issue-runner Maintain 이 rebase).
 
 **3단계 — 문서 reconcile (머지 전, PR 브랜치 커밋).** 1단계가 구현을 확인한
 계획문서 절의 `- [ ]` 를 `- [x]` 로 바꾼다. PR 브랜치 worktree 에서 커밋·push 하여
@@ -137,5 +140,6 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
 - 운용: closeout 은 issue-runner 와 별도의 `/loop` 세션으로 돌린다
   (예 `/loop 20m /closeout`) — 서로의 점유를 라벨로만 조율한다.
 - 의존: 결정적 헬퍼(`closeout-reconcile.sh`·`closeout-eligible.sh`·
-  `closeout-ci-pass.sh`)와 references 3종(`verifier-prompt.md`·
-  `deploy-check-issue.md`·`spinoff-issue.md`)은 같은 `skills/closeout/` 아래에 있다.
+  `closeout-ci-pass.sh`)는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)에
+  있고, references 3종(`verifier-prompt.md`·`deploy-check-issue.md`·
+  `spinoff-issue.md`)은 `skills/closeout/references/` 에 있다.
