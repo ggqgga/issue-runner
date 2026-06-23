@@ -100,4 +100,56 @@ done
 rm -rf "$tmp"
 [ "$fail" = 0 ] || exit 1
 
+echo "[closeout] setup-labels.sh 에 harvesting·epic 라벨 정의 존재 검사"
+for lbl in harvesting epic; do
+  grep -qF "gh label create $lbl " scripts/setup-labels.sh || {
+    echo "  ✗ setup-labels.sh 에 $lbl 라벨 정의 누락"; exit 1; }
+done
+
+echo "[closeout] ci-pass 헬퍼 fail-closed 스모크"
+tmp=$(mktemp -d); mkdir "$tmp/stub"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/stub/gh"; chmod +x "$tmp/stub/gh"
+rc=0; PATH="$tmp/stub:$PATH" bash scripts/closeout-ci-pass.sh owner/r 123 >/dev/null 2>&1 || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ ci-pass: gh 실패 시 exit $rc (기대 1)"; exit 1; }
+rm -rf "$tmp"
+
+echo "[closeout] eligible 빈-스코프 스모크"
+tmp=$(mktemp -d); mkdir "$tmp/stub"
+cat > "$tmp/stub/gh" <<'EOF'
+#!/bin/sh
+case "$*" in *search/issues*) echo '{"items":[]}';; *) echo '';; esac
+EOF
+chmod +x "$tmp/stub/gh"
+out=$(PATH="$tmp/stub:$PATH" bash scripts/closeout-eligible.sh 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && [ -z "$out" ] || { echo "  ✗ eligible 빈: rc=$rc out='$out'"; exit 1; }
+rm -rf "$tmp"
+
+echo "[closeout] reconcile 빈-결과 스모크"
+tmp=$(mktemp -d); mkdir "$tmp/stub"
+cat > "$tmp/stub/gh" <<'EOF'
+#!/bin/sh
+case "$*" in *search/issues*) echo '{"items":[]}';; *) echo '';; esac
+EOF
+chmod +x "$tmp/stub/gh"
+out=$(PATH="$tmp/stub:$PATH" bash scripts/closeout-reconcile.sh 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && [ -z "$out" ] || { echo "  ✗ reconcile 빈: rc=$rc out='$out'"; exit 1; }
+rm -rf "$tmp"
+
+echo "[closeout] references placeholder 검사"
+# macOS 기본 bash 3.2 는 declare -A 미지원 — case 분기로 파일별 placeholder 매핑.
+for f in skills/closeout/references/verifier-prompt.md \
+         skills/closeout/references/deploy-check-issue.md \
+         skills/closeout/references/spinoff-issue.md; do
+  [ -f "$f" ] || { echo "  ✗ 누락: $f"; exit 1; }
+  case "$f" in
+    *verifier-prompt.md)    phs="<PR> <REPO> <BASE> <PLAN_REF>" ;;
+    *deploy-check-issue.md) phs="<PR> <SHA> <SUMMARY> <DEPLOY_CMD> <LIVE_CHECKS>" ;;
+    *spinoff-issue.md)      phs="<BACKGROUND> <REASON> <PLAN> <TEST_PLAN> <RELATED>" ;;
+  esac
+  # shellcheck disable=SC2086
+  for ph in $phs; do
+    grep -qF "$ph" "$f" || { echo "  ✗ $f 에 $ph 없음"; exit 1; }
+  done
+done
+
 echo "CI pass"

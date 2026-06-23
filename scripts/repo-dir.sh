@@ -19,6 +19,8 @@ fi
 [ -z "$dir" ] && dir="${ISSUE_RUNNER_PROJECTS_ROOT:-$HOME/Projects}/$name"
 
 # ~ 확장 (conf 에 ~/ 로 적은 경우)
+# SC2088: "~/"* 는 conf 입력의 리터럴 틸드 접두를 매칭하는 패턴 — 확장 의도 아님(다음 줄이 $HOME 치환).
+# shellcheck disable=SC2088
 case "$dir" in "~/"*) dir="$HOME/${dir#\~/}" ;; esac
 
 if [ -d "$dir" ]; then
