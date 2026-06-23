@@ -107,6 +107,8 @@ N 도 디스패치당 1만 올린다.
 3. base 와 conflict → 보수 에이전트에 rebase (merge 금지) 를 지시.
 4. CI green + 리뷰 코멘트 없음 → 손대지 않는다. 사람 리뷰 대기 상태.
 
+`harvesting` 이벤트 = closeout 마감 진행 중 → **건드리지 않는다**(보수·rebase·리뷰 코멘트 해결 제외). closeout 가 머지/정리한다.
+
 ## ③ Dispatch — 남는 슬롯만큼만
 
 1. in-flight 계산: ①의 `working` + 이번 틱에 ②로 투입한 보수 + **빨간 PR**

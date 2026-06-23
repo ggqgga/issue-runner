@@ -135,6 +135,26 @@ out=$(PATH="$tmp/stub:$PATH" bash scripts/closeout-reconcile.sh 2>/dev/null); rc
 [ "$rc" = 0 ] && [ -z "$out" ] || { echo "  ✗ reconcile 빈: rc=$rc out='$out'"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] reconcile harvesting PR 분류 스모크 (#44)"
+# OPEN PR 에 harvesting 라벨이 있으면 pr_open 이 아니라 harvesting 이벤트로 분류돼야
+# 한다 (② Maintain 이 closeout 점유 PR 을 건드리지 않도록). OPEN 경로는 worktree
+# 디렉토리를 만지지 않으므로 gh 세 형태만 스텁한다.
+tmp=$(mktemp -d); mkdir "$tmp/stub"
+cat > "$tmp/stub/gh" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *"api user"*) echo "tester" ;;
+  *"search issues"*) echo '[{"repository":{"nameWithOwner":"o/r"},"number":44}]' ;;
+  *"pr list"*) echo '[{"number":99,"state":"OPEN","statusCheckRollup":[],"labels":[{"name":"harvesting"}]}]' ;;
+  *) echo '' ;;
+esac
+EOF
+chmod +x "$tmp/stub/gh"
+out=$(PATH="$tmp/stub:$PATH" ISSUE_RUNNER_PROJECTS_ROOT="$tmp" bash scripts/reconcile.sh 2>/dev/null)
+ev=$(printf '%s' "$out" | jq -r 'select(.number==44) | .event' 2>/dev/null | head -1)
+[ "$ev" = "harvesting" ] || { echo "  ✗ harvesting PR 분류 실패: event='$ev' (기대 harvesting)"; exit 1; }
+rm -rf "$tmp"
+
 echo "[closeout] references placeholder 검사"
 # macOS 기본 bash 3.2 는 declare -A 미지원 — case 분기로 파일별 placeholder 매핑.
 for f in skills/closeout/references/verifier-prompt.md \
