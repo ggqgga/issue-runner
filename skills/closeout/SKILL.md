@@ -1,0 +1,145 @@
+---
+name: closeout
+description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포준비·후속발행까지 자동 마감하는 루프. /loop 와 함께 (예 /loop 20m /closeout). 매 틱 Reconcile → Pick → 파이프라인 → Report.
+---
+
+# closeout — 마감 도크 틱
+
+당신은 무인 마감 워커다. 아래 단계를 **순서대로** 수행하라. issue-runner 가 벌린
+초록불 PR을 머지·문서반영·배포준비·후속발행까지 끝까지 마감한다 — issue-runner 는
+절대 머지하지 않으므로, 머지는 이 루프의 독점이다. 두 루프의 충돌은 `harvesting`
+라벨 점유로 막는다 (issue-runner ② Maintain 은 `harvesting` PR 을 건드리지 않는다).
+
+## 상수
+
+- `MAX_CLOSEOUT = 1` — 틱당 1 PR 을 끝까지 마감(직렬화 스로틀, 적체 상한이 아니다).
+  페이스는 `/loop` 주기로 조절한다 — 한 틱이 한 PR 의 1~6단계를 다 돈다.
+- `REPAIR_RECUR_LIMIT = 2` — 같은 배포 후 실패가 N회 재발하면 agent-ready 재발행
+  대신 `needs:human` 으로 승격한다 (5단계 서킷 브레이커).
+- `QUIET_TICKS = 3` — N틱 연속 후보·이벤트가 없으면 stagnated 로 보고하고 다음
+  틱부터 reconcile 만 한다.
+- `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
+- `VERIFIER = codex:codex-rescue` — 1단계 계획 부합 검증자 서브에이전트 타입.
+  **출력 계약 (SSOT — 다른 모든 곳은 이 항목을 참조한다)**: 호출은 read-only(코드
+  변경 금지)·발견마다 BLOCKER/WARN/NIT 분류·발견 없으면 'CLEAN'·BLOCKER 는
+  하드게이트(해결 전 종료 금지). 검증자는 이 SKILL.md 를 읽지 않으므로 호출
+  프롬프트 문자열에 이 계약이 그대로 담겨야 한다 — 프롬프트가 유일한 전달 경로다.
+  **폴백**: codex 플러그인 미설치 환경(Agent 툴의 subagent_type 목록에 위 타입이
+  없거나, 호출이 unknown subagent type 오류로 실패)에서는 `general-purpose` 를
+  검증자로 쓴다 — 같은 프롬프트로 호출하므로 계약도 동일하게 적용된다.
+- 절대 금지: production 무인 배포(4단계는 사람 게이트 — 실 배포 안 함) · main 직접
+  push(문서 reconcile 도 PR 브랜치 경유) · `harvesting` 점유 없이 머지 · issue-runner
+  가 만든 워크트리/브랜치 조작 · issue-runner 의 "절대 머지 안 함" 불변 훼손.
+
+## ① Reconcile
+
+`$SCRIPTS/closeout-reconcile.sh` 를 실행하고 이벤트별로 처리:
+
+- `merged_cleanup` — 머지·라벨 정리가 끝났다. 단 아래 마커표에서 4·6단계 미완
+  마커가 발견되면 그 단계부터 이어간다 (멱등 재개).
+- `resume` — PR 이 OPEN 이고 `harvesting` 유지 중. 마커표로 끝난 단계를 건너뛰고
+  중단 지점부터 파이프라인을 이어간다.
+- `stale` — 보고만 한다.
+
+멱등 마커표 (끝난 단계 재판정용 — 재개 시 중복 작업 방지):
+
+| 단계 | 마커 | 재개 판정 |
+|---|---|---|
+| 1 검증 | PR 코멘트 `마감 검증:` | 있으면 1단계 건너뜀 |
+| 2 머지 | PR `MERGED` | MERGED 면 머지 끝 |
+| 3 reconcile | 계획문서 diff(머지 커밋) + epic 코멘트 | 머지에 포함이면 끝 |
+| 4 배포 | `배포 대기:` 코멘트 / `deployed:<sha>` | 있으면 재요청 안 함 |
+| 5 후처리 | 발행 이슈 번호 코멘트 | 있으면 재발행 안 함 |
+| 6 파생 | 생성 이슈 번호 코멘트 | 있으면 재발행 안 함 |
+
+## ② Pick — 틱당 1 PR (MAX_CLOSEOUT=1)
+
+`$SCRIPTS/closeout-eligible.sh` 출력의 **첫 후보 1개만** 집는다. 틱당 1개라
+모듈 겹침 판단은 불필요하다 (직렬 마감). 집으면 즉시
+`gh issue edit <pr> --repo <repo> --add-label harvesting` 으로 점유를 선언하라 —
+이 라벨이 있어야 issue-runner ② Maintain 이 이 PR 을 건드리지 않는다. 후보가 0이면
+③ 파이프라인을 건너뛰고 ④ Report 에 clean no-op 으로 보고한다.
+
+## ③ 파이프라인 — 1~6단계
+
+집은 PR 에 대해 아래 6단계를 순서대로 수행한다. 각 단계 끝에 마커 명령을 박아
+(① Reconcile 마커표) 다음 틱이 멱등 재개할 수 있게 한다.
+
+**1단계 — 계획 부합 검증.** `references/verifier-prompt.md` 를 placeholder
+(`<PR>`·`<REPO>`·`<BASE>`=default branch·`<PLAN_REF>`=이슈 `## Plan` 또는 참조한
+`Plans/*.md`, 없으면 빈 문자열)를 채워 `VERIFIER` 를 동기 호출한다 (## 상수의
+VERIFIER 계약·폴백을 따른다).
+- BLOCKER → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>"`
+  + `gh issue edit <issue> --repo <repo> --add-label needs-human`
+  + `gh issue edit <pr> --repo <repo> --remove-label harvesting` →
+  **blocked 종료** (머지하지 않는다).
+- CLEAN/WARN → `gh pr comment <pr> --repo <repo> --body "마감 검증: ✅ <CLEAN 또는 WARN n>"`
+  (이 코멘트가 1단계 완료 마커다).
+
+**2단계 — 머지 게이트.** 머지 명령은 **반드시 `--repo <repo>` 를 넘긴다** —
+closeout 은 cwd 밖 레포의 PR 을 머지하므로 ci-gate 훅이 `--repo` 로 그 레포를
+조회해야 fail-closed 를 안 맞는다 (훅 `--repo` 인식은 #47; 실증 2026-06-24: BoDAT
+cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차단됨). 게이트 통과
+조건: `$SCRIPTS/closeout-ci-pass.sh <repo> <pr>` (exit 0) + 워커가 남긴
+`검증자 리뷰:` 코멘트가 BLOCKER 0 + `gh pr view <pr> --repo <repo> --json mergeable`
+≠ CONFLICTING 재확인. 모두 통과면 **여기서 3단계(문서 reconcile)를 먼저 수행**해 PR 브랜치에 문서 커밋을
+만들고 push 한 뒤 — squash 머지가 그 문서 반영을 포함하도록 — `gh pr merge <pr>
+--repo <repo> --squash` (ci-gate 훅이 한 번 더 판정한다). 즉 단계 번호는 1→2→3
+순서지만, 2단계의 머지 직전에 3단계 커밋을 끼워 넣는다 (3단계 헤더의 "머지 전"이
+이 끼워넣기 지점이다). CONFLICTING 이면 `harvesting` 을 제거하고 skip 한다
+(issue-runner Maintain 이 rebase).
+
+**3단계 — 문서 reconcile (머지 전, PR 브랜치 커밋).** 1단계가 구현을 확인한
+계획문서 절의 `- [ ]` 를 `- [x]` 로 바꾼다. PR 브랜치 worktree 에서 커밋·push 하여
+squash 머지에 포함시킨다 (main 직접 push 금지). epic 이 있으면 진행 롤업 코멘트를
+남긴다.
+- **단일 이슈 degrade**: `Plans/*.md`·`## Plan` 이 없으면 문서 편집을 skip 한다.
+  epic 이 없으면 롤업을 skip 한다. 이슈 자체 체크박스만 reconcile 한다. 둘 다
+  없으면 이 단계는 no-op.
+
+**4단계 — 배포 (사람 게이트, dry-run).** **실 배포를 하지 않는다.**
+`references/deploy-check-issue.md` 를 채워(`<DEPLOY_CMD>`=레포 배포 엔트리포인트,
+모르면 "레포 배포 절차") `gh issue create --repo <repo> --label needs-human` 으로
+배포 요청 이슈를 발행하고, `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"`
+로 마커를 남긴 뒤 → **approval-required 로 종료**한다.
+
+**5단계 — 배포 후 처리.** 이 Phase 에는 자동 smoke 가 없다 — 사람이 배포 후
+보고하는 경로만 있다. 문제가 보고되면 직접 고치지 않고 이슈를 발행한다:
+자동수정 가능하면 `references/spinoff-issue.md` 로 agent-ready 이슈, 라이브 검증이
+필요하면 `needs:human` 이슈. 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복되면
+`needs:human` 으로 승격한다 (**exhausted 종료**).
+
+**6단계 — 파생 이슈.** 워커 PR 본문의 `follow-up:` 항목 + 1단계 diff 리뷰가 짚은
+인접 작업을 `references/spinoff-issue.md` 로 채워 agent-ready 이슈로 발행한다.
+epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생성한 번호를 원본 PR
+코멘트에 기록한다 (중복 발행 방지 마커).
+
+## ④ Report
+
+한 줄 요약: `마감 N · 검증보류 N · 배포대기 N · 파생 N · stale N`.
+
+종료 상태 6종을 명시한다:
+- **success** — 1~6단계를 다 돌아 PR 을 머지하고 후속까지 발행함.
+- **clean no-op** — ② Pick 후보가 0이라 마감할 PR 이 없음.
+- **blocked** — 1단계 검증이 BLOCKER 라 보류(머지 안 함).
+- **approval-required** — 4단계에서 배포 이슈를 발행하고 사람 게이트 대기.
+- **exhausted** — 5단계 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복돼 needs:human 승격.
+- **stagnated** — `QUIET_TICKS` 연속 조용함.
+
+`QUIET_TICKS` 연속으로 조용하면 다음 틱부터는 reconcile 만 하고 끝낸다.
+
+## 참고 자료
+
+비운영 참고 — 틱 수행에는 영향 없다.
+
+- 역할 분담: issue-runner = 벌리는 공장 (절대 머지하지 않고 불변을 보존), closeout
+  = 마감 도크 (머지를 독점). 두 루프는 `harvesting` 라벨 점유로 충돌을 막는다 —
+  closeout 가 집은 PR 은 issue-runner ② Maintain 이 건드리지 않는다.
+- 사람 게이트: production 배포만 사람이 승인한다 (4단계 dry-run 이슈 발행 → 승인).
+  나머지 머지·문서반영·후속발행은 무인.
+- 운용: closeout 은 issue-runner 와 별도의 `/loop` 세션으로 돌린다
+  (예 `/loop 20m /closeout`) — 서로의 점유를 라벨로만 조율한다.
+- 의존: 결정적 헬퍼(`closeout-reconcile.sh`·`closeout-eligible.sh`·
+  `closeout-ci-pass.sh`)는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)에
+  있고, references 3종(`verifier-prompt.md`·`deploy-check-issue.md`·
+  `spinoff-issue.md`)은 `skills/closeout/references/` 에 있다.
