@@ -245,6 +245,47 @@ rc=0; run_gate || rc=$?
 [ "$rc" = 2 ] || { echo "  ✗ --repo fail-closed(캐시 없음): exit $rc (기대 2)"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
+echo "[gate] ci-gate rollup 폴백 스모크 (SUCCESS-only allowlist, #60)"
+# 로컬 bin/ci 없는 레포 → 게이트가 GitHub statusCheckRollup 으로 판정.
+# closeout-ci-pass 스모크와 대칭: 전부 SUCCESS→통과(exit 0), 그 외 종결값은
+# allowlist 가 전부 차단(exit 2). denylist 면 STARTUP_FAILURE·미열거 conclusion 이
+# 새어 비통과 PR 이 머지로 흘러간다.
+gate="$PWD/hooks/ci-gate-before-pr-merge.sh"
+tmp=$(mktemp -d); mkdir -p "$tmp/stub" "$tmp/proj/r"  # r/bin/ci 일부러 안 만든다(폴백 강제)
+run_gate_rollup() {  # $1=rollup JSON 배열 → gh stub 이 statusCheckRollup 으로 반환
+  cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"pr view"*statusCheckRollup*) echo '{"statusCheckRollup":$1}' ;;
+  *"pr view"*number*) echo '{"number":5}' ;;
+  *) echo '' ;;
+esac
+STUB
+  chmod +x "$tmp/stub/gh"
+  printf '{"tool_input":{"command":"gh pr merge 5 --repo o/r --squash"}}' \
+    | ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" PATH="$tmp/stub:$PATH" \
+      bash "$gate" >/dev/null 2>&1
+}
+# 전부 SUCCESS (check-run conclusion + 레거시 commit-status state 혼합) → 통과 보존(exit 0)
+rc=0; run_gate_rollup '[{"status":"COMPLETED","conclusion":"SUCCESS"},{"state":"SUCCESS"}]' || rc=$?
+[ "$rc" = 0 ] || { echo "  ✗ ci-gate rollup: 전부 SUCCESS → exit $rc (기대 0)"; rm -rf "$tmp"; exit 1; }
+# denylist 회귀: FAILURE/CANCELLED/TIMED_OUT 여전히 차단(exit 2)
+for c in FAILURE CANCELLED TIMED_OUT; do
+  rc=0; run_gate_rollup "[{\"status\":\"COMPLETED\",\"conclusion\":\"$c\"}]" || rc=$?
+  [ "$rc" = 2 ] || { echo "  ✗ ci-gate rollup: $c → exit $rc (기대 2)"; rm -rf "$tmp"; exit 1; }
+done
+# 미완료(pending) 포함 → 차단 보존(exit 2)
+rc=0; run_gate_rollup '[{"status":"IN_PROGRESS"}]' || rc=$?
+[ "$rc" = 2 ] || { echo "  ✗ ci-gate rollup: 미완료 → exit $rc (기대 2)"; rm -rf "$tmp"; exit 1; }
+# 비-SUCCESS 종결 (열거 안 된 conclusion — STARTUP_FAILURE) 포함 → 차단(exit 2)
+# (allowlist 핵심: denylist 면 여기를 통과시켜 CI 미통과를 머지로 흘린다.)
+rc=0; run_gate_rollup '[{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"STARTUP_FAILURE"}]' || rc=$?
+[ "$rc" = 2 ] || { echo "  ✗ ci-gate rollup: STARTUP_FAILURE → exit $rc (기대 2)"; rm -rf "$tmp"; exit 1; }
+# 알 수 없는 종결값(미래/오타 conclusion) 포함 → 차단(exit 2)
+rc=0; run_gate_rollup '[{"status":"COMPLETED","conclusion":"UNKNOWN_STATE"}]' || rc=$?
+[ "$rc" = 2 ] || { echo "  ✗ ci-gate rollup: 알 수 없는 conclusion → exit $rc (기대 2)"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
 echo "[closeout] README 두 루프 분업 문서화 검사 (#45)"
 # closeout 루프 문서화 — 부하 핵심 문자열 + issue-runner 머지 불변 보존.
 for s in '/closeout' 'harvesting' 'MAX_CLOSEOUT' '머지는 항상 사람이 한다'; do
