@@ -152,4 +152,37 @@ for f in skills/closeout/references/verifier-prompt.md \
   done
 done
 
+echo "[closeout] ci-gate --repo 분기 스모크 (positive + fail-closed)"
+# flag_repo 가 있으면 게이트가 cwd 가 아니라 그 레포 기준으로 SHA·캐시를 잡아야 한다 (#47).
+gate="$PWD/hooks/ci-gate-before-pr-merge.sh"
+tmp=$(mktemp -d)
+mkdir -p "$tmp/stub" "$tmp/proj/r/bin" "$tmp/home"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/proj/r/bin/ci"   # 가짜 레포 체크아웃(로컬 CI 옵트인)
+chmod +x "$tmp/proj/r/bin/ci"
+cat > "$tmp/stub/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *"pr view"*headRefOid*) echo '{"headRefOid":"deadbeef00"}' ;;
+  *) echo '' ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+# 게이트는 repo-dir.sh 가 pwd -P 로 정규화한 경로(/private/var…)로 slug 를 잡는다 →
+# 캐시 경로도 같은 정규화 경로로 맞춰야 매칭된다 (macOS /tmp→/private 심링크 주의).
+realroot=$(cd "$tmp/proj/r" && pwd -P)
+slug=$(printf '%s' "$realroot" | sed 's#[/ ]#_#g; s#^_##')
+mkdir -p "$tmp/home/.claude/.local-ci/$slug"
+run_gate() {
+  printf '{"tool_input":{"command":"gh pr merge 5 --repo o/r --squash"}}' \
+    | HOME="$tmp/home" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" PATH="$tmp/stub:$PATH" \
+      bash "$gate" >/dev/null 2>&1
+}
+echo pass > "$tmp/home/.claude/.local-ci/$slug/deadbeef00.result"
+rc=0; run_gate || rc=$?
+[ "$rc" = 0 ] || { echo "  ✗ --repo positive(캐시 pass): exit $rc (기대 0 — 게이트가 o/r 를 안 봄)"; rm -rf "$tmp"; exit 1; }
+rm -f "$tmp/home/.claude/.local-ci/$slug/deadbeef00.result"
+rc=0; run_gate || rc=$?
+[ "$rc" = 2 ] || { echo "  ✗ --repo fail-closed(캐시 없음): exit $rc (기대 2)"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
 echo "CI pass"
