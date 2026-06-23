@@ -245,4 +245,10 @@ rc=0; run_gate || rc=$?
 [ "$rc" = 2 ] || { echo "  ✗ --repo fail-closed(캐시 없음): exit $rc (기대 2)"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] README 두 루프 분업 문서화 검사 (#45)"
+# closeout 루프 문서화 — 부하 핵심 문자열 + issue-runner 머지 불변 보존.
+for s in '/closeout' 'harvesting' 'MAX_CLOSEOUT' '머지는 항상 사람이 한다'; do
+  grep -qF "$s" README.md || { echo "  ✗ README.md 에 '$s' 없음"; exit 1; }
+done
+
 echo "CI pass"
