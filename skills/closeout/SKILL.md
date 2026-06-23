@@ -64,6 +64,13 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 이 라벨이 있어야 issue-runner ② Maintain 이 이 PR 을 건드리지 않는다. 후보가 0이면
 ③ 파이프라인을 건너뛰고 ④ Report 에 clean no-op 으로 보고한다.
 
+**라벨 부재 자동 보강.** 옵트인 레포여도 `setup-labels.sh` 재실행 전에는
+`harvesting` 라벨이 없을 수 있다(기존 레포 공통). `--add-label harvesting` 이
+`'harvesting' not found` 류로 실패하면 **`$SCRIPTS/setup-labels.sh <repo>` 를 1회
+호출**(멱등 — 이미 있는 라벨은 갱신만)한 뒤 `--add-label harvesting` 을 1회만
+재시도한다. 재시도도 실패하면 **더 반복하지 말고**(무한루프 금지) 이 PR 을 skip 하고
+④ Report 에 `BLOCKED: harvesting 라벨 보강 실패 — <repo>` 로 보고한다.
+
 ## ③ 파이프라인 — 1~6단계
 
 집은 PR 에 대해 아래 6단계를 순서대로 수행한다. 각 단계 끝에 마커 명령을 박아
