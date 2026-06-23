@@ -137,6 +137,8 @@ prompt, and increment N by exactly 1 per dispatch.
    forbidden).
 4. CI green + no review comments → leave it alone. It is waiting for human review.
 
+A `harvesting` event = closeout is in progress → **leave it alone** (no repair, rebase, or review-comment resolution). closeout merges/cleans it up.
+
 ## ③ Dispatch — only as many as there are free slots
 
 1. Compute in-flight: the count of ①'s `working` + whatever this tick sent

@@ -4,6 +4,7 @@
 #   merged   — PR 머지됨 → worktree 제거 + claim 해제 (이슈는 Closes 로 자동 닫힘)
 #   rejected — PR 이 머지 없이 닫힘 → 정리 + agent-ready 도 제거 (자동 재시도 금지)
 #   pr_open  — PR 열려 있음 (failing 카운트 포함 → Maintain 단계 입력)
+#   harvesting — closeout 가 점유한 OPEN PR (harvesting 라벨) → Maintain 제외, 건드리지 않음
 #   working  — PR 없고 worktree 있음 → 워커 진행 중으로 간주
 #   stale    — PR 없고 worktree 도 없음 → 죽은 claim 해제
 #   warn     — dirty/unpushed worktree → 제거 보류, 사람 확인 필요
@@ -53,7 +54,7 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
   }
 
   pr=$(gh pr list --repo "$repo" --head "$branch" --state all \
-    --json number,state,statusCheckRollup --limit 1 2>/dev/null | jq -c '.[0] // empty')
+    --json number,state,statusCheckRollup,labels --limit 1 2>/dev/null | jq -c '.[0] // empty')
 
   if [ -z "$pr" ]; then
     if [ -d "$wt" ]; then
@@ -81,6 +82,12 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
         printf '{"event":"rejected","repo":"%s","number":%s,"pr":%s}\n' "$repo" "$num" "$prnum"
       fi ;;
     OPEN)
+      # closeout 가 점유한 PR(harvesting 라벨)은 ② Maintain 입력에서 제외 (#44).
+      # 머지/닫힘 PR 은 위 MERGED/CLOSED 분기에서 정상 정리되므로 OPEN 만 가른다.
+      if printf '%s' "$pr" | jq -e '[.labels[].name]|index("harvesting")' >/dev/null; then
+        printf '{"event":"harvesting","repo":"%s","number":%s,"pr":%s}\n' "$repo" "$num" "$prnum"
+        continue
+      fi
       failing=$(printf '%s' "$pr" | jq '[.statusCheckRollup[]?
         | select((.conclusion // .state // "")
           | test("FAILURE|ERROR|CANCELLED|TIMED_OUT"))] | length')
