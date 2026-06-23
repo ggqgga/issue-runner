@@ -130,12 +130,43 @@ ci-gate hook judges once more). That is: the step numbering is 1→2→3, but th
 commit is slotted in just before the step-2 merge ("before merge" in the step-3 header
 marks this slot-in point). If CONFLICTING, remove `harvesting` and skip (issue-runner
 Maintain rebases).
+- **Recheck the new SHA's cache before merge (when a step-3 doc commit was pushed).**
+  If step 3 pushed a doc commit, the head SHA changed, so before merging re-poll
+  `$SCRIPTS/closeout-ci-pass.sh <repo> <pr>` to confirm the cache that step 3 topped
+  up (the foreign-cwd push remedy) is filled for that **new** SHA (it re-queries the
+  head SHA, so it judges the new SHA). The cache is only filled once the background
+  `bin/ci` finishes, so it may not pass immediately — poll a **finite** number of
+  times (e.g. ~30s intervals, up to ~10 min); if it does not pass within that bound,
+  **do not merge** — remove `harvesting` and report `BLOCKED: new SHA local-CI cache
+  unmet — <repo>#<pr>` in ④ Report, then exit (stays fail-closed — it cuts off ahead
+  of the merge that ci-gate would block on a new-SHA cache miss, with no infinite wait
+  or bypass). If there was no doc commit (single-issue degrade), the head SHA did not
+  change, so this re-poll is unnecessary.
 
 **Step 3 — doc reconcile (before merge, PR-branch commit).** Change the `- [ ]` to
 `- [x]` in the plan-doc section that step 1 confirmed implemented. Commit and push
-from the PR-branch worktree so it is included in the squash merge (no direct push to
-main). If there is an epic, leave a progress rollup comment.
+from the target repo's **main checkout** (`$SCRIPTS/repo-dir.sh <repo>` output path)
+by checking out the PR branch there, so it is included in the squash merge (no direct
+push to main). If there is an epic, leave a progress rollup comment.
+- **Foreign-cwd push cache top-up (required).** Pushing the doc commit changes the PR
+  head SHA, but the push hook (`~/.claude/hooks/local-ci.sh`) fires in the closeout
+  session cwd (usually a different repo) and resolves ROOT to that cwd — so **the
+  target repo's new SHA does not land in the local-CI cache** (foreign-cwd push). Left
+  alone, the very next step-2 merge's ci-gate fail-closes on a new-SHA cache miss. So
+  right after the push, **always run the hook once from the target repo's main-checkout
+  cwd** to fill the cache:
+  `cd "$($SCRIPTS/repo-dir.sh <repo>)" && printf '{"tool_input":{"command":"git push"}}' | ~/.claude/hooks/local-ci.sh`
+  (this cwd's `git rev-parse --show-toplevel` slug must match the READ slug
+  =`repo-dir.sh <repo>` used by the step-2 merge ci-gate and `closeout-ci-pass.sh` for
+  the cache to hit — that is why it must run in the main checkout. Running it in a
+  separate worktree yields a different slug and the cache leaks to a dead key). The
+  hook runs `bin/ci` in the background keyed by SHA.
+- **Idempotent**: if the SHA is already cached, the hook's dedup guard
+  (`local-ci.sh`'s `[ -f "$RESULT" ] && exit 0`) prevents a re-run — running it
+  multiple times for the same SHA is harmless (same contract).
 - **single-issue degrade**: if there is no `Plans/*.md`·`## Plan`, skip the doc edit.
+  Since there is no new commit (head SHA unchanged), the cache top-up above is also
+  unnecessary (skip) — the pre-merge cache the worker filled on push is still valid.
   If there is no epic, skip the rollup. Reconcile only the issue's own checkboxes. If
   neither exists, this step is a no-op.
 
