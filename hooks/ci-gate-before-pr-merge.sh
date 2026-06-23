@@ -144,22 +144,27 @@ if [ -n "$pending" ]; then
   exit 2
 fi
 
-# 실패 항목.
+# 비통과 항목 — SUCCESS-only allowlist (scripts/closeout-ci-pass.sh 와 SSOT 정렬, #60).
+# 통과 모양(check-run: COMPLETED+SUCCESS / 레거시 commit-status: state==SUCCESS)을
+# 정의하고 그 외를 전부 negate 한다. denylist 가 아니라 good-then-negate 라
+# 미열거 종결값(STARTUP_FAILURE·NEUTRAL·SKIPPED·미래/오타 conclusion)도 자동으로
+# 차단된다 — 비통과 PR 이 머지로 새는 경로를 닫는다. (위 pending 가 미완료를 먼저
+# 거르므로 여기 negate 가 미완료와 충돌하지 않는다.)
 failed=$(printf '%s' "$checks" | jq -r '
   .[]
   | select(
-      ((.conclusion // "") == "FAILURE")
-      or ((.conclusion // "") == "CANCELLED")
-      or ((.conclusion // "") == "TIMED_OUT")
-      or ((.conclusion // "") == "ACTION_REQUIRED")
-      or ((.state // "") == "FAILURE")
-      or ((.state // "") == "ERROR")
+      (
+        ((.status // "") == "COMPLETED") and ((.conclusion // "") == "SUCCESS")
+      ) or (
+        ((.status // "") == "") and ((.state // "") == "SUCCESS")
+      )
+      | not
     )
   | "  - \(.name // .context // .workflowName // "?") = \(.conclusion // .state // "?")"
 ' | head -20)
 
 if [ -n "$failed" ]; then
-  printf 'PR #%s 의 CI 가 실패한 체크를 포함합니다:\n%s\n실패 원인을 해결한 뒤 머지하세요.\n' "$pr_num" "$failed" >&2
+  printf 'PR #%s 의 CI 가 통과하지 않은 체크를 포함합니다:\n%s\n원인을 해결한 뒤 머지하세요.\n' "$pr_num" "$failed" >&2
   exit 2
 fi
 
