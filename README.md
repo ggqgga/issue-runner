@@ -2,7 +2,13 @@
 
 루프 엔지니어링 디스패처 — GitHub 계정 전체에서 `agent-ready` 라벨이 붙은 이슈를
 자동으로 집어, git worktree 격리 환경에서 구현하고 PR을 여는 자율 루프.
-**머지는 항상 사람이 한다 — 루프는 절대 머지하지 않는다.**
+**머지는 항상 사람이 한다 — issue-runner 는 절대 머지하지 않는다.**[^merge]
+
+[^merge]: 이 불변은 issue-runner **자체**에 대한 것이며 그대로다 — 디스패처는
+    어떤 경우에도 머지하지 않는다. 머지 자동화가 필요하면 **별도의** 옵트인 루프
+    [`/closeout`](#두-루프-분업--공장과-도크)이 초록불 PR 만 골라 수행한다. 즉
+    "issue-runner 는 머지 안 함"과 "머지가 자동화될 수 있음"은 주체가 다르므로
+    모순이 아니다 (전자=디스패처, 후자=별도 closeout 루프).
 
 > English: skill docs are available in English — [SKILL.en.md](SKILL.en.md) · [skills/loop-issues/SKILL.en.md](skills/loop-issues/SKILL.en.md) (한국어판이 원본).
 
@@ -23,8 +29,9 @@
 사람이 확인한다 ([트러블슈팅](#트러블슈팅) 참조).
 
 **왜 켜두고 자리를 비워도 되나 — 가드레일.** 루프는 폭주를 가정하고 설계됐고,
-각 장치는 "최악의 경우 사람이 잃는 것"을 상한으로 묶는다: **머지는 절대 하지
-않는다**(항상 사람) · 동시 작업 2개 제한(`MAX_AGENTS`) · 같은 PR 보수 3회 초과 시
+각 장치는 "최악의 경우 사람이 잃는 것"을 상한으로 묶는다: **issue-runner 는 머지를
+절대 하지 않는다**(항상 사람 — 머지 자동화는 [별도 `/closeout` 루프](#두-루프-분업--공장과-도크)의 옵트인 영역)
+· 동시 작업 2개 제한(`MAX_AGENTS`) · 같은 PR 보수 3회 초과 시
 `needs-human`으로 손 떼기(서킷 브레이커) · PR 없이 1시간 끌면 워커 회수(타임박스) ·
 열린 PR 10개 도달 시 신규 투입 중단(배압). 전체 표와 상수 조정은
 [가드레일](#가드레일) 참조.
@@ -39,6 +46,34 @@
 | "루프 시작해줘" | `/loop 15m /issue-runner` 상시 구동 (step 2) |
 
 단계별 상세 절차는 [빠른 시작](#빠른-시작--첫-이슈-한-바퀴), 운영 규칙은 [사용법](#사용법) 참조.
+
+## 두 루프 분업 — 공장과 도크
+
+이 레포에는 `/loop`로 돌리는 자율 루프가 **둘** 있다. issue-runner 가 일을 벌리는
+**공장**이라면, `/closeout`(에픽 #41)은 그 산출물을 끝까지 마감하는 **도크**다.
+머지는 closeout 의 독점이다 — issue-runner 는 여전히 어떤 경우에도 머지하지 않는다.
+
+| 루프 | 역할 | 머지 |
+|---|---|---|
+| `/issue-runner` | 이슈 → 구현 → PR (벌리는 공장) | **안 함** (불변) |
+| `/closeout` | 초록불 PR → 검증·머지·문서반영·배포준비·후속발행 (마감 도크) | **독점 수행** |
+
+두 루프가 같은 레포에서 동시에 돌아도 충돌하지 않는 이유와 자율 범위:
+
+- **`harvesting` 라벨 = closeout 점유.** closeout 이 마감할 PR 을 집으면 그 PR 에
+  `harvesting` 라벨을 단다. issue-runner ② Maintain 은 `harvesting` 이 붙은 PR 을
+  건드리지 않는다 — 이 라벨이 두 루프의 작업 경계다.
+- **자율 범위 = 머지·문서·파생은 자동, production 실 배포는 사람 게이트.**
+  closeout 은 머지·계획문서 reconcile·후속 이슈 발행까지 무인으로 하지만,
+  production 실 배포는 자동으로 하지 않는다 — 배포 단계는 사람이 게이트한다.
+- **`MAX_CLOSEOUT = 1`** — 한 틱에 1 PR 만 끝까지 마감하는 직렬화 스로틀이다.
+  마감 페이스는 `/loop` 주기로 조절한다 (예: `/loop 20m /closeout`).
+- **Phase A / B 범위.** 현재는 **Phase A** — 안전 코어(검증·머지·문서·파생)와
+  배포 dry-run 까지만 한다. 실 자동 배포(**Phase B**)는 추후 별도로 연다.
+
+**쓰는 법** — issue-runner 와 **별도 세션**에서 `/loop 20m /closeout` 를 돌린다
+(설치는 [§설치](#설치) — closeout 도 전용 심링크가 필요하다). issue-runner 세션이
+PR 을 벌리는 동안 closeout 세션이 초록불이 된 PR 을 골라 마감한다.
 
 ## 개념
 
@@ -104,6 +139,7 @@ git clone https://github.com/ggqgga/issue-runner ~/Projects/refs/issue-runner
 mkdir -p ~/.claude/skills
 ln -s ~/Projects/refs/issue-runner            ~/.claude/skills/issue-runner
 ln -s ~/Projects/refs/issue-runner/skills/loop-issues ~/.claude/skills/loop-issues
+ln -s ~/Projects/refs/issue-runner/skills/closeout    ~/.claude/skills/closeout  # 마감 도크 루프(/closeout)
 
 # 3. 루프에 참여시킬 각 레포에 라벨 세트 생성 (= 옵트인 신호)
 ~/.claude/skills/issue-runner/scripts/setup-labels.sh <owner/repo>
