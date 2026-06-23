@@ -16,6 +16,12 @@ gh label create "P0" --repo "$repo" --color B60205 --force --description "최우
 gh label create "P1" --repo "$repo" --color FBCA04 --force --description "보통"
 gh label create "P2" --repo "$repo" --color C2E0C6 --force --description "낮음"
 
+# closeout 마감 루프 (#41) — harvesting(점유)·epic(부모 탐지)
+gh label create harvesting --repo "$repo" --color 5319e7 \
+  --description "closeout 마감 진행 중 (issue-runner Maintain 제외)" --force
+gh label create epic --repo "$repo" --color 0e8a16 \
+  --description "부모 에픽 이슈 (sub-issue 롤업 대상)" --force
+
 # 머지된 head 브랜치 자동 삭제 — reconcile 이 로컬만 정리하므로 원격은 GitHub 가 맡는다
 gh repo edit "$repo" --delete-branch-on-merge
 

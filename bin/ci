@@ -100,4 +100,10 @@ done
 rm -rf "$tmp"
 [ "$fail" = 0 ] || exit 1
 
+echo "[closeout] setup-labels.sh 에 harvesting·epic 라벨 정의 존재 검사"
+for lbl in harvesting epic; do
+  grep -qF "gh label create $lbl " scripts/setup-labels.sh || {
+    echo "  ✗ setup-labels.sh 에 $lbl 라벨 정의 누락"; exit 1; }
+done
+
 echo "CI pass"
