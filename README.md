@@ -402,7 +402,8 @@ bin/ci                     # 이 레포 자체의 로컬 CI (셸 문법 검사 +
 
 - [ ] `gh auth status` — 인증 OK
 - [ ] `command -v jq` — jq 설치됨
-- [ ] clone + symlink 2개 생성 (`ls -l ~/.claude/skills/issue-runner` 로 확인)
+- [ ] clone + symlink 3개 생성 — issue-runner·loop-issues·closeout
+      (`ls -l ~/.claude/skills/{issue-runner,loop-issues,closeout}` 로 확인)
 - [ ] 대상 레포에 `scripts/setup-labels.sh <owner/repo>` 실행 — "labels ready" 출력
 - [ ] 레포가 기본 위치(`~/Projects/<레포명>`) 밖이면 `repos.conf` 매핑 추가 후
       `scripts/repo-dir.sh <owner/repo>` 가 올바른 경로를 출력하는지 확인
