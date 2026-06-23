@@ -113,6 +113,37 @@ rc=0; PATH="$tmp/stub:$PATH" bash scripts/closeout-ci-pass.sh owner/r 123 >/dev/
 [ "$rc" = 1 ] || { echo "  ✗ ci-pass: gh 실패 시 exit $rc (기대 1)"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] ci-pass rollup 폴백 스모크 (로컬 bin/ci 없는 레포)"
+# 로컬 CI 없는 레포(repo-dir.sh 해석 root 에 bin/ci 부재) → GitHub statusCheckRollup
+# 으로 판정 (ci-gate 의 그 외 레포 분기와 동일 계약, #51).
+ci_pass="$PWD/scripts/closeout-ci-pass.sh"
+tmp=$(mktemp -d); mkdir -p "$tmp/stub" "$tmp/proj/r"  # r/bin/ci 일부러 안 만든다
+run_ci_pass() {  # $1=rollup JSON 배열 → gh stub 이 statusCheckRollup 으로 반환
+  cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"pr view"*statusCheckRollup*) echo '{"statusCheckRollup":$1}' ;;
+  *) echo '' ;;
+esac
+STUB
+  chmod +x "$tmp/stub/gh"
+  PATH="$tmp/stub:$PATH" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" \
+    bash "$ci_pass" o/r 5 >/dev/null 2>&1
+}
+# 전부 SUCCESS (check-run conclusion + 레거시 commit-status state 혼합) → exit 0
+rc=0; run_ci_pass '[{"status":"COMPLETED","conclusion":"SUCCESS"},{"state":"SUCCESS"}]' || rc=$?
+[ "$rc" = 0 ] || { echo "  ✗ ci-pass rollup: 전부 SUCCESS → exit $rc (기대 0)"; rm -rf "$tmp"; exit 1; }
+# FAILURE 포함 → exit 1
+rc=0; run_ci_pass '[{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]' || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ ci-pass rollup: FAILURE 포함 → exit $rc (기대 1)"; rm -rf "$tmp"; exit 1; }
+# 미완료(pending) 포함 → exit 1
+rc=0; run_ci_pass '[{"status":"IN_PROGRESS"}]' || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ ci-pass rollup: 미완료 포함 → exit $rc (기대 1)"; rm -rf "$tmp"; exit 1; }
+# 빈 rollup(체크 0개) → exit 1
+rc=0; run_ci_pass '[]' || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ ci-pass rollup: 빈 rollup → exit $rc (기대 1)"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
 echo "[closeout] eligible 빈-스코프 스모크"
 tmp=$(mktemp -d); mkdir "$tmp/stub"
 cat > "$tmp/stub/gh" <<'EOF'
