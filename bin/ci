@@ -162,7 +162,9 @@ for f in skills/closeout/references/verifier-prompt.md \
          skills/closeout/references/spinoff-issue.md; do
   [ -f "$f" ] || { echo "  ✗ 누락: $f"; exit 1; }
   case "$f" in
-    *verifier-prompt.md)    phs="<PR> <REPO> <BASE> <PLAN_REF>" ;;
+    # <DIFF>·<ISSUE_BODY>: 검증자가 sandbox 네트워크 없이 판정하도록 메인 세션이
+    # diff·이슈 본문을 동봉하는 지점 — 지우면 원문 fetch 회귀(#54).
+    *verifier-prompt.md)    phs="<PR> <REPO> <BASE> <PLAN_REF> <DIFF> <ISSUE_BODY>" ;;
     *deploy-check-issue.md) phs="<PR> <SHA> <SUMMARY> <DEPLOY_CMD> <LIVE_CHECKS>" ;;
     *spinoff-issue.md)      phs="<BACKGROUND> <REASON> <PLAN> <TEST_PLAN> <RELATED>" ;;
   esac

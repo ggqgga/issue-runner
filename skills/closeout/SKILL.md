@@ -24,9 +24,13 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
   변경 금지)·발견마다 BLOCKER/WARN/NIT 분류·발견 없으면 'CLEAN'·BLOCKER 는
   하드게이트(해결 전 종료 금지). 검증자는 이 SKILL.md 를 읽지 않으므로 호출
   프롬프트 문자열에 이 계약이 그대로 담겨야 한다 — 프롬프트가 유일한 전달 경로다.
-  **폴백**: codex 플러그인 미설치 환경(Agent 툴의 subagent_type 목록에 위 타입이
-  없거나, 호출이 unknown subagent type 오류로 실패)에서는 `general-purpose` 를
-  검증자로 쓴다 — 같은 프롬프트로 호출하므로 계약도 동일하게 적용된다.
+  **폴백**: 아래 둘 중 하나면 `general-purpose` 를 검증자로 쓴다 (같은 프롬프트로
+  호출하므로 계약도 동일하게 적용된다) — (a) codex 플러그인 미설치(Agent 툴의
+  subagent_type 목록에 위 타입이 없거나, 호출이 unknown subagent type 오류로 실패),
+  (b) codex 가 stall/실패해 verdict(BLOCKER/WARN/NIT/CLEAN)를 못 냄 — 네트워크
+  차단·타임아웃·verdict 없는 응답 포함(실증 2026-06-24 #54: codex 가 sandbox 에서
+  gh 네트워크 차단으로 verdict 미산출). 폴백 호출도 verdict 를 못 내면 BLOCKER 로
+  간주해 보류 종료한다 (게이트 fail-closed).
 - 절대 금지: production 무인 배포(4단계는 사람 게이트 — 실 배포 안 함) · main 직접
   push(문서 reconcile 도 PR 브랜치 경유) · `harvesting` 점유 없이 머지 · issue-runner
   가 만든 워크트리/브랜치 조작 · issue-runner 의 "절대 머지 안 함" 불변 훼손.
@@ -65,10 +69,15 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 집은 PR 에 대해 아래 6단계를 순서대로 수행한다. 각 단계 끝에 마커 명령을 박아
 (① Reconcile 마커표) 다음 틱이 멱등 재개할 수 있게 한다.
 
-**1단계 — 계획 부합 검증.** `references/verifier-prompt.md` 를 placeholder
-(`<PR>`·`<REPO>`·`<BASE>`=default branch·`<PLAN_REF>`=이슈 `## Plan` 또는 참조한
-`Plans/*.md`, 없으면 빈 문자열)를 채워 `VERIFIER` 를 동기 호출한다 (## 상수의
-VERIFIER 계약·폴백을 따른다).
+**1단계 — 계획 부합 검증.** 검증자가 sandbox 에서 gh·git 네트워크에 닿지 못해도
+판정하도록, **메인 세션이 먼저 원문을 받아 프롬프트에 동봉**한다 — `gh pr diff <pr>
+--repo <repo>` 로 diff 를, `gh issue view <issue> --repo <repo>` 로 이슈 본문을
+받아둔다. 그런 다음 `references/verifier-prompt.md` 의 placeholder 를 채워
+`VERIFIER` 를 동기 호출한다: `<PR>`·`<REPO>`·`<BASE>`=default branch·`<PLAN_REF>`=
+이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<DIFF>`=위 pr diff
+출력·`<ISSUE_BODY>`=위 issue view 출력 (## 상수의 VERIFIER 계약·폴백을 따른다).
+검증자 프롬프트는 diff·이슈 본문을 본문으로 담고 있으므로 검증자는 추가 네트워크
+명령을 실행하지 않는다.
 - BLOCKER → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>"`
   + `gh issue edit <issue> --repo <repo> --add-label needs-human`
   + `gh issue edit <pr> --repo <repo> --remove-label harvesting` →

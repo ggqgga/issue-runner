@@ -34,10 +34,15 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
   before they are resolved). The verifier does not read this SKILL.md, so the
   call's prompt string must carry this contract verbatim — the prompt is the only
   delivery path.
-  **Fallback**: in environments without the codex plugin (the type above is
-  missing from the Agent tool's subagent_type list, or the call fails with an
-  unknown subagent type error), use `general-purpose` as the verifier — it is
-  invoked with the same prompt, so the same contract applies.
+  **Fallback**: use `general-purpose` as the verifier (invoked with the same
+  prompt, so the same contract applies) if either — (a) the codex plugin is
+  missing (the type above is absent from the Agent tool's subagent_type list, or
+  the call fails with an unknown subagent type error), or (b) codex stalls/fails
+  and produces no verdict (BLOCKER/WARN/NIT/CLEAN) — including network block,
+  timeout, or a verdict-less response (demonstrated 2026-06-24 #54: codex
+  produced no verdict because gh network was blocked in the sandbox). If the
+  fallback call also produces no verdict, treat it as a BLOCKER and exit on hold
+  (gate fail-closed).
 - Absolutely forbidden: unattended production deploys (step 4 is a human gate — no
   real deploy) · pushing directly to main (doc reconcile also goes through the PR
   branch) · merging without `harvesting` occupation · touching worktrees/branches
@@ -80,10 +85,16 @@ issue-runner ② Maintain from touching this PR. If there are 0 candidates, skip
 For the picked PR, perform the 6 steps below in order. At the end of each step, plant
 the marker command (① Reconcile marker table) so the next tick can resume idempotently.
 
-**Step 1 — plan-conformance verification.** Fill `references/verifier-prompt.md`'s
-placeholders (`<PR>`·`<REPO>`·`<BASE>`=default branch·`<PLAN_REF>`=the issue's
-`## Plan` or the referenced `Plans/*.md`, empty string if none) and synchronously
-invoke `VERIFIER` (following the VERIFIER contract and fallback in ## Constants).
+**Step 1 — plan-conformance verification.** So the verifier can judge even when it
+cannot reach gh·git network in the sandbox, **the main session first fetches the
+sources and embeds them in the prompt** — get the diff via `gh pr diff <pr> --repo
+<repo>` and the issue body via `gh issue view <issue> --repo <repo>`. Then fill
+`references/verifier-prompt.md`'s placeholders and synchronously invoke `VERIFIER`:
+`<PR>`·`<REPO>`·`<BASE>`=default branch·`<PLAN_REF>`=the issue's `## Plan` or the
+referenced `Plans/*.md` (empty string if none)·`<DIFF>`=the pr diff output above·
+`<ISSUE_BODY>`=the issue view output above (following the VERIFIER contract and
+fallback in ## Constants). The verifier prompt carries the diff and issue body
+inline, so the verifier runs no additional network commands.
 - BLOCKER → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>"`
   + `gh issue edit <issue> --repo <repo> --add-label needs-human`
   + `gh issue edit <pr> --repo <repo> --remove-label harvesting` →
