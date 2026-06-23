@@ -87,14 +87,21 @@ the marker command (① Reconcile marker table) so the next tick can resume idem
 
 **Step 1 — plan-conformance verification.** So the verifier can judge even when it
 cannot reach gh·git network in the sandbox, **the main session first fetches the
-sources and embeds them in the prompt** — get the diff via `gh pr diff <pr> --repo
-<repo>` and the issue body via `gh issue view <issue> --repo <repo>`. Then fill
-`references/verifier-prompt.md`'s placeholders and synchronously invoke `VERIFIER`:
-`<PR>`·`<REPO>`·`<BASE>`=default branch·`<PLAN_REF>`=the issue's `## Plan` or the
-referenced `Plans/*.md` (empty string if none)·`<DIFF>`=the pr diff output above·
-`<ISSUE_BODY>`=the issue view output above (following the VERIFIER contract and
-fallback in ## Constants). The verifier prompt carries the diff and issue body
-inline, so the verifier runs no additional network commands.
+sources and embeds them in the prompt**. Get `<issue>` from the PR body's
+`Closes #N` / `Refs #N` line (parse via `gh pr view <pr> --repo <repo> --json
+body`). Then get the diff via `gh pr diff <pr> --repo <repo>` and the issue body
+via `gh issue view <issue> --repo <repo>` (if there is no linked issue,
+`<ISSUE_BODY>` is the empty string). Then fill `references/verifier-prompt.md`'s
+placeholders and synchronously invoke `VERIFIER`: `<PR>`·`<REPO>`·`<BASE>`=default
+branch·`<PLAN_REF>`=the issue's `## Plan` or the referenced `Plans/*.md` (empty
+string if none)·`<DIFF>`=the pr diff output above·`<ISSUE_BODY>`=the issue view
+output above (following the VERIFIER contract and fallback in ## Constants). The
+verifier prompt carries the diff and issue body inline, so the verifier runs no
+additional network commands.
+- Embed-failure fail-closed: if `gh pr diff` fails or the diff is empty, or the
+  diff is too large to fit the verifier's context (when you judge so), do not treat
+  verification as passed — exit on hold via the BLOCKER path (no merge), so the
+  network-independent path does not silently break and leak through to a merge.
 - BLOCKER → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>"`
   + `gh issue edit <issue> --repo <repo> --add-label needs-human`
   + `gh issue edit <pr> --repo <repo> --remove-label harvesting` →

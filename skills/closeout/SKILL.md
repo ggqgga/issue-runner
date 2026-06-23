@@ -70,14 +70,20 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 (① Reconcile 마커표) 다음 틱이 멱등 재개할 수 있게 한다.
 
 **1단계 — 계획 부합 검증.** 검증자가 sandbox 에서 gh·git 네트워크에 닿지 못해도
-판정하도록, **메인 세션이 먼저 원문을 받아 프롬프트에 동봉**한다 — `gh pr diff <pr>
---repo <repo>` 로 diff 를, `gh issue view <issue> --repo <repo>` 로 이슈 본문을
-받아둔다. 그런 다음 `references/verifier-prompt.md` 의 placeholder 를 채워
-`VERIFIER` 를 동기 호출한다: `<PR>`·`<REPO>`·`<BASE>`=default branch·`<PLAN_REF>`=
-이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<DIFF>`=위 pr diff
-출력·`<ISSUE_BODY>`=위 issue view 출력 (## 상수의 VERIFIER 계약·폴백을 따른다).
-검증자 프롬프트는 diff·이슈 본문을 본문으로 담고 있으므로 검증자는 추가 네트워크
-명령을 실행하지 않는다.
+판정하도록, **메인 세션이 먼저 원문을 받아 프롬프트에 동봉**한다. `<issue>` 는 PR
+본문의 `Closes #N` / `Refs #N` 줄에서 얻는다(`gh pr view <pr> --repo <repo> --json
+body` 로 파싱). 그런 다음 `gh pr diff <pr> --repo <repo>` 로 diff 를,
+`gh issue view <issue> --repo <repo>` 로 이슈 본문을 받아둔다(연결 이슈가 없으면
+`<ISSUE_BODY>` 는 빈 문자열). 이어 `references/verifier-prompt.md` 의 placeholder 를
+채워 `VERIFIER` 를 동기 호출한다: `<PR>`·`<REPO>`·`<BASE>`=default branch·
+`<PLAN_REF>`=이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<DIFF>`=위
+pr diff 출력·`<ISSUE_BODY>`=위 issue view 출력 (## 상수의 VERIFIER 계약·폴백을
+따른다). 검증자 프롬프트는 diff·이슈 본문을 본문으로 담고 있으므로 검증자는 추가
+네트워크 명령을 실행하지 않는다.
+- 동봉 실패 fail-closed: `gh pr diff` 가 실패하거나 diff 가 비면, 또는 diff 가
+  검증자 컨텍스트에 다 안 들어갈 만큼 크면(판단이 서면) 검증을 통과로 보지 말고
+  BLOCKER 경로로 보류 종료한다(머지 안 함) — 네트워크 비의존 경로가 조용히 깨진 채
+  머지로 새지 않게 한다.
 - BLOCKER → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>"`
   + `gh issue edit <issue> --repo <repo> --add-label needs-human`
   + `gh issue edit <pr> --repo <repo> --remove-label harvesting` →
