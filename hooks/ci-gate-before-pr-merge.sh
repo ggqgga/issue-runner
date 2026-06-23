@@ -20,6 +20,14 @@ printf '%s' "$cmd" \
   | grep -qE '(^|[[:space:];|&])gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)' \
   || exit 0
 
+# --repo 플래그 (#47) — closeout 등 계정 전체 머저는 cwd 밖 레포 PR을 머지한다.
+# 있으면 조회·캐시 경로를 그 레포 기준으로 잡고, 없으면 cwd 기준(기존 동작 100% 보존).
+flag_repo=$(printf '%s' "$cmd" | sed -n -E 's/.*--repo[ =]+([^ ]+).*/\1/p' | head -1)
+gh_pr_view() {  # $1=대상, 이후=추가 인자. flag_repo 있으면 --repo 주입.
+  if [ -n "$flag_repo" ]; then gh pr view "$1" --repo "$flag_repo" "${@:2}"
+  else gh pr view "$1" "${@:2}"; fi
+}
+
 # PR 대상 추출 — `gh pr merge` 는 <번호>·<URL>·<브랜치명> 을 모두 받는다.
 # "gh pr merge" 뒤 첫 비플래그 토큰이 대상 (플래그만 있으면 현재 브랜치 PR).
 target=$(printf '%s' "$cmd" | awk '{
@@ -33,7 +41,7 @@ target=$(printf '%s' "$cmd" | awk '{
 if [ -n "$target" ]; then
   case "$target" in
     *[!0-9]*) # URL·브랜치명 — gh 로 PR 번호 해석 (gh pr view 도 세 형태 모두 받음)
-      pr_num=$(gh pr view "$target" --json number 2>/dev/null | jq -r '.number // empty') ;;
+      pr_num=$(gh_pr_view "$target" --json number 2>/dev/null | jq -r '.number // empty') ;;
     *) pr_num=$target ;;
   esac
 else
@@ -47,7 +55,19 @@ if [ -z "$pr_num" ]; then
   exit 2
 fi
 
-ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+# ROOT — flag_repo 있으면 그 레포의 로컬 체크아웃(repo-dir.sh), 없으면 cwd(기존).
+# 훅은 개별 심링크라 인접 scripts/ 가 없을 수 있다 → 설치 경로로 폴백.
+if [ -n "$flag_repo" ]; then
+  rd=""
+  for cand in "$(dirname "$0")/../scripts/repo-dir.sh" \
+              "$HOME/.claude/skills/issue-runner/scripts/repo-dir.sh"; do
+    [ -x "$cand" ] && { rd="$cand"; break; }
+  done
+  ROOT=""
+  [ -n "$rd" ] && ROOT=$("$rd" "$flag_repo" 2>/dev/null)
+else
+  ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+fi
 
 # ── 로컬 CI 레포 분기 ────────────────────────────────────────────────
 if [ -n "$ROOT" ] && [ -x "$ROOT/bin/ci" ]; then
@@ -55,7 +75,7 @@ if [ -n "$ROOT" ] && [ -x "$ROOT/bin/ci" ]; then
   dir="$HOME/.claude/.local-ci/$slug"
 
   # PR head SHA(무료 API — Actions 아님).
-  sha=$(gh pr view "$pr_num" --json headRefOid 2>/dev/null | jq -r '.headRefOid // empty')
+  sha=$(gh_pr_view "$pr_num" --json headRefOid 2>/dev/null | jq -r '.headRefOid // empty')
   if [ -z "$sha" ]; then
     printf 'PR #%s 의 head SHA 를 조회할 수 없습니다(gh pr view 실패). 네트워크/인증을 확인하세요.\n' "$pr_num" >&2
     exit 2
@@ -93,7 +113,7 @@ if [ -n "$ROOT" ] && [ -x "$ROOT/bin/ci" ]; then
 fi
 
 # ── 그 외 레포 — 기존 GitHub statusCheckRollup 동작 ───────────────────
-rollup=$(gh pr view "$pr_num" --json statusCheckRollup 2>/dev/null)
+rollup=$(gh_pr_view "$pr_num" --json statusCheckRollup 2>/dev/null)
 if [ -z "$rollup" ]; then
   printf 'CI 상태를 조회할 수 없습니다 (gh pr view 실패). 네트워크 또는 인증 상태를 확인하세요.\n' >&2
   exit 2
