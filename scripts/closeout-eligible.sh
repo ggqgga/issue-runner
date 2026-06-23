@@ -33,8 +33,12 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
     | jq -e '[.comments[].body] | map(select(startswith("머지 판정: ✅"))) | length > 0' \
     >/dev/null || continue
 
+  # 워커가 남기는 머신 코멘트 접두사는 장식이 붙는다("검증자 리뷰 (codex…):",
+  # "검증자 리뷰(보수 후):"). 콜론까지 고정 매칭하면 그 변형들이 미해결 인간
+  # 코멘트로 오인돼 초록불 PR이 통째로 후보에서 탈락한다 → stem 매칭으로 관대하게.
+  # (긍정 게이트는 위 "머지 판정: ✅" 정확 매칭을 그대로 유지하므로 위험은 좁다.)
   unresolved=$(printf '%s' "$meta" | jq '[.comments[].body
-    | select((startswith("머지 판정:") or startswith("검증자 리뷰:") or startswith("마감 검증:")) | not)]
+    | select((startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
     | length')
   [ "${unresolved:-0}" -gt 0 ] && continue
 
