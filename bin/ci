@@ -124,4 +124,15 @@ out=$(PATH="$tmp/stub:$PATH" bash scripts/closeout-eligible.sh 2>/dev/null); rc=
 [ "$rc" = 0 ] && [ -z "$out" ] || { echo "  ✗ eligible 빈: rc=$rc out='$out'"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] reconcile 빈-결과 스모크"
+tmp=$(mktemp -d); mkdir "$tmp/stub"
+cat > "$tmp/stub/gh" <<'EOF'
+#!/bin/sh
+case "$*" in *search/issues*) echo '{"items":[]}';; *) echo '';; esac
+EOF
+chmod +x "$tmp/stub/gh"
+out=$(PATH="$tmp/stub:$PATH" bash scripts/closeout-reconcile.sh 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && [ -z "$out" ] || { echo "  ✗ reconcile 빈: rc=$rc out='$out'"; exit 1; }
+rm -rf "$tmp"
+
 echo "CI pass"
