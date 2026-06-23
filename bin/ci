@@ -106,4 +106,11 @@ for lbl in harvesting epic; do
     echo "  ✗ setup-labels.sh 에 $lbl 라벨 정의 누락"; exit 1; }
 done
 
+echo "[closeout] ci-pass 헬퍼 fail-closed 스모크"
+tmp=$(mktemp -d); mkdir "$tmp/stub"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/stub/gh"; chmod +x "$tmp/stub/gh"
+rc=0; PATH="$tmp/stub:$PATH" bash scripts/closeout-ci-pass.sh owner/r 123 >/dev/null 2>&1 || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ ci-pass: gh 실패 시 exit $rc (기대 1)"; exit 1; }
+rm -rf "$tmp"
+
 echo "CI pass"
