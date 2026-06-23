@@ -135,4 +135,21 @@ out=$(PATH="$tmp/stub:$PATH" bash scripts/closeout-reconcile.sh 2>/dev/null); rc
 [ "$rc" = 0 ] && [ -z "$out" ] || { echo "  ✗ reconcile 빈: rc=$rc out='$out'"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] references placeholder 검사"
+# macOS 기본 bash 3.2 는 declare -A 미지원 — case 분기로 파일별 placeholder 매핑.
+for f in skills/closeout/references/verifier-prompt.md \
+         skills/closeout/references/deploy-check-issue.md \
+         skills/closeout/references/spinoff-issue.md; do
+  [ -f "$f" ] || { echo "  ✗ 누락: $f"; exit 1; }
+  case "$f" in
+    *verifier-prompt.md)    phs="<PR> <REPO> <BASE> <PLAN_REF>" ;;
+    *deploy-check-issue.md) phs="<PR> <SHA> <SUMMARY> <DEPLOY_CMD> <LIVE_CHECKS>" ;;
+    *spinoff-issue.md)      phs="<BACKGROUND> <REASON> <PLAN> <TEST_PLAN> <RELATED>" ;;
+  esac
+  # shellcheck disable=SC2086
+  for ph in $phs; do
+    grep -qF "$ph" "$f" || { echo "  ✗ $f 에 $ph 없음"; exit 1; }
+  done
+done
+
 echo "CI pass"
