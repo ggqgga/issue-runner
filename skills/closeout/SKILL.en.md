@@ -80,6 +80,14 @@ picked, immediately declare occupation with
 issue-runner ② Maintain from touching this PR. If there are 0 candidates, skip the
 ③ pipeline and report a clean no-op in ④ Report.
 
+**Auto-provision a missing label.** Even an opted-in repo may lack the
+`harvesting` label until `setup-labels.sh` is re-run (common for existing repos).
+If `--add-label harvesting` fails with `'harvesting' not found` or similar, **call
+`$SCRIPTS/setup-labels.sh <repo>` once** (idempotent — existing labels are just
+updated), then retry `--add-label harvesting` exactly once. If the retry also
+fails, **do not loop further** (no infinite loop): skip this PR and report
+`BLOCKED: harvesting label provisioning failed — <repo>` in ④ Report.
+
 ## ③ Pipeline — steps 1–6
 
 For the picked PR, perform the 6 steps below in order. At the end of each step, plant
