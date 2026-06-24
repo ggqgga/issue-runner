@@ -300,6 +300,133 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qF 'run-local-ci.sh' "$f" || { echo "  ✗ $f 에 run-local-ci.sh 캐시 보강 지시 없음"; exit 1; }
 done
 
+echo "[closeout] cleanup-worktree.sh 동작 스모크 (#62)"
+# 공유 worktree 정리 헬퍼 — 더티/미push/--merged/멱등 동작을 실제 git worktree 로 검증.
+clean_wt="$PWD/scripts/cleanup-worktree.sh"
+[ -x "$clean_wt" ] || { echo "  ✗ scripts/cleanup-worktree.sh 미존재/비실행"; exit 1; }
+tmp=$(mktemp -d)
+mk_repo() {  # $1=issue-num → o/r 레포 + agent/issue-<N> worktree 생성, 더티/upstream 인자 반영
+  local inum="$1"
+  rm -rf "$tmp/proj"; mkdir -p "$tmp/proj/r"
+  git -C "$tmp/proj/r" init -q
+  git -C "$tmp/proj/r" config user.email t@t; git -C "$tmp/proj/r" config user.name t
+  git -C "$tmp/proj/r" commit -q --allow-empty -m init
+  git -C "$tmp/proj/r" worktree add -q -b "agent/issue-$inum" \
+    "$tmp/proj/r/.claude/worktrees/issue-$inum" >/dev/null 2>&1
+}
+run_clean() {  # $@ = cleanup-worktree.sh 인자 (repo issue-num [--merged])
+  PATH="$PATH" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" bash "$clean_wt" "$@"
+}
+# (a) clean + --merged → 제거됨(exit 0), worktree 디렉토리 사라짐
+mk_repo 5
+rc=0; out=$(run_clean o/r 5 --merged 2>&1) || rc=$?
+[ "$rc" = 0 ] || { echo "  ✗ clean+--merged: exit $rc (기대 0) out='$out'"; rm -rf "$tmp"; exit 1; }
+[ ! -d "$tmp/proj/r/.claude/worktrees/issue-5" ] || { echo "  ✗ clean+--merged: worktree 미제거"; rm -rf "$tmp"; exit 1; }
+# (b) dirty + --merged → 보류(exit 1), warn JSON, worktree 잔존 (더티 가드는 --merged 여도 유지)
+mk_repo 6
+echo dirty > "$tmp/proj/r/.claude/worktrees/issue-6/x.txt"
+rc=0; out=$(run_clean o/r 6 --merged 2>&1) || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ dirty+--merged: exit $rc (기대 1)"; rm -rf "$tmp"; exit 1; }
+printf '%s' "$out" | jq -e 'select(.event=="warn" and .number==6)' >/dev/null 2>&1 \
+  || { echo "  ✗ dirty+--merged: warn JSON 누락 out='$out'"; rm -rf "$tmp"; exit 1; }
+[ -d "$tmp/proj/r/.claude/worktrees/issue-6" ] || { echo "  ✗ dirty+--merged: worktree 오제거"; rm -rf "$tmp"; exit 1; }
+# (c) clean + 기본(플래그 없음) + upstream 없음 → 미push 가드로 보류(exit 1), warn JSON
+mk_repo 7
+rc=0; out=$(run_clean o/r 7 2>&1) || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ clean+기본+no-upstream: exit $rc (기대 1)"; rm -rf "$tmp"; exit 1; }
+printf '%s' "$out" | jq -e 'select(.event=="warn" and .number==7)' >/dev/null 2>&1 \
+  || { echo "  ✗ clean+기본+no-upstream: warn JSON 누락 out='$out'"; rm -rf "$tmp"; exit 1; }
+[ -d "$tmp/proj/r/.claude/worktrees/issue-7" ] || { echo "  ✗ clean+기본+no-upstream: worktree 오제거"; rm -rf "$tmp"; exit 1; }
+# (d) 멱등: worktree 없음 → no-op(exit 0), 출력 없음
+rm -rf "$tmp/proj"; mkdir -p "$tmp/proj/r"
+git -C "$tmp/proj/r" init -q
+rc=0; out=$(run_clean o/r 99 --merged 2>&1) || rc=$?
+[ "$rc" = 0 ] && [ -z "$out" ] || { echo "  ✗ 멱등(없음): exit $rc out='$out' (기대 0/빈)"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
+echo "[closeout] reconcile dirty worktree warn 회귀 스모크 (#62 — 동작 불변)"
+# reconcile 가 헬퍼를 부르도록 리팩터된 뒤에도 MERGED PR + dirty worktree 는
+# 정확히 한 줄 warn(원래 메시지 형식)을 내고 merged 이벤트를 안 내야 한다.
+tmp=$(mktemp -d); mkdir -p "$tmp/proj/r" "$tmp/stub"
+git -C "$tmp/proj/r" init -q
+git -C "$tmp/proj/r" config user.email t@t; git -C "$tmp/proj/r" config user.name t
+git -C "$tmp/proj/r" commit -q --allow-empty -m init
+git -C "$tmp/proj/r" worktree add -q -b "agent/issue-8" \
+  "$tmp/proj/r/.claude/worktrees/issue-8" >/dev/null 2>&1
+echo dirty > "$tmp/proj/r/.claude/worktrees/issue-8/x.txt"
+cat > "$tmp/stub/gh" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *"api user"*) echo "tester" ;;
+  *"search issues"*) echo '[{"repository":{"nameWithOwner":"o/r"},"number":8}]' ;;
+  *"pr list"*) echo '[{"number":80,"state":"MERGED","statusCheckRollup":[],"labels":[]}]' ;;
+  *) echo '' ;;
+esac
+EOF
+chmod +x "$tmp/stub/gh"
+out=$(PATH="$tmp/stub:$PATH" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" bash scripts/reconcile.sh 2>/dev/null)
+warn_n=$(printf '%s\n' "$out" | jq -rs '[.[] | select(.event=="warn")] | length' 2>/dev/null)
+merged_n=$(printf '%s\n' "$out" | jq -rs '[.[] | select(.event=="merged")] | length' 2>/dev/null)
+[ "$warn_n" = 1 ] && [ "$merged_n" = 0 ] || { echo "  ✗ reconcile dirty: warn=$warn_n merged=$merged_n (기대 1/0) out='$out'"; rm -rf "$tmp"; exit 1; }
+printf '%s' "$out" | jq -e 'select(.event=="warn") | .msg | test("dirty")' >/dev/null 2>&1 \
+  || { echo "  ✗ reconcile dirty: warn 메시지 형식 변형 out='$out'"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
+echo "[closeout] closeout-reconcile MERGED → cleanup --merged 호출 검사 (#62)"
+# MERGED 분기가 PR head 에서 이슈번호를 파싱해 cleanup-worktree.sh ... --merged 를
+# 부르는지 검사한다. 호출을 가로채는 stub cleanup-worktree.sh 로 인자를 캡처.
+grep -qE 'cleanup-worktree\.sh.*--merged' scripts/closeout-reconcile.sh \
+  || { echo "  ✗ closeout-reconcile.sh 에 cleanup-worktree.sh --merged 호출 없음"; exit 1; }
+grep -qF 'headRefName' scripts/closeout-reconcile.sh \
+  || { echo "  ✗ closeout-reconcile.sh 가 PR head(headRefName)에서 이슈번호 파싱 안 함"; exit 1; }
+# 런타임 검증: closeout-reconcile.sh 를 임시 scripts 디렉토리로 복사하고
+# cleanup-worktree.sh 를 인자 캡처 스텁으로 갈아끼워, MERGED 분기가 (a) 매칭
+# 브랜치에서 cleanup --merged 를 부르고 (b) cleanup 실패에도 merged_cleanup 을
+# 내며 (c) 비매칭 브랜치에선 cleanup 을 안 부르는지 확인한다.
+crun() {  # $1=headRefName → out 은 stdout, capture 파일은 $tmp/capture
+  tmp=$(mktemp -d); mkdir "$tmp/sc"
+  cp scripts/closeout-reconcile.sh "$tmp/sc/closeout-reconcile.sh"
+  cat > "$tmp/sc/cleanup-worktree.sh" <<CAP
+#!/bin/sh
+printf '%s\n' "\$*" >> "$tmp/capture"
+exit 1
+CAP
+  chmod +x "$tmp/sc/cleanup-worktree.sh"
+  cat > "$tmp/sc/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"search/issues"*) echo '[{"repo":"o/r","num":80}]' ;;
+  *"pr view"*headRefName*) echo '$1' ;;
+  *"pr view"*state*) echo 'MERGED' ;;
+  *) echo '' ;;
+esac
+STUB
+  chmod +x "$tmp/sc/gh"
+  out=$(PATH="$tmp/sc:$PATH" bash "$tmp/sc/closeout-reconcile.sh" 2>/dev/null)
+}
+# (a)+(b): 매칭 브랜치 → cleanup --merged 호출(캡처) + cleanup 실패해도 merged_cleanup 출력
+crun "agent/issue-7"
+grep -qE '^o/r 7 --merged$' "$tmp/capture" 2>/dev/null \
+  || { echo "  ✗ closeout-reconcile 런타임: cleanup 호출 인자 불일치 (capture='$(cat "$tmp/capture" 2>/dev/null)')"; rm -rf "$tmp"; exit 1; }
+printf '%s' "$out" | jq -e 'select(.event=="merged_cleanup")' >/dev/null 2>&1 \
+  || { echo "  ✗ closeout-reconcile 런타임: cleanup 실패 시 merged_cleanup 미출력 out='$out'"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+# (c): 비매칭 브랜치(agent/issue- 접두 없음) → cleanup 호출 안 함, merged_cleanup 은 출력
+crun "some-other-branch"
+[ ! -f "$tmp/capture" ] \
+  || { echo "  ✗ closeout-reconcile 런타임: 비매칭 브랜치에서 cleanup 오호출 (capture='$(cat "$tmp/capture")')"; rm -rf "$tmp"; exit 1; }
+printf '%s' "$out" | jq -e 'select(.event=="merged_cleanup")' >/dev/null 2>&1 \
+  || { echo "  ✗ closeout-reconcile 런타임: 비매칭 브랜치 merged_cleanup 미출력 out='$out'"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
+echo "[closeout] SKILL worktree 정리(cleanup-worktree.sh) 문서화 검사 (#62)"
+# closeout 이 머지 직후 스스로 worktree 를 정리한다는 지시가 한/영 양쪽에 있어야 한다
+# (issue-runner reconcile 의존 제거 — 지우면 closeout-only 세션서 worktree 적체 회귀).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF 'cleanup-worktree.sh' "$f" || { echo "  ✗ $f 에 cleanup-worktree.sh 정리 지시 없음"; exit 1; }
+done
+
 echo "[worker-template] 참조 이슈 본문 체크박스 reconcile 지시 존재 검사 (#66)"
 # 워커가 PR 최종 단계에서 참조 이슈 본문의 체크박스를 reconcile(완료=[x],
 # 미완=[ ] 유지) 하라는 지시가 한/영 워커 템플릿 양쪽에 있어야 한다. 본문 마크

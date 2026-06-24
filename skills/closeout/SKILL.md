@@ -39,8 +39,10 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 
 `$SCRIPTS/closeout-reconcile.sh` 를 실행하고 이벤트별로 처리:
 
-- `merged_cleanup` — 머지·라벨 정리가 끝났다. 단 아래 마커표에서 4·6단계 미완
-  마커가 발견되면 그 단계부터 이어간다 (멱등 재개).
+- `merged_cleanup` — 머지·라벨·worktree 정리가 끝났다(`closeout-reconcile.sh` 가
+  머지 확정 시 PR head `agent/issue-N` 을 파싱해 `cleanup-worktree.sh ... --merged`
+  로 worktree 까지 거둔다 — 크래시 재개 경로의 적체 방지). 단 아래 마커표에서
+  4·6단계 미완 마커가 발견되면 그 단계부터 이어간다 (멱등 재개).
 - `resume` — PR 이 OPEN 이고 `harvesting` 유지 중. 마커표로 끝난 단계를 건너뛰고
   중단 지점부터 파이프라인을 이어간다.
 - `stale` — 보고만 한다.
@@ -50,7 +52,7 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 | 단계 | 마커 | 재개 판정 |
 |---|---|---|
 | 1 검증 | PR 코멘트 `마감 검증:` | 있으면 1단계 건너뜀 |
-| 2 머지 | PR `MERGED` | MERGED 면 머지 끝 |
+| 2 머지 | PR `MERGED` | MERGED 면 머지 끝 (머지 직후 worktree 정리 포함) |
 | 3 reconcile | 계획문서 diff(머지 커밋) + epic 코멘트 | 머지에 포함이면 끝 |
 | 4 배포 | `배포 대기:` 코멘트 / `deployed:<sha>` | 있으면 재요청 안 함 |
 | 5 후처리 | 발행 이슈 번호 코멘트 | 있으면 재발행 안 함 |
@@ -114,6 +116,12 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 `run-local-ci.sh` 가 캐시를 동기로 채우므로 보통 즉시 pass — 한도 내 pass 미도달이면
 머지하지 말고 fail-closed 로 보류 종료한다(아래 3단계의 캐시 비0/미도달 처리와 동일
 경로 — `harvesting` 제거 + `blocked` 종료, 새 종료 상태를 만들지 않는다).
+**`gh pr merge` 성공 직후** `$SCRIPTS/cleanup-worktree.sh <repo> <N> --merged` 를
+호출해 이 PR 의 worktree(`agent/issue-<N>`)를 직접 정리한다 (`<N>`=PR head
+`agent/issue-N` 파싱, 3단계와 동일). 머지를 독점하는 closeout 이 머지 시점에 스스로
+거두므로 issue-runner reconcile 에 의존하지 않는다 — closeout-only 세션서도 적체가
+없다. `--merged` 는 squash 머지로 원격 head 가 자동삭제돼 `@{u}` 가 사라지는
+함정에서 미push 가드를 완화한다(더티 가드는 유지 — 더티면 warn 후 보류, best-effort).
 CONFLICTING 이면 `harvesting` 을 제거하고 skip 한다 (issue-runner Maintain 이 rebase).
 
 **3단계 — 문서 reconcile (머지 전, PR 브랜치 커밋).** 1단계가 구현을 확인한

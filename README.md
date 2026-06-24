@@ -66,6 +66,11 @@
 - **자율 범위 = 머지·문서·파생은 자동, production 실 배포는 사람 게이트.**
   closeout 은 머지·계획문서 reconcile·후속 이슈 발행까지 무인으로 하지만,
   production 실 배포는 자동으로 하지 않는다 — 배포 단계는 사람이 게이트한다.
+- **머지 직후 worktree 정리는 closeout 이 직접 한다.** 머지를 독점하는 closeout 이
+  `gh pr merge` 성공 직후 공유 헬퍼 `cleanup-worktree.sh ... --merged` 로 그 PR 의
+  worktree 를 스스로 거둔다 — issue-runner reconcile 이 멈춰 있어도(closeout-only
+  세션) worktree 가 적체되지 않는다. issue-runner reconcile 도 같은 헬퍼를 쓰지만
+  `--merged` 없이(미push 가드 유지) 호출한다.
 - **`MAX_CLOSEOUT = 1`** — 한 틱에 1 PR 만 끝까지 마감하는 직렬화 스로틀이다.
   마감 페이스는 `/loop` 주기로 조절한다 (예: `/loop 20m /closeout`).
 - **Phase A / B 범위.** 현재는 **Phase A** — 안전 코어(검증·머지·문서·파생)와
@@ -381,6 +386,7 @@ scripts/
   claim-issue.sh           # 직접 API 재확인 후 claim (검색 인덱스 지연 방어)
   make-worktree.sh         # 레포 보장(clone) + worktree 생성
   reconcile.sh             # claim 전수 점검 → 이벤트 JSON + 안전 정리
+  cleanup-worktree.sh      # 공유 worktree 안전 제거 헬퍼 (reconcile·closeout 공용, --merged)
   repo-dir.sh              # repos.conf / 기본 경로로 레포 로컬 경로 해석
   run-local-ci.sh          # worktree에서 bin/ci 실행 → local-ci 캐시 기록
 hooks/
