@@ -285,13 +285,39 @@ for f in skills/closeout/references/verifier-prompt.md \
     # <DIFF>·<ISSUE_BODY>: 검증자가 sandbox 네트워크 없이 판정하도록 메인 세션이
     # diff·이슈 본문을 동봉하는 지점 — 지우면 원문 fetch 회귀(#54).
     *verifier-prompt.md)    phs="<PR> <REPO> <BASE> <PLAN_REF> <DIFF> <ISSUE_BODY>" ;;
-    *deploy-check-issue.md) phs="<PR> <SHA> <SUMMARY> <DEPLOY_CMD> <LIVE_CHECKS>" ;;
+    *deploy-check-issue.md) phs="<PR> <SHA> <SUMMARY> <DEPLOY_CMD> <LIVE_CHECKS> <VERIFY_URL>" ;;
     *spinoff-issue.md)      phs="<BACKGROUND> <REASON> <PLAN> <TEST_PLAN> <RELATED>" ;;
   esac
   # shellcheck disable=SC2086
   for ph in $phs; do
     grep -qF "$ph" "$f" || { echo "  ✗ $f 에 $ph 없음"; exit 1; }
   done
+done
+
+echo "[closeout] smoke-prompt 한/영 placeholder 검사 (#69)"
+# 5단계 Chrome 스모크 동봉형 프롬프트(verifier-prompt.md 미러) — 한/영 양쪽이
+# 존재하고 두 placeholder 를 다 담아야 한다. <VERIFY_URL>=production 베이스 URL,
+# <LIVE_CHECKS>=배포 이슈 본문의 검증 항목 — 5단계가 런타임에 치환하는 계약.
+# 지우면 동봉형 프롬프트가 깨져 스모크가 빈 컨텍스트로 도는 회귀.
+for f in skills/closeout/references/smoke-prompt.md \
+         skills/closeout/references/smoke-prompt.en.md; do
+  [ -f "$f" ] || { echo "  ✗ 누락: $f"; exit 1; }
+  for ph in '<VERIFY_URL>' '<LIVE_CHECKS>'; do
+    grep -qF "$ph" "$f" || { echo "  ✗ $f 에 $ph 없음"; exit 1; }
+  done
+done
+
+echo "[closeout] SKILL 5단계 Chrome 스모크(smoke-prompt) 문서화 검사 (#69)"
+# closeout ③ 5단계가 chrome-devtools MCP 로 검증 URL 에 스모크를 돌리고, MCP 부재/
+# URL 도달불가 시 사람-보고 경로로 폴백하며 skip 코멘트를 남긴다는 지시가 한/영
+# 양쪽에 있어야 한다. smoke-prompt 는 동봉형 프롬프트 파일명(언어 불변 토큰)이라
+# 한 가드로 양 파일을 덮는다. 단어만 남고 저하(degrade) 지시가 빠지는 회귀를 막기
+# 위해, smoke-prompt 를 담은 단락(빈 줄 구분)에 chrome-devtools 와 <VERIFY_URL> 이
+# 함께 있는지 awk 로 확인한다(#70 패턴). 지우면 5단계가 수동 대기로 되돌아가는 회귀.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF 'smoke-prompt' "$f" || { echo "  ✗ $f 에 5단계 Chrome 스모크(smoke-prompt) 지시 없음"; exit 1; }
+  awk 'BEGIN{RS="";ok=0} /smoke-prompt/ && /chrome-devtools/ && /<VERIFY_URL>/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f 의 smoke-prompt 단락에 chrome-devtools·<VERIFY_URL> 구동 지시 없음"; exit 1; }
 done
 
 echo "[closeout] ci-gate --repo 분기 스모크 (positive + fail-closed)"
