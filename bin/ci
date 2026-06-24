@@ -284,6 +284,16 @@ mkgh '[{"body":"머지 판정: ✅ 머지 가능"},{"body":"검증자 리뷰: CL
 out=$(run_elig)
 printf '%s' "$out" | jq -e 'select(.pr==5)' >/dev/null 2>&1 \
   || { echo "  ✗ eligible 마커: 레거시 접두사(마커 이전) 코멘트가 탈락됨 out='$out'"; rm -rf "$tmp"; exit 1; }
+# (d) 영문 긍정 게이트: 영문 머지 판정(Merge verdict: ✅)+마커만 → 후보 출력(긍정 게이트 한·영)
+mkgh '[{"body":"Merge verdict: ✅ ready to merge <!-- bodat:worker -->"}]'
+out=$(run_elig)
+printf '%s' "$out" | jq -e 'select(.pr==5)' >/dev/null 2>&1 \
+  || { echo "  ✗ eligible 마커: 영문 머지 판정이 긍정 게이트 통과 못함 out='$out'"; rm -rf "$tmp"; exit 1; }
+# (e) 마커가 줄 중간/본문에 있어도 머신으로 제외(contains 위치 무관 — 마지막줄 강제 아님이 계약)
+mkgh '[{"body":"머지 판정: ✅ 머지 가능 <!-- bodat:worker -->"},{"body":"중간에 <!-- bodat:worker --> 박힌 자기-노트"}]'
+out=$(run_elig)
+printf '%s' "$out" | jq -e 'select(.pr==5)' >/dev/null 2>&1 \
+  || { echo "  ✗ eligible 마커: 중간 마커 코멘트가 사람으로 오인돼 탈락 out='$out'"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
 echo "[closeout] 머신 코멘트 sentinel 마커 주입 지시 검사 (#72)"

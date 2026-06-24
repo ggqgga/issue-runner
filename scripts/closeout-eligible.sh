@@ -30,7 +30,7 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   [ "$(printf '%s' "$meta" | jq -r '.mergeable')" = "CONFLICTING" ] && continue
 
   printf '%s' "$meta" \
-    | jq -e '[.comments[].body] | map(select(startswith("머지 판정: ✅"))) | length > 0' \
+    | jq -e '[.comments[].body] | map(select(startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))) | length > 0' \
     >/dev/null || continue
 
   # 미해결(사람 리뷰) 코멘트 판정 — 머신 코멘트는 sentinel 마커 <!-- bodat:worker -->
@@ -41,7 +41,13 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 레거시 3접두사(머지 판정/검증자 리뷰/마감 검증)는 **동결 폴백**으로 남긴다 — 마커
   # 도입 이전에 열린 PR 의 옛 머신 코멘트가 "미해결 사람 리뷰"로 오인돼 탈락하지 않게.
   # 이 폴백은 더 키우지 않는다(새 어휘는 마커가 받는다) → whack-a-mole 종결.
-  # (긍정 게이트는 위 "머지 판정: ✅" 정확 매칭을 그대로 유지하므로 위험은 좁다.)
+  # (긍정 게이트는 위 "머지 판정: ✅"/"Merge verdict: ✅" 시작 매칭이라 위험은 좁다.)
+  #
+  # contains 는 **의도적**이다(위치 무관) — 워커가 마커를 정확히 마지막 줄에 못 둬도
+  # 머신으로 인식해 robust 하다. 템플릿의 "마지막 줄" 규칙은 *긍정 게이트* 작성
+  # 제약일 뿐(마커가 "머지 판정: ✅" 앞에 오면 startswith 가 깨진다) 이 필터의
+  # 요구사항이 아니다. 마지막-줄을 jq 로 강제하면 마커 오배치가 사람 코멘트로
+  # 오인돼 #72 false-positive 가 재발하므로 그렇게 바꾸지 마라.
   unresolved=$(printf '%s' "$meta" | jq '[.comments[].body
     | select((contains("<!-- bodat:worker -->")
               or startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
