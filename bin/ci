@@ -300,4 +300,14 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qF 'run-local-ci.sh' "$f" || { echo "  ✗ $f 에 run-local-ci.sh 캐시 보강 지시 없음"; exit 1; }
 done
 
+echo "[worker-template] 참조 이슈 본문 체크박스 reconcile 지시 존재 검사 (#66)"
+# 워커가 PR 최종 단계에서 참조 이슈 본문의 체크박스를 reconcile(완료=[x],
+# 미완=[ ] 유지) 하라는 지시가 한/영 워커 템플릿 양쪽에 있어야 한다. 본문 마크
+# 동기화는 `gh issue edit --body` 로 한다 — 이 호출은 템플릿 다른 곳에 안 나오는
+# 언어 불변 토큰이라 한 가드로 양 파일을 덮는다. 지우면 PR 머지 후 이슈가
+# 체크박스 전부 빈 채로 닫히는 회귀(#66 배경).
+for f in references/worker-template.md references/worker-template.en.md; do
+  grep -qF 'gh issue edit' "$f" || { echo "  ✗ $f 에 참조 이슈 체크박스 reconcile(gh issue edit) 지시 없음"; exit 1; }
+done
+
 echo "CI pass"
