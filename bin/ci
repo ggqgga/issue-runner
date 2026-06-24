@@ -379,6 +379,46 @@ grep -qE 'cleanup-worktree\.sh.*--merged' scripts/closeout-reconcile.sh \
   || { echo "  ✗ closeout-reconcile.sh 에 cleanup-worktree.sh --merged 호출 없음"; exit 1; }
 grep -qF 'headRefName' scripts/closeout-reconcile.sh \
   || { echo "  ✗ closeout-reconcile.sh 가 PR head(headRefName)에서 이슈번호 파싱 안 함"; exit 1; }
+# 런타임 검증: closeout-reconcile.sh 를 임시 scripts 디렉토리로 복사하고
+# cleanup-worktree.sh 를 인자 캡처 스텁으로 갈아끼워, MERGED 분기가 (a) 매칭
+# 브랜치에서 cleanup --merged 를 부르고 (b) cleanup 실패에도 merged_cleanup 을
+# 내며 (c) 비매칭 브랜치에선 cleanup 을 안 부르는지 확인한다.
+crun() {  # $1=headRefName → out 은 stdout, capture 파일은 $tmp/capture
+  tmp=$(mktemp -d); mkdir "$tmp/sc"
+  cp scripts/closeout-reconcile.sh "$tmp/sc/closeout-reconcile.sh"
+  cat > "$tmp/sc/cleanup-worktree.sh" <<CAP
+#!/bin/sh
+printf '%s\n' "\$*" >> "$tmp/capture"
+exit 1
+CAP
+  chmod +x "$tmp/sc/cleanup-worktree.sh"
+  cat > "$tmp/sc/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"search/issues"*) echo '[{"repo":"o/r","num":80}]' ;;
+  *"pr view"*headRefName*) echo '$1' ;;
+  *"pr view"*state*) echo 'MERGED' ;;
+  *) echo '' ;;
+esac
+STUB
+  chmod +x "$tmp/sc/gh"
+  out=$(PATH="$tmp/sc:$PATH" bash "$tmp/sc/closeout-reconcile.sh" 2>/dev/null)
+}
+# (a)+(b): 매칭 브랜치 → cleanup --merged 호출(캡처) + cleanup 실패해도 merged_cleanup 출력
+crun "agent/issue-7"
+grep -qE '^o/r 7 --merged$' "$tmp/capture" 2>/dev/null \
+  || { echo "  ✗ closeout-reconcile 런타임: cleanup 호출 인자 불일치 (capture='$(cat "$tmp/capture" 2>/dev/null)')"; rm -rf "$tmp"; exit 1; }
+printf '%s' "$out" | jq -e 'select(.event=="merged_cleanup")' >/dev/null 2>&1 \
+  || { echo "  ✗ closeout-reconcile 런타임: cleanup 실패 시 merged_cleanup 미출력 out='$out'"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+# (c): 비매칭 브랜치(agent/issue- 접두 없음) → cleanup 호출 안 함, merged_cleanup 은 출력
+crun "some-other-branch"
+[ ! -f "$tmp/capture" ] \
+  || { echo "  ✗ closeout-reconcile 런타임: 비매칭 브랜치에서 cleanup 오호출 (capture='$(cat "$tmp/capture")')"; rm -rf "$tmp"; exit 1; }
+printf '%s' "$out" | jq -e 'select(.event=="merged_cleanup")' >/dev/null 2>&1 \
+  || { echo "  ✗ closeout-reconcile 런타임: 비매칭 브랜치 merged_cleanup 미출력 out='$out'"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
 
 echo "[closeout] SKILL worktree 정리(cleanup-worktree.sh) 문서화 검사 (#62)"
 # closeout 이 머지 직후 스스로 worktree 를 정리한다는 지시가 한/영 양쪽에 있어야 한다
