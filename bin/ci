@@ -382,6 +382,17 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qF 'run-local-ci.sh' "$f" || { echo "  ✗ $f 에 run-local-ci.sh 캐시 보강 지시 없음"; exit 1; }
 done
 
+echo "[closeout] SKILL 2단계 rebase된 HEAD 재검증(revalidate) 문서화 검사 (#70)"
+# closeout ③ 2단계 머지 게이트가 revalidate:true 후보를 머지 직전 run-local-ci.sh 로
+# 재검증한다는 지시가 한/영 SKILL 양쪽에 있어야 한다. revalidate 는 closeout-eligible.sh
+# 출력 JSON 필드명(언어 불변 토큰)이라 한 가드로 양 파일을 덮는다. run-local-ci.sh 는
+# 3단계 캐시 보강도 쓰므로 단독으로는 2단계 재검증 경로 존재를 증명 못 한다 — revalidate
+# 토큰이 그 경로의 식별자다. 지우면 rebase 로 HEAD 가 바뀐 PR 이 양쪽 사각지대에
+# 끼는 회귀(#70 배경).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF 'revalidate' "$f" || { echo "  ✗ $f 에 rebase HEAD 재검증(revalidate) 지시 없음"; exit 1; }
+done
+
 echo "[closeout] cleanup-worktree.sh 동작 스모크 (#62)"
 # 공유 worktree 정리 헬퍼 — 더티/미push/--merged/멱등 동작을 실제 git worktree 로 검증.
 clean_wt="$PWD/scripts/cleanup-worktree.sh"
