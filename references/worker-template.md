@@ -18,6 +18,13 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 않다 — 탐색 보조로만 쓰고 최종 확인은 <WT_PATH> 실파일로 하라.
 인덱스가 없으면 이 단락은 무시하라.
 
+머신 코멘트 마커(필수): 네가 PR·이슈에 남기는 모든 코멘트(`gh pr comment`/
+`gh issue comment` — 머지 판정·검증자 리뷰·BLOCKED·그 외 자기-노트 일체)는 **마지막
+줄에 정확히 `<!-- bodat:worker -->` 한 줄**을 포함해야 한다. 이 마커가 머신 코멘트를
+사람 리뷰와 구분하는 유일한 신호다(closeout-eligible 의 미해결-코멘트 판정 기준) —
+빠지면 그 PR 이 "미해결 사람 코멘트 있음"으로 오인돼 자동 마감에서 탈락한다. (긍정
+게이트는 "머지 판정: ✅" 로 시작하는지 보므로 마커는 **반드시 마지막 줄**에 둔다.)
+
 절차:
 1. <WT_PATH> 의 CLAUDE.md 를 읽고 빌드/테스트 방법을 파악하라.
    코드 탐색 시 codegraph MCP 도구(`mcp__codegraph__*`)가 사용 가능하면
@@ -61,7 +68,8 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사와 codex 리뷰
    주입이 누락된다.) 본문에 반드시 전용 라인 `Closes #<NUM>` 과 `## Test plan`
    섹션(수용 기준 기반 체크박스)을 포함하라. PR 생성 직후
-   `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: 🔄 진행 중 — 검증자 리뷰·로컬 CI 확정 전, 머지 보류"`
+   `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: 🔄 진행 중 — 검증자 리뷰·로컬 CI 확정 전, 머지 보류
+<!-- bodat:worker -->"`
    코멘트를 남겨라 (사람이 PR 화면만 보고 머지 시점을 판단할 수 있어야 한다).
 11. PR 생성 후 **검증자 리뷰를 직접 스폰하라** (PostToolUse hook 의 codex 주입은
    서브에이전트 컨텍스트에 닿지 않는다 — 기다리지 말 것). Agent 툴 동기 호출:
@@ -75,7 +83,8 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    항목을 따른다 — 같은 프롬프트이므로 계약도 동일하다).
    검증자가 BLOCKER 를 보고하면 **반드시 해결 커밋 + push + 로컬 CI 재실행 후에만**
    종료하라. BLOCKER 미해결 종료 금지. 검증자 결과는 본문이 아니라 **PR 코멘트**로 남겨라 —
-   `gh pr comment <PR번호> --repo <REPO> --body "검증자 리뷰: <CLEAN 또는 BLOCKER/WARN/NIT 건수와 각 발견 요약·처리 내역>"`
+   `gh pr comment <PR번호> --repo <REPO> --body "검증자 리뷰: <CLEAN 또는 BLOCKER/WARN/NIT 건수와 각 발견 요약·처리 내역>
+<!-- bodat:worker -->"`
    (CLEAN 이어도 코멘트는 남긴다 — 리뷰가 실행됐다는 증거다).
 12. 머지 판정 코멘트 직전, **참조 이슈(`#<NUM>`) 본문의 체크박스를 reconcile** 하라
    (글로벌 훅의 이슈 체크박스 reconcile 은 서브에이전트 워커에 안 닿는다 — codex 주입과
@@ -87,8 +96,10 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    **본문 전체를 재생성하지 말 것** — 체크박스(`- [ ]`/`- [x]`) 줄의 마크만 보수적으로
    치환하고 나머지 본문 텍스트는 한 글자도 바꾸지 마라(텍스트 손실 방지).
 13. 종료 직전 PR 에 머지 판정 코멘트를 남겨라 — 모든 게이트(테스트·로컬 CI·검증자) 통과면
-   `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: ✅ 머지 가능 — 로컬 CI pass (HEAD <sha>) · 검증자 <CLEAN 또는 'BLOCKER 0 / WARN n건 해소'> · 미해결 없음"`,
-   미해결 항목이 남았으면 `--body "머지 판정: ⚠ 보류 — <사유>"`. 이 코멘트가 PR 에 대한
+   `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: ✅ 머지 가능 — 로컬 CI pass (HEAD <sha>) · 검증자 <CLEAN 또는 'BLOCKER 0 / WARN n건 해소'> · 미해결 없음
+<!-- bodat:worker -->"`,
+   미해결 항목이 남았으면 `--body "머지 판정: ⚠ 보류 — <사유>
+<!-- bodat:worker -->"`. 이 코멘트가 PR 에 대한
    너의 마지막 접촉이어야 한다 — 이후 커밋을 추가하게 되면 판정 코멘트를 다시 남겨라.
    그런 다음 종료 보고: PR 번호/URL, 테스트 결과, 검증자 리뷰 처리 내역, 남은 사항.
 

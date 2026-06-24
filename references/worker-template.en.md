@@ -18,6 +18,15 @@ The index reflects the main checkout (<REPO_DIR>), not your worktree changes —
 use it as a navigation aid only and verify against the actual files in <WT_PATH>.
 If there is no index, ignore this paragraph.
 
+Machine-comment marker (required): every comment you leave on a PR or issue
+(`gh pr comment`/`gh issue comment` — merge verdict, verifier review, BLOCKED, and
+any other self-note) must include **exactly one final line `<!-- bodat:worker -->`**.
+This marker is the only signal that distinguishes a machine comment from a human
+review (it is closeout-eligible's unresolved-comment criterion) — without it, the PR
+is mistaken for "has an unresolved human comment" and drops out of auto-closeout. (The
+positive gate checks whether a comment starts with "머지 판정: ✅", so the marker must
+be the **last** line.)
+
 Procedure:
 1. Read CLAUDE.md in <WT_PATH> to learn how to build and test.
    When exploring code, prefer the codegraph MCP tools (`mcp__codegraph__*`)
@@ -72,7 +81,8 @@ Procedure:
    the codex review injection get skipped.) The body must include a dedicated line
    `Closes #<NUM>` and a `## Test plan` section (checkboxes based on the
    acceptance criteria). Immediately after creating the PR, leave the comment
-   `gh pr comment <PR_NUMBER> --repo <REPO> --body "Merge verdict: 🔄 in progress — verifier review and local CI not yet final, hold off merging"`
+   `gh pr comment <PR_NUMBER> --repo <REPO> --body "Merge verdict: 🔄 in progress — verifier review and local CI not yet final, hold off merging
+<!-- bodat:worker -->"`
    (a human must be able to judge merge timing from the PR page alone).
 11. After creating the PR, **spawn the verifier review yourself** (the PostToolUse
    hook's codex injection does not reach subagent contexts — do not wait for it).
@@ -88,7 +98,8 @@ Procedure:
    If the verifier reports a BLOCKER, finish **only after a fix commit + push +
    local CI re-run**. Never finish with an unresolved BLOCKER. Post the verifier
    result as a **PR comment**, not in the body —
-   `gh pr comment <PR_NUMBER> --repo <REPO> --body "Verifier review: <CLEAN, or BLOCKER/WARN/NIT counts with a summary of each finding and how it was handled>"`
+   `gh pr comment <PR_NUMBER> --repo <REPO> --body "Verifier review: <CLEAN, or BLOCKER/WARN/NIT counts with a summary of each finding and how it was handled>
+<!-- bodat:worker -->"`
    (comment even on CLEAN — it is the evidence that the review actually ran).
 12. Just before the merge-verdict comment, **reconcile the checkboxes in the
     referenced issue (`#<NUM>`) body** (the global hook's issue-checkbox reconcile
@@ -104,8 +115,10 @@ Procedure:
     leave every other character of the body text unchanged (avoid text loss).
 13. Just before finishing, leave a merge-verdict comment on the PR — if every gate
     (tests, local CI, verifier) passed:
-    `gh pr comment <PR_NUMBER> --repo <REPO> --body "Merge verdict: ✅ ready to merge — local CI pass (HEAD <sha>) · verifier <CLEAN or 'BLOCKER 0 / WARN n resolved'> · nothing unresolved"`,
-    or if anything is left unresolved: `--body "Merge verdict: ⚠ hold — <reason>"`.
+    `gh pr comment <PR_NUMBER> --repo <REPO> --body "Merge verdict: ✅ ready to merge — local CI pass (HEAD <sha>) · verifier <CLEAN or 'BLOCKER 0 / WARN n resolved'> · nothing unresolved
+<!-- bodat:worker -->"`,
+    or if anything is left unresolved: `--body "Merge verdict: ⚠ hold — <reason>
+<!-- bodat:worker -->"`.
     This comment must be your last touch on the PR — if you end up adding commits
     afterwards, post the verdict comment again. Then the final report: PR number/URL,
     test results, how the verifier review was handled, anything left over.

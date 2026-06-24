@@ -113,11 +113,17 @@ additional network commands.
   diff is too large to fit the verifier's context (when you judge so), do not treat
   verification as passed — exit on hold via the BLOCKER path (no merge), so the
   network-independent path does not silently break and leak through to a merge.
-- BLOCKER → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>"`
+  Machine-comment marker (required): the closeout-verification comment posted below via
+  `gh pr comment` must include **a final line `<!-- bodat:worker -->`** — it is how
+  closeout-eligible tells a machine comment from a human review (#72). Without it, on
+  re-evaluation the PR is mistaken for an unresolved human comment and drops out.
+- BLOCKER → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
+  <!-- bodat:worker -->"`
   + `gh issue edit <issue> --repo <repo> --add-label needs-human`
   + `gh issue edit <pr> --repo <repo> --remove-label harvesting` →
   **blocked exit** (do not merge).
-- CLEAN/WARN → `gh pr comment <pr> --repo <repo> --body "마감 검증: ✅ <CLEAN or WARN n>"`
+- CLEAN/WARN → `gh pr comment <pr> --repo <repo> --body "마감 검증: ✅ <CLEAN or WARN n>
+  <!-- bodat:worker -->"`
   (this comment is the step-1 completion marker).
 
 **Step 2 — merge gate.** The merge command **must pass `--repo <repo>`** — closeout

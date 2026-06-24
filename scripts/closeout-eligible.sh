@@ -33,12 +33,18 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
     | jq -e '[.comments[].body] | map(select(startswith("머지 판정: ✅"))) | length > 0' \
     >/dev/null || continue
 
-  # 워커가 남기는 머신 코멘트 접두사는 장식이 붙는다("검증자 리뷰 (codex…):",
-  # "검증자 리뷰(보수 후):"). 콜론까지 고정 매칭하면 그 변형들이 미해결 인간
-  # 코멘트로 오인돼 초록불 PR이 통째로 후보에서 탈락한다 → stem 매칭으로 관대하게.
+  # 미해결(사람 리뷰) 코멘트 판정 — 머신 코멘트는 sentinel 마커 <!-- bodat:worker -->
+  # (마지막 줄)로 식별한다(#72). 워커/closeout 이 남기는 모든 자기-문서화 코멘트엔
+  # 이 마커가 박힌다(worker-template 한/영·closeout SKILL 한/영). 마커가 있으면 머신
+  # → unresolved 제외. 접두사 어휘가 늘어도(예 "추가 보정") 안 깨진다 = allowlist 탈피.
+  #
+  # 레거시 3접두사(머지 판정/검증자 리뷰/마감 검증)는 **동결 폴백**으로 남긴다 — 마커
+  # 도입 이전에 열린 PR 의 옛 머신 코멘트가 "미해결 사람 리뷰"로 오인돼 탈락하지 않게.
+  # 이 폴백은 더 키우지 않는다(새 어휘는 마커가 받는다) → whack-a-mole 종결.
   # (긍정 게이트는 위 "머지 판정: ✅" 정확 매칭을 그대로 유지하므로 위험은 좁다.)
   unresolved=$(printf '%s' "$meta" | jq '[.comments[].body
-    | select((startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
+    | select((contains("<!-- bodat:worker -->")
+              or startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
     | length')
   [ "${unresolved:-0}" -gt 0 ] && continue
 
