@@ -128,16 +128,40 @@ here** to create the doc commit on the PR branch and push it — so the squash m
 includes that doc reconcile — then `gh pr merge <pr> --repo <repo> --squash` (the
 ci-gate hook judges once more). That is: the step numbering is 1→2→3, but the step-3
 commit is slotted in just before the step-2 merge ("before merge" in the step-3 header
-marks this slot-in point). If CONFLICTING, remove `harvesting` and skip (issue-runner
-Maintain rebases).
+marks this slot-in point). **Just before `gh pr merge`, if step 3 pushed a new doc
+commit**, re-confirm `$SCRIPTS/closeout-ci-pass.sh <repo> <pr>` is pass (exit 0) with a
+short bounded poll (e.g. 2–3s interval × max 5 tries, never wait forever) — since
+step 3's `run-local-ci.sh` fills the cache synchronously this is usually pass
+immediately — and if pass is not reached within the limit, do not merge: exit on hold
+fail-closed (same path as step 3's nonzero-cache/not-reached handling — remove
+`harvesting` + `blocked` exit, do not invent a new exit state). If CONFLICTING, remove
+`harvesting` and skip (issue-runner Maintain rebases).
 
 **Step 3 — doc reconcile (before merge, PR-branch commit).** Change the `- [ ]` to
 `- [x]` in the plan-doc section that step 1 confirmed implemented. Commit and push
-from the PR-branch worktree so it is included in the squash merge (no direct push to
-main). If there is an epic, leave a progress rollup comment.
+from the PR-branch worktree (obtained via `$SCRIPTS/make-worktree.sh <repo> <N>` —
+`<N>` parsed from the PR head branch `agent/issue-<N>` via
+`gh pr view <pr> --repo <repo> --json headRefName`, idempotent) so it is included in
+the squash merge (no direct push to main). If there is an epic, leave a progress rollup
+comment.
+- **cache supplement (right after push, option 1).** Once the doc commit is pushed,
+  **right after** call `$SCRIPTS/run-local-ci.sh <repo> <N>` once (`<N>`=the issue
+  number parsed above — identifies the worktree path `issue-<N>`; distinct from
+  `closeout-ci-pass.sh`'s `<pr>`). This helper reads the worktree HEAD SHA and, via
+  `repo-dir.sh`, fills the local-CI cache under the **main repo slug**
+  (`<main-slug>/<SHA>.result`) — exactly where step 2's merge gate (`ci-gate`·
+  `closeout-ci-pass.sh`) reads, closing the gap where the result lands only under the
+  worktree slug and the gate fail-closes on a permanent cache-miss. **Idempotency guard
+  before the call**: if `$SCRIPTS/closeout-ci-pass.sh <repo> <pr>` is already pass
+  (exit 0) (a prior tick already cached the same HEAD), do not re-run `run-local-ci.sh`
+  (the helper has no dedup of its own, so the caller guards). If `run-local-ci.sh`
+  exits nonzero (=bin/ci failed) the cache is not filled with pass, so do not merge:
+  exit on hold fail-closed (remove `harvesting` + `blocked` exit, follow the existing
+  BLOCKER path — do not invent a new exit state).
 - **single-issue degrade**: if there is no `Plans/*.md`·`## Plan`, skip the doc edit.
   If there is no epic, skip the rollup. Reconcile only the issue's own checkboxes. If
-  neither exists, this step is a no-op.
+  neither exists, this step is a no-op — **since there is no new doc commit·push, skip
+  the cache supplement above too** (no new HEAD SHA to fill).
 
 **Step 4 — deploy (human gate, dry-run).** **Do not deploy for real.** Fill
 `references/deploy-check-issue.md` (`<DEPLOY_CMD>`=the repo's deploy entrypoint, or

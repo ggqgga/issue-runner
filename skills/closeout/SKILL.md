@@ -108,16 +108,36 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 만들고 push 한 뒤 — squash 머지가 그 문서 반영을 포함하도록 — `gh pr merge <pr>
 --repo <repo> --squash` (ci-gate 훅이 한 번 더 판정한다). 즉 단계 번호는 1→2→3
 순서지만, 2단계의 머지 직전에 3단계 커밋을 끼워 넣는다 (3단계 헤더의 "머지 전"이
-이 끼워넣기 지점이다). CONFLICTING 이면 `harvesting` 을 제거하고 skip 한다
-(issue-runner Maintain 이 rebase).
+이 끼워넣기 지점이다). **`gh pr merge` 직전, 3단계가 새 doc 커밋을 push 했다면**
+`$SCRIPTS/closeout-ci-pass.sh <repo> <pr>` 가 pass(exit 0)인지를 짧은 한도 폴링
+(예: 2~3초 간격 × 최대 5회, 무한 대기 금지)으로 재확인하고 — 3단계의
+`run-local-ci.sh` 가 캐시를 동기로 채우므로 보통 즉시 pass — 한도 내 pass 미도달이면
+머지하지 말고 fail-closed 로 보류 종료한다(아래 3단계의 캐시 비0/미도달 처리와 동일
+경로 — `harvesting` 제거 + `blocked` 종료, 새 종료 상태를 만들지 않는다).
+CONFLICTING 이면 `harvesting` 을 제거하고 skip 한다 (issue-runner Maintain 이 rebase).
 
 **3단계 — 문서 reconcile (머지 전, PR 브랜치 커밋).** 1단계가 구현을 확인한
-계획문서 절의 `- [ ]` 를 `- [x]` 로 바꾼다. PR 브랜치 worktree 에서 커밋·push 하여
-squash 머지에 포함시킨다 (main 직접 push 금지). epic 이 있으면 진행 롤업 코멘트를
-남긴다.
+계획문서 절의 `- [ ]` 를 `- [x]` 로 바꾼다. PR 브랜치 worktree
+(`$SCRIPTS/make-worktree.sh <repo> <N>` 로 확보 — `<N>`=PR head 브랜치
+`agent/issue-<N>` 에서 파싱(`gh pr view <pr> --repo <repo> --json headRefName`), 멱등)
+에서 커밋·push 하여 squash 머지에 포함시킨다 (main 직접 push 금지). epic 이 있으면
+진행 롤업 코멘트를 남긴다.
+- **캐시 보강 (push 직후, 옵션1).** doc 커밋을 push 했으면 **그 직후**
+  `$SCRIPTS/run-local-ci.sh <repo> <N>` 를 1회 호출한다 (`<N>`=위에서 파싱한 이슈
+  번호 — worktree 경로 `issue-<N>` 식별용; `closeout-ci-pass.sh` 의 `<pr>` 와 다름).
+  이 헬퍼가 worktree HEAD SHA 를 읽어 `repo-dir.sh` 로 **메인 레포 slug** 의 로컬 CI
+  캐시(`<메인slug>/<SHA>.result`)를 채운다 — 2단계 머지 게이트(`ci-gate`·
+  `closeout-ci-pass.sh`)가 읽는 바로 그 위치라, 워크트리 slug 에만 남아 영구
+  cache-miss 로 fail-closed 되는 갭을 메운다. **호출 전 멱등 가드**:
+  `$SCRIPTS/closeout-ci-pass.sh <repo> <pr>` 가 이미 pass(exit 0)면(이전 틱이 같은
+  HEAD 를 이미 캐시함) `run-local-ci.sh` 를 재실행하지 않는다(헬퍼 자체엔 dedup 가
+  없어 호출측이 가드한다). `run-local-ci.sh` 가 비0(=bin/ci 실패)이면 캐시가 pass 로
+  안 채워진 것이므로 머지하지 말고 fail-closed 로 보류 종료한다(`harvesting` 제거 +
+  `blocked` 종료, 기존 BLOCKER 경로 준용 — 새 종료 상태를 만들지 않는다).
 - **단일 이슈 degrade**: `Plans/*.md`·`## Plan` 이 없으면 문서 편집을 skip 한다.
   epic 이 없으면 롤업을 skip 한다. 이슈 자체 체크박스만 reconcile 한다. 둘 다
-  없으면 이 단계는 no-op.
+  없으면 이 단계는 no-op — **새 doc 커밋·push 가 없으므로 위 캐시 보강도 건너뛴다**
+  (채울 새 HEAD SHA 가 없다).
 
 **4단계 — 배포 (사람 게이트, dry-run).** **실 배포를 하지 않는다.**
 `references/deploy-check-issue.md` 를 채워(`<DEPLOY_CMD>`=레포 배포 엔트리포인트,
