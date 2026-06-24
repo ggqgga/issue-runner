@@ -391,6 +391,12 @@ echo "[closeout] SKILL 2단계 rebase된 HEAD 재검증(revalidate) 문서화 �
 # 끼는 회귀(#70 배경).
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qF 'revalidate' "$f" || { echo "  ✗ $f 에 rebase HEAD 재검증(revalidate) 지시 없음"; exit 1; }
+  # revalidate 경로가 실제로 현재 HEAD 에 로컬 CI 를 돌린다는 핵심 지시를 확인:
+  # revalidate 와 같은 단락(빈 줄로 구분)에 run-local-ci.sh 가 있어야 한다. 단어만
+  # 남고 재실행 지시가 빠지는 회귀를 막는다(#70 codex NIT). awk 로 revalidate 를 담은
+  # 단락만 떼어 그 안에서 run-local-ci.sh 를 찾는다.
+  awk 'BEGIN{RS="";ok=0} /revalidate/ && /run-local-ci\.sh/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f 의 revalidate 단락에 run-local-ci.sh 재검증 지시 없음"; exit 1; }
 done
 
 echo "[closeout] cleanup-worktree.sh 동작 스모크 (#62)"
