@@ -36,21 +36,10 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
   branch="agent/issue-$num"
   wt="$dir/.claude/worktrees/issue-$num"
 
+  # 안전 제거는 공유 헬퍼(cleanup-worktree.sh)로 일원화 (#62). 동작 불변:
+  # --merged 안 넘기므로 기존 더티/미push 가드·warn JSON·반환코드가 그대로다.
   safe_remove_worktree() {
-    [ -d "$wt" ] || return 0
-    if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
-      printf '{"event":"warn","repo":"%s","number":%s,"msg":"worktree dirty — 제거 보류"}\n' "$repo" "$num"
-      return 1
-    fi
-    local ahead
-    ahead=$(git -C "$wt" rev-list --count '@{u}..HEAD' 2>/dev/null || echo "unknown")
-    if [ "$ahead" != "0" ]; then
-      printf '{"event":"warn","repo":"%s","number":%s,"msg":"미push 커밋(%s) — 제거 보류"}\n' "$repo" "$num" "$ahead"
-      return 1
-    fi
-    git -C "$dir" worktree remove "$wt" >/dev/null 2>&1 || return 1
-    git -C "$dir" branch -D "$branch" >/dev/null 2>&1 || true
-    return 0
+    "$SCRIPT_DIR/cleanup-worktree.sh" "$repo" "$num"
   }
 
   pr=$(gh pr list --repo "$repo" --head "$branch" --state all \

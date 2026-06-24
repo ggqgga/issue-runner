@@ -52,9 +52,12 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
 
 Run `$SCRIPTS/closeout-reconcile.sh` and handle each event:
 
-- `merged_cleanup` — the merge and label cleanup are done. But if the marker table
-  below shows an incomplete step-4 or step-6 marker, resume from that step
-  (idempotent resume).
+- `merged_cleanup` — the merge, label, and worktree cleanup are done
+  (`closeout-reconcile.sh`, on a confirmed merge, parses the PR head
+  `agent/issue-N` and reaps the worktree too via `cleanup-worktree.sh ... --merged`
+  — preventing buildup on the crash-resume path). But if the marker table below
+  shows an incomplete step-4 or step-6 marker, resume from that step (idempotent
+  resume).
 - `resume` — the PR is OPEN and still holds `harvesting`. Skip the steps the
   marker table shows as finished and resume the pipeline from where it stopped.
 - `stale` — report only.
@@ -65,7 +68,7 @@ resume):
 | Step | Marker | Resume judgment |
 |---|---|---|
 | 1 verify | PR comment `마감 검증:` | if present, skip step 1 |
-| 2 merge | PR `MERGED` | if MERGED, merge is done |
+| 2 merge | PR `MERGED` | if MERGED, merge is done (includes post-merge worktree cleanup) |
 | 3 reconcile | plan-doc diff (merge commit) + epic comment | if in the merge, done |
 | 4 deploy | `배포 대기:` comment / `deployed:<sha>` | if present, do not re-request |
 | 5 post | issued-issue number comment | if present, do not re-issue |
@@ -135,7 +138,14 @@ step 3's `run-local-ci.sh` fills the cache synchronously this is usually pass
 immediately — and if pass is not reached within the limit, do not merge: exit on hold
 fail-closed (same path as step 3's nonzero-cache/not-reached handling — remove
 `harvesting` + `blocked` exit, do not invent a new exit state). If CONFLICTING, remove
-`harvesting` and skip (issue-runner Maintain rebases).
+`harvesting` and skip (issue-runner Maintain rebases). **Right after `gh pr merge`
+succeeds**, call `$SCRIPTS/cleanup-worktree.sh <repo> <N> --merged` to clean up this
+PR's worktree (`agent/issue-<N>`) directly (`<N>` parsed from the PR head
+`agent/issue-N`, same as step 3). Since closeout monopolizes merging, it reaps the
+worktree itself at merge time and does not depend on issue-runner reconcile — so even
+a closeout-only session has no buildup. `--merged` relaxes the unpushed guard for the
+trap where a squash merge auto-deletes the remote head and `@{u}` disappears (the
+dirty guard stays — if dirty, warn and hold; best-effort).
 
 **Step 3 — doc reconcile (before merge, PR-branch commit).** Change the `- [ ]` to
 `- [x]` in the plan-doc section that step 1 confirmed implemented. Commit and push
