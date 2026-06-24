@@ -42,8 +42,15 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
     | length')
   [ "${unresolved:-0}" -gt 0 ] && continue
 
-  "$SCRIPT_DIR/closeout-ci-pass.sh" "$repo" "$pr" || continue
+  # ci-pass exit code 분기 (#70): 0=캐시 pass(revalidate:false)·2=로컬 CI HEAD 미실행
+  # (rebase 등 — revalidate:true 로 머지 도크가 재검증)·그 외=종전대로 탈락(fail/조회불가).
+  "$SCRIPT_DIR/closeout-ci-pass.sh" "$repo" "$pr"; cp=$?
+  case "$cp" in
+    0) reval=false ;;
+    2) reval=true ;;
+    *) continue ;;
+  esac
 
   issue=$(printf '%s' "$meta" | jq -r '.closingIssuesReferences[0].number // empty')
-  printf '{"repo":"%s","pr":%s,"issue":"%s","head":"%s"}\n' "$repo" "$pr" "$issue" "$head"
+  printf '{"repo":"%s","pr":%s,"issue":"%s","head":"%s","revalidate":%s}\n' "$repo" "$pr" "$issue" "$head" "$reval"
 done

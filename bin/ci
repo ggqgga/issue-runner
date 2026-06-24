@@ -200,6 +200,50 @@ out=$(PATH="$tmp/stub:$PATH" bash scripts/closeout-eligible.sh 2>/dev/null); rc=
 [ "$rc" = 0 ] && [ -z "$out" ] || { echo "  ✗ eligible 빈: rc=$rc out='$out'"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] eligible 재검증 후보 분기 스모크 (#70 — exit2=revalidate:true·exit1=탈락·exit0=false)"
+# closeout-eligible.sh 가 ci-pass exit code 로 분기하는지 검증(로컬 CI 옵트인 레포).
+# 캐시 부재(exit 2)+머지판정✅ → revalidate:true 로 출력, 캐시 fail(exit 1) → 미출력,
+# 캐시 pass(exit 0) → revalidate:false. slug 은 ci-pass 와 같은 pwd -P 정규화 경로.
+elig="$PWD/scripts/closeout-eligible.sh"
+tmp=$(mktemp -d); mkdir -p "$tmp/stub" "$tmp/proj/r/bin" "$tmp/home"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/proj/r/bin/ci"   # 가짜 레포(로컬 CI 옵트인)
+chmod +x "$tmp/proj/r/bin/ci"
+cat > "$tmp/stub/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *"api user"*) echo "tester" ;;
+  *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
+  *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
+  *"pr view"*headRefName*)
+    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"comments":[{"body":"머지 판정: ✅ 머지 가능"}],"closingIssuesReferences":[{"number":5}]}' ;;
+  *) echo '' ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+realroot=$(cd "$tmp/proj/r" && pwd -P)
+slug=$(printf '%s' "$realroot" | sed 's#[/ ]#_#g; s#^_##')
+mkdir -p "$tmp/home/.claude/.local-ci/$slug"
+result="$tmp/home/.claude/.local-ci/$slug/feed0070ab.result"
+run_elig() {
+  PATH="$tmp/stub:$PATH" HOME="$tmp/home" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" \
+    bash "$elig" 2>/dev/null
+}
+# (a) 캐시 부재(exit 2) + 머지판정✅ → 후보 출력 + revalidate:true
+rm -f "$result"
+out=$(run_elig)
+printf '%s' "$out" | jq -e 'select(.pr==5 and .revalidate==true)' >/dev/null 2>&1 \
+  || { echo "  ✗ eligible 재검증: 캐시 부재 → revalidate:true 미출력 out='$out'"; rm -rf "$tmp"; exit 1; }
+# (b) 캐시 fail(exit 1) → 후보 탈락(출력 없음)
+echo fail > "$result"
+out=$(run_elig)
+[ -z "$out" ] || { echo "  ✗ eligible 재검증: 캐시 fail → 탈락 안 됨 out='$out'"; rm -rf "$tmp"; exit 1; }
+# (c) 캐시 pass(exit 0) → 후보 출력 + revalidate:false
+echo pass > "$result"
+out=$(run_elig)
+printf '%s' "$out" | jq -e 'select(.pr==5 and .revalidate==false)' >/dev/null 2>&1 \
+  || { echo "  ✗ eligible 재검증: 캐시 pass → revalidate:false 미출력 out='$out'"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
 echo "[closeout] reconcile 빈-결과 스모크"
 tmp=$(mktemp -d); mkdir "$tmp/stub"
 cat > "$tmp/stub/gh" <<'EOF'
