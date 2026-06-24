@@ -208,7 +208,7 @@ then **exit as approval-required**.
 reported deployed, without any new detection mechanism (no polling/timing), actively run
 a Chrome smoke to judge it. Parse `## 검증 URL` (`<VERIFY_URL>`) and
 `## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body, fill
-`references/smoke-prompt.md`'s placeholders, load the chrome-devtools MCP tools via
+`references/smoke-prompt.en.md`'s placeholders, load the chrome-devtools MCP tools via
 ToolSearch, `navigate_page` to `<VERIFY_URL>`, and compare each item via
 `evaluate_script`/`take_snapshot` to produce a per-item pass/fail (distinguish
 structure/empty-state confirmation from real-data render confirmation in the result).
