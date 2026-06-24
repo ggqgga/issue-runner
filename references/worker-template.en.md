@@ -90,7 +90,19 @@ Procedure:
    result as a **PR comment**, not in the body —
    `gh pr comment <PR_NUMBER> --repo <REPO> --body "Verifier review: <CLEAN, or BLOCKER/WARN/NIT counts with a summary of each finding and how it was handled>"`
    (comment even on CLEAN — it is the evidence that the review actually ran).
-12. Just before finishing, leave a merge-verdict comment on the PR — if every gate
+12. Just before the merge-verdict comment, **reconcile the checkboxes in the
+    referenced issue (`#<NUM>`) body** (the global hook's issue-checkbox reconcile
+    does not reach subagent workers — same structure as the codex injection, so do
+    it yourself). Read the body with `gh issue view <NUM> --repo <REPO> --json body`,
+    set each issue acceptance-criteria/Test-plan line that corresponds to an item you
+    marked `[x]` in the PR `## Test plan` to `[x]`, and **leave** unfinished items as
+    `[ ]`, then write it back with `gh issue edit <NUM> --repo <REPO> --body` (items
+    that cannot be completed at PR time, like live verification, stay honestly `[ ]`
+    — their reasons are already stated in the PR `## Test plan` / merge-verdict
+    comment, so do not repeat them here). **Do not regenerate the whole body** —
+    conservatively replace only the mark in checkbox (`- [ ]`/`- [x]`) lines and
+    leave every other character of the body text unchanged (avoid text loss).
+13. Just before finishing, leave a merge-verdict comment on the PR — if every gate
     (tests, local CI, verifier) passed:
     `gh pr comment <PR_NUMBER> --repo <REPO> --body "Merge verdict: ✅ ready to merge — local CI pass (HEAD <sha>) · verifier <CLEAN or 'BLOCKER 0 / WARN n resolved'> · nothing unresolved"`,
     or if anything is left unresolved: `--body "Merge verdict: ⚠ hold — <reason>"`.
@@ -100,6 +112,8 @@ Procedure:
 
 Forbidden: merging, pushing directly to main/master, changing issue labels,
 working on other issues, modifying anything outside <WT_PATH>.
+(Exception: syncing the checkbox marks in the referenced issue body, per step 12,
+is allowed — it is neither a label change nor working on another issue.)
 
 Past lessons:
 <LESSONS_OR_"none">
