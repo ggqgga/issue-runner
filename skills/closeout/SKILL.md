@@ -169,15 +169,31 @@ CONFLICTING 이면 `harvesting` 을 제거하고 skip 한다 (issue-runner Maint
 
 **4단계 — 배포 (사람 게이트, dry-run).** **실 배포를 하지 않는다.**
 `references/deploy-check-issue.md` 를 채워(`<DEPLOY_CMD>`=레포 배포 엔트리포인트,
-모르면 "레포 배포 절차") `gh issue create --repo <repo> --label needs-human` 으로
-배포 요청 이슈를 발행하고, `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"`
-로 마커를 남긴 뒤 → **approval-required 로 종료**한다.
+모르면 "레포 배포 절차"; `<VERIFY_URL>`=production 베이스 URL — 5단계 스모크가 몰
+주소, 모르면 빈 줄로 둬 5단계가 URL 도달불가로 폴백) `gh issue create --repo <repo>
+--label needs-human` 으로 배포 요청 이슈를 발행하고,
+`gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"` 로 마커를 남긴 뒤
+→ **approval-required 로 종료**한다.
 
-**5단계 — 배포 후 처리.** 이 Phase 에는 자동 smoke 가 없다 — 사람이 배포 후
-보고하는 경로만 있다. 문제가 보고되면 직접 고치지 않고 이슈를 발행한다:
-자동수정 가능하면 `references/spinoff-issue.md` 로 agent-ready 이슈, 라이브 검증이
-필요하면 `needs:human` 이슈. 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복되면
-`needs:human` 으로 승격한다 (**exhausted 종료**).
+**5단계 — 배포 후 처리 (Chrome 스모크).** 사람이 배포를 보고한 배포 이슈에 대해
+새 감지 기구 없이(폴링/타이밍 미도입) 능동적으로 Chrome 스모크를 돌려 판정한다.
+배포 이슈 본문에서 `## 검증 URL`(`<VERIFY_URL>`)과 `## 라이브/하드웨어 검증 항목`
+(`<LIVE_CHECKS>`)을 파싱해 `references/smoke-prompt.md` 의 placeholder 에 채우고,
+chrome-devtools MCP 도구를 ToolSearch 로 로드해 `navigate_page` 로 `<VERIFY_URL>` 에
+진입한 뒤 각 항목을 `evaluate_script`/`take_snapshot` 으로 대조해 항목별 pass/fail 을
+산출한다 (구조/빈 상태 확인과 실 데이터 렌더 확인을 결과에 구분 표기).
+- **저하(degrade) — 조용한 skip 금지.** chrome-devtools MCP 가 세션에 없거나(헤드리스/
+  크론 — 대화형 인증 MCP 부재 가능) `<VERIFY_URL>` 이 비었거나 도달 불가면, 스모크를
+  건너뛰고 기존 사람-보고 경로로 폴백하되 배포 이슈에 `스모크 skip: <사유>` 코멘트를
+  남긴다(누락 은폐 금지).
+- **green (전부 통과)** → 배포 이슈 + 원본 PR 에 `✅ 스모크: <n>/<n> 통과` 코멘트(이
+  코멘트가 5단계 완료 마커 — 재개 틱이 재스모크하지 않는다). 이어 배포 이슈에서
+  `needs-human` 라벨을 제거하고 배포 이슈를 close 한다(남은 게이트가 검증뿐이고 그게
+  통과했으므로 closeout 이 종결 — 미결 결정의 권장안).
+- **fail (한 건이라도 실패)** → 직접 고치지 않고 기존 발행 경로: 자동수정 가능하면
+  `references/spinoff-issue.md` 로 agent-ready 이슈, 라이브 검증이 필요하면
+  `needs:human` 이슈. 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복되면 `needs:human` 으로
+  승격한다 (**exhausted 종료**). 배포 이슈는 닫지 않는다.
 
 **6단계 — 파생 이슈.** 워커 PR 본문의 `follow-up:` 항목 + 1단계 diff 리뷰가 짚은
 인접 작업을 `references/spinoff-issue.md` 로 채워 agent-ready 이슈로 발행한다.

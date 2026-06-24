@@ -198,16 +198,33 @@ comment.
 
 **Step 4 — deploy (human gate, dry-run).** **Do not deploy for real.** Fill
 `references/deploy-check-issue.md` (`<DEPLOY_CMD>`=the repo's deploy entrypoint, or
-"the repo's deploy procedure" if unknown), issue a deploy-request issue with
-`gh issue create --repo <repo> --label needs-human`, leave the marker
-`gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
-**exit as approval-required**.
+"the repo's deploy procedure" if unknown; `<VERIFY_URL>`=the production base URL the
+step-5 smoke drives — leave it blank if unknown so step 5 falls back as URL-unreachable),
+issue a deploy-request issue with `gh issue create --repo <repo> --label needs-human`,
+leave the marker `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`,
+then **exit as approval-required**.
 
-**Step 5 — post-deploy handling.** This Phase has no automatic smoke — only the path
-where a human reports after deploying. If a problem is reported, do not fix it directly;
-issue an issue instead: an agent-ready issue via `references/spinoff-issue.md` if it is
-auto-fixable, a `needs:human` issue if live verification is needed. If the same failure
-recurs `REPAIR_RECUR_LIMIT` times, escalate to `needs:human` (**exhausted exit**).
+**Step 5 — post-deploy handling (Chrome smoke).** For a deploy issue a human has
+reported deployed, without any new detection mechanism (no polling/timing), actively run
+a Chrome smoke to judge it. Parse `## 검증 URL` (`<VERIFY_URL>`) and
+`## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body, fill
+`references/smoke-prompt.md`'s placeholders, load the chrome-devtools MCP tools via
+ToolSearch, `navigate_page` to `<VERIFY_URL>`, and compare each item via
+`evaluate_script`/`take_snapshot` to produce a per-item pass/fail (distinguish
+structure/empty-state confirmation from real-data render confirmation in the result).
+- **Degrade — no silent skip.** If the chrome-devtools MCP is absent from the session
+  (headless/cron — interactive-auth MCP may be missing) or `<VERIFY_URL>` is blank or
+  unreachable, skip the smoke and fall back to the existing human-report path, but leave
+  a `스모크 skip: <reason>` comment on the deploy issue (no hiding the gap).
+- **green (all pass)** → a `✅ 스모크: <n>/<n> 통과` comment on the deploy issue + the
+  original PR (this comment is the step-5 completion marker — a resumed tick does not
+  re-smoke). Then remove the `needs-human` label from the deploy issue and close the
+  deploy issue (the only remaining gate was verification and it passed, so closeout
+  finalizes — the recommended option of the open decision).
+- **fail (any item fails)** → do not fix it directly; use the existing publish path: an
+  agent-ready issue via `references/spinoff-issue.md` if auto-fixable, a `needs:human`
+  issue if live verification is needed. If the same failure recurs `REPAIR_RECUR_LIMIT`
+  times, escalate to `needs:human` (**exhausted exit**). Do not close the deploy issue.
 
 **Step 6 — spinoff issues.** Fill `references/spinoff-issue.md` with the worker PR
 body's `follow-up:` items + adjacent work the step-1 diff review flagged, and issue an
