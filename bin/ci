@@ -292,4 +292,12 @@ for s in '/closeout' 'harvesting' 'MAX_CLOSEOUT' '머지는 항상 사람이 한
   grep -qF "$s" README.md || { echo "  ✗ README.md 에 '$s' 없음"; exit 1; }
 done
 
+echo "[closeout] SKILL 3단계 캐시 보강(run-local-ci.sh) 문서화 검사 (#58)"
+# closeout ③ 3단계 doc push 직후 run-local-ci.sh 로 메인 slug 캐시를 채운다는
+# 지시가 한/영 SKILL 양쪽에 있어야 한다 (워크트리 provenance — 머지 게이트 cache-miss
+# 방지). 지우면 Plans/*.md 를 가진 PR 의 마감이 stage 3 직후 막히는 회귀.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF 'run-local-ci.sh' "$f" || { echo "  ✗ $f 에 run-local-ci.sh 캐시 보강 지시 없음"; exit 1; }
+done
+
 echo "CI pass"
