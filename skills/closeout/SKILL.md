@@ -93,11 +93,16 @@ pr diff 출력·`<ISSUE_BODY>`=위 issue view 출력 (## 상수의 VERIFIER 계�
   검증자 컨텍스트에 다 안 들어갈 만큼 크면(판단이 서면) 검증을 통과로 보지 말고
   BLOCKER 경로로 보류 종료한다(머지 안 함) — 네트워크 비의존 경로가 조용히 깨진 채
   머지로 새지 않게 한다.
-- BLOCKER → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>"`
+  머신 코멘트 마커(필수): 아래 `gh pr comment` 로 남기는 마감 검증 코멘트는 **마지막 줄에
+  `<!-- bodat:worker -->`** 를 포함한다 — closeout-eligible 이 머신 코멘트를 사람 리뷰와
+  구분하는 신호다(#72). 빠지면 그 PR 이 재평가 때 미해결 사람 코멘트로 오인돼 탈락한다.
+- BLOCKER → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>
+  <!-- bodat:worker -->"`
   + `gh issue edit <issue> --repo <repo> --add-label needs-human`
   + `gh issue edit <pr> --repo <repo> --remove-label harvesting` →
   **blocked 종료** (머지하지 않는다).
-- CLEAN/WARN → `gh pr comment <pr> --repo <repo> --body "마감 검증: ✅ <CLEAN 또는 WARN n>"`
+- CLEAN/WARN → `gh pr comment <pr> --repo <repo> --body "마감 검증: ✅ <CLEAN 또는 WARN n>
+  <!-- bodat:worker -->"`
   (이 코멘트가 1단계 완료 마커다).
 
 **2단계 — 머지 게이트.** 머지 명령은 **반드시 `--repo <repo>` 를 넘긴다** —

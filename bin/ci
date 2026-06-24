@@ -244,6 +244,66 @@ printf '%s' "$out" | jq -e 'select(.pr==5 and .revalidate==false)' >/dev/null 2>
   || { echo "  ✗ eligible 재검증: 캐시 pass → revalidate:false 미출력 out='$out'"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] eligible sentinel 마커로 머신/사람 코멘트 판정 스모크 (#72)"
+# 워커 머신 코멘트는 마지막 줄 <!-- bodat:worker --> 마커로 식별한다. 마커 단 코멘트는
+# 접두사 어휘 무관('추가 보정' 같은 자기-노트 포함) unresolved 에서 제외되고, 마커
+# 없는 사람 코멘트는 unresolved 로 집계돼 초록불 PR 을 후보에서 탈락시킨다(#72 회귀 가드).
+elig="$PWD/scripts/closeout-eligible.sh"
+tmp=$(mktemp -d); mkdir -p "$tmp/stub" "$tmp/proj/r/bin" "$tmp/home"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/proj/r/bin/ci"; chmod +x "$tmp/proj/r/bin/ci"
+realroot=$(cd "$tmp/proj/r" && pwd -P)
+slug=$(printf '%s' "$realroot" | sed 's#[/ ]#_#g; s#^_##')
+mkdir -p "$tmp/home/.claude/.local-ci/$slug"
+echo pass > "$tmp/home/.claude/.local-ci/$slug/feed0070ab.result"   # 캐시 pass → revalidate:false 경로
+mkgh() {  # $1 = comments JSON 배열 → gh pr view ...headRefName 분기에 주입
+  cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
+  *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
+  *"pr view"*headRefName*)
+    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"comments":$1,"closingIssuesReferences":[{"number":5}]}' ;;
+  *) echo '' ;;
+esac
+STUB
+  chmod +x "$tmp/stub/gh"
+}
+run_elig() { PATH="$tmp/stub:$PATH" HOME="$tmp/home" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" bash "$elig" 2>/dev/null; }
+# (a) 머신 코멘트만 (머지판정✅ + 마커 단 자기-노트 '추가 보정') → 후보 출력
+mkgh '[{"body":"머지 판정: ✅ 머지 가능 <!-- bodat:worker -->"},{"body":"추가 보정 (e3cb586): revalidate 경로 보정 <!-- bodat:worker -->"}]'
+out=$(run_elig)
+printf '%s' "$out" | jq -e 'select(.pr==5)' >/dev/null 2>&1 \
+  || { echo "  ✗ eligible 마커: 마커 단 머신 코멘트만인데 후보 탈락 out='$out'"; rm -rf "$tmp"; exit 1; }
+# (b) 마커 없는 사람 코멘트 추가 → unresolved>0 로 탈락
+mkgh '[{"body":"머지 판정: ✅ 머지 가능 <!-- bodat:worker -->"},{"body":"이 부분 다시 확인 부탁드립니다"}]'
+out=$(run_elig)
+[ -z "$out" ] || { echo "  ✗ eligible 마커: 마커 없는 사람 코멘트가 있는데 탈락 안 됨 out='$out'"; rm -rf "$tmp"; exit 1; }
+# (c) 마커 없는 레거시 접두사 코멘트(마커 도입 이전 PR) → 동결 폴백으로 제외 → 후보 출력
+mkgh '[{"body":"머지 판정: ✅ 머지 가능"},{"body":"검증자 리뷰: CLEAN"}]'
+out=$(run_elig)
+printf '%s' "$out" | jq -e 'select(.pr==5)' >/dev/null 2>&1 \
+  || { echo "  ✗ eligible 마커: 레거시 접두사(마커 이전) 코멘트가 탈락됨 out='$out'"; rm -rf "$tmp"; exit 1; }
+# (d) 영문 긍정 게이트: 영문 머지 판정(Merge verdict: ✅)+마커만 → 후보 출력(긍정 게이트 한·영)
+mkgh '[{"body":"Merge verdict: ✅ ready to merge <!-- bodat:worker -->"}]'
+out=$(run_elig)
+printf '%s' "$out" | jq -e 'select(.pr==5)' >/dev/null 2>&1 \
+  || { echo "  ✗ eligible 마커: 영문 머지 판정이 긍정 게이트 통과 못함 out='$out'"; rm -rf "$tmp"; exit 1; }
+# (e) 마커가 줄 중간/본문에 있어도 머신으로 제외(contains 위치 무관 — 마지막줄 강제 아님이 계약)
+mkgh '[{"body":"머지 판정: ✅ 머지 가능 <!-- bodat:worker -->"},{"body":"중간에 <!-- bodat:worker --> 박힌 자기-노트"}]'
+out=$(run_elig)
+printf '%s' "$out" | jq -e 'select(.pr==5)' >/dev/null 2>&1 \
+  || { echo "  ✗ eligible 마커: 중간 마커 코멘트가 사람으로 오인돼 탈락 out='$out'"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
+echo "[closeout] 머신 코멘트 sentinel 마커 주입 지시 검사 (#72)"
+# 워커/closeout 머신 코멘트에 <!-- bodat:worker --> 마커를 박으라는 지시가 워커
+# 템플릿(한/영)+closeout SKILL(한/영) 양쪽에 있어야 한다. 빠지면 접두사 allowlist 회귀.
+for f in references/worker-template.md references/worker-template.en.md \
+         skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF '<!-- bodat:worker -->' "$f" || { echo "  ✗ $f 에 sentinel 마커 주입 지시 없음"; exit 1; }
+done
+
 echo "[closeout] reconcile 빈-결과 스모크"
 tmp=$(mktemp -d); mkdir "$tmp/stub"
 cat > "$tmp/stub/gh" <<'EOF'
