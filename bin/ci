@@ -113,6 +113,44 @@ rc=0; PATH="$tmp/stub:$PATH" bash scripts/closeout-ci-pass.sh owner/r 123 >/dev/
 [ "$rc" = 1 ] || { echo "  ✗ ci-pass: gh 실패 시 exit $rc (기대 1)"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] ci-pass 로컬 CI 분기 세 결과 구분 스모크 (#70 — pass=0/fail=1/부재=2)"
+# 로컬 CI 옵트인 레포(root 에 실행가능 bin/ci) → head SHA 캐시 결과로 0/1/2 구분.
+# rebase 로 HEAD 가 바뀐 PR 은 새 SHA 결과파일이 부재 → exit 2(재검증 필요)여야 한다.
+# (slug 은 repo-dir.sh 의 pwd -P 정규화 경로 기준 — macOS /tmp→/private 심링크 주의.)
+ci_pass="$PWD/scripts/closeout-ci-pass.sh"
+tmp=$(mktemp -d); mkdir -p "$tmp/stub" "$tmp/proj/r/bin" "$tmp/home"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/proj/r/bin/ci"   # 가짜 레포 체크아웃(로컬 CI 옵트인)
+chmod +x "$tmp/proj/r/bin/ci"
+cat > "$tmp/stub/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *"pr view"*headRefOid*) echo '{"headRefOid":"cafef00d11"}' ;;
+  *) echo '' ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+realroot=$(cd "$tmp/proj/r" && pwd -P)
+slug=$(printf '%s' "$realroot" | sed 's#[/ ]#_#g; s#^_##')
+mkdir -p "$tmp/home/.claude/.local-ci/$slug"
+run_ci_pass_local() {
+  PATH="$tmp/stub:$PATH" HOME="$tmp/home" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" \
+    bash "$ci_pass" o/r 5 >/dev/null 2>&1
+}
+result="$tmp/home/.claude/.local-ci/$slug/cafef00d11.result"
+# (a) 결과파일 부재(현재 HEAD 미실행) → exit 2 (재검증 필요)
+rm -f "$result"
+rc=0; run_ci_pass_local || rc=$?
+[ "$rc" = 2 ] || { echo "  ✗ ci-pass 로컬: 결과파일 부재 → exit $rc (기대 2)"; rm -rf "$tmp"; exit 1; }
+# (b) 결과 == pass → exit 0
+echo pass > "$result"
+rc=0; run_ci_pass_local || rc=$?
+[ "$rc" = 0 ] || { echo "  ✗ ci-pass 로컬: pass → exit $rc (기대 0)"; rm -rf "$tmp"; exit 1; }
+# (c) 결과 == fail → exit 1
+echo fail > "$result"
+rc=0; run_ci_pass_local || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ ci-pass 로컬: fail → exit $rc (기대 1)"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
 echo "[closeout] ci-pass rollup 폴백 스모크 (로컬 bin/ci 없는 레포)"
 # 로컬 CI 없는 레포(repo-dir.sh 해석 root 에 bin/ci 부재) → GitHub statusCheckRollup
 # 으로 판정 (ci-gate 의 그 외 레포 분기와 동일 계약, #51).

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # PR 의 CI 통과를 판정 — pass 면 exit 0, 아니면 exit 1. closeout 진입 조건용(무출력 필터).
+#  • exit 2 = 로컬 CI HEAD 미실행(결과파일 부재 → 재검증 필요, #70). 로컬 CI 분기
+#    한정 — rebase 로 HEAD SHA 가 바뀌어 새 SHA 캐시가 비었을 때를 fail(1)과 구분한다
+#    (closeout 머지 도크가 떠안아 재검증). GitHub rollup 폴백 분기는 0/1 그대로.
 #  • 로컬 CI 옵트인 레포(실행 가능한 bin/ci 보유): PR head SHA 의 로컬 CI 캐시로 판정.
 #  • 그 외 레포: GitHub statusCheckRollup 으로 판정 (ci-gate-before-pr-merge.sh 의
 #    그 외 레포 분기와 같은 취지 — 등록 체크 1개 이상 + 전부 SUCCESS 면 0, 아니면 1).
@@ -21,7 +24,15 @@ if [ -n "$root" ] && [ -x "$root/bin/ci" ]; then
 
   slug=$(printf '%s' "$root" | sed 's#[/ ]#_#g; s#^_##')
   result="$HOME/.claude/.local-ci/$slug/$sha.result"
-  [ -f "$result" ] && [ "$(cat "$result" 2>/dev/null)" = pass ]
+  # 세 결과 구분 (#70): 결과파일 부재=exit 2(미실행, 재검증 필요)·내용 pass=exit 0·
+  # 그 외(fail/빈값)=exit 1. exit 2 도 비0이라 `if ci-pass; then` 호출부엔 무손상.
+  if [ ! -f "$result" ]; then
+    exit 2
+  elif [ "$(cat "$result" 2>/dev/null)" = pass ]; then
+    exit 0
+  else
+    exit 1
+  fi
 else
   # ── 그 외 레포 — GitHub statusCheckRollup 폴백 (SUCCESS-only allowlist) ──
   rollup=$(gh pr view "$pr" --repo "$repo" --json statusCheckRollup 2>/dev/null)
