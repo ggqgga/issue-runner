@@ -126,7 +126,30 @@ merges PRs in repos outside cwd, so the ci-gate hook must query that repo via
 2026-06-24: in a BoDAT cwd session, merging an issue-runner PR was blocked because the
 hook queried the cwd repo). Gate conditions: `$SCRIPTS/closeout-ci-pass.sh <repo> <pr>`
 (exit 0) + the worker's `검증자 리뷰:` comment shows BLOCKER 0 + recheck
-`gh pr view <pr> --repo <repo> --json mergeable` ≠ CONFLICTING. If all pass, **perform step 3 (doc reconcile) right
+`gh pr view <pr> --repo <repo> --json mergeable` ≠ CONFLICTING.
+- **Revalidate the rebased HEAD (`revalidate:true` precondition gate, #70).** If the
+  candidate ② Pick took has `revalidate` true (= `closeout-ci-pass.sh` returned exit 2 —
+  the current HEAD's local-CI cache is empty due to a rebase etc., i.e. "not run, not
+  fail"), then **before** evaluating the exit-0 gate above, revalidate the current HEAD:
+  obtain a worktree via `$SCRIPTS/make-worktree.sh <repo> <N>` (`<N>` parsed from the PR
+  head `agent/issue-N`, same as step 3) → **sync that worktree to the rebased remote
+  head** (`make-worktree.sh` returns an existing worktree as-is, so it may still have the
+  pre-rebase SHA checked out — unlike step 3, this path makes no new commit, so the sync
+  is the only freshness guarantee): `git -C <wt> fetch origin` then
+  `git -C <wt> reset --hard origin/agent/issue-<N>` to align the worktree HEAD to the PR's
+  current (rebased) head SHA (this is exactly the SHA `closeout-ci-pass.sh` looks up via
+  `gh pr view headRefOid` — without the sync, run-local-ci caches the old SHA and it stays
+  permanently exit 2) → fill the **current HEAD** cache with
+  `$SCRIPTS/run-local-ci.sh <repo> <N>`. If `run-local-ci.sh` exits nonzero (integration
+  with the new base is broken), do not merge: exit on hold fail-closed (remove
+  `harvesting` + `blocked` exit, do not invent a new exit state). If 0, the cache is
+  filled with pass, so join the exit-0 gate below. This path fires **independent of
+  whether step 3 produced a doc commit** — step 3's cache supplement only runs after a
+  doc push, so it cannot cover the rebase·no-doc-change case (where the worker's
+  `머지 판정 ✅` did not follow the new SHA). (If `revalidate:false`, the cache is
+  already pass so this revalidation is skipped.)
+
+If all pass, **perform step 3 (doc reconcile) right
 here** to create the doc commit on the PR branch and push it — so the squash merge
 includes that doc reconcile — then `gh pr merge <pr> --repo <repo> --squash` (the
 ci-gate hook judges once more). That is: the step numbering is 1→2→3, but the step-3

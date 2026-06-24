@@ -113,6 +113,44 @@ rc=0; PATH="$tmp/stub:$PATH" bash scripts/closeout-ci-pass.sh owner/r 123 >/dev/
 [ "$rc" = 1 ] || { echo "  ✗ ci-pass: gh 실패 시 exit $rc (기대 1)"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] ci-pass 로컬 CI 분기 세 결과 구분 스모크 (#70 — pass=0/fail=1/부재=2)"
+# 로컬 CI 옵트인 레포(root 에 실행가능 bin/ci) → head SHA 캐시 결과로 0/1/2 구분.
+# rebase 로 HEAD 가 바뀐 PR 은 새 SHA 결과파일이 부재 → exit 2(재검증 필요)여야 한다.
+# (slug 은 repo-dir.sh 의 pwd -P 정규화 경로 기준 — macOS /tmp→/private 심링크 주의.)
+ci_pass="$PWD/scripts/closeout-ci-pass.sh"
+tmp=$(mktemp -d); mkdir -p "$tmp/stub" "$tmp/proj/r/bin" "$tmp/home"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/proj/r/bin/ci"   # 가짜 레포 체크아웃(로컬 CI 옵트인)
+chmod +x "$tmp/proj/r/bin/ci"
+cat > "$tmp/stub/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *"pr view"*headRefOid*) echo '{"headRefOid":"cafef00d11"}' ;;
+  *) echo '' ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+realroot=$(cd "$tmp/proj/r" && pwd -P)
+slug=$(printf '%s' "$realroot" | sed 's#[/ ]#_#g; s#^_##')
+mkdir -p "$tmp/home/.claude/.local-ci/$slug"
+run_ci_pass_local() {
+  PATH="$tmp/stub:$PATH" HOME="$tmp/home" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" \
+    bash "$ci_pass" o/r 5 >/dev/null 2>&1
+}
+result="$tmp/home/.claude/.local-ci/$slug/cafef00d11.result"
+# (a) 결과파일 부재(현재 HEAD 미실행) → exit 2 (재검증 필요)
+rm -f "$result"
+rc=0; run_ci_pass_local || rc=$?
+[ "$rc" = 2 ] || { echo "  ✗ ci-pass 로컬: 결과파일 부재 → exit $rc (기대 2)"; rm -rf "$tmp"; exit 1; }
+# (b) 결과 == pass → exit 0
+echo pass > "$result"
+rc=0; run_ci_pass_local || rc=$?
+[ "$rc" = 0 ] || { echo "  ✗ ci-pass 로컬: pass → exit $rc (기대 0)"; rm -rf "$tmp"; exit 1; }
+# (c) 결과 == fail → exit 1
+echo fail > "$result"
+rc=0; run_ci_pass_local || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ ci-pass 로컬: fail → exit $rc (기대 1)"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
 echo "[closeout] ci-pass rollup 폴백 스모크 (로컬 bin/ci 없는 레포)"
 # 로컬 CI 없는 레포(repo-dir.sh 해석 root 에 bin/ci 부재) → GitHub statusCheckRollup
 # 으로 판정 (ci-gate 의 그 외 레포 분기와 동일 계약, #51).
@@ -160,6 +198,50 @@ EOF
 chmod +x "$tmp/stub/gh"
 out=$(PATH="$tmp/stub:$PATH" bash scripts/closeout-eligible.sh 2>/dev/null); rc=$?
 [ "$rc" = 0 ] && [ -z "$out" ] || { echo "  ✗ eligible 빈: rc=$rc out='$out'"; exit 1; }
+rm -rf "$tmp"
+
+echo "[closeout] eligible 재검증 후보 분기 스모크 (#70 — exit2=revalidate:true·exit1=탈락·exit0=false)"
+# closeout-eligible.sh 가 ci-pass exit code 로 분기하는지 검증(로컬 CI 옵트인 레포).
+# 캐시 부재(exit 2)+머지판정✅ → revalidate:true 로 출력, 캐시 fail(exit 1) → 미출력,
+# 캐시 pass(exit 0) → revalidate:false. slug 은 ci-pass 와 같은 pwd -P 정규화 경로.
+elig="$PWD/scripts/closeout-eligible.sh"
+tmp=$(mktemp -d); mkdir -p "$tmp/stub" "$tmp/proj/r/bin" "$tmp/home"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/proj/r/bin/ci"   # 가짜 레포(로컬 CI 옵트인)
+chmod +x "$tmp/proj/r/bin/ci"
+cat > "$tmp/stub/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *"api user"*) echo "tester" ;;
+  *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
+  *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
+  *"pr view"*headRefName*)
+    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"comments":[{"body":"머지 판정: ✅ 머지 가능"}],"closingIssuesReferences":[{"number":5}]}' ;;
+  *) echo '' ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+realroot=$(cd "$tmp/proj/r" && pwd -P)
+slug=$(printf '%s' "$realroot" | sed 's#[/ ]#_#g; s#^_##')
+mkdir -p "$tmp/home/.claude/.local-ci/$slug"
+result="$tmp/home/.claude/.local-ci/$slug/feed0070ab.result"
+run_elig() {
+  PATH="$tmp/stub:$PATH" HOME="$tmp/home" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" \
+    bash "$elig" 2>/dev/null
+}
+# (a) 캐시 부재(exit 2) + 머지판정✅ → 후보 출력 + revalidate:true
+rm -f "$result"
+out=$(run_elig)
+printf '%s' "$out" | jq -e 'select(.pr==5 and .revalidate==true)' >/dev/null 2>&1 \
+  || { echo "  ✗ eligible 재검증: 캐시 부재 → revalidate:true 미출력 out='$out'"; rm -rf "$tmp"; exit 1; }
+# (b) 캐시 fail(exit 1) → 후보 탈락(출력 없음)
+echo fail > "$result"
+out=$(run_elig)
+[ -z "$out" ] || { echo "  ✗ eligible 재검증: 캐시 fail → 탈락 안 됨 out='$out'"; rm -rf "$tmp"; exit 1; }
+# (c) 캐시 pass(exit 0) → 후보 출력 + revalidate:false
+echo pass > "$result"
+out=$(run_elig)
+printf '%s' "$out" | jq -e 'select(.pr==5 and .revalidate==false)' >/dev/null 2>&1 \
+  || { echo "  ✗ eligible 재검증: 캐시 pass → revalidate:false 미출력 out='$out'"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
 echo "[closeout] reconcile 빈-결과 스모크"
@@ -298,6 +380,23 @@ echo "[closeout] SKILL 3단계 캐시 보강(run-local-ci.sh) 문서화 검사 (
 # 방지). 지우면 Plans/*.md 를 가진 PR 의 마감이 stage 3 직후 막히는 회귀.
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qF 'run-local-ci.sh' "$f" || { echo "  ✗ $f 에 run-local-ci.sh 캐시 보강 지시 없음"; exit 1; }
+done
+
+echo "[closeout] SKILL 2단계 rebase된 HEAD 재검증(revalidate) 문서화 검사 (#70)"
+# closeout ③ 2단계 머지 게이트가 revalidate:true 후보를 머지 직전 run-local-ci.sh 로
+# 재검증한다는 지시가 한/영 SKILL 양쪽에 있어야 한다. revalidate 는 closeout-eligible.sh
+# 출력 JSON 필드명(언어 불변 토큰)이라 한 가드로 양 파일을 덮는다. run-local-ci.sh 는
+# 3단계 캐시 보강도 쓰므로 단독으로는 2단계 재검증 경로 존재를 증명 못 한다 — revalidate
+# 토큰이 그 경로의 식별자다. 지우면 rebase 로 HEAD 가 바뀐 PR 이 양쪽 사각지대에
+# 끼는 회귀(#70 배경).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF 'revalidate' "$f" || { echo "  ✗ $f 에 rebase HEAD 재검증(revalidate) 지시 없음"; exit 1; }
+  # revalidate 경로가 실제로 현재 HEAD 에 로컬 CI 를 돌린다는 핵심 지시를 확인:
+  # revalidate 와 같은 단락(빈 줄로 구분)에 run-local-ci.sh 가 있어야 한다. 단어만
+  # 남고 재실행 지시가 빠지는 회귀를 막는다(#70 codex NIT). awk 로 revalidate 를 담은
+  # 단락만 떼어 그 안에서 run-local-ci.sh 를 찾는다.
+  awk 'BEGIN{RS="";ok=0} /revalidate/ && /run-local-ci\.sh/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f 의 revalidate 단락에 run-local-ci.sh 재검증 지시 없음"; exit 1; }
 done
 
 echo "[closeout] cleanup-worktree.sh 동작 스모크 (#62)"

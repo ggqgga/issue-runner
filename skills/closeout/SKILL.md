@@ -106,7 +106,27 @@ closeout 은 cwd 밖 레포의 PR 을 머지하므로 ci-gate 훅이 `--repo` �
 cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차단됨). 게이트 통과
 조건: `$SCRIPTS/closeout-ci-pass.sh <repo> <pr>` (exit 0) + 워커가 남긴
 `검증자 리뷰:` 코멘트가 BLOCKER 0 + `gh pr view <pr> --repo <repo> --json mergeable`
-≠ CONFLICTING 재확인. 모두 통과면 **여기서 3단계(문서 reconcile)를 먼저 수행**해 PR 브랜치에 문서 커밋을
+≠ CONFLICTING 재확인.
+- **rebase된 HEAD 재검증 (`revalidate:true` 선행 게이트, #70).** ② Pick 이 집은
+  후보의 `revalidate` 가 true 면(= `closeout-ci-pass.sh` 가 exit 2 — rebase 등으로
+  현재 HEAD 의 로컬 CI 캐시가 비어 "fail 이 아니라 미실행"), 위 exit 0 게이트를
+  판정하기 **전에** 현재 HEAD 를 재검증한다: `$SCRIPTS/make-worktree.sh <repo> <N>`
+  로 worktree 확보(`<N>`=PR head `agent/issue-N` 파싱, 3단계와 동일) → **그 worktree 를
+  rebase된 원격 head 로 동기화**(`make-worktree.sh` 는 기존 worktree 가 있으면 그대로
+  반환해 rebase 전 SHA 가 체크아웃된 채일 수 있다 — 3단계와 달리 이 경로는 새 커밋을
+  안 만들어 동기화가 freshness 의 유일한 보장이다): `git -C <wt> fetch origin` 후
+  `git -C <wt> reset --hard origin/agent/issue-<N>` 으로 worktree HEAD 를 PR 의 현재
+  (rebased) head SHA 에 맞춘다(이 SHA 가 `closeout-ci-pass.sh` 가 `gh pr view headRefOid`
+  로 조회하는 바로 그 SHA — 안 맞추면 run-local-ci 가 옛 SHA 를 캐시해 영구 exit 2 로
+  남는다) → `$SCRIPTS/run-local-ci.sh <repo> <N>` 로 **현재 HEAD** 캐시를 채운다. `run-local-ci.sh`
+  가 비0(새 base 와의 통합이 깨짐)이면 머지하지 말고 fail-closed 로 보류 종료한다
+  (`harvesting` 제거 + `blocked` 종료, 새 종료 상태 안 만듦). 0이면 캐시가 pass 로
+  채워졌으니 아래 exit 0 게이트로 합류한다. 이 경로는 **3단계 doc 커밋 유무와
+  무관**하게 발동한다 — 3단계 캐시 보강은 doc push 후에만 돌아 rebase·doc무변경
+  케이스(워커 `머지 판정 ✅` 이 새 SHA 에 안 따라온 채)를 못 메우기 때문이다.
+  (`revalidate:false` 면 캐시가 이미 pass 라 이 재검증을 건너뛴다.)
+
+모두 통과면 **여기서 3단계(문서 reconcile)를 먼저 수행**해 PR 브랜치에 문서 커밋을
 만들고 push 한 뒤 — squash 머지가 그 문서 반영을 포함하도록 — `gh pr merge <pr>
 --repo <repo> --squash` (ci-gate 훅이 한 번 더 판정한다). 즉 단계 번호는 1→2→3
 순서지만, 2단계의 머지 직전에 3단계 커밋을 끼워 넣는다 (3단계 헤더의 "머지 전"이
