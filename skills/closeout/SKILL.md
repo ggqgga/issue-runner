@@ -111,8 +111,14 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   후보의 `revalidate` 가 true 면(= `closeout-ci-pass.sh` 가 exit 2 — rebase 등으로
   현재 HEAD 의 로컬 CI 캐시가 비어 "fail 이 아니라 미실행"), 위 exit 0 게이트를
   판정하기 **전에** 현재 HEAD 를 재검증한다: `$SCRIPTS/make-worktree.sh <repo> <N>`
-  로 worktree 확보(`<N>`=PR head `agent/issue-N` 파싱, 3단계와 동일) →
-  `$SCRIPTS/run-local-ci.sh <repo> <N>` 로 **현재 HEAD** 캐시를 채운다. `run-local-ci.sh`
+  로 worktree 확보(`<N>`=PR head `agent/issue-N` 파싱, 3단계와 동일) → **그 worktree 를
+  rebase된 원격 head 로 동기화**(`make-worktree.sh` 는 기존 worktree 가 있으면 그대로
+  반환해 rebase 전 SHA 가 체크아웃된 채일 수 있다 — 3단계와 달리 이 경로는 새 커밋을
+  안 만들어 동기화가 freshness 의 유일한 보장이다): `git -C <wt> fetch origin` 후
+  `git -C <wt> reset --hard origin/agent/issue-<N>` 으로 worktree HEAD 를 PR 의 현재
+  (rebased) head SHA 에 맞춘다(이 SHA 가 `closeout-ci-pass.sh` 가 `gh pr view headRefOid`
+  로 조회하는 바로 그 SHA — 안 맞추면 run-local-ci 가 옛 SHA 를 캐시해 영구 exit 2 로
+  남는다) → `$SCRIPTS/run-local-ci.sh <repo> <N>` 로 **현재 HEAD** 캐시를 채운다. `run-local-ci.sh`
   가 비0(새 base 와의 통합이 깨짐)이면 머지하지 말고 fail-closed 로 보류 종료한다
   (`harvesting` 제거 + `blocked` 종료, 새 종료 상태 안 만듦). 0이면 캐시가 pass 로
   채워졌으니 아래 exit 0 게이트로 합류한다. 이 경로는 **3단계 doc 커밋 유무와

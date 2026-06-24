@@ -132,7 +132,14 @@ hook queried the cwd repo). Gate conditions: `$SCRIPTS/closeout-ci-pass.sh <repo
   the current HEAD's local-CI cache is empty due to a rebase etc., i.e. "not run, not
   fail"), then **before** evaluating the exit-0 gate above, revalidate the current HEAD:
   obtain a worktree via `$SCRIPTS/make-worktree.sh <repo> <N>` (`<N>` parsed from the PR
-  head `agent/issue-N`, same as step 3) → fill the **current HEAD** cache with
+  head `agent/issue-N`, same as step 3) → **sync that worktree to the rebased remote
+  head** (`make-worktree.sh` returns an existing worktree as-is, so it may still have the
+  pre-rebase SHA checked out — unlike step 3, this path makes no new commit, so the sync
+  is the only freshness guarantee): `git -C <wt> fetch origin` then
+  `git -C <wt> reset --hard origin/agent/issue-<N>` to align the worktree HEAD to the PR's
+  current (rebased) head SHA (this is exactly the SHA `closeout-ci-pass.sh` looks up via
+  `gh pr view headRefOid` — without the sync, run-local-ci caches the old SHA and it stays
+  permanently exit 2) → fill the **current HEAD** cache with
   `$SCRIPTS/run-local-ci.sh <repo> <N>`. If `run-local-ci.sh` exits nonzero (integration
   with the new base is broken), do not merge: exit on hold fail-closed (remove
   `harvesting` + `blocked` exit, do not invent a new exit state). If 0, the cache is
