@@ -10,8 +10,11 @@ in_scope() {
   grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' | grep -qxF "$1"
 }
 
+# sort=created·order=asc — 미지정 시 search API 는 best-match(관련도) 순이라
+# ② Pick 의 "첫 후보" 가 사실상 랜덤이 된다. 오래된 PR 먼저 = FIFO 마감.
 prs=$(gh api -X GET search/issues \
   -f q="user:$me is:open is:pr" -f per_page=50 \
+  -f sort=created -f order=asc \
   -q '[.items[] | {repo:(.repository_url|sub(".*/repos/";"")), pr:.number}]' 2>/dev/null)
 [ -n "$prs" ] || exit 0
 
