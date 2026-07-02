@@ -21,9 +21,12 @@ in_scope() {
 # 라벨명 하나("X -label:Y")로 오파싱해 항상 0건이 된다 (이슈 #21, GH_DEBUG=api 실측).
 # REST search/issues 직접 호출만 정상 동작. 출력은 기존 gh search --json 형태와
 # 동일하게 변환해 이후 파이프라인(repository.nameWithOwner/labels[].name/createdAt) 무수정.
+# sort=created·order=asc — 최종 정렬(sort_by)은 아래서 하지만, 후보가 per_page=50 을
+# 넘으면 "어떤 50개가 창에 담기는지"가 정렬 없인 best-match(관련도) 순 = 임의가 되어
+# 오래된 이슈가 창 밖으로 밀릴 수 있다. 창 자체를 오래된 순으로 고정한다.
 cands=$(gh api -X GET search/issues \
   -f q="user:$me is:open is:issue label:agent-ready -label:needs-human" \
-  -f per_page=50 \
+  -f per_page=50 -f sort=created -f order=asc \
   -q '[.items[] | {repository: {nameWithOwner: (.repository_url | sub(".*/repos/"; ""))}, number, title, labels: [.labels[] | {name}], createdAt: .created_at}]')
 
 out="[]"
