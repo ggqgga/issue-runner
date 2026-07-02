@@ -175,7 +175,10 @@ CONFLICTING 이면 `harvesting` 을 제거하고 skip 한다 (issue-runner Maint
 **4단계 — 배포 (사람 게이트, dry-run).** **실 배포를 하지 않는다.**
 `references/deploy-check-issue.md` 를 채워(`<DEPLOY_CMD>`=레포 배포 엔트리포인트,
 모르면 "레포 배포 절차"; `<VERIFY_URL>`=production 베이스 URL — 5단계 스모크가 몰
-주소, 모르면 빈 줄로 둬 5단계가 URL 도달불가로 폴백) `gh issue create --repo <repo>
+주소, 모르면 빈 줄로 둬 5단계가 URL 도달불가로 폴백; `<LIVE_CHECKS>`=PR test plan·
+이슈 본문에서 "배포 후 라이브 검증"·하드웨어/실장비 검증 등 **머지 후에만 수행
+가능하다고 표기된 항목**을 그대로 옮긴다(없으면 "없음") — 1단계 검증자가 머지
+게이트에서 제외한 범위 밖 검증 항목의 유일한 이관 목적지다) `gh issue create --repo <repo>
 --label needs-human` 으로 배포 요청 이슈를 발행하고,
 `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"` 로 마커를 남긴 뒤
 → **approval-required 로 종료**한다.

@@ -205,7 +205,11 @@ comment.
 **Step 4 — deploy (human gate, dry-run).** **Do not deploy for real.** Fill
 `references/deploy-check-issue.md` (`<DEPLOY_CMD>`=the repo's deploy entrypoint, or
 "the repo's deploy procedure" if unknown; `<VERIFY_URL>`=the production base URL the
-step-5 smoke drives — leave it blank if unknown so step 5 falls back as URL-unreachable),
+step-5 smoke drives — leave it blank if unknown so step 5 falls back as URL-unreachable;
+`<LIVE_CHECKS>`=carry over verbatim the items from the PR test plan·issue body marked
+as **only performable after merge** — e.g. "post-deploy live verification",
+hardware/real-device checks — or "없음" if none; this is the sole hand-off destination
+for out-of-merge-scope verification the step-1 verifier excluded from the merge gate),
 issue a deploy-request issue with `gh issue create --repo <repo> --label needs-human`,
 leave the marker `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`,
 then **exit as approval-required**.
