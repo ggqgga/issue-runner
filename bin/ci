@@ -637,15 +637,20 @@ for f in SKILL.md SKILL.en.md; do
     || { echo "  ✗ $f: lessons.md 경로가 repo-dir.sh 해석으로 명문화된 단락 없음"; exit 1; }
 done
 
-echo "[lessons] 트리거 신호 보강 검사 (#80 변경 3 — local-ci status·검증자 BLOCKER·NONE 규칙)"
+echo "[lessons] 트리거 신호 보강 검사 (#80 변경 3 / #82 — commit statuses 실패 이력·검증자 BLOCKER·NONE 규칙)"
 # local-ci 체제 레포(GitHub Actions 없음)에선 gh run list 가 항상 빈값이라 기존
-# 트리거만으론 교훈이 안 잡힌다. local-ci commit status 실패 이력(statusCheckRollup)과
-# 검증자 리뷰 코멘트 BLOCKER 를 신호로 추가하되, 신호 0이면 NONE 규칙은 유지.
+# 트리거만으론 교훈이 안 잡힌다. 실 메커니즘은 각 커밋 SHA 를
+# `gh api repos/<repo>/commits/<sha>/statuses` 로 실패 이력을 조회하는 것 —
+# 가드는 이 실 메커니즘(commits/<sha>/statuses)을 앵커로 고정한다. 반례로 폐기된
+# statusCheckRollup 문자열을 앵커로 삼으면, 실 메커니즘이 리팩터로 사라지고
+# "statusCheckRollup 은 못 쓴다"는 반례 설명만 남아도 초록불이 되는 회귀(#82) —
+# statusCheckRollup 은 "왜 안 쓰는지" 반례로 본문에 남되 앵커로는 쓰지 않는다.
+# 검증자 리뷰 코멘트 BLOCKER 를 함께 신호로 요구하고, 신호 0이면 NONE 규칙은 유지.
 for f in SKILL.md SKILL.en.md; do
-  grep -qF 'statusCheckRollup' "$f" \
-    || { echo "  ✗ $f lessons 트리거에 local-ci status(statusCheckRollup) 신호 없음"; exit 1; }
-  awk 'BEGIN{RS="";ok=0} /statusCheckRollup/ && /BLOCKER/ && /NONE/ {ok=1} END{exit ok?0:1}' "$f" \
-    || { echo "  ✗ $f lessons 트리거 단락에 검증자 BLOCKER 신호·NONE 규칙이 함께 있지 않음"; exit 1; }
+  grep -qF 'commits/<sha>/statuses' "$f" \
+    || { echo "  ✗ $f lessons 트리거에 실 메커니즘(commit statuses 실패 이력 조회) 신호 없음"; exit 1; }
+  awk 'BEGIN{RS="";ok=0} /commits\/<sha>\/statuses/ && /BLOCKER/ && /NONE/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f lessons 트리거 단락에 commit statuses 신호·검증자 BLOCKER·NONE 규칙이 함께 있지 않음"; exit 1; }
 done
 
 echo "[lessons] README 이관 체크리스트·트러블슈팅 증상 검사 (#80 변경 2)"
