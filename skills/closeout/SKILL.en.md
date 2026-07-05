@@ -241,7 +241,9 @@ reported deployed, without any new detection mechanism (no polling/timing), acti
 a Chrome smoke to judge it. Parse `## 검증 URL` (`<VERIFY_URL>`) and
 `## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body, fill
 `references/smoke-prompt.en.md`'s placeholders, load the chrome-devtools MCP tools via
-ToolSearch, `navigate_page` to `<VERIFY_URL>`, and compare each item via
+ToolSearch, then **entry cleanup (idempotent — crash-resume defense): via `list_pages`,
+if a prior tick died before cleanup and left a smoke page, `close_page` it first.** Then
+`navigate_page` to `<VERIFY_URL>`, and compare each item via
 `evaluate_script`/`take_snapshot` to produce a per-item pass/fail (distinguish
 structure/empty-state confirmation from real-data render confirmation in the result).
 - **Already-closed deploy issue — skip the smoke.** If the deploy issue is already
@@ -251,7 +253,9 @@ structure/empty-state confirmation from real-data render confirmation in the res
 - **Degrade — no silent skip.** If the chrome-devtools MCP is absent from the session
   (headless/cron — interactive-auth MCP may be missing) or `<VERIFY_URL>` is blank or
   unreachable, skip the smoke and fall back to the existing human-report path, but leave
-  a `스모크 skip: <reason>` comment on the deploy issue (no hiding the gap).
+  a `스모크 skip: <reason>` comment on the deploy issue (no hiding the gap). **Since no
+  browser was started at all, there is nothing to clean up — the browser cleanup below
+  is a no-op (not a leak).**
 - **green (all pass)** → a `✅ 스모크: <n>/<n> 통과` comment on the deploy issue + the
   original PR (this comment is the step-5 completion marker — a resumed tick does not
   re-smoke). Then remove the `needs-human` label from the deploy issue and close the
@@ -268,6 +272,15 @@ structure/empty-state confirmation from real-data render confirmation in the res
     to `.loop/lessons.md` under the path output by `$SCRIPTS/repo-dir.sh <repo>`
     (same 20-line cap). A failure that turns out to be a code defect is not recorded
     here — the publish path handles it.
+- **Browser cleanup — leak prevention (common exit; green·fail·degrade all).** **After**
+  leaving the smoke-verdict comment above, always close the chrome-devtools page this tick
+  opened via `list_pages`→`close_page` — no matter which of the three exit paths was taken
+  (do not return before cleanup). Production pages keep client pollers alive (adspower_pool
+  30s auto-refresh·aging live poll·assembler live-sync, etc.), so a stranded tab accumulates
+  every tick and spins CPU via `setInterval`, tipping the mini into overload within days
+  (2026-07-06 load-66 incident). If degrade opened no browser there is nothing to clean up
+  (no-op), and a normal no-op tick (no smoke target) likewise opens no browser, so this
+  cleanup is skipped without regression.
 
 **Step 6 — spinoff issues.** Fill `references/spinoff-issue.md` with the worker PR
 body's `follow-up:` items + adjacent work the step-1 diff review flagged, and issue an
