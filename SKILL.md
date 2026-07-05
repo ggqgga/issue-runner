@@ -10,7 +10,7 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
 ## 상수
 
-- `MAX_AGENTS = 2` — 동시 in-flight 이슈 상한 (in-flight 정의는 ③-1 —
+- `MAX_AGENTS = 5` — 동시 in-flight 이슈 상한 (in-flight 정의는 ③-1 —
   사람 리뷰 대기 PR 은 점유하지 않는다)
 - `MAX_OPEN_PRS = 10` — 열린 PR 총수 적체 상한. 도달 시 신규 디스패치만 멈춘다
   (보수는 계속) — 사람 머지가 밀릴 때 PR 끼리 rebase conflict 가 폭증하는 것을 막는
@@ -158,7 +158,10 @@ warn 이 있으면 경로와 사유를 그 아래 나열.
 누적이 `SOFT_TOKEN_BUDGET_PER_ISSUE` 초과면 그 줄에 **"소프트 예산 초과 —
 needs-human 승격 권고"** 를 명시하라 (보고만 — 라벨 부착·워커 중단 등 자동 조치 금지).
 모든 카운트가 0이면 "조용함" 한 줄만.
-3틱 연속 조용하면 다음 틱부터는 reconcile 만 하고 끝내라.
+조용한 틱이라도 **③ Dispatch 의 eligible 스캔(eligible-issues.sh)은 매 틱 실행하라** —
+새 agent-ready 이슈는 reconcile 이벤트를 만들지 않으므로 eligible 스캔을 거르면 절전
+모드가 신규 후보에 영구히 맹목이 된다(빈 큐에서는 search/issues 1콜이라 비용 무시 가능).
+eligible 이 비고 reconcile 도 조용하면 "조용함" 한 줄만 보고하고 끝내라.
 
 ## 참고 자료
 

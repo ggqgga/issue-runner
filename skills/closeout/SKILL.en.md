@@ -24,7 +24,13 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
   escalate to `needs:human` instead of re-issuing agent-ready (step-5 circuit
   breaker).
 - `QUIET_TICKS = 3` — if there are no candidates/events for N consecutive ticks,
-  report stagnated and do only reconcile from the next tick on.
+  report stagnated. **① Reconcile and ② Pick still run every tick afterwards** —
+  both are mere `gh api` lookups with effectively zero cost (the real cost is only
+  in the ③ pipeline), and new PRs open at any time regardless of what is already
+  in flight, so skipping the scan saves nothing and only misses candidates
+  (evidenced by #805 — a tick that skipped Pick after stagnated missed a PR that
+  had newly become eligible). stagnated is a pure reporting label — no step is
+  ever skipped.
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
 - `VERIFIER = codex:codex-rescue` — verifier subagent type for the step-1 plan-
   conformance check.
@@ -282,7 +288,8 @@ State the 6 exit states:
   escalated to needs:human.
 - **stagnated** — quiet for `QUIET_TICKS` consecutive ticks.
 
-After `QUIET_TICKS` consecutive quiet ticks, do only reconcile from the next tick on.
+Even after `QUIET_TICKS` consecutive quiet ticks, ①② still run on every tick —
+stagnated only affects reporting; no step is ever skipped.
 
 ## References
 

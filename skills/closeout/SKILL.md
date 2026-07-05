@@ -16,8 +16,12 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
   페이스는 `/loop` 주기로 조절한다 — 한 틱이 한 PR 의 1~6단계를 다 돈다.
 - `REPAIR_RECUR_LIMIT = 2` — 같은 배포 후 실패가 N회 재발하면 agent-ready 재발행
   대신 `needs:human` 으로 승격한다 (5단계 서킷 브레이커).
-- `QUIET_TICKS = 3` — N틱 연속 후보·이벤트가 없으면 stagnated 로 보고하고 다음
-  틱부터 reconcile 만 한다.
+- `QUIET_TICKS = 3` — N틱 연속 후보·이벤트가 없으면 stagnated 로 보고한다. **①
+  Reconcile·② Pick 은 이후에도 매 틱 그대로 수행**한다 — 둘 다 `gh api` 조회뿐이라
+  비용이 사실상 0 이고(실제 비용은 ③ 파이프라인에서만 발생), 새 PR 은 이미 진행
+  중인 것과 무관하게 아무 때나 열리므로 스캔을 끄면 절약 없이 후보만 놓친다
+  (실증 #805 — stagnated 이후 Pick 을 건너뛴 틱이 새로 eligible 해진 PR 을 놓침).
+  stagnated 는 순수 보고 라벨이다 — 어떤 단계도 건너뛰지 않는다.
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
 - `VERIFIER = codex:codex-rescue` — 1단계 계획 부합 검증자 서브에이전트 타입.
   **출력 계약 (SSOT — 다른 모든 곳은 이 항목을 참조한다)**: 호출은 read-only(코드
@@ -240,7 +244,8 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
 - **exhausted** — 5단계 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복돼 needs:human 승격.
 - **stagnated** — `QUIET_TICKS` 연속 조용함.
 
-`QUIET_TICKS` 연속으로 조용하면 다음 틱부터는 reconcile 만 하고 끝낸다.
+`QUIET_TICKS` 연속으로 조용해도 ①②는 다음 틱에도 그대로 수행한다 — stagnated 는
+보고에만 반영되고 어떤 단계도 건너뛰지 않는다.
 
 ## 참고 자료
 

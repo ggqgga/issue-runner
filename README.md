@@ -31,7 +31,7 @@
 **왜 켜두고 자리를 비워도 되나 — 가드레일.** 루프는 폭주를 가정하고 설계됐고,
 각 장치는 "최악의 경우 사람이 잃는 것"을 상한으로 묶는다: **issue-runner 는 머지를
 절대 하지 않는다**(항상 사람 — 머지 자동화는 [별도 `/closeout` 루프](#두-루프-분업--공장과-도크)의 옵트인 영역)
-· 동시 작업 2개 제한(`MAX_AGENTS`) · 같은 PR 보수 3회 초과 시
+· 동시 작업 5개 제한(`MAX_AGENTS`) · 같은 PR 보수 3회 초과 시
 `needs-human`으로 손 떼기(서킷 브레이커) · PR 없이 1시간 끌면 워커 회수(타임박스) ·
 열린 PR 10개 도달 시 신규 투입 중단(배압). 전체 표와 상수 조정은
 [가드레일](#가드레일) 참조.
@@ -139,7 +139,7 @@ reconcile ④ 배포 대기 이슈 발행=사람 게이트 ⑤ 배포 후 스모
 - **결정론적 판단은 bash 스크립트** (`scripts/` — 자격 필터·claim·정리),
   **재량 판단은 LLM** (`SKILL.md` — 충돌 회피·수리 방법).
 - 워커는 매 커밋마다 push — worktree는 언제 버려져도 되는 상태를 유지한다.
-- 동시 in-flight 상한은 `MAX_AGENTS = 2` (SKILL.md 상수).
+- 동시 in-flight 상한은 `MAX_AGENTS = 5` (SKILL.md 상수).
 
 ## 전제 조건
 
@@ -435,7 +435,7 @@ main 이 통합 브랜치, release 가 프로덕션 포인터다
 | `ISSUE_TIMEBOX_HOURS` | 1 | PR 없이 claim 1시간 초과한 워커는 중단하고 worktree를 폐기, claim을 해제한다. push된 커밋은 원격 브랜치에 보존되어 재디스패치가 이어받는다 |
 | `MAX_REPAIRS_PER_PR` | 3 | PR 1개당 보수 투입 상한. 초과하면 보수를 멈추고 이슈에 `needs-human` 라벨을 붙인다 (서킷 브레이커) |
 | `SOFT_TOKEN_BUDGET_PER_ISSUE` | 300k | 이슈당 토큰 사용량 관측치. 초과해도 중단하지 않고 Report에 승격 권고만 표시 |
-| `MAX_AGENTS` | 2 | 동시 in-flight 이슈 상한. in-flight = 작업 중 + 보수 중 + 빨간 PR(CI 실패·리뷰 코멘트·conflict) — CI green으로 사람 리뷰만 기다리는 PR은 슬롯을 점유하지 않는다 |
+| `MAX_AGENTS` | 5 | 동시 in-flight 이슈 상한. in-flight = 작업 중 + 보수 중 + 빨간 PR(CI 실패·리뷰 코멘트·conflict) — CI green으로 사람 리뷰만 기다리는 PR은 슬롯을 점유하지 않는다 |
 | `MAX_OPEN_PRS` | 10 | 열린 PR 총수 적체 상한. 도달 시 신규 디스패치만 멈추고(보수는 계속) Report에 적체 warn을 올린다 — 머지가 밀릴 때의 배압 |
 
 `needs-human` 라벨이 붙은 이슈는 루프가 손을 뗀 상태다 — 사람이 원인을 보고

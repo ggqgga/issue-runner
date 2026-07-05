@@ -15,7 +15,7 @@ maintenance must come before new work).
 
 ## Constants
 
-- `MAX_AGENTS = 2` — cap on concurrently in-flight issues (in-flight is defined
+- `MAX_AGENTS = 5` — cap on concurrently in-flight issues (in-flight is defined
   in ③-1 — PRs waiting for human review do not occupy a slot)
 - `MAX_OPEN_PRS = 10` — cap on total open PRs (backlog backpressure). When
   reached, only new dispatches stop (maintenance continues) — prevents rebase
@@ -199,7 +199,11 @@ cumulative = the same issue's `tokens:` figures from previous tick Reports visib
 context + this count (none visible → just this count). If it exceeds `SOFT_TOKEN_BUDGET_PER_ISSUE`,
 state **"soft budget exceeded — recommend escalating to needs-human"** on that line (report only — never auto-label or stop workers).
 If every count is 0, output the single line "quiet".
-After 3 consecutive quiet ticks, from the next tick on do only reconcile and stop.
+Even on a quiet tick, **run the eligible scan of ③ Dispatch (eligible-issues.sh)
+every tick** — new agent-ready issues create no reconcile events, so skipping the
+eligible scan makes quiet mode permanently blind to new candidates (on an empty
+queue it is a single search/issues call, so the cost is negligible).
+If eligible is empty and reconcile is also quiet, report the single line "quiet" and stop.
 
 ## References
 
