@@ -684,4 +684,17 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f: 1단계 검증자에 lessons 주입(<LESSONS_OR_ ← lessons.md) 지시 없음"; exit 1; }
 done
 
+echo "[test] finish-classify.sh 분류 픽스처 테스트 (#88)"
+bash scripts/tests/finish-classify.test.sh
+
+echo "[#88] 완결 유실 재파생 배선 검사 — 한/영 SKILL 동기"
+# STALE_FINISH_MIN 상수 + finish-classify.sh 분기 + 4b 인라인 대리 판정 배선이
+# 한/영 SKILL 양쪽에 있어야 한다(완결 유실 갭 자가 재파생 — 규칙4 분리).
+for f in SKILL.md SKILL.en.md; do
+  grep -qF 'STALE_FINISH_MIN' "$f" \
+    || { echo "  ✗ $f 에 STALE_FINISH_MIN 상수 없음"; exit 1; }
+  grep -qF 'finish-classify.sh' "$f" \
+    || { echo "  ✗ $f 에 finish-classify.sh 분기 배선 없음"; exit 1; }
+done
+
 echo "CI pass"

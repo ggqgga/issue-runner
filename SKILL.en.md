@@ -24,6 +24,12 @@ maintenance must come before new work).
   (② Maintain circuit breaker)
 - `ISSUE_TIMEBOX_HOURS = 1` — allowed claim age for a `working` issue with no PR
   (① Reconcile timebox)
+- `STALE_FINISH_MIN = 30` — lost-finish time buffer (minutes, ② Maintain rules
+  4b/4c). A live worker posts its final verdict within seconds of the
+  `Verifier review:` comment, so if the latest `Verifier review:` is CLEAN yet no
+  final verdict appears past this buffer, the worker is considered dead (→ 4b
+  inline re-emit). In-progress fix loops are auto-excluded because their latest
+  verifier comment is either recent or non-CLEAN.
 - `SOFT_TOKEN_BUDGET_PER_ISSUE = 300000` — soft token budget per issue. Not a
   hard cap but the observation threshold for ④ Report (the Agent call has no
   budget API, so it cannot be enforced).
@@ -41,7 +47,12 @@ maintenance must come before new work).
   unknown subagent type error), use `general-purpose` as the verifier — it is
   invoked with the same prompt, so the same contract applies.
 - Absolutely forbidden: merging PRs, pushing directly to main, touching
-  human-created branches, attaching the agent-ready label on your own
+  human-created branches, attaching the agent-ready label on your own.
+  **Exception (allowed)**: in ② Maintain rule 4b, **appending the final
+  `Merge verdict:` comment on behalf of** a lost-finish PR + reconciling the
+  referenced issue's checkboxes — this is not a merge or label manipulation but
+  posting step 13 (the final verdict append) in place of a dead worker, merely
+  restoring the positive gate for closeout pickup.
 
 ## ① Reconcile
 
@@ -147,7 +158,50 @@ prompt, and increment N by exactly 1 per dispatch.
    are not review comments — do not count them as repair triggers.
 3. Conflict with base → instruct a maintenance agent to rebase (merging is
    forbidden).
-4. CI green + no review comments → leave it alone. It is waiting for human review.
+4. CI green + no unresolved review comments → **classify the finish state** and
+   branch. Only PRs where none of rules 1–3 fired reach here (failing==0, no
+   unresolved human comment, no conflict). Run
+   `$SCRIPTS/finish-classify.sh <repo> <pr>` and branch on its output
+   (deterministic helper — the latest `Merge verdict:`/`Verifier review:` uses the
+   last match in the comment array):
+
+   - **4a finished — untouched.** `done_verdict` (latest `Merge verdict: ✅`) →
+     waiting for closeout pickup, leave it. `held` (latest `Merge verdict: ⚠`) →
+     worker's explicit hold (needs-human territory), no auto-progress. `active`
+     (in progress · time buffer not reached · a recent non-CLEAN verifier) →
+     waiting for human review or still finishing, leave it.
+   - **4b lost finish · inline re-emit (common).** `stale_inline` (🔄 + latest
+     verifier CLEAN + past `STALE_FINISH_MIN`) → the worker died just before step
+     13 and only the final-verdict append was lost. **With no agent or worktree**,
+     Maintain appends the final verdict itself (the allowed exception in the
+     Constants "Absolutely forbidden"). Get the HEAD sha via
+     `gh pr view <pr> --repo <repo> --json headRefOid -q .headRefOid`, then (body =
+     verdict line + newline + sentinel as one `--body`, using `$'...\n...'` to put
+     the marker on the last line):
+     `gh pr comment <pr> --repo <repo> --body $'Merge verdict: ✅ mergeable — worker lost finish, re-emitted by Maintain (verifier CLEAN · local CI pass HEAD <sha> · nothing unresolved)\n<!-- bodat:worker -->'`
+     — the last line must be exactly `<!-- bodat:worker -->` (closeout-eligible's positive
+     gate matches `Merge verdict: ✅` by startswith and recognizes the machine via
+     the sentinel — the marker must be the last line). Then, isomorphic to worker
+     step 12, **conservatively reconcile the referenced issue's checkboxes**:
+     read the body via `gh issue view <num> --repo <repo> --json body`, and for
+     items marked `[x]` in the PR's `## Test plan`, flip only the corresponding
+     acceptance-criteria/Test-plan lines' marks to `[x]` — **do not change a single
+     character of the body text** (conservatively substitute only the checkbox
+     `- [ ]`/`- [x]` marks). Set the flow label with
+     `gh issue edit <pr> --repo <repo> --add-label flow:ready --remove-label flow:codex --remove-label flow:ci`
+     (idempotent, best-effort). Count this PR in ④ Report's `lost-finish re-emit`
+     count. **Not an agent dispatch — does not consume the circuit breaker.**
+   - **4c verification incomplete · re-dispatch (rare).** `stale_reverify` (🔄 +
+     the `Verifier review:` is itself absent or notes an unresolved BLOCKER + past
+     `STALE_FINISH_MIN`) → code-quality verification did not finish (closeout's
+     step 1 is plan-conformance verification only, not a code-quality gate, so an
+     inline verdict is unsafe). Via the circuit breaker (common section),
+     re-dispatch a **completion agent** — re-run the verifier → reconcile
+     checkboxes → final verdict (worker steps 11–13). Replace the template's
+     "Procedure" with "The PR is CI green with no conflict, but the finish
+     (verifier → checkboxes → final verdict) was lost. Re-run the verifier review
+     and complete it," keeping the rest (compound commands, push discipline,
+     prohibitions). On breaker exhaustion, `needs-human` per the common section.
 
 A `harvesting` event = closeout is in progress → **leave it alone** (no repair, rebase, or review-comment resolution). closeout merges/cleans it up.
 
@@ -190,7 +244,8 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
 
 ## ④ Report
 
-One-line summary: `reconciled N · maintained N · new N · waiting(human review) N · warn N`.
+One-line summary: `reconciled N · maintained N · lost-finish re-emit N · new N · waiting(human review) N · warn N`.
+`lost-finish re-emit` = the number of PRs where ② Maintain 4b inline-appended a final verdict this tick.
 If there are warns, list the paths and reasons below it.
 **Token observation (soft budget)**: if any worker delivered a completion report, add
 one line per issue — `tokens: <repo>#<num> <this report's count> (cumulative <sum>)`.
