@@ -53,12 +53,15 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   and fallback in ## Constants). If no signal is present, do not invoke it and
   leave it NONE (record no lesson): (1) a CHANGES_REQUESTED review (`--json
   reviews`) · (2) a `gh run list` CI failure (GitHub Actions repos) · (3) a
-  **local-ci commit status failure history** — if `--json statusCheckRollup` has
-  the local-ci context recorded as FAILURE even once (a lesson candidate even if
-  the final state is SUCCESS, as long as there is a failure history; on local-ci
-  repos `gh run list` is always empty, so this is the effective trigger) · (4) a
-  **BLOCKER in a verifier review comment** — if the PR's `마감 검증:`·`검증자 리뷰:`
-  comment had a BLOCKER (`--json comments`).
+  **local-ci commit status failure history** — if any of the PR's commits had the
+  local-ci context as FAILURE (enumerate commit SHAs via `--json commits` and query
+  each SHA via `gh api repos/<repo>/commits/<sha>/statuses` — the HEAD's `--json
+  statusCheckRollup` keeps only the latest state per context and cannot see a
+  failure history; a lesson candidate even if the final state is SUCCESS after a
+  mid-life failure was fixed on a new SHA, as long as there is a failure history;
+  on local-ci repos `gh run list` is always empty, so this is the effective
+  trigger) · (4) a **BLOCKER in a verifier review comment** — if the PR's
+  `마감 검증:`·`검증자 리뷰:` comment had a BLOCKER (`--json comments`).
 
   > "Read the review comments and CI failure logs of PR #<pr> (<repo>), and from
   > the objective failure facts produce exactly one recurrence-prevention lesson

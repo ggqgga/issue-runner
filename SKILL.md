@@ -40,11 +40,13 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   `gh pr view <pr> --repo <repo>` 로 확인) `VERIFIER` 서브에이전트(## 상수의 VERIFIER
   계약·폴백을 따른다)를 동기 호출하라. 신호가 하나도 안 잡히면 호출하지 말고 NONE 으로
   둔다(lessons 미기록): (1) CHANGES_REQUESTED 리뷰(`--json reviews`) · (2) `gh run list`
-  CI 실패(GitHub Actions 레포) · (3) **local-ci commit status 실패 이력** — `--json
-  statusCheckRollup` 에 local-ci 컨텍스트가 한 번이라도 FAILURE 로 기록됐으면(최종
-  SUCCESS 라도 실패 이력이면 교훈 후보. local-ci 체제 레포는 gh run list 가 항상 빈값이라
-  이 신호가 실질 트리거다) · (4) **검증자 리뷰 코멘트의 BLOCKER** — PR 의 `마감 검증:`·
-  `검증자 리뷰:` 코멘트에 BLOCKER 가 있었던 경우(`--json comments`).
+  CI 실패(GitHub Actions 레포) · (3) **local-ci commit status 실패 이력** — PR 의 커밋
+  중 하나라도 local-ci 컨텍스트가 FAILURE 였으면(`--json commits` 로 커밋 SHA 를 열거하고
+  각 SHA 를 `gh api repos/<repo>/commits/<sha>/statuses` 로 조회한다 — HEAD 의 `--json
+  statusCheckRollup` 은 컨텍스트당 최신 1개만 남아 실패 이력을 못 본다. 도중 실패 후 새
+  SHA 로 고쳐 최종 SUCCESS 라도 실패 이력이면 교훈 후보. local-ci 체제 레포는 gh run
+  list 가 항상 빈값이라 이 신호가 실질 트리거다) · (4) **검증자 리뷰 코멘트의 BLOCKER**
+  — PR 의 `마감 검증:`·`검증자 리뷰:` 코멘트에 BLOCKER 가 있었던 경우(`--json comments`).
 
   > "PR #<pr> (<repo>)의 리뷰 코멘트와 CI 실패 로그를 읽고, 객관적 실패 사실에서
   > 재발 방지 교훈을 딱 1줄로: '<상황>일 때 <구체 행동>하라' 형식. 추측·일반론 금지.
