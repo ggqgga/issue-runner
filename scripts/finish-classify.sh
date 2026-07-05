@@ -91,29 +91,42 @@ verifier_body=$(last_matching "검증자 리뷰" "Verifier review" body)
 verifier_at=$(last_matching "검증자 리뷰" "Verifier review" createdAt)
 
 # 검증자 CLEAN/전건해소 판정 (보수적 — 확실히 깨끗할 때만 인라인 자동 판정 허용).
+# 안전 게이트라 애매하면 non-clean 으로 떨어뜨린다(→ 재디스패치=안전). 부정문
+# ("아직 CLEAN 아님", "not clean")은 부분문자열 *CLEAN* 에 걸리므로 먼저 배제한다.
 is_clean() {
+  case "$1" in
+    *"CLEAN 아님"*|*"not clean"*|*"NOT CLEAN"*|*"미해결 BLOCKER"*) return 1 ;;
+  esac
   case "$1" in
     *CLEAN*|*"BLOCKER 0"*|*전건해소*|*"전건 해소"*|*"all resolved"*) return 0 ;;
     *) return 1 ;;
   esac
 }
 
-# 경과 초 계산 헬퍼.
-age_of() {
-  local at="$1" ep
-  ep=$(iso_to_epoch "$at")
-  [ -n "$ep" ] || { echo 0; return; }
-  echo $((now - ep))
+# 두 epoch 중 큰 값(가장 최신 워커 활동).
+max_epoch() {
+  local a="${1:-0}" b="${2:-0}"
+  [ -n "$a" ] || a=0
+  [ -n "$b" ] || b=0
+  if [ "$a" -ge "$b" ]; then echo "$a"; else echo "$b"; fi
 }
+
+verdict_epoch=$(iso_to_epoch "$verdict_at")
 
 if [ -z "$verifier_body" ]; then
   # 검증자 부재 → 10단계 후 11단계 전 사망 가능. 🔄 판정 코멘트 기준 경과로 판별.
-  age=$(age_of "$verdict_at")
+  age=$((now - ${verdict_epoch:-$now}))
   if [ "$age" -gt "$stale_sec" ]; then echo stale_reverify; else echo active; fi
   exit 0
 fi
 
-age=$(age_of "$verifier_at")
+# 스테일 클록 = 가장 최신 워커 활동(검증자 시각 vs 이후 재-🔄 판정 시각). 검증자
+# CLEAN 뒤에 워커가 다시 🔄 를 찍고(재수정 루프) 새 검증자를 아직 안 올린 경우,
+# 최신 판정은 여전히 🔄 라 이 분기로 오는데 검증자 시각만 보면 살아있는 워커를
+# 사망으로 오판한다 → verdict_epoch 와의 max 로 방어.
+verifier_epoch=$(iso_to_epoch "$verifier_at")
+ref_epoch=$(max_epoch "$verifier_epoch" "$verdict_epoch")
+age=$((now - ${ref_epoch:-$now}))
 if is_clean "$verifier_body"; then
   # 검증자 CLEAN — 최종 판정만 유실. 시간버퍼 초과면 인라인 대리 판정.
   if [ "$age" -gt "$stale_sec" ]; then echo stale_inline; else echo active; fi

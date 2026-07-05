@@ -175,9 +175,11 @@ prompt, and increment N by exactly 1 per dispatch.
      13 and only the final-verdict append was lost. **With no agent or worktree**,
      Maintain appends the final verdict itself (the allowed exception in the
      Constants "Absolutely forbidden"). Get the HEAD sha via
-     `gh pr view <pr> --repo <repo> --json headRefOid -q .headRefOid`, then:
-     `gh pr comment <pr> --repo <repo> --body "Merge verdict: ✅ mergeable — worker lost finish, re-emitted by Maintain (verifier CLEAN · local CI pass HEAD <sha> · nothing unresolved)`
-     + a final line of exactly `<!-- bodat:worker -->` (closeout-eligible's positive
+     `gh pr view <pr> --repo <repo> --json headRefOid -q .headRefOid`, then (body =
+     verdict line + newline + sentinel as one `--body`, using `$'...\n...'` to put
+     the marker on the last line):
+     `gh pr comment <pr> --repo <repo> --body $'Merge verdict: ✅ mergeable — worker lost finish, re-emitted by Maintain (verifier CLEAN · local CI pass HEAD <sha> · nothing unresolved)\n<!-- bodat:worker -->'`
+     — the last line must be exactly `<!-- bodat:worker -->` (closeout-eligible's positive
      gate matches `Merge verdict: ✅` by startswith and recognizes the machine via
      the sentinel — the marker must be the last line). Then, isomorphic to worker
      step 12, **conservatively reconcile the referenced issue's checkboxes**:

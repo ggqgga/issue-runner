@@ -96,5 +96,41 @@ assert "no-verdict→active" active '[
   {"body":"그냥 사람 코멘트","createdAt":"2026-07-05T11:00:00Z"}
 ]'
 
+# 11) 부정문 오탐 방지 — "아직 CLEAN 아님"은 *CLEAN* 부분매칭이지만 non-clean 이어야
+#     한다 → 30분 초과라도 stale_inline(인라인 ✅) 아니라 stale_reverify(재디스패치).
+assert "CLEAN아님→non-clean" stale_reverify '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
+  {"body":"검증자 리뷰: 아직 CLEAN 아님 — BLOCKER 1건 남음\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:00:30Z"}
+]'
+
+# 12) 스테일 클록 = 최신 워커 활동 — 검증자 CLEAN(60분 전) 뒤 재-🔄(5분 전)면
+#     살아있는 워커다 → verdict_at(최신)로 age 재어 active(무접촉).
+assert "재-🔄후→active" active '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:00:30Z"},
+  {"body":"머지 판정: 🔄 다시 수정 중","createdAt":"2026-07-05T11:55:00Z"}
+]'
+
+# 13) CI 실패 방어 가드 — 🔄 + 검증자 CLEAN + 30분 초과라도 failing>0 이면 active
+#     (규칙1 대상, 완결 판별 안 함).
+got_ci=$(FC_NOW="$NOW" FC_FAILING=2 STALE_FINISH_MIN=30 \
+  FC_COMMENTS_JSON='[
+    {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
+    {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:00:30Z"}
+  ]' "$SUT" owner/repo 1 2>/dev/null)
+if [ "$got_ci" = active ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "  ✗ failing>0→active — 기대=active 실제=$got_ci"; fi
+
+# 14) 검증자 non-CLEAN·버퍼 미만(9.5분 전) → active(아직-수정중, 무접촉)
+assert "non-clean·recent→active" active '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:50:00Z"},
+  {"body":"검증자 리뷰: BLOCKER 1건 미해소\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:50:30Z"}
+]'
+
+# 15) 영문 검증자 접두(Verifier review:)도 CLEAN 인식 → stale_inline
+assert "english-verifier-clean" stale_inline '[
+  {"body":"Merge verdict: 🔄 in progress","createdAt":"2026-07-05T11:00:00Z"},
+  {"body":"Verifier review: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:00:30Z"}
+]'
+
 echo "finish-classify.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]

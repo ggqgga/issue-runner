@@ -147,9 +147,10 @@ N 도 디스패치당 1만 올린다.
      `STALE_FINISH_MIN` 초과) → 워커가 13단계 직전에 죽어 최종 판정 append 만 유실된
      것이다. **에이전트·worktree 없이** Maintain 이 직접 최종 판정을 대리 append 한다
      (##상수 "절대 금지"의 허용 예외). `gh pr view <pr> --repo <repo> --json headRefOid
-     -q .headRefOid` 로 HEAD sha 를 얻어:
-     `gh pr comment <pr> --repo <repo> --body "머지 판정: ✅ 머지 가능 — 워커 완결 유실, Maintain 재파생 (검증자 CLEAN · 로컬 CI pass HEAD <sha> · 미해결 없음)`
-     + 마지막 줄 정확히 `<!-- bodat:worker -->` (closeout-eligible 긍정 게이트가
+     -q .headRefOid` 로 HEAD sha 를 얻어 (본문 = 판정문 + 개행 + sentinel 을 한
+     `--body` 로, `$'...\n...'` 로 마지막 줄에 마커):
+     `gh pr comment <pr> --repo <repo> --body $'머지 판정: ✅ 머지 가능 — 워커 완결 유실, Maintain 재파생 (검증자 CLEAN · 로컬 CI pass HEAD <sha> · 미해결 없음)\n<!-- bodat:worker -->'`
+     — 마지막 줄이 정확히 `<!-- bodat:worker -->` 여야 한다 (closeout-eligible 긍정 게이트가
      `머지 판정: ✅` startswith 로 잡고 sentinel 로 머신 인식 — 마커는 반드시 마지막 줄).
      이어 워커 12단계와 동형으로 **참조 이슈 체크박스를 보수적으로 reconcile**:
      `gh issue view <num> --repo <repo> --json body` 로 본문을 읽어, PR `## Test plan`
