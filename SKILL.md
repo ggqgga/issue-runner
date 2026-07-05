@@ -37,9 +37,10 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   검증자로 쓴다 — 같은 프롬프트로 호출하므로 계약도 동일하게 적용된다.
 - 절대 금지: PR 머지, main 직접 push, 사람이 만든 브랜치 조작, agent-ready 라벨 임의 부착.
   **예외(허용)**: ② Maintain 규칙4b 에서 완결 유실 PR 에 **최종 `머지 판정:` 코멘트를
-  대리 append** + 참조 이슈 체크박스 reconcile — 이는 머지·라벨 조작이 아니라 죽은
-  워커의 13단계(최종 판정 append)를 대신 찍는 것으로, closeout 픽업의 긍정 게이트를
-  복구할 뿐이다.
+  대리 append** + 참조 이슈 체크박스 reconcile + **단계 라벨 flow:ready 부착**(flow:codex·
+  flow:ci 제거) — 이는 머지나 agent-ready·코디네이션 라벨 조작이 아니라(단계 라벨 flow:*
+  는 워커가 각 단계에서 직접 다는 허용 예외에 속한다), 죽은 워커의 13단계(최종 판정
+  append)를 대신 찍어 closeout 픽업의 긍정 게이트를 복구할 뿐이다.
 
 ## ① Reconcile
 

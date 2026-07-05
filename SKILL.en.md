@@ -50,9 +50,11 @@ maintenance must come before new work).
   human-created branches, attaching the agent-ready label on your own.
   **Exception (allowed)**: in ② Maintain rule 4b, **appending the final
   `Merge verdict:` comment on behalf of** a lost-finish PR + reconciling the
-  referenced issue's checkboxes — this is not a merge or label manipulation but
-  posting step 13 (the final verdict append) in place of a dead worker, merely
-  restoring the positive gate for closeout pickup.
+  referenced issue's checkboxes + **attaching the flow:ready stage label**
+  (removing flow:codex·flow:ci) — this is not a merge or agent-ready/coordination
+  label manipulation (flow:* stage labels belong to the allowed exception the
+  worker attaches at each step itself); it merely posts step 13 (the final verdict
+  append) in place of a dead worker, restoring the positive gate for closeout pickup.
 
 ## ① Reconcile
 
