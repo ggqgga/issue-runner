@@ -91,6 +91,17 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
 `pr_open` 이벤트 각각에 대해:
 
+**0. 단계 라벨 보정 (best-effort, 스캔할 때 붙인다).** 이 PR 의 마지막 판정 코멘트를
+읽어(`gh pr view <pr> --repo <repo> --json comments`) 단계 라벨 `flow:*` 를 실제 상태에
+맞춘다 — 워커가 각 단계에서 직접 붙이지만 크래시·놓침이 있을 수 있어 스캔이 안전망이다.
+마지막 코멘트가 `머지 판정: ✅` → `flow:ready`, `검증자 리뷰:` 또는 `머지 판정: 🔄`(✅ 전)
+→ `flow:codex`, `머지 판정: ⚠ 보류` → flow:* 제거(needs-human 경로로 감). 목표 라벨과
+현재가 다를 때만 `gh issue edit <pr> --repo <repo> --add-label <목표> --remove-label <나머지 flow:*>`
+로 교체한다(멱등 — 같으면 skip, `--remove-label` 은 없는 라벨에 무해). `harvesting`
+PR 은 이 보정도 건너뛴다(closeout 소유 — 아래 `harvesting` 이벤트 규칙과 동일). 최초 CI·
+구현 단계는 PR 이 아직 없어 이슈 `agent:claimed` 로만 보인다(`flow:ci` 는 재-CI 도는
+PR 에만 뜬다).
+
 **서킷 브레이커 — 아래 1~3 의 모든 보수 디스패치 전 공통**:
 PR 본문에서 `<!-- repair-count: N -->` HTML 주석을 읽어라
 (`gh pr view <pr> --repo <repo> --json body`; 주석이 없으면 N = 0).

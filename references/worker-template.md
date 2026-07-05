@@ -71,6 +71,11 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: 🔄 진행 중 — 검증자 리뷰·로컬 CI 확정 전, 머지 보류
 <!-- bodat:worker -->"`
    코멘트를 남겨라 (사람이 PR 화면만 보고 머지 시점을 판단할 수 있어야 한다).
+   이어 이 PR 의 단계 라벨을 `flow:codex` 로 세워라(이 시점 로컬 CI 는 이미 통과, 다음은
+   검증자 리뷰): `gh issue edit <PR번호> --repo <REPO> --add-label "flow:codex"` (PR 도
+   `gh issue edit` 로 라벨을 단다). 이 `flow:*` 부착은 아래 "금지"의 좁은 예외다 —
+   PR 리스트만으로 단계가 보이게 하는 표시일 뿐, 코디네이션 라벨(agent-ready·
+   needs-human·harvesting·우선순위)은 여전히 건드리지 마라.
 11. PR 생성 후 **검증자 리뷰를 직접 스폰하라** (PostToolUse hook 의 codex 주입은
    서브에이전트 컨텍스트에 닿지 않는다 — 기다리지 말 것). Agent 툴 동기 호출:
    subagent_type: "<VERIFIER>", prompt:
@@ -82,7 +87,11 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    **같은 프롬프트**를 재시도하라 (계약은 디스패처 SKILL.md ## 상수의 VERIFIER
    항목을 따른다 — 같은 프롬프트이므로 계약도 동일하다).
    검증자가 BLOCKER 를 보고하면 **반드시 해결 커밋 + push + 로컬 CI 재실행 후에만**
-   종료하라. BLOCKER 미해결 종료 금지. 검증자 결과는 본문이 아니라 **PR 코멘트**로 남겨라 —
+   종료하라. BLOCKER 미해결 종료 금지. **재-CI 를 돌리기 직전** 단계 라벨을
+   `gh issue edit <PR번호> --repo <REPO> --add-label "flow:ci" --remove-label "flow:codex"`
+   로 바꾸고(이 PR 이 지금 CI 를 다시 돈다는 표시), 재-CI pass 후 검증자를 다시 스폰하기
+   전에 `--add-label "flow:codex" --remove-label "flow:ci"` 로 되돌려라(best-effort — 실패해도
+   틱 루프가 보정한다). 검증자 결과는 본문이 아니라 **PR 코멘트**로 남겨라 —
    `gh pr comment <PR번호> --repo <REPO> --body "검증자 리뷰: <CLEAN 또는 BLOCKER/WARN/NIT 건수와 각 발견 요약·처리 내역>
 <!-- bodat:worker -->"`
    (CLEAN 이어도 코멘트는 남긴다 — 리뷰가 실행됐다는 증거다).
@@ -101,11 +110,16 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    미해결 항목이 남았으면 `--body "머지 판정: ⚠ 보류 — <사유>
 <!-- bodat:worker -->"`. 이 코멘트가 PR 에 대한
    너의 마지막 접촉이어야 한다 — 이후 커밋을 추가하게 되면 판정 코멘트를 다시 남겨라.
+   `✅` 를 남겼으면 단계 라벨을 `gh issue edit <PR번호> --repo <REPO> --add-label "flow:ready" --remove-label "flow:codex"`
+   로 바꿔라(그린라이트·마감 대기 — closeout 이 이 라벨을 보고 집는다). `⚠ 보류` 면 flow:*
+   를 손대지 말고 그대로 둬라(디스패처가 needs-human 으로 승격한다).
    그런 다음 종료 보고: PR 번호/URL, 테스트 결과, 검증자 리뷰 처리 내역, 남은 사항.
 
-금지: 머지, main/master 직접 push, 이슈 라벨 변경, 다른 이슈 작업, <WT_PATH> 밖 수정.
-(단, 12단계의 참조 이슈 본문 체크박스 마크 동기화는 허용 — 라벨 변경도, 다른 이슈
-작업도 아니다.)
+금지: 머지, main/master 직접 push, 코디네이션 라벨(agent-ready·agent:claimed·
+needs-human·harvesting·우선순위·area 등) 변경, 다른 이슈 작업, <WT_PATH> 밖 수정.
+(예외 1: 12단계의 참조 이슈 본문 체크박스 마크 동기화 — 라벨 변경도, 다른 이슈 작업도
+아니다. 예외 2: **이 PR 의 단계 표시 라벨 `flow:*`(flow:ci·flow:codex·flow:ready)** 부착·
+교체 — 10·11·13단계에서 지시한 대로만. 이 둘 외의 라벨은 여전히 손대지 마라.)
 
 과거 교훈:
 <LESSONS_OR_"없음">
