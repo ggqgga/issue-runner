@@ -22,7 +22,7 @@
 |---|---|---|
 | 1 | **이슈를 루프에 넘긴다** | 기획 세션에서 `/loop-issues` — 마감 체크리스트(스펙 완결성·의존성 등 9항목)를 통과한 이슈에 `agent-ready` + 우선순위 라벨이 붙는다 |
 | 2 | **루프를 돌린다** | **별도 세션**에서 `/loop 15m /issue-runner` — 매 틱 디스패처가 이슈를 집어 worktree에서 구현하고 PR을 연다. 여러 프로젝트 루프를 병행하려면 [세션 레포 스코프](#상시-구동) 참조 |
-| 3 | **PR 리뷰 → 머지** | 사람이 직접 `gh pr merge <N>` (선택 전제인 local-ci hook을 설치한 `bin/ci` 옵트인 레포면 게이트가 판정 — 그 외에는 일반 merge). 고칠 게 있으면 리뷰 코멘트만 남기면 다음 틱이 보수 워커로 반영한다 |
+| 3 | **PR 리뷰 → 머지** | **기본**: 사람이 직접 `gh pr merge <N>` (선택 전제인 local-ci hook을 설치한 `bin/ci` 옵트인 레포면 게이트가 판정 — 그 외에는 일반 merge). 고칠 게 있으면 리뷰 코멘트만 남기면 다음 틱이 보수 워커로 반영한다. **closeout 옵트인 시**: 머지·문서반영·배포준비까지 자동이고 사람은 배포(승격) 게이트만 잡는다 ([두 루프 분업](#두-루프-분업--공장과-도크)) |
 
 머지되면 다음 틱의 Reconcile이 worktree·claim을 정리하고 다음 이슈로 넘어간다.
 예외는 dirty/미push worktree — 안전하게 **보존하고 warn**으로 알리므로 그때만
@@ -44,6 +44,7 @@
 | "이슈 마감해줘" / "agent-ready 붙여줘" | 〃 |
 | "루프로 진행할 수 있는 이슈 분석해줘" / "이슈 분석하고 라벨 붙여줘" | **트리아지 모드** — 레포의 기존 open 이슈를 일괄 분석·분류 후 적합한 것만 마감 |
 | "루프 시작해줘" | `/loop 15m /issue-runner` 상시 구동 (step 2) |
+| "마감 루프 돌려줘" / "PR 마감해줘" | `/loop 20m /closeout` — 초록불 PR 을 검증·머지·문서반영·배포준비까지 자동 마감 ([두 루프 분업](#두-루프-분업--공장과-도크)) |
 
 단계별 상세 절차는 [빠른 시작](#빠른-시작--첫-이슈-한-바퀴), 운영 규칙은 [사용법](#사용법) 참조.
 
@@ -66,6 +67,12 @@
 - **자율 범위 = 머지·문서·파생은 자동, production 실 배포는 사람 게이트.**
   closeout 은 머지·계획문서 reconcile·후속 이슈 발행까지 무인으로 하지만,
   production 실 배포는 자동으로 하지 않는다 — 배포 단계는 사람이 게이트한다.
+  - **승격(promotion) 모델 호환.** 소비 레포는 main(통합)/release(프로덕션 포인터)
+    승격 모델을 쓸 수 있다 — 루프는 main 에만 머지하고, closeout 4단계의 배포 대기
+    이슈가 사람 게이트(dev 검증 → release 승격 → 배포)의 입력이 된다. 이 경우에도 두
+    루프의 계약은 무변경이며, 승격(release push)도 배포와 마찬가지로 루프가 하지
+    않는다. Phase A 의 "배포 dry-run 까지"와 양립한다(승격·배포 모두 사람 게이트).
+    (예: BoDAT — BodaT#870)
 - **머지 직후 worktree 정리는 closeout 이 직접 한다.** 머지를 독점하는 closeout 이
   `gh pr merge` 성공 직후 공유 헬퍼 `cleanup-worktree.sh ... --merged` 로 그 PR 의
   worktree 를 스스로 거둔다 — issue-runner reconcile 이 멈춰 있어도(closeout-only
@@ -75,6 +82,33 @@
   마감 페이스는 `/loop` 주기로 조절한다 (예: `/loop 20m /closeout`).
 - **Phase A / B 범위.** 현재는 **Phase A** — 안전 코어(검증·머지·문서·파생)와
   배포 dry-run 까지만 한다. 실 자동 배포(**Phase B**)는 추후 별도로 연다.
+
+승격 모델을 쓰는 레포에서의 전체 흐름 — 자율 루프(무인)·사람 게이트·소비자 세 줄기:
+
+```mermaid
+flowchart TD
+  subgraph auto["자율 루프 (무인)"]
+    A1["agent-ready 이슈"] --> A2["issue-runner: 구현 → PR"]
+    A2 --> A3["closeout: 검증 → main 머지"]
+    A3 --> A4["배포 대기 이슈 발행 (사람 게이트에서 정지)"]
+  end
+  subgraph human["사람 게이트"]
+    H1["배포 대기 이슈 N건 일괄"] --> H2["dev 스테이지 검증"]
+    H2 -->|통과| H3["release 로 SHA 승격 + 버전 태그"]
+    H3 --> H4["프로덕션 배포 → 스모크"]
+    H4 --> H5["배포 이슈 일괄 close"]
+    H2 -->|실패| H6["승격 중단 · 프로덕션은 이전 release 유지"]
+  end
+  subgraph consumer["소비자 (프로덕션·워커)"]
+    C1["release 브랜치만 당김 · main 머지 ≠ 라이브"]
+  end
+  A4 --> H1
+  H3 --> C1
+  H6 -.->|고침 이슈를 루프로| A1
+```
+
+범용 어휘(소비 레포·dev 스테이지·release 포인터)로 그렸고 BoDAT 은 예시일 뿐이다.
+GitHub 이 위 블록을 도식으로 렌더한다 (미지원 뷰어에서는 코드블록으로 보인다).
 
 **쓰는 법** — issue-runner 와 **별도 세션**에서 `/loop 20m /closeout` 를 돌린다
 (설치는 [§설치](#설치) — closeout 도 전용 심링크가 필요하다). issue-runner 세션이
@@ -91,6 +125,12 @@ PR 을 벌리는 동안 closeout 세션이 초록불이 된 PR 을 골라 마감
 | ② Maintain | 열린 PR 보수 — CI 실패 수리, 리뷰 코멘트 해결, base conflict rebase |
 | ③ Dispatch | 남는 슬롯만큼 신규 이슈 claim → worktree 생성 → 백그라운드 워커 투입 |
 | ④ Report | 한 줄 요약 (`정리 N · 보수 N · 신규 N · 대기 N · warn N`) |
+
+**closeout 틱** (옵트인 시 별도 `/loop` 세션) — 매 틱 Reconcile → Pick(틱당 1 PR,
+`harvesting` 라벨로 점유) → 파이프라인 6단계(① 계획 부합 검증 ② 머지 게이트 ③ 문서
+reconcile ④ 배포 대기 이슈 발행=사람 게이트 ⑤ 배포 후 스모크 ⑥ 파생 이슈) → Report.
+절차 SSOT 는 [`skills/closeout/SKILL.md`](skills/closeout/SKILL.md) — 여기 요약은
+그 발췌다. 두 루프의 분업은 [두 루프 분업](#두-루프-분업--공장과-도크) 참조.
 
 설계 원칙:
 
@@ -389,10 +429,21 @@ scripts/
   cleanup-worktree.sh      # 공유 worktree 안전 제거 헬퍼 (reconcile·closeout 공용, --merged)
   repo-dir.sh              # repos.conf / 기본 경로로 레포 로컬 경로 해석
   run-local-ci.sh          # worktree에서 bin/ci 실행 → local-ci 캐시 기록
+  closeout-reconcile.sh    # closeout 틱 Reconcile — 머지/재개/stale 이벤트 분류
+  closeout-eligible.sh     # closeout 마감 자격 PR 필터 (초록불·harvesting·미해결 코멘트 판정)
+  closeout-ci-pass.sh      # PR HEAD 의 로컬 CI 캐시 pass 판정 (머지 게이트)
 hooks/
   local-ci.sh              # (선택 설치) push 직후 bin/ci 백그라운드 실행 → 캐시·commit status
   ci-gate-before-pr-merge.sh # (선택 설치) gh pr merge 직전 캐시로 머지 게이트
 skills/loop-issues/SKILL.md # 기획 세션용 이슈 마감 체크리스트
+skills/closeout/           # 마감 도크 루프(/closeout — 옵트인)
+  SKILL.md                 # 마감 도크 틱 본체 (Reconcile → Pick → 파이프라인 6단계 → Report)
+  SKILL.en.md              # 영문 미러 (한국어판이 원본)
+  references/              # 틱에서 채우는 프롬프트·이슈 템플릿 5종
+    verifier-prompt.md       # 1단계 계획 부합 검증자 프롬프트
+    deploy-check-issue.md    # 4단계 배포 대기 이슈 템플릿
+    smoke-prompt.md          # 5단계 Chrome 스모크 프롬프트 (smoke-prompt.en.md 영문 미러)
+    spinoff-issue.md         # 5·6단계 파생/후속 이슈 템플릿
 repos.conf.example         # 머신별 레포 경로 매핑 예시
 bin/ci                     # 이 레포 자체의 로컬 CI (셸 문법 검사 + 스모크 테스트)
 ```
