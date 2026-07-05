@@ -31,7 +31,9 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
   차단·타임아웃·verdict 없는 응답 포함(실증 2026-06-24 #54: codex 가 sandbox 에서
   gh 네트워크 차단으로 verdict 미산출). 폴백 호출도 verdict 를 못 내면 BLOCKER 로
   간주해 보류 종료한다 (게이트 fail-closed).
-- 절대 금지: production 무인 배포(4단계는 사람 게이트 — 실 배포 안 함) · main 직접
+- 절대 금지: production 무인 배포(4단계는 사람 게이트 — 실 배포 안 함) · 프로덕션
+  포인터 브랜치(release 등) 무인 승격(검증된 SHA 를 프로덕션/워커가 당기는 브랜치로
+  미는 것도 배포와 동급의 사람 게이트다) · main 직접
   push(문서 reconcile 도 PR 브랜치 경유) · `harvesting` 점유 없이 머지 · issue-runner
   가 만든 워크트리/브랜치 조작 · issue-runner 의 "절대 머지 안 함" 불변 훼손.
 
@@ -55,7 +57,7 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 | 2 머지 | PR `MERGED` | MERGED 면 머지 끝 (머지 직후 worktree 정리 포함) |
 | 3 reconcile | 계획문서 diff(머지 커밋) + epic 코멘트 | 머지에 포함이면 끝 |
 | 4 배포 | `배포 대기:` 코멘트 / `deployed:<sha>` | 있으면 재요청 안 함 |
-| 5 후처리 | 발행 이슈 번호 코멘트 | 있으면 재발행 안 함 |
+| 5 후처리 | `✅ 스모크` 코멘트 / 배포 이슈 CLOSED + 검증·배포 완료 코멘트 | 있으면 재스모크 안 함 (사람 게이트가 검증까지 마치고 닫은 경우 포함) |
 | 6 파생 | 생성 이슈 번호 코멘트 | 있으면 재발행 안 함 |
 
 ## ② Pick — 틱당 1 PR (MAX_CLOSEOUT=1)
@@ -190,6 +192,9 @@ CONFLICTING 이면 `harvesting` 을 제거하고 skip 한다 (issue-runner Maint
 chrome-devtools MCP 도구를 ToolSearch 로 로드해 `navigate_page` 로 `<VERIFY_URL>` 에
 진입한 뒤 각 항목을 `evaluate_script`/`take_snapshot` 으로 대조해 항목별 pass/fail 을
 산출한다 (구조/빈 상태 확인과 실 데이터 렌더 확인을 결과에 구분 표기).
+- **이미 닫힌 배포 이슈 — 스모크 생략.** 배포 이슈가 이미 CLOSED 이고 검증/배포 완료
+  코멘트가 있으면 5단계 완료로 간주한다 — 재스모크하지 않고 다음 단계로 진행한다
+  (사람 게이트가 검증까지 마치고 닫은 경우 — 승격 모델 레포의 표준 종결).
 - **저하(degrade) — 조용한 skip 금지.** chrome-devtools MCP 가 세션에 없거나(헤드리스/
   크론 — 대화형 인증 MCP 부재 가능) `<VERIFY_URL>` 이 비었거나 도달 불가면, 스모크를
   건너뛰고 기존 사람-보고 경로로 폴백하되 배포 이슈에 `스모크 skip: <사유>` 코멘트를

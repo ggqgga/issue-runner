@@ -1,5 +1,5 @@
 ## 배경
-PR #<PR> 머지됨 (HEAD <SHA>). production 배포·검증이 필요하다 (closeout 4단계 — 사람 게이트).
+PR #<PR> 머지됨 (HEAD <SHA>). 배포·검증이 필요하다 (closeout 4단계 — 사람 게이트). 검증·배포 순서는 이 레포의 배포 절차를 따른다.
 
 ## 변경 요약
 <SUMMARY>
@@ -9,6 +9,7 @@ PR #<PR> 머지됨 (HEAD <SHA>). production 배포·검증이 필요하다 (clos
 
 ## 검증 URL
 <VERIFY_URL> (production 베이스 URL — 예 `http://bodat.local:3000`. closeout 5단계가 이 URL 로 Chrome 스모크를 몰아 아래 검증 항목을 대조한다.)
+레포가 dev 스테이지를 두는 경우 상세 검증은 그쪽에서 먼저 수행될 수 있고, 이 URL 스모크는 배포 후 마지막 안전망이다.
 
 ## 라이브/하드웨어 검증 항목
 <LIVE_CHECKS>
