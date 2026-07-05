@@ -68,9 +68,12 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 
 `$SCRIPTS/closeout-eligible.sh` 출력의 **첫 후보 1개만** 집는다. 틱당 1개라
 모듈 겹침 판단은 불필요하다 (직렬 마감). 집으면 즉시
-`gh issue edit <pr> --repo <repo> --add-label harvesting` 으로 점유를 선언하라 —
-이 라벨이 있어야 issue-runner ② Maintain 이 이 PR 을 건드리지 않는다. 후보가 0이면
-③ 파이프라인을 건너뛰고 ④ Report 에 clean no-op 으로 보고한다.
+`gh issue edit <pr> --repo <repo> --add-label harvesting --remove-label "flow:ready" --remove-label "flow:codex" --remove-label "flow:ci"`
+으로 점유를 선언하라 — `harvesting` 이 있어야 issue-runner ② Maintain 이 이 PR 을
+건드리지 않고, 워커 단계 라벨(`flow:*`)은 이제 마감 단계로 넘어갔으니 함께 뗀다
+(PR 리스트에서 `harvesting` 하나만 남아 "마감 중"이 명확해진다. `--remove-label` 은
+없는 라벨엔 무해). 후보가 0이면 ③ 파이프라인을 건너뛰고 ④ Report 에 clean no-op 으로
+보고한다.
 
 **라벨 부재 자동 보강.** 옵트인 레포여도 `setup-labels.sh` 재실행 전에는
 `harvesting` 라벨이 없을 수 있다(기존 레포 공통). `--add-label harvesting` 이

@@ -22,6 +22,16 @@ gh label create harvesting --repo "$repo" --color 5319e7 \
 gh label create epic --repo "$repo" --color 0e8a16 \
   --description "부모 에픽 이슈 (sub-issue 롤업 대상)" --force
 
+# PR 생애주기 표시 라벨(flow:*) — PR 리스트만으로 "기계가 물고 있음 vs 사람이 봐야 함"이
+# 갈리게 한다. 워커가 각 단계에서 직접 부착(worker-template 의 flow:* 예외) + 틱 루프가
+# PR 스캔 시 마지막 판정 코멘트로 best-effort 보정. 이후 harvesting→needs-human 으로 이어짐.
+gh label create "flow:ci" --repo "$repo" --color FEF2C0 \
+  --description "워커가 이 PR 의 로컬 CI 를 (재)실행 중" --force
+gh label create "flow:codex" --repo "$repo" --color C5DEF5 \
+  --description "워커 검증자(codex) 리뷰 중 — 그린라이트 전" --force
+gh label create "flow:ready" --repo "$repo" --color 0E8A16 \
+  --description "그린라이트(머지 판정 ✅) — closeout 마감 대기" --force
+
 # 머지된 head 브랜치 자동 삭제 — reconcile 이 로컬만 정리하므로 원격은 GitHub 가 맡는다
 gh repo edit "$repo" --delete-branch-on-merge
 
