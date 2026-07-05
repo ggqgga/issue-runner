@@ -28,7 +28,12 @@ context — the issue body is the only spec.
    to run.
 4. **Dependencies**: if there are prerequisite issues, put a **dedicated line**
    `Blocked by #N` in the body (one per line, at the start of the line). Mentions
-   buried in prose are invisible to the dispatcher.
+   buried in prose are invisible to the dispatcher. You may also express it with a
+   `blocked-by:<N>` **label** (blocking is then visible right in the issue list —
+   attach via `scripts/block-issue.sh <owner/repo> <issue#> <blocker#>`). The body
+   line and the label are combined with **OR**, and `<N>` is the **issue number** —
+   when the blocker issue is CLOSED the gate releases automatically. Either one
+   suffices.
 5. **Hierarchy**: if it is an epic (parent), split it into sub-issues and attach
    agent-ready **only to leaves**. Never attach it to the epic itself.
 6. **Priority**: attach exactly one P0/P1/P2 label (without one it is treated as

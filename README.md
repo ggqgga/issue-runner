@@ -267,9 +267,17 @@ acme/webapp ~/Work/clients/acme-webapp
 
 추가 규약:
 
-- **의존성**: 이슈 본문에 **전용 라인** `Blocked by #N` (한 줄에 하나, 라인 시작
-  위치). 모든 블로커 이슈가 CLOSED여야 디스패치 자격이 생긴다. 산문 속 언급은
-  디스패처가 읽지 못한다.
+- **의존성**: 두 가지 표기를 **OR**로 합쳐 판정한다 — 둘 중 하나로 지정한 블로커가
+  하나라도 OPEN이면 blocked, 모든 블로커가 CLOSED여야 디스패치 자격이 생긴다.
+  - **본문 라인**: 이슈 본문에 **전용 라인** `Blocked by #N` (한 줄에 하나, 라인
+    시작 위치). 산문 속 언급은 디스패처가 읽지 못한다.
+  - **`blocked-by:<N>` 라벨**: 블로커를 **이슈 목록에서 한눈에** 보이게 한다.
+    `<N>`은 **이슈 번호**다(PR 번호가 아님 — 블로커 PR이 머지되면 `Closes #N`으로
+    그 이슈가 닫히고, 게이트가 **자동 해제**해 다음 틱에 후보로 복귀한다. 사람이
+    라벨을 뗄 필요 없음). 번호 라벨은 블로커마다 늘어나므로 `setup-labels`로 미리
+    못 만든다 — `scripts/block-issue.sh <owner/repo> <issue#> <blocker#> [...]`로
+    on-demand 생성·부착한다(gh는 없는 라벨을 `--add-label`하면 실패). 존재하지
+    않는 블로커 번호는 영구 정체 방지를 위해 게이트가 무시(통과)하고 경고만 낸다.
 - **epic 금지**: 부모(epic) 이슈에는 `agent-ready`를 붙이지 않는다 — sub-issue로
   쪼개고 leaf에만 붙인다.
 - **거부 = 재시도 금지**: PR이 머지 없이 닫히면 reconcile이 `agent-ready`까지
@@ -452,7 +460,7 @@ PR이 머지/거부될 때 디스패처가 검증자(codex)로 객관적 실패 
 
 | 증상 | 확인 |
 |---|---|
-| 이슈가 안 집힌다 | `scripts/eligible-issues.sh` 직접 실행 — `agent-ready` 부착 여부, `agent:claimed` 잔존 여부, `Blocked by #N` 블로커가 전부 CLOSED인지. GitHub 검색 인덱스는 몇 분 지연될 수 있다 |
+| 이슈가 안 집힌다 | `scripts/eligible-issues.sh` 직접 실행 — `agent-ready` 부착 여부, `agent:claimed` 잔존 여부, 블로커(본문 `Blocked by #N` ∪ `blocked-by:<N>` 라벨)가 전부 CLOSED인지. GitHub 검색 인덱스는 몇 분 지연될 수 있다 |
 | 워커가 죽고 PR이 없다 | 다음 틱 Reconcile이 회수한다 — push된 커밋이 있으면 보수로 이어받고, 없으면 claim을 풀어 재디스패치한다 |
 | worktree가 안 지워진다 | dirty이거나 미push 커밋이 있으면 reconcile이 **보존하고 warn**한다. 내용 확인 후 직접 `git worktree remove` |
 | PR에 CI 결과가 안 보인다 | `gh api` 인증으로 commit status를 게시한다 — `gh auth status` 확인. 게시 실패해도 로컬 캐시 판정에는 영향 없다 |
@@ -464,6 +472,7 @@ PR이 머지/거부될 때 디스패처가 검증자(codex)로 객관적 실패 
 SKILL.md                   # 디스패처 틱 본체 (Reconcile → Maintain → Dispatch → Report)
 scripts/
   setup-labels.sh          # 레포에 라벨 세트 생성 (옵트인 부트스트랩)
+  block-issue.sh           # blocked-by:<N> 라벨 on-demand 생성·부착 (블로커 가시화)
   eligible-issues.sh       # 자격 필터 → 우선순위 정렬 JSON
   claim-issue.sh           # 직접 API 재확인 후 claim (검색 인덱스 지연 방어)
   make-worktree.sh         # 레포 보장(clone) + worktree 생성

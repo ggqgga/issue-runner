@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 계정 전체에서 디스패치 가능한 이슈를 우선순위 정렬 JSON 배열로 출력.
-# 자격: open + agent-ready + ¬agent:claimed + ¬needs-human + 모든 "Blocked by #N" 라인의 N이 CLOSED
+# 자격: open + agent-ready + ¬agent:claimed + ¬needs-human +
+#       모든 블로커가 CLOSED (블로커 = 본문 "Blocked by #N" 라인의 N ∪ blocked-by:<N> 라벨의 N, OR·dedupe)
 # 정렬: P0 > P1 > P2 > 없음, 동순위는 오래된 순.
 # 주의: search API는 인덱스 지연이 있다 — 최종 재확인은 claim-issue.sh가 직접 API로 한다.
 set -euo pipefail
@@ -48,15 +49,34 @@ while [ "$i" -lt "$count" ]; do
   # 사람 개입 대기(needs-human) 제외 — 사람이 라벨을 떼기 전에는 재디스패치 금지
   case ",$labels," in *",needs-human,"*) continue ;; esac
 
-  # 본문 전용 라인 "Blocked by #N" — 모든 블로커가 CLOSED 여야 자격
+  # 블로커 = 본문 "Blocked by #N" 라인의 N ∪ blocked-by:<N> 라벨의 N (OR·dedupe).
+  # 라벨 방식은 이슈 목록에서 블로킹이 한눈에 보이는 게 요점(#85). 새 search 쿼리를
+  # 추가하지 않고 이미 받은 labels 배열에서만 파싱한다(gh search 부정라벨 오파싱 #21).
   body=$(gh issue view "$num" --repo "$repo" --json body -q '.body // ""')
-  blockers=$(printf '%s' "$body" \
+  body_blockers=$(printf '%s' "$body" \
     | grep -iE '^[[:space:]]*blocked[- ]by[[:space:]]+#[0-9]+' \
     | grep -oE '#[0-9]+' | tr -d '#' || true)
+  label_blockers=$(printf '%s' "$row" \
+    | jq -r '[.labels[].name | select(startswith("blocked-by:")) | ltrimstr("blocked-by:")] | .[]' \
+    2>/dev/null || true)
+  blockers=$(printf '%s\n%s\n' "$body_blockers" "$label_blockers" \
+    | grep -E '^[0-9]+$' | sort -un || true)
+
+  # 하나라도 OPEN 이면 제외. 모두 CLOSED 면 통과(자동 해제 — 라벨을 사람이 뗄 필요 없음).
+  # 블로커 조회 실패는 "진짜 미존재"와 "일시 오류(rate-limit·네트워크·auth)"를 구분한다:
+  #   - 미존재(GraphQL "Could not resolve to an issue"): 영구 정체 방지 위해 게이트 무시(통과).
+  #   - 그 외 오류: 아직 OPEN 인 블로커를 뚫지 않도록 이번 틱은 blocked 유지(다음 틱 재시도).
+  # (2>&1 병합: 성공 시 gh_out=상태값, 실패 시 gh_out=에러문. if 조건이라 set -e 안전.)
   blocked=false
   for b in $blockers; do
-    bstate=$(gh issue view "$b" --repo "$repo" --json state -q '.state' 2>/dev/null || echo "OPEN")
-    [ "$bstate" = "CLOSED" ] || { blocked=true; break; }
+    if gh_out=$(gh issue view "$b" --repo "$repo" --json state -q '.state' 2>&1); then
+      [ "$gh_out" = "CLOSED" ] || { blocked=true; break; }
+    elif printf '%s' "$gh_out" | grep -qi 'could not resolve to an issue'; then
+      echo "warn: $repo#$num blocked-by #$b 미존재 — 영구 정체 방지 위해 게이트 무시(통과)" >&2
+    else
+      echo "warn: $repo#$num blocked-by #$b 조회 일시 오류 — 이번 틱 blocked 유지(재시도): $gh_out" >&2
+      blocked=true; break
+    fi
   done
   [ "$blocked" = "true" ] && continue
 
