@@ -8,7 +8,7 @@ in_scope() { [ -f "$scope_file" ] || return 0
   grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' | grep -qxF "$1"; }
 
 items=$(gh api -X GET search/issues \
-  -f q="user:$me label:harvesting" -f per_page=50 \
+  -f q="user:$me label:harvesting is:pull-request" -f per_page=50 \
   -q '[.items[] | {repo:(.repository_url|sub(".*/repos/";"")), num:.number}]' 2>/dev/null)
 [ -n "$items" ] || exit 0
 
