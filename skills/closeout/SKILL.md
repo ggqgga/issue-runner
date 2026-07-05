@@ -238,8 +238,9 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
   프로덕션 페이지엔 클라이언트 폴러(adspower_pool 30초 자동 새로고침·aging 라이브 폴·
   조립기 라이브싱크 등)가 살아 있어, 좌존 탭이 틱마다 누적되며 `setInterval` 로 CPU 를
   스핀해 며칠이면 미니를 과부하로 넘어뜨린다(2026-07-06 load 66 사고). degrade 로
-  브라우저를 안 열었으면 정리 대상이 없어 no-op 이고, 스모크 대상이 없는 정상 no-op
-  틱도 브라우저를 열지 않으므로 여기 정리는 회귀 없이 건너뛴다.
+  브라우저를 안 열었으면 정리 대상이 없어 no-op 이고(단 URL 도달 불가를 판정하느라
+  `navigate_page` 를 시도해 에러 탭이 열렸으면 그 탭도 `close_page` 한다), 스모크
+  대상이 없는 정상 no-op 틱도 브라우저를 열지 않으므로 여기 정리는 회귀 없이 건너뛴다.
 
 **6단계 — 파생 이슈.** 워커 PR 본문의 `follow-up:` 항목 + 1단계 diff 리뷰가 짚은
 인접 작업을 `references/spinoff-issue.md` 로 채워 agent-ready 이슈로 발행한다.

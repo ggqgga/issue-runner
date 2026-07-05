@@ -279,8 +279,9 @@ structure/empty-state confirmation from real-data render confirmation in the res
   30s auto-refresh·aging live poll·assembler live-sync, etc.), so a stranded tab accumulates
   every tick and spins CPU via `setInterval`, tipping the mini into overload within days
   (2026-07-06 load-66 incident). If degrade opened no browser there is nothing to clean up
-  (no-op), and a normal no-op tick (no smoke target) likewise opens no browser, so this
-  cleanup is skipped without regression.
+  (no-op — but if `navigate_page` was attempted to judge URL-unreachability and it opened
+  an error tab, `close_page` that tab too), and a normal no-op tick (no smoke target)
+  likewise opens no browser, so this cleanup is skipped without regression.
 
 **Step 6 — spinoff issues.** Fill `references/spinoff-issue.md` with the worker PR
 body's `follow-up:` items + adjacent work the step-1 diff review flagged, and issue an

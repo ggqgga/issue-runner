@@ -15,7 +15,9 @@ pass/fail.
 4. **Cleanup (common exit — leak prevention):** after producing the verdict, always
    `close_page` the page this smoke opened (pass·fail, no exception on either path).
    Production pages keep client pollers alive, so a stranded tab spins CPU and accumulates
-   — do not leave it. If no browser was opened at all (degrade), nothing to clean up.
+   — do not leave it. If no browser was opened at all (degrade), nothing to clean up (but
+   if `navigate_page` was attempted to judge unreachability and opened an error tab,
+   `close_page` that tab too).
 
 **Degrade — no silent skip.** If the chrome-devtools MCP tools are absent from the
 session (headless/cron environment) or `<VERIFY_URL>` is unreachable, skip the smoke and
