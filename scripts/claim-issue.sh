@@ -27,4 +27,17 @@ post=$(gh issue view "$num" --repo "$repo" --json labels)
 printf '%s' "$post" | jq -e '.labels | map(.name) | index("agent:claimed")' >/dev/null \
   || { echo "claim 실패: 라벨 미부착 $repo#$num" >&2; exit 1; }
 
+# stale blocked-by 라벨 청소(#85 should): 이 이슈가 eligible 게이트를 통과해 claim 됐다는
+# 것은 남아 있는 blocked-by:<N> 중 CLOSED 인 블로커의 라벨이 이제 무의미하다는 뜻이다.
+# 목록 청소용으로만 제거한다 — 게이트는 N=CLOSED 면 라벨 제거 없이도 이미 통과한다.
+# (eligible-issues.sh 는 순수 조회라 부수효과를 claim 시점으로 옮긴 최소 침습 위치.)
+printf '%s' "$post" | jq -r '.labels[].name | select(startswith("blocked-by:"))' \
+  | while IFS= read -r lbl; do
+      bn=${lbl#blocked-by:}
+      bstate=$(gh issue view "$bn" --repo "$repo" --json state -q '.state' 2>/dev/null || echo "")
+      if [ "$bstate" = "CLOSED" ]; then
+        gh issue edit "$num" --repo "$repo" --remove-label "$lbl" >/dev/null 2>&1 || true
+      fi
+    done
+
 echo "claimed: $repo#$num"
