@@ -44,7 +44,9 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
   fallback call also produces no verdict, treat it as a BLOCKER and exit on hold
   (gate fail-closed).
 - Absolutely forbidden: unattended production deploys (step 4 is a human gate — no
-  real deploy) · pushing directly to main (doc reconcile also goes through the PR
+  real deploy) · unattended promotion of a production pointer branch (release etc. —
+  pushing a verified SHA to a branch that production/workers pull is a human gate on
+  par with a deploy) · pushing directly to main (doc reconcile also goes through the PR
   branch) · merging without `harvesting` occupation · touching worktrees/branches
   that issue-runner created · breaking issue-runner's "never merges" invariant.
 
@@ -71,7 +73,7 @@ resume):
 | 2 merge | PR `MERGED` | if MERGED, merge is done (includes post-merge worktree cleanup) |
 | 3 reconcile | plan-doc diff (merge commit) + epic comment | if in the merge, done |
 | 4 deploy | `배포 대기:` comment / `deployed:<sha>` | if present, do not re-request |
-| 5 post | issued-issue number comment | if present, do not re-issue |
+| 5 post | `✅ 스모크` comment / deploy issue CLOSED + verification·deploy-complete comment | if present, do not re-smoke (including when the human gate finished verification and closed it) |
 | 6 spinoff | created-issue number comment | if present, do not re-issue |
 
 ## ② Pick — 1 PR per tick (MAX_CLOSEOUT=1)
@@ -222,6 +224,10 @@ a Chrome smoke to judge it. Parse `## 검증 URL` (`<VERIFY_URL>`) and
 ToolSearch, `navigate_page` to `<VERIFY_URL>`, and compare each item via
 `evaluate_script`/`take_snapshot` to produce a per-item pass/fail (distinguish
 structure/empty-state confirmation from real-data render confirmation in the result).
+- **Already-closed deploy issue — skip the smoke.** If the deploy issue is already
+  CLOSED and has a verification/deploy-complete comment, treat step 5 as complete —
+  do not re-smoke, proceed to the next step (the case where the human gate finished
+  verification and closed it — the standard finalization in a promotion-model repo).
 - **Degrade — no silent skip.** If the chrome-devtools MCP is absent from the session
   (headless/cron — interactive-auth MCP may be missing) or `<VERIFY_URL>` is blank or
   unreachable, skip the smoke and fall back to the existing human-report path, but leave
