@@ -63,13 +63,19 @@ while [ "$i" -lt "$count" ]; do
     | grep -E '^[0-9]+$' | sort -un || true)
 
   # 하나라도 OPEN 이면 제외. 모두 CLOSED 면 통과(자동 해제 — 라벨을 사람이 뗄 필요 없음).
-  # 존재하지 않는 블로커 번호는 영구 정체 방지를 위해 게이트 무시(통과)하고 경고만 낸다.
+  # 블로커 조회 실패는 "진짜 미존재"와 "일시 오류(rate-limit·네트워크·auth)"를 구분한다:
+  #   - 미존재(GraphQL "Could not resolve to an issue"): 영구 정체 방지 위해 게이트 무시(통과).
+  #   - 그 외 오류: 아직 OPEN 인 블로커를 뚫지 않도록 이번 틱은 blocked 유지(다음 틱 재시도).
+  # (2>&1 병합: 성공 시 gh_out=상태값, 실패 시 gh_out=에러문. if 조건이라 set -e 안전.)
   blocked=false
   for b in $blockers; do
-    if bstate=$(gh issue view "$b" --repo "$repo" --json state -q '.state' 2>/dev/null); then
-      [ "$bstate" = "CLOSED" ] || { blocked=true; break; }
+    if gh_out=$(gh issue view "$b" --repo "$repo" --json state -q '.state' 2>&1); then
+      [ "$gh_out" = "CLOSED" ] || { blocked=true; break; }
+    elif printf '%s' "$gh_out" | grep -qi 'could not resolve to an issue'; then
+      echo "warn: $repo#$num blocked-by #$b 미존재 — 영구 정체 방지 위해 게이트 무시(통과)" >&2
     else
-      echo "warn: $repo#$num blocked-by #$b 조회 실패 — 존재하지 않는 블로커로 보고 게이트 무시(통과)" >&2
+      echo "warn: $repo#$num blocked-by #$b 조회 일시 오류 — 이번 틱 blocked 유지(재시도): $gh_out" >&2
+      blocked=true; break
     fi
   done
   [ "$blocked" = "true" ] && continue
