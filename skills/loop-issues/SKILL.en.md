@@ -48,8 +48,20 @@ context — the issue body is the only spec.
    same effect), and attach a `## Plan` section to the issue body.
    Required `## Plan` structure: a step-by-step task list (each task names the file
    paths to modify/create) + a verification command per task. Task order is the
-   execution order. If the plan grows beyond 5 tasks, consider splitting into
-   sub-issues first instead of attaching it (ties into hierarchy item 5).
+   execution order.
+
+   **Split first**: for high issues, consider splitting into staged sub-issues
+   before attaching a Plan (ties into hierarchy item 5) — the smaller the PR, the
+   more accurate both the worker's implementation and the verifier's review. The
+   criterion is not task count but **whether the seam is independently verifiable**:
+   - If each piece leaves an independently observable, verifiable result (e.g. a
+     data-ledger issue and a viewing-UI issue on top of it) → split and serialize
+     with `Blocked by`. Split pieces usually drop to medium or below, and
+     hardware verification (needs:hardware) stays only on the pieces that need it.
+   - If the seam runs through the middle of a contract so that either half is
+     meaningless alone (e.g. sender/receiver — neither has an observable result by
+     itself) → keep it whole and attach a `## Plan`.
+   A Plan beyond 5 tasks is almost always the former — split first.
 
    `## Plan` format example:
 

@@ -15,7 +15,7 @@ maintenance must come before new work).
 
 ## Constants
 
-- `MAX_AGENTS = 2` — cap on concurrently in-flight issues (in-flight is defined
+- `MAX_AGENTS = 5` — cap on concurrently in-flight issues (in-flight is defined
   in ③-1 — PRs waiting for human review do not occupy a slot)
 - `MAX_OPEN_PRS = 10` — cap on total open PRs (backlog backpressure). When
   reached, only new dispatches stop (maintenance continues) — prevents rebase
