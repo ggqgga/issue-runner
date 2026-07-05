@@ -47,21 +47,30 @@ maintenance must come before new work).
 
 Run `$SCRIPTS/reconcile.sh` and handle each event:
 
-- `merged` — successful completion. **Lessons step**: if the PR had a
-  CHANGES_REQUESTED review or a history of CI failures (check with
-  gh pr view <pr> --repo <repo> --json reviews and gh run list), synchronously
-  invoke the `VERIFIER` subagent (following the VERIFIER contract and fallback
-  in ## Constants):
+- `merged` — successful completion. **Lessons step**: if any of the failure
+  signals below is present (all checked via `gh pr view <pr> --repo <repo>`),
+  synchronously invoke the `VERIFIER` subagent (following the VERIFIER contract
+  and fallback in ## Constants). If no signal is present, do not invoke it and
+  leave it NONE (record no lesson): (1) a CHANGES_REQUESTED review (`--json
+  reviews`) · (2) a `gh run list` CI failure (GitHub Actions repos) · (3) a
+  **local-ci commit status failure history** — if `--json statusCheckRollup` has
+  the local-ci context recorded as FAILURE even once (a lesson candidate even if
+  the final state is SUCCESS, as long as there is a failure history; on local-ci
+  repos `gh run list` is always empty, so this is the effective trigger) · (4) a
+  **BLOCKER in a verifier review comment** — if the PR's `마감 검증:`·`검증자 리뷰:`
+  comment had a BLOCKER (`--json comments`).
 
   > "Read the review comments and CI failure logs of PR #<pr> (<repo>), and from
   > the objective failure facts produce exactly one recurrence-prevention lesson
   > line in the form 'When <situation>, do <specific action>'. No speculation or
   > generalities. If there are no failure facts, output 'NONE'."
 
-  If the result is not NONE, append to `~/Projects/<repo-name>/.loop/lessons.md`
-  in the form `- [YYYY-MM-DD PR#<pr>] <lesson>`. **If the file exceeds 20 lines,
-  delete the oldest lines** (context-rot defense). Only a human moves lessons
-  into CLAUDE.md.
+  If the result is not NONE, append to the `.loop/lessons.md` under the path
+  output by `$SCRIPTS/repo-dir.sh <repo>` (= `<repo-dir>/.loop/lessons.md` — the
+  only interpretation that makes record and read point at the same file even on
+  a repos.conf-mapped machine) in the form `- [YYYY-MM-DD PR#<pr>] <lesson>`.
+  **If the file exceeds 20 lines, delete the oldest lines** (context-rot defense).
+  Only a human moves lessons into CLAUDE.md.
 - `rejected` — a human rejected the PR. Perform the lessons step the same way.
   Do not re-dispatch the issue (agent-ready has already been removed).
 - `stale` — a dead claim was released. Report only.
@@ -160,7 +169,9 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       move on to the next candidate.
    b. `$SCRIPTS/make-worktree.sh <repo> <num>` — the last output line is the
       worktree path.
-   c. If `~/Projects/<repo-name>/.loop/lessons.md` exists, read its contents.
+   c. If the `.loop/lessons.md` under the path output by `$SCRIPTS/repo-dir.sh
+      <repo>` (= `<repo-dir>/.loop/lessons.md`, same interpretation as the record
+      path) exists, read its contents.
    d. Right before dispatching, read
       `~/.claude/skills/issue-runner/references/worker-template.en.md`, fill the
       placeholders (`<WT_PATH>` `<REPO>` `<NUM>` `<TITLE>` `<DEFAULT_BRANCH>`
