@@ -206,7 +206,9 @@ CONFLICTING 이면 `harvesting` 을 제거하고 skip 한다 (issue-runner Maint
 새 감지 기구 없이(폴링/타이밍 미도입) 능동적으로 Chrome 스모크를 돌려 판정한다.
 배포 이슈 본문에서 `## 검증 URL`(`<VERIFY_URL>`)과 `## 라이브/하드웨어 검증 항목`
 (`<LIVE_CHECKS>`)을 파싱해 `references/smoke-prompt.md` 의 placeholder 에 채우고,
-chrome-devtools MCP 도구를 ToolSearch 로 로드해 `navigate_page` 로 `<VERIFY_URL>` 에
+chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱등 — 크래시 재개 방어):
+`list_pages` 로 이전 틱이 정리 전에 죽어 남긴 스모크 페이지가 있으면 `close_page` 로
+먼저 닫는다.** 이어 `navigate_page` 로 `<VERIFY_URL>` 에
 진입한 뒤 각 항목을 `evaluate_script`/`take_snapshot` 으로 대조해 항목별 pass/fail 을
 산출한다 (구조/빈 상태 확인과 실 데이터 렌더 확인을 결과에 구분 표기).
 - **이미 닫힌 배포 이슈 — 스모크 생략.** 배포 이슈가 이미 CLOSED 이고 검증/배포 완료
@@ -215,7 +217,8 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드해 `navigate_page` 로 `<VER
 - **저하(degrade) — 조용한 skip 금지.** chrome-devtools MCP 가 세션에 없거나(헤드리스/
   크론 — 대화형 인증 MCP 부재 가능) `<VERIFY_URL>` 이 비었거나 도달 불가면, 스모크를
   건너뛰고 기존 사람-보고 경로로 폴백하되 배포 이슈에 `스모크 skip: <사유>` 코멘트를
-  남긴다(누락 은폐 금지).
+  남긴다(누락 은폐 금지). **브라우저를 아예 기동하지 않았으므로 정리 대상도 없다 —
+  아래 브라우저 정리는 no-op(누수 아님).**
 - **green (전부 통과)** → 배포 이슈 + 원본 PR 에 `✅ 스모크: <n>/<n> 통과` 코멘트(이
   코멘트가 5단계 완료 마커 — 재개 틱이 재스모크하지 않는다). 이어 배포 이슈에서
   `needs-human` 라벨을 제거하고 배포 이슈를 close 한다(남은 게이트가 검증뿐이고 그게
@@ -229,6 +232,15 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드해 `navigate_page` 로 `<VER
     `$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 `.loop/lessons.md` 에
     `- [YYYY-MM-DD PR#<pr>] <스모크 오판 패턴 → 재발 방지 행동>` 1줄을 append 한다
     (20줄 캡 동일). 코드 결함으로 판명된 실패는 여기 기록하지 않는다 — 발행 경로가 담당.
+- **브라우저 정리 — 누수 방지 (공통 종료, green·fail·degrade 모두).** 위 스모크 판정
+  코멘트를 남긴 **뒤**, 이 틱이 연 chrome-devtools 페이지를 `list_pages`→`close_page` 로
+  반드시 닫는다 — 세 종료 경로 어느 쪽으로 빠졌든 예외 없이(정리 전에 return 하지 마라).
+  프로덕션 페이지엔 클라이언트 폴러(adspower_pool 30초 자동 새로고침·aging 라이브 폴·
+  조립기 라이브싱크 등)가 살아 있어, 좌존 탭이 틱마다 누적되며 `setInterval` 로 CPU 를
+  스핀해 며칠이면 미니를 과부하로 넘어뜨린다(2026-07-06 load 66 사고). degrade 로
+  브라우저를 안 열었으면 정리 대상이 없어 no-op 이고(단 URL 도달 불가를 판정하느라
+  `navigate_page` 를 시도해 에러 탭이 열렸으면 그 탭도 `close_page` 한다), 스모크
+  대상이 없는 정상 no-op 틱도 브라우저를 열지 않으므로 여기 정리는 회귀 없이 건너뛴다.
 
 **6단계 — 파생 이슈.** 워커 PR 본문의 `follow-up:` 항목 + 1단계 diff 리뷰가 짚은
 인접 작업을 `references/spinoff-issue.md` 로 채워 agent-ready 이슈로 발행한다.
