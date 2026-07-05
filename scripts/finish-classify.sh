@@ -91,11 +91,18 @@ verifier_body=$(last_matching "검증자 리뷰" "Verifier review" body)
 verifier_at=$(last_matching "검증자 리뷰" "Verifier review" createdAt)
 
 # 검증자 CLEAN/전건해소 판정 (보수적 — 확실히 깨끗할 때만 인라인 자동 판정 허용).
-# 안전 게이트라 애매하면 non-clean 으로 떨어뜨린다(→ 재디스패치=안전). 부정문
-# ("아직 CLEAN 아님", "not clean")은 부분문자열 *CLEAN* 에 걸리므로 먼저 배제한다.
+# 안전 게이트라 애매하면 non-clean 으로 떨어뜨린다(→ 재디스패치=안전). 3중 방어:
+#   (1) 명시적 부정문("CLEAN 아님","not clean")은 *CLEAN* 부분매칭에 걸리므로 배제.
+#   (2) BLOCKER 언급이 있으면(해소 표기 "BLOCKER 0"/전건해소 제외) 무조건 non-clean —
+#       혼합대소문자 부정문("not CLEAN yet, BLOCKER remains")도 이 게이트가 잡는다.
+#   (3) 그 다음에야 긍정 CLEAN 토큰을 본다.
 is_clean() {
   case "$1" in
     *"CLEAN 아님"*|*"not clean"*|*"NOT CLEAN"*|*"미해결 BLOCKER"*) return 1 ;;
+  esac
+  case "$1" in
+    *"BLOCKER 0"*|*전건해소*|*"전건 해소"*|*"all resolved"*) : ;;  # 해소 표기 → 긍정 판정으로
+    *BLOCKER*) return 1 ;;                                         # 그 외 BLOCKER 언급 = 미해결
   esac
   case "$1" in
     *CLEAN*|*"BLOCKER 0"*|*전건해소*|*"전건 해소"*|*"all resolved"*) return 0 ;;
