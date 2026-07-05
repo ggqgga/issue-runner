@@ -88,9 +88,11 @@ body` 로 파싱). 그런 다음 `gh pr diff <pr> --repo <repo>` 로 diff 를,
 `<ISSUE_BODY>` 는 빈 문자열). 이어 `references/verifier-prompt.md` 의 placeholder 를
 채워 `VERIFIER` 를 동기 호출한다: `<PR>`·`<REPO>`·`<BASE>`=default branch·
 `<PLAN_REF>`=이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<DIFF>`=위
-pr diff 출력·`<ISSUE_BODY>`=위 issue view 출력 (## 상수의 VERIFIER 계약·폴백을
-따른다). 검증자 프롬프트는 diff·이슈 본문을 본문으로 담고 있으므로 검증자는 추가
-네트워크 명령을 실행하지 않는다.
+pr diff 출력·`<ISSUE_BODY>`=위 issue view 출력·`<LESSONS_OR_"없음">`=`$SCRIPTS/repo-dir.sh
+<repo>` 해석 경로 밑 `.loop/lessons.md` 내용(파일 없거나 비면 `없음`) — 검증자가 과거
+오판 패턴(인용 오판·base 맹점 등)을 반복하지 않게 하는 주입 (## 상수의 VERIFIER 계약·
+폴백을 따른다). 검증자 프롬프트는 diff·이슈 본문·lessons 를 본문으로 담고 있으므로
+검증자는 추가 네트워크 명령을 실행하지 않는다.
 - 동봉 실패 fail-closed: `gh pr diff` 가 실패하거나 diff 가 비면, 또는 diff 가
   검증자 컨텍스트에 다 안 들어갈 만큼 크면(판단이 서면) 검증을 통과로 보지 말고
   BLOCKER 경로로 보류 종료한다(머지 안 함) — 네트워크 비의존 경로가 조용히 깨진 채
@@ -106,6 +108,14 @@ pr diff 출력·`<ISSUE_BODY>`=위 issue view 출력 (## 상수의 VERIFIER 계�
 - CLEAN/WARN → `gh pr comment <pr> --repo <repo> --body "마감 검증: ✅ <CLEAN 또는 WARN n>
   <!-- bodat:worker -->"`
   (이 코멘트가 1단계 완료 마커다).
+- **거짓 BLOCKER 반전 기록 (lessons).** 이 PR 에 이전 틱의 `마감 검증: ⚠ 보류 — …`
+  BLOCKER 코멘트가 이미 있는데(직전 BLOCKER) 이번 재검증이 CLEAN/WARN 이거나 사람이
+  `needs-human` 을 떼고 원안 그대로 흐른 경우 — 그 BLOCKER 는 거짓 판정으로 뒤집힌
+  것이다. `$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 `.loop/lessons.md` 에
+  `- [YYYY-MM-DD PR#<pr>] <거짓 BLOCKER 패턴 → 재발 방지 행동>` 1줄을 append 한다
+  (20줄 캡 — 초과 시 가장 오래된 줄 삭제, issue-runner Reconcile lessons 와 동형).
+  이 기록은 위 `<LESSONS_OR_"없음">` 주입으로 다음 검증에 되먹여져 같은 오판(인용
+  오판·base 맹점 등)의 재발을 막는다. (반전이 아니면 — 정상 CLEAN — 기록하지 않는다.)
 
 **2단계 — 머지 게이트.** 머지 명령은 **반드시 `--repo <repo>` 를 넘긴다** —
 closeout 은 cwd 밖 레포의 PR 을 머지하므로 ci-gate 훅이 `--repo` 로 그 레포를
@@ -207,6 +217,11 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드해 `navigate_page` 로 `<VER
   `references/spinoff-issue.md` 로 agent-ready 이슈, 라이브 검증이 필요하면
   `needs:human` 이슈. 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복되면 `needs:human` 으로
   승격한다 (**exhausted 종료**). 배포 이슈는 닫지 않는다.
+  - **코드무관 스모크 실패 기록 (lessons).** 그 스모크 실패가 코드 무관(인프라 장애·
+    플레이크·검증 URL 일시 오류 등)으로 판명되면, 위 발행 경로와 별개로
+    `$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 `.loop/lessons.md` 에
+    `- [YYYY-MM-DD PR#<pr>] <스모크 오판 패턴 → 재발 방지 행동>` 1줄을 append 한다
+    (20줄 캡 동일). 코드 결함으로 판명된 실패는 여기 기록하지 않는다 — 발행 경로가 담당.
 
 **6단계 — 파생 이슈.** 워커 PR 본문의 `follow-up:` 항목 + 1단계 diff 리뷰가 짚은
 인접 작업을 `references/spinoff-issue.md` 로 채워 agent-ready 이슈로 발행한다.

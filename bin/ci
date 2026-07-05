@@ -622,4 +622,61 @@ for f in references/worker-template.md references/worker-template.en.md; do
   grep -qF 'gh issue edit' "$f" || { echo "  ✗ $f 에 참조 이슈 체크박스 reconcile(gh issue edit) 지시 없음"; exit 1; }
 done
 
+echo "[lessons] 경로 repo-dir.sh 명문화 검사 (#80 변경 1 — 문자 그대로 <repo-name> 잔존 0)"
+# 기록(Reconcile)·읽기(Dispatch) 양쪽 lessons 경로가 repo-dir.sh 해석으로 명문화돼야
+# 한다. repos.conf 매핑 머신에서 문자 그대로의 ~/Projects/<repo-name> 는 실제 위치와
+# 어긋난다(랩탑↔미니 사례) — 리터럴 잔존 0 + lessons.md 경로 단락에 repo-dir.sh 명시.
+for f in SKILL.md SKILL.en.md; do
+  if grep -qF 'Projects/<repo-name>' "$f"; then
+    echo "  ✗ $f 에 문자 그대로 'Projects/<repo-name>' 표기 잔존 (repo-dir.sh 해석 경로로 교체 필요)"; exit 1
+  fi
+  if grep -qE '~[^ `]*\.loop/lessons\.md' "$f"; then
+    echo "  ✗ $f 에 lessons.md 홈-상대 리터럴 경로(~/…) 잔존 (repo-dir.sh 해석으로 통일 필요)"; exit 1
+  fi
+  awk 'BEGIN{RS="";ok=0} /lessons\.md/ && /repo-dir\.sh/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f: lessons.md 경로가 repo-dir.sh 해석으로 명문화된 단락 없음"; exit 1; }
+done
+
+echo "[lessons] 트리거 신호 보강 검사 (#80 변경 3 — local-ci status·검증자 BLOCKER·NONE 규칙)"
+# local-ci 체제 레포(GitHub Actions 없음)에선 gh run list 가 항상 빈값이라 기존
+# 트리거만으론 교훈이 안 잡힌다. local-ci commit status 실패 이력(statusCheckRollup)과
+# 검증자 리뷰 코멘트 BLOCKER 를 신호로 추가하되, 신호 0이면 NONE 규칙은 유지.
+for f in SKILL.md SKILL.en.md; do
+  grep -qF 'statusCheckRollup' "$f" \
+    || { echo "  ✗ $f lessons 트리거에 local-ci status(statusCheckRollup) 신호 없음"; exit 1; }
+  awk 'BEGIN{RS="";ok=0} /statusCheckRollup/ && /BLOCKER/ && /NONE/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f lessons 트리거 단락에 검증자 BLOCKER 신호·NONE 규칙이 함께 있지 않음"; exit 1; }
+done
+
+echo "[lessons] README 이관 체크리스트·트러블슈팅 증상 검사 (#80 변경 2)"
+# 새 머신 체크리스트에 lessons.md 이관 항목(체크박스) + 트러블슈팅에 "과거 교훈: 없음" 증상.
+# lessons 는 gitignore 로컬 파일이라 머신 이관 절차에 없으면 자가학습이 조용히 리셋된다.
+grep -qE '^- \[ \].*lessons\.md' README.md \
+  || { echo "  ✗ README 새 머신 체크리스트에 lessons.md 이관 항목(체크박스) 없음"; exit 1; }
+grep -qF '과거 교훈: 없음' README.md \
+  || { echo "  ✗ README 트러블슈팅에 '과거 교훈: 없음' 증상 항목 없음"; exit 1; }
+
+echo "[closeout] lessons 기록 배선 검사 (#80 변경 4 — 거짓 BLOCKER 반전·코드무관 스모크 실패)"
+# closeout 파이프라인에 반복 실증된 두 지점만 최소 배선: (a) 1단계 검증자 BLOCKER 가
+# 사람/후속 확인으로 거짓 판정으로 뒤집힌 경우, (b) 5단계 스모크 실패가 코드무관
+# (인프라/플레이크)으로 판명된 경우 — 각각 대상 레포 lessons.md 에 1줄 append.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF 'lessons.md' "$f" || { echo "  ✗ $f 에 closeout lessons 기록 배선 없음"; exit 1; }
+  awk 'BEGIN{RS="";ok=0} /lessons\.md/ && /BLOCKER/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f: 거짓 BLOCKER 반전 시 lessons 기록 지시(같은 단락) 없음"; exit 1; }
+  awk 'BEGIN{RS="";ok=0} /lessons\.md/ && (/스모크/ || /smoke/) {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f: 코드무관 스모크 실패 시 lessons 기록 지시(같은 단락) 없음"; exit 1; }
+done
+
+echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4)"
+# 1단계 검증자가 과거 오판 패턴(인용 오판·base 맹점 등)을 반복하지 않도록 lessons 를
+# 프롬프트에 주입한다 — 프롬프트가 유일한 전달 경로라는 기존 계약 유지.
+# (<LESSONS_OR_ 는 접미사가 언어별로 다를 수 있어 워커 템플릿과 동일하게 접두만 본다.)
+grep -qF '<LESSONS_OR_' skills/closeout/references/verifier-prompt.md \
+  || { echo "  ✗ verifier-prompt.md 에 <LESSONS_OR_ placeholder 없음"; exit 1; }
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  awk 'BEGIN{RS="";ok=0} /<LESSONS_OR_/ && /lessons\.md/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f: 1단계 검증자에 lessons 주입(<LESSONS_OR_ ← lessons.md) 지시 없음"; exit 1; }
+done
+
 echo "CI pass"

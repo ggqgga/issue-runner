@@ -108,9 +108,12 @@ via `gh issue view <issue> --repo <repo>` (if there is no linked issue,
 placeholders and synchronously invoke `VERIFIER`: `<PR>`·`<REPO>`·`<BASE>`=default
 branch·`<PLAN_REF>`=the issue's `## Plan` or the referenced `Plans/*.md` (empty
 string if none)·`<DIFF>`=the pr diff output above·`<ISSUE_BODY>`=the issue view
-output above (following the VERIFIER contract and fallback in ## Constants). The
-verifier prompt carries the diff and issue body inline, so the verifier runs no
-additional network commands.
+output above·`<LESSONS_OR_"없음">`=the contents of `.loop/lessons.md` under the
+path output by `$SCRIPTS/repo-dir.sh <repo>` (`없음` if the file is missing or
+empty) — an injection so the verifier does not repeat past misjudgment patterns
+(citation misreads·base blind spots·etc.) (following the VERIFIER contract and
+fallback in ## Constants). The verifier prompt carries the diff, issue body, and
+lessons inline, so the verifier runs no additional network commands.
 - Embed-failure fail-closed: if `gh pr diff` fails or the diff is empty, or the
   diff is too large to fit the verifier's context (when you judge so), do not treat
   verification as passed — exit on hold via the BLOCKER path (no merge), so the
@@ -127,6 +130,17 @@ additional network commands.
 - CLEAN/WARN → `gh pr comment <pr> --repo <repo> --body "마감 검증: ✅ <CLEAN or WARN n>
   <!-- bodat:worker -->"`
   (this comment is the step-1 completion marker).
+- **Record a false-BLOCKER reversal (lessons).** If this PR already has a prior
+  tick's `마감 검증: ⚠ 보류 — …` BLOCKER comment (a prior BLOCKER) yet this
+  re-verification is CLEAN/WARN, or a human removed `needs-human` and the original
+  flowed through unchanged — that BLOCKER was a false judgment that got reversed.
+  Append one line `- [YYYY-MM-DD PR#<pr>] <false-BLOCKER pattern → recurrence-
+  prevention action>` to `.loop/lessons.md` under the path output by
+  `$SCRIPTS/repo-dir.sh <repo>` (20-line cap — drop the oldest line on overflow,
+  isomorphic to issue-runner's Reconcile lessons). This record is fed back into
+  the next verification via the `<LESSONS_OR_"없음">` injection above, preventing
+  recurrence of the same misjudgment (citation misreads·base blind spots·etc.).
+  (If it was not a reversal — a normal CLEAN — do not record.)
 
 **Step 2 — merge gate.** The merge command **must pass `--repo <repo>`** — closeout
 merges PRs in repos outside cwd, so the ci-gate hook must query that repo via
@@ -241,6 +255,13 @@ structure/empty-state confirmation from real-data render confirmation in the res
   agent-ready issue via `references/spinoff-issue.md` if auto-fixable, a `needs:human`
   issue if live verification is needed. If the same failure recurs `REPAIR_RECUR_LIMIT`
   times, escalate to `needs:human` (**exhausted exit**). Do not close the deploy issue.
+  - **Record a code-unrelated smoke failure (lessons).** If that smoke failure turns
+    out to be code-unrelated (infra outage·flake·transient verify-URL error·etc.),
+    separately from the publish path above, append one line
+    `- [YYYY-MM-DD PR#<pr>] <smoke-misjudgment pattern → recurrence-prevention action>`
+    to `.loop/lessons.md` under the path output by `$SCRIPTS/repo-dir.sh <repo>`
+    (same 20-line cap). A failure that turns out to be a code defect is not recorded
+    here — the publish path handles it.
 
 **Step 6 — spinoff issues.** Fill `references/spinoff-issue.md` with the worker PR
 body's `follow-up:` items + adjacent work the step-1 diff review flagged, and issue an

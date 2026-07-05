@@ -456,6 +456,7 @@ PR이 머지/거부될 때 디스패처가 검증자(codex)로 객관적 실패 
 | 워커가 죽고 PR이 없다 | 다음 틱 Reconcile이 회수한다 — push된 커밋이 있으면 보수로 이어받고, 없으면 claim을 풀어 재디스패치한다 |
 | worktree가 안 지워진다 | dirty이거나 미push 커밋이 있으면 reconcile이 **보존하고 warn**한다. 내용 확인 후 직접 `git worktree remove` |
 | PR에 CI 결과가 안 보인다 | `gh api` 인증으로 commit status를 게시한다 — `gh auth status` 확인. 게시 실패해도 로컬 캐시 판정에는 영향 없다 |
+| 워커가 `과거 교훈: 없음`만 받는다 | `scripts/repo-dir.sh <owner/repo>` 해석 경로 밑 `.loop/lessons.md` 존재 확인 — 없으면 자가학습이 리셋된 것(머신 이관 시 미복사가 흔한 원인). 파일은 gitignore 로컬이라 기존 머신에서 복사해 복구 |
 
 ## 파일 구조
 
@@ -505,6 +506,10 @@ bin/ci                     # 이 레포 자체의 로컬 CI (셸 문법 검사 +
 - [ ] 대상 레포에 `scripts/setup-labels.sh <owner/repo>` 실행 — "labels ready" 출력
 - [ ] 레포가 기본 위치(`~/Projects/<레포명>`) 밖이면 `repos.conf` 매핑 추가 후
       `scripts/repo-dir.sh <owner/repo>` 가 올바른 경로를 출력하는지 확인
+- [ ] **다른 머신에서 루프를 옮겨오는 경우** — 각 대상 레포의 `.loop/lessons.md`
+      (repo-dir.sh 해석 경로 밑)를 기존 머신에서 함께 복사
+      (gitignore 라 clone 에 안 딸려온다 — 빠뜨리면 자가학습이 조용히 리셋돼 워커가
+      "과거 교훈: 없음"만 받는다. 실측: 미니 이관 후 워커 32명 전원 유실)
 - [ ] (선택) hook 2종 symlink + settings.json 등록 — Claude Code 세션에서
       `git push` 시 "로컬 CI 백그라운드 시작" 메시지가 뜨는지 확인
 - [ ] 테스트 이슈에 수용 기준 + Test plan 작성 → `agent-ready` + `P2` 부착
