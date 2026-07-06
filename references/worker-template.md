@@ -32,7 +32,10 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    네 브랜치가 아니라 main 시점의 코드 지도다 — 수정 대상의 최종 확인은
    <WT_PATH> 의 실제 파일로 하라. 도구가 없으면 기존 방식대로 진행하라(필수 아님).
 2. 아래 '과거 교훈'을 읽고 같은 실수를 피하라.
-3. `gh issue view <NUM> --repo <REPO>` 로 이슈 본문(수용 기준 체크박스)을 정독하라.
+3. `gh issue view <NUM> --repo <REPO> --json state,body` 로 이슈를 읽어라.
+   **state 가 CLOSED 면 즉시 no-op 종료** — 이미 마감된 이슈다(다른 워커가 PR 을 냈거나
+   머지됨). 아무것도 하지 말고 "이미 종료됨(CLOSED) — no-op" 로 종료 보고하라.
+   OPEN 이면 본문(수용 기준 체크박스)을 정독하라.
    본문이 모호해서 구현 방향을 정할 수 없으면 **작업하지 말고** 이슈에
    `gh issue comment` 로 `BLOCKED: <사유>` 로 시작하는 코멘트(질문 포함)를 남긴 뒤
    "BLOCKED: <사유>" 로 종료 보고하라.
@@ -72,8 +75,11 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 <!-- bodat:worker -->"`
    코멘트를 남겨라 (사람이 PR 화면만 보고 상태를 판단할 수 있어야 한다).
    - **재디스패치 감지·처리 (verify-runner 반송).** 이 브랜치에 이미 PR 이 있으면
-     (`gh pr list --repo <REPO> --head agent/issue-<NUM> --json number`) `gh pr create`
-     는 실패한다 — 그건 네가 **검증 실패로 반송된** 경우다. 그 PR 의 최신
+     (`gh pr list --repo <REPO> --head agent/issue-<NUM> --state all --json number,state`)
+     `gh pr create` 는 실패한다. **그 PR 이 MERGED 상태면 이미 완료된 작업이다 — 반송이
+     아니다. 즉시 "이미 머지됨 — no-op" 로 종료 보고하고 아무것도 하지 마라**(머지된 PR 을
+     붙들고 스핀 금지 — 관측된 고아 유령의 원인). OPEN 이면 네가 **검증 실패로 반송된**
+     경우다. 그 PR 의 최신
      `재검증 실패:` 코멘트(`gh pr view <PR번호> --repo <REPO> --json comments`)를 읽어
      **그 사유(E2E 실패 테스트 / codex BLOCKER / 결정적 CI 실패)를 겨냥해 고쳐라** —
      1~9 단계를 그 실패에 맞춰 수행(고침→테스트→커밋→push→로컬 CI). 새 PR 을 만들지

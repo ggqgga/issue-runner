@@ -59,7 +59,11 @@ maintenance must come before new work).
 
 Run `$SCRIPTS/reconcile.sh` and handle each event:
 
-- `merged` — successful completion. **Lessons step**: if any of the failure
+- `merged` — successful completion. **Orphan-worker cleanup (first)**: if this
+  issue's worker is still alive (check TaskList for the `implement <repo>#<num>`
+  background agent), stop it with `TaskStop` — the PR has merged so the worker's
+  work is moot, and if left alone it holds the already-closed PR and spins forever
+  (the recovery path for the observed orphan ghost). Then the **Lessons step**: if any of the failure
   signals below is present (all checked via `gh pr view <pr> --repo <repo>`),
   synchronously invoke the `VERIFIER` subagent (following the VERIFIER contract
   and fallback in ## Constants). If no signal is present, do not invoke it and
@@ -86,7 +90,8 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   a repos.conf-mapped machine) in the form `- [YYYY-MM-DD PR#<pr>] <lesson>`.
   **If the file exceeds 20 lines, delete the oldest lines** (context-rot defense).
   Only a human moves lessons into CLAUDE.md.
-- `rejected` — a human rejected the PR. Perform the lessons step the same way.
+- `rejected` — a human rejected the PR. **If a worker is still alive, stop it first
+  with `TaskStop` the same as `merged`** (orphan prevention). Perform the lessons step the same way.
   Do not re-dispatch the issue (agent-ready has already been removed).
 - `stale` — a dead claim was released. Report only.
 - `warn` — dirty/unpushed worktree. **Do not touch it** — surface it as-is in

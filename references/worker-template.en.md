@@ -35,8 +35,11 @@ Procedure:
    final verification of anything you modify against the actual files in
    <WT_PATH>. If the tools are absent, proceed the usual way (not required).
 2. Read the 'Past lessons' below and avoid repeating the same mistakes.
-3. Read the issue body (acceptance-criteria checkboxes) carefully with
-   `gh issue view <NUM> --repo <REPO>`. If the body is too ambiguous to determine
+3. Read the issue with `gh issue view <NUM> --repo <REPO> --json state,body`.
+   **If state is CLOSED, terminate immediately as a no-op** — the issue is already
+   closed (another worker opened a PR, or it merged). Do nothing and report
+   "already CLOSED — no-op". If OPEN, read the body (acceptance-criteria checkboxes)
+   carefully. If the body is too ambiguous to determine
    an implementation direction, **do not work** — leave a comment starting with
    `BLOCKED: <reason>` (including your question) on the issue with
    `gh issue comment`, then finish with the report "BLOCKED: <reason>".
@@ -86,8 +89,11 @@ Procedure:
 <!-- bodat:worker -->"`
    (a human must be able to judge state from the PR page alone).
    - **Re-dispatch detection/handling (verify-runner bounce-back).** If a PR already
-     exists for this branch (`gh pr list --repo <REPO> --head agent/issue-<NUM> --json number`),
-     `gh pr create` fails — that means you were **bounced back on verification failure**.
+     exists for this branch (`gh pr list --repo <REPO> --head agent/issue-<NUM> --state all --json number,state`),
+     `gh pr create` fails. **If that PR is MERGED, the work is already done — this is
+     not a bounce-back. Report "already merged — no-op" immediately and do nothing**
+     (never hold a merged PR and spin — the cause of the observed orphan ghost). If OPEN,
+     you were **bounced back on verification failure**.
      Read that PR's latest `Re-verify failed:` comment (`gh pr view <PR_NUMBER> --repo
      <REPO> --json comments`) and **fix precisely what it names** (failing E2E test /
      codex BLOCKER / deterministic CI failure) — run steps 1–9 against that failure

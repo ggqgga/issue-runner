@@ -44,7 +44,10 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
 `$SCRIPTS/reconcile.sh` 를 실행하고 이벤트별로 처리:
 
-- `merged` — 성공 종료. **lessons 단계**: 아래 실패 신호가 하나라도 잡히면 (전부
+- `merged` — 성공 종료. **고아 워커 정리(선행)**: 이 이슈의 워커가 아직 살아있으면
+  (TaskList 로 `<repo>#<num> 구현` 백그라운드 에이전트 확인) `TaskStop` 으로 중단하라 —
+  PR 이 머지됐으니 워커 작업은 무의미하고, 방치하면 이미 종료된 PR 을 붙들고 무한
+  스핀한다(관측된 고아 유령의 회수 경로). 그다음 **lessons 단계**: 아래 실패 신호가 하나라도 잡히면 (전부
   `gh pr view <pr> --repo <repo>` 로 확인) `VERIFIER` 서브에이전트(## 상수의 VERIFIER
   계약·폴백을 따른다)를 동기 호출하라. 신호가 하나도 안 잡히면 호출하지 말고 NONE 으로
   둔다(lessons 미기록): (1) CHANGES_REQUESTED 리뷰(`--json reviews`) · (2) `gh run list`
@@ -65,7 +68,8 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   가리키게 하는 유일한 해석)에 `- [YYYY-MM-DD PR#<pr>] <교훈>` 형식으로 append.
   **20줄 초과 시 가장 오래된 줄 삭제** (context rot 방어). lessons를 CLAUDE.md로 옮기는
   것은 사람만 한다.
-- `rejected` — 사람이 PR을 거부함. lessons 단계 동일하게 수행. 이슈는 재디스패치하지
+- `rejected` — 사람이 PR을 거부함. **살아있는 워커가 있으면 `merged` 와 동일하게
+  `TaskStop` 으로 먼저 중단**(고아 방지). lessons 단계 동일하게 수행. 이슈는 재디스패치하지
   않는다 (agent-ready가 이미 제거됨).
 - `stale` — 죽은 claim 해제됨. 보고만.
 - `warn` — dirty/unpushed worktree. **건드리지 말고** Report에 그대로 올려 사람이 보게 하라.
