@@ -82,9 +82,62 @@ resume):
 | 5 post | `✅ 스모크` comment / deploy issue CLOSED + verification·deploy-complete comment | if present, do not re-smoke (including when the human gate finished verification and closed it) |
 | 6 spinoff | created-issue number comment | if present, do not re-issue |
 
+## ①-b Stuck-PR sweep — lost-finish recovery (every tick)
+
+`closeout-eligible.sh` only surfaces PRs that carry a **`머지 판정: ✅` marker**. That ✅
+is written by the worker **right before it exits** (worker-template final step), so if the
+worker dies or is timeboxed between `🔄 진행 중` → verifier review → `✅`, the ✅ is lost and
+the PR accumulates forever in the **blind spot of both** eligible.sh (no ✅) and issue-runner
+Maintain (CI-green-with-no-review = left as awaiting human review) — evidenced by #970
+(verifier `BLOCKER 없음` but ✅ lost) and #971 (died at `🔄 진행 중`). **Lost-finish recovery
+is owned by this loop** (the closer) — the finish logic is unified into closeout rather than
+loaded onto issue-runner (role split, user decision 2026-07-06). Like the QUIET_TICKS rule
+(gh-query-only, ~0 cost), it runs every tick even when stagnated.
+
+**Targets**: `me=$(gh api user -q .login)`, then `gh api -X GET search/issues -f q="user:$me
+is:open is:pr" -f per_page=100 -f sort=created -f order=asc` (FIFO). For each PR whose head is
+`agent/issue-*` and that is **not labeled `harvesting`**, judge it:
+
+**1) CONFLICTING first**: if `gh pr view <pr> --repo <repo> --json mergeable` is CONFLICTING
+→ **Adopt (rebase path)** — hand to ② Pick; ③ step 2 has closeout rebase then merge (step-2
+conflict path). (Skip finish-classify.)
+
+**2) Otherwise `$SCRIPTS/finish-classify.sh <repo> <pr>` for deterministic classification** —
+the helper reads the latest `머지 판정:`/`검증자 리뷰:` comments and the `STALE_FINISH_MIN`
+time buffer to emit a state (reuse the tested helper instead of hand-rolled comment parsing).
+**A live worker / time-buffer-not-reached is filtered out as `active`, preventing races** — no
+separate freshness gate needed:
+
+| finish-classify output | Meaning | Action |
+|---|---|---|
+| `done_verdict` | latest `머지 판정: ✅` | eligible.sh's normal path handles it — sweep skips |
+| `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). |
+| `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). Re-add `agent-ready` + remove `agent:claimed` on the linked issue → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). |
+| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — attach `needs-human` to the linked issue, closeout leaves it (no auto-progress). |
+| `active` | in progress · buffer not reached · not our shape | **Leave it** (next tick). |
+
+**`flow:*` supplementary signal**: finish-classify judges by comments, but a stale PR with
+`flow:codex`/`flow:ci` and no `flow:ready` is itself evidence of "worker died during verify"
+(the labels are set outside this skill by the worker runtime — use as a supplement when
+present; judge by finish-classify alone when absent).
+
+**Re-dispatch idempotency marker (required)**: on a `stale_reverify` re-dispatch, leave
+`gh pr comment <pr> --repo <repo> --body "재디스패치: #<issue> — lost finish (died before verify) <!-- bodat:worker -->"`,
+and **if this marker already exists and there has been no new commit / verifier comment since,
+do not re-issue** (prevents /loop spam, isomorphic to the step-6 spinoff marker). Re-dispatch
+eligibility is `open + agent-ready + ¬agent:claimed` (eligible-issues.sh), so re-add
+`agent-ready` and also remove `agent:claimed` — issue-runner Dispatch's make-worktree reuses
+the existing `agent/issue-N` worktree, so **the fix continues on the same PR branch and no new
+PR is created** (a repair, not a duplicate).
+
+Adopt candidates (rebase · `stale_inline`) are consumed by ② Pick; re-dispatch / needs-human
+counts are tallied in ④ Report.
+
 ## ② Pick — 1 PR per tick (MAX_CLOSEOUT=1)
 
-Take **only the first candidate** from `$SCRIPTS/closeout-eligible.sh` output. With
+Take the **first candidate** (FIFO) from `$SCRIPTS/closeout-eligible.sh` output (✅-marked
+normal candidates) merged with the **①-b sweep's adopt candidates** (`stale_inline` ·
+CONFLICTING). With
 1 per tick there is no module-overlap judgment to make (serial closeout). Once
 picked, immediately declare occupation with
 `gh issue edit <pr> --repo <repo> --add-label harvesting` — this label is what keeps
@@ -188,8 +241,7 @@ short bounded poll (e.g. 2–3s interval × max 5 tries, never wait forever) —
 step 3's `run-local-ci.sh` fills the cache synchronously this is usually pass
 immediately — and if pass is not reached within the limit, do not merge: exit on hold
 fail-closed (same path as step 3's nonzero-cache/not-reached handling — remove
-`harvesting` + `blocked` exit, do not invent a new exit state). If CONFLICTING, remove
-`harvesting` and skip (issue-runner Maintain rebases). **Right after `gh pr merge`
+`harvesting` + `blocked` exit, do not invent a new exit state). **Right after `gh pr merge`
 succeeds**, call `$SCRIPTS/cleanup-worktree.sh <repo> <N> --merged` to clean up this
 PR's worktree (`agent/issue-<N>`) directly (`<N>` parsed from the PR head
 `agent/issue-N`, same as step 3). Since closeout monopolizes merging, it reaps the
@@ -197,6 +249,24 @@ worktree itself at merge time and does not depend on issue-runner reconcile — 
 a closeout-only session has no buildup. `--merged` relaxes the unpushed guard for the
 trap where a squash merge auto-deletes the remote head and `@{u}` disappears (the
 dirty guard stays — if dirty, warn and hold; best-effort).
+
+- **CONFLICTING → closeout rebases it and proceeds directly** (conflict-rebase ownership
+  transferred from issue-runner Maintain to closeout). Do not skip — conflict must be
+  **caught at the merge stage** and that responsibility is this loop's. Keeping the
+  `harvesting` occupation: `$SCRIPTS/make-worktree.sh <repo> <N>` (`<N>` = head
+  `agent/issue-N`) → `git -C <wt> fetch origin` → `git -C <wt> rebase origin/<BASE>`
+  (`<BASE>` = default branch). **If conflicts arise, synchronously spawn a rebase agent**
+  (read worker-template `~/.claude/skills/issue-runner/references/worker-template.md`, fill
+  placeholders, replace the "Procedure" with "in this worktree (`<WT_PATH>`), rebase onto
+  `origin/<BASE>`, resolve conflicts per the original intent, `git push --force-with-lease`,
+  **no merge commit**", keeping push discipline and prohibitions) → after the agent exits,
+  run `$SCRIPTS/run-local-ci.sh <repo> <N>` to regenerate the rebased-HEAD cache. If nonzero
+  (integration with the new base is broken), do not merge — **delegate fail-closed**: remove
+  `harvesting` + re-add `agent-ready` to the linked issue (or spinoff), blocked exit. If 0,
+  join the exit-0 merge gate above and squash-merge normally. If the agent **cannot resolve**
+  the conflict (rebase abort / repeated failure), a semantic conflict is a human call: remove
+  `harvesting` + add `needs-human` to the linked issue, blocked exit (no unattended forced
+  resolution).
 
 **Step 3 — doc reconcile (before merge, PR-branch commit).** Change the `- [ ]` to
 `- [x]` in the plan-doc section that step 1 confirmed implemented. Commit and push
@@ -291,12 +361,15 @@ duplicate-issuance marker).
 
 ## ④ Report
 
-One-line summary: `closed N · verify-hold N · deploy-wait N · spinoff N · stale N`.
+One-line summary: `closed N · verify-hold N · deploy-wait N · spinoff N · recovered N · re-dispatched N · stale N`.
+Count PRs the ①-b sweep adopted to close/rebase as `recovered N` (also reflected in `closed`
+if it became that tick's Pick), and `stale_reverify` re-dispatches / `held` needs-human as
+`re-dispatched N`.
 
 State the 6 exit states:
-- **success** — ran steps 1–6, merged the PR, and issued follow-ups.
-- **clean no-op** — ② Pick had 0 candidates, so there was no PR to close.
-- **blocked** — step-1 verification was a BLOCKER, so it is on hold (no merge).
+- **success** — ran steps 1–6, merged the PR, and issued follow-ups (including adopt/rebase recoveries).
+- **clean no-op** — ② Pick had 0 candidates, so there was no PR to close (but if there were ①-b re-dispatches it is not a no-op — report `re-dispatched N`).
+- **blocked** — step-1 verification was a BLOCKER, or step-2 rebase integration failed, so it is on hold (no merge).
 - **approval-required** — step 4 issued a deploy issue and is awaiting the human gate.
 - **exhausted** — the same step-5 failure recurred `REPAIR_RECUR_LIMIT` times,
   escalated to needs:human.

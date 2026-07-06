@@ -47,6 +47,13 @@ assert "stale_inline" stale_inline '[
   {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:00:30Z"}
 ]'
 
+# 3b) stale_inline — 워커 실제 표기 "BLOCKER 없음(게이트 통과)" = 블로커 0 = CLEAN
+#     (회귀 가드 #970: "없음"의 BLOCKER 부분매칭으로 검증된 PR 을 stale_reverify 로 오판하던 버그)
+assert "BLOCKER없음→stale_inline" stale_inline '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
+  {"body":"검증자 리뷰: BLOCKER 없음(게이트 통과) · WARN 1 · NIT 3.\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:00:30Z"}
+]'
+
 # 4) stale_reverify — 🔄 + 검증자 부재 + 30분 초과(판정 60분 전)
 assert "stale_reverify(부재)" stale_reverify '[
   {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}

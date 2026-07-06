@@ -64,9 +64,59 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 | 5 후처리 | `✅ 스모크` 코멘트 / 배포 이슈 CLOSED + 검증·배포 완료 코멘트 | 있으면 재스모크 안 함 (사람 게이트가 검증까지 마치고 닫은 경우 포함) |
 | 6 파생 | 생성 이슈 번호 코멘트 | 있으면 재발행 안 함 |
 
+## ①-b 정체 PR 스윕 — 완결 유실 회수 (매 틱)
+
+`closeout-eligible.sh` 는 **`머지 판정: ✅` 마커가 있는 PR만** 후보로 올린다. 이 ✅ 는
+워커가 **종료 직전**에 찍어서(worker-template 최종단계), 워커가 `🔄 진행 중`→검증자
+리뷰→`✅` 사이에서 죽거나 timebox 로 끊기면 ✅ 가 유실되고, 그 PR 은 eligible.sh(✅
+없음)·issue-runner Maintain(CI green·리뷰없음=사람 리뷰 대기로 방치) **양쪽 사각지대**
+에서 무한 적체한다(실증 #970: 검증자 `BLOCKER 없음`까지 갔는데 ✅ 유실; #971: `🔄 진행
+중`에서 사망). **완결 유실 회수는 마감 담당인 이 루프가 소유한다** — issue-runner 에
+완결 로직(대리 append·재디스패치)을 얹지 않고 closeout 에 일원화하는 역할 분리다
+(사용자 결정 2026-07-06). QUIET_TICKS 원칙과 같은 이유(gh 조회뿐·비용 0)로 stagnated
+여도 매 틱 돈다.
+
+**대상**: `me=$(gh api user -q .login)` 후 `gh api -X GET search/issues -f q="user:$me
+is:open is:pr" -f per_page=100 -f sort=created -f order=asc`(FIFO)로 열린 PR 을 모으고,
+head 가 `agent/issue-*` 이고 **`harvesting` 미부착**인 PR 마다 판정한다.
+
+**1) CONFLICTING 먼저**: `gh pr view <pr> --repo <repo> --json mergeable` 가
+CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기고 ③ 2단계에서 closeout 이
+직접 rebase 후 머지(2단계 conflict 경로). (finish-classify 는 건너뛴다.)
+
+**2) 아니면 `$SCRIPTS/finish-classify.sh <repo> <pr>` 로 결정적 분류** — 이 헬퍼가 최신
+`머지 판정:`/`검증자 리뷰:` 코멘트와 `STALE_FINISH_MIN` 시간버퍼로 상태를 낸다(손수
+코멘트 파싱 대신 테스트된 헬퍼 재사용). **살아있는 워커·시간버퍼 미도달은 `active` 로
+걸러져 레이스가 방지된다** — 별도 신선도 게이트가 필요 없다:
+
+| finish-classify 출력 | 뜻 | 조치 |
+|---|---|---|
+| `done_verdict` | 최신 `머지 판정: ✅` | eligible.sh 정상 경로가 처리 — 스윕은 skip |
+| `stale_inline` | 🔄 + 검증자 CLEAN + 버퍼 초과 (검증까지 도달·최종판정만 유실, #970형) | **입양(머지)** — ② Pick 후보로. ③ 1단계가 **독립 재검증** 후 마감. **새 이슈 안 만듦**(완료된 일 재수행 금지). |
+| `stale_reverify` | 🔄 + 검증자 부재/미해결 BLOCKER + 버퍼 초과 (검증 전 사망·구현 미완 가능, #971형) | **재디스패치** — 미완 코드를 codex 재검증 하나로 자동 머지하지 않는다(사용자 결정). 연결 이슈에 `agent-ready` 재부착 + `agent:claimed` 제거 → 새 워커가 같은 브랜치서 검증자 재실행→체크박스→최종판정으로 완결. 멱등 마커(아래). |
+| `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **needs-human** — 연결 이슈에 `needs-human` 부착, closeout 무접촉(자동 진행 안 함). |
+| `active` | 진행 중·버퍼 미도달·우리 형상 아님 | **무접촉**(다음 틱). |
+
+**flow:\* 보조 신호**: finish-classify 가 코멘트로 판정하지만, `flow:ready` 없이
+`flow:codex`/`flow:ci` 만 있고 오래된 PR 은 그 자체로 "검증 중 워커 사망"의 방증이다
+(라벨은 이 스킬 밖 워커 런타임이 세팅 — 있으면 보조로 참고, 없으면 finish-classify
+결과만으로 판정).
+
+**재디스패치 멱등 마커 (필수)**: `stale_reverify` 재디스패치 시 PR 에
+`gh pr comment <pr> --repo <repo> --body "재디스패치: #<이슈> — 완결 유실(검증 전 사망) <!-- bodat:worker -->"`
+를 남기고, **이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지
+않는다**(/loop 스팸 방지, 6단계 파생 마커 동형). 재디스패치 자격은 `open + agent-ready +
+¬agent:claimed`(eligible-issues.sh)이므로 `agent-ready` 재부착과 함께 `agent:claimed`
+를 제거한다 — issue-runner Dispatch 가 make-worktree 로 기존 `agent/issue-N` worktree
+를 재사용해 **같은 PR 브랜치에서 이어 완결**하므로 새 PR 이 생기지 않는다(중복 아닌 보수).
+
+입양 후보(rebase·`stale_inline`)는 ② Pick 이 소비하고, 재디스패치·needs-human 건수는
+④ Report 에 집계한다.
+
 ## ② Pick — 틱당 1 PR (MAX_CLOSEOUT=1)
 
-`$SCRIPTS/closeout-eligible.sh` 출력의 **첫 후보 1개만** 집는다. 틱당 1개라
+`$SCRIPTS/closeout-eligible.sh` 출력(✅ 마킹된 정상 후보)과 **①-b 스윕의 입양
+후보**(`stale_inline`·CONFLICTING)를 합쳐 FIFO **첫 후보 1개만** 집는다. 틱당 1개라
 모듈 겹침 판단은 불필요하다 (직렬 마감). 집으면 즉시
 `gh issue edit <pr> --repo <repo> --add-label harvesting --remove-label "flow:ready" --remove-label "flow:codex" --remove-label "flow:ci"`
 으로 점유를 선언하라 — `harvesting` 이 있어야 issue-runner ② Maintain 이 이 PR 을
@@ -166,7 +216,23 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 거두므로 issue-runner reconcile 에 의존하지 않는다 — closeout-only 세션서도 적체가
 없다. `--merged` 는 squash 머지로 원격 head 가 자동삭제돼 `@{u}` 가 사라지는
 함정에서 미push 가드를 완화한다(더티 가드는 유지 — 더티면 warn 후 보류, best-effort).
-CONFLICTING 이면 `harvesting` 을 제거하고 skip 한다 (issue-runner Maintain 이 rebase).
+
+- **CONFLICTING → closeout 이 직접 rebase 해서 진행한다** (conflict-rebase 소유는
+  issue-runner Maintain 에서 closeout 으로 이관됨). skip 하지 않는다 — conflict 는
+  **머지 단계에서 잡아야** 하고 그 책임이 이 루프에 있다. `harvesting` 점유를 유지한 채:
+  `$SCRIPTS/make-worktree.sh <repo> <N>` 로 worktree 확보(`<N>`=head `agent/issue-N`) →
+  `git -C <wt> fetch origin` → `git -C <wt> rebase origin/<BASE>`(`<BASE>`=default
+  branch). **conflict 가 나면 rebase 보수 에이전트를 동기 스폰**한다(worker-template
+  `~/.claude/skills/issue-runner/references/worker-template.md` 를 읽어 placeholder 를
+  채우되 "절차" 지시를 "이 worktree(`<WT_PATH>`)에서 `origin/<BASE>` 위로 rebase,
+  conflict 를 원안 의도대로 해소, `git push --force-with-lease`, **merge 커밋 금지**" 로
+  교체하고 push 규율·금지는 유지) → 에이전트 종료 후 `$SCRIPTS/run-local-ci.sh <repo>
+  <N>` 로 rebased HEAD 캐시를 재생성한다. 비0(새 base 통합 깨짐)이면 머지하지 말고
+  **위임 fail-closed**: `harvesting` 제거 + 연결 이슈에 `agent-ready` 재부착(또는
+  spinoff)해 넘기고 blocked 종료. 0이면 위 exit 0 머지 게이트로 합류해 정상 squash
+  머지한다. 에이전트가 conflict 를 **못 풀면**(rebase abort·반복 실패) semantic
+  conflict 는 사람 판단이므로 `harvesting` 제거 + 연결 이슈에 `needs-human` 을 달고
+  blocked 종료한다(무인 강제 해소 금지).
 
 **3단계 — 문서 reconcile (머지 전, PR 브랜치 커밋).** 1단계가 구현을 확인한
 계획문서 절의 `- [ ]` 를 `- [x]` 로 바꾼다. PR 브랜치 worktree
@@ -249,15 +315,17 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
 
 ## ④ Report
 
-한 줄 요약: `마감 N · 검증보류 N · 배포대기 N · 파생 N · stale N`.
+한 줄 요약: `마감 N · 검증보류 N · 배포대기 N · 파생 N · 회수 N · 재디스패치 N · stale N`.
+①-b 스윕이 입양해 마감·rebase 한 건은 `회수 N`(마감까지 갔으면 `마감` 에도 반영),
+`stale_reverify` 재디스패치·`held` needs-human 건은 `재디스패치 N` 으로 집계한다.
 
 종료 상태 6종을 명시한다:
-- **success** — 1~6단계를 다 돌아 PR 을 머지하고 후속까지 발행함.
-- **clean no-op** — ② Pick 후보가 0이라 마감할 PR 이 없음.
-- **blocked** — 1단계 검증이 BLOCKER 라 보류(머지 안 함).
+- **success** — 1~6단계를 다 돌아 PR 을 머지하고 후속까지 발행함(입양·rebase 회수분 포함).
+- **clean no-op** — ② Pick 후보가 0이라 마감할 PR 이 없음(①-b 재디스패치만 있었어도 no-op 아님 — `재디스패치 N` 보고).
+- **blocked** — 1단계 검증이 BLOCKER 이거나 2단계 rebase 통합 실패라 보류(머지 안 함).
 - **approval-required** — 4단계에서 배포 이슈를 발행하고 사람 게이트 대기.
 - **exhausted** — 5단계 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복돼 needs:human 승격.
-- **stagnated** — `QUIET_TICKS` 연속 조용함.
+- **stagnated** — `QUIET_TICKS` 연속 조용함(①-b 스윕은 stagnated 여도 매 틱 돈다).
 
 `QUIET_TICKS` 연속으로 조용해도 ①②는 다음 틱에도 그대로 수행한다 — stagnated 는
 보고에만 반영되고 어떤 단계도 건너뛰지 않는다.

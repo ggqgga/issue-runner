@@ -18,11 +18,11 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 - `MAX_REPAIRS_PER_PR = 3` — PR 1개당 보수 디스패치 상한 (② Maintain 서킷 브레이커)
 - `ISSUE_TIMEBOX_HOURS = 1` — PR 없는 `working` 이슈에 허용하는 claim 경과 시간
   (① Reconcile timebox)
-- `STALE_FINISH_MIN = 30` — 완결 유실 판별 시간버퍼(분, ② Maintain 규칙4b/4c).
-  살아있는 워커는 `검증자 리뷰:` 코멘트 직후 수초 내 최종 판정을 찍으므로, 최신
-  `검증자 리뷰:` 가 CLEAN 이면서 이 버퍼를 넘도록 최종 판정이 없으면 워커 사망으로
-  간주(→ 4b 인라인 재파생). 진행 중 fix 루프는 최신 검증자 코멘트가 recent 이거나
-  non-CLEAN 이라 자동 제외된다.
+- `STALE_FINISH_MIN = 30` — 완결 유실 판별 시간버퍼(분). `finish-classify.sh` 의
+  버퍼이며, 이제 이 헬퍼는 **closeout ①-b 정체 스윕**이 소비한다(issue-runner 는 규칙4
+  원복 후 직접 쓰지 않음). 살아있는 워커는 `검증자 리뷰:` 직후 수초 내 최종 판정을
+  찍으므로, 최신 검증자가 CLEAN 인데 이 버퍼를 넘도록 최종 판정이 없으면 워커 사망으로
+  간주. 진행 중 fix 루프는 최신 검증자 코멘트가 recent 이거나 non-CLEAN 이라 자동 제외.
 - `SOFT_TOKEN_BUDGET_PER_ISSUE = 300000` — 이슈당 소프트 토큰 예산. 하드 캡이
   아니라 ④ Report 의 관측 기준 (Agent 호출에 예산 API 가 없어 강제는 불가).
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
@@ -35,12 +35,10 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   **폴백**: codex 플러그인 미설치 환경(Agent 툴의 subagent_type 목록에 위 타입이
   없거나, 호출이 unknown subagent type 오류로 실패)에서는 `general-purpose` 를
   검증자로 쓴다 — 같은 프롬프트로 호출하므로 계약도 동일하게 적용된다.
-- 절대 금지: PR 머지, main 직접 push, 사람이 만든 브랜치 조작, agent-ready 라벨 임의 부착.
-  **예외(허용)**: ② Maintain 규칙4b 에서 완결 유실 PR 에 **최종 `머지 판정:` 코멘트를
-  대리 append** + 참조 이슈 체크박스 reconcile + **단계 라벨 flow:ready 부착**(flow:codex·
-  flow:ci 제거) — 이는 머지나 agent-ready·코디네이션 라벨 조작이 아니라(단계 라벨 flow:*
-  는 워커가 각 단계에서 직접 다는 허용 예외에 속한다), 죽은 워커의 13단계(최종 판정
-  append)를 대신 찍어 closeout 픽업의 긍정 게이트를 복구할 뿐이다.
+- 절대 금지: PR 머지, main 직접 push, 사람이 만든 브랜치 조작, agent-ready 라벨 임의 부착,
+  완결 유실 PR 에 최종 `머지 판정: ✅` 대리 append(그 회수는 closeout ①-b 스윕 소유).
+  **허용**: ② Maintain 규칙0 의 단계 라벨 `flow:*` 보정(워커가 각 단계에서 직접 다는
+  자가설명 라벨이라 스캔 안전망으로 실제 상태에 맞추는 것은 조작이 아니다).
 
 ## ① Reconcile
 
@@ -134,48 +132,25 @@ N 도 디스패치당 1만 올린다.
 2. 미해결 리뷰 코멘트 → 같은 방식으로 보수 에이전트에 코멘트 해결을 지시.
    단, 워커 자신이 남긴 상태 코멘트(`머지 판정:`·`검증자 리뷰:` 로 시작)는
    리뷰 코멘트가 아니다 — 보수 사유로 세지 마라.
-3. base 와 conflict → 보수 에이전트에 rebase (merge 금지) 를 지시.
-4. CI green + 미해결 리뷰 코멘트 없음 → **완결 상태**를 판별해 분기한다. 규칙1~3 이
-   하나도 안 걸린 PR 만 여기 온다(failing==0·미해결 사람 코멘트 없음·conflict 없음).
-   `$SCRIPTS/finish-classify.sh <repo> <pr>` 를 실행해 출력으로 분기(결정적 헬퍼 —
-   최신 `머지 판정:`/`검증자 리뷰:` 는 코멘트 배열의 마지막 매칭을 쓴다):
-
-   - **4a 완결 — 무접촉.** `done_verdict`(최신 `머지 판정: ✅`) → closeout 픽업 대기,
-     손대지 않는다. `held`(최신 `머지 판정: ⚠ 보류`) → 워커 명시 보류(needs-human
-     영역), 자동 진행 안 함. `active`(진행 중·시간버퍼 미도달·검증자 non-CLEAN 이 recent)
-     → 사람 리뷰 대기이거나 아직-완결중, 손대지 않는다.
-   - **4b 완결 유실·인라인 재파생 (흔함).** `stale_inline`(🔄 + 최신 검증자 CLEAN +
-     `STALE_FINISH_MIN` 초과) → 워커가 13단계 직전에 죽어 최종 판정 append 만 유실된
-     것이다. **에이전트·worktree 없이** Maintain 이 직접 최종 판정을 대리 append 한다
-     (##상수 "절대 금지"의 허용 예외). `gh pr view <pr> --repo <repo> --json headRefOid
-     -q .headRefOid` 로 HEAD sha 를 얻어 (본문 = 판정문 + 개행 + sentinel 을 한
-     `--body` 로, `$'...\n...'` 로 마지막 줄에 마커):
-     `gh pr comment <pr> --repo <repo> --body $'머지 판정: ✅ 머지 가능 — 워커 완결 유실, Maintain 재파생 (검증자 CLEAN · 로컬 CI pass HEAD <sha> · 미해결 없음)\n<!-- bodat:worker -->'`
-     — 마지막 줄이 정확히 `<!-- bodat:worker -->` 여야 한다 (closeout-eligible 긍정 게이트가
-     `머지 판정: ✅` startswith 로 잡고 sentinel 로 머신 인식 — 마커는 반드시 마지막 줄).
-     이어 워커 12단계와 동형으로 **참조 이슈 체크박스를 보수적으로 reconcile**:
-     `gh issue view <num> --repo <repo> --json body` 로 본문을 읽어, PR `## Test plan`
-     의 `[x]` 항목에 대응하는 이슈 수용기준·Test plan 줄만 `[x]` 로 마크를 치환하고
-     **본문 텍스트는 한 글자도 바꾸지 않는다**(체크박스 `- [ ]`/`- [x]` 마크만 보수적
-     치환). 단계 라벨은 `gh issue edit <pr> --repo <repo> --add-label flow:ready
-     --remove-label flow:codex --remove-label flow:ci`(멱등, best-effort). 이 PR 을
-     ④ Report 의 `완결재파생` 카운트에 넣는다. **에이전트 디스패치 아님 — 서킷
-     브레이커 미소모.**
-   - **4c 검증 미완·재디스패치 (드묾).** `stale_reverify`(🔄 + 검증자 리뷰 자체가
-     없거나 미해결 BLOCKER 표기 + `STALE_FINISH_MIN` 초과) → 코드품질 검증이 안 끝났다
-     (closeout 1단계는 계획부합 검증일 뿐 코드품질 게이트가 아니므로 인라인 판정은
-     위험). 서킷 브레이커(공통 절)를 경유해 **완결 에이전트**를 재디스패치한다 —
-     검증자 재실행 → 체크박스 reconcile → 최종 판정(워커 11~13단계). 지시는 워커
-     템플릿의 "절차" 대신 "PR 은 CI green·conflict 없음이나 완결(검증자→체크박스→
-     최종 판정)이 유실됐다. 검증자 리뷰부터 재실행해 완결하라"로 교체하되 나머지
-     (복합 명령·push 규율·금지)는 유지. 서킷 상한 소진 시 공통 절대로 `needs-human`.
+3. base 와 conflict → **더 이상 여기서 rebase 하지 않는다** — conflict-rebase 소유는
+   closeout 으로 이관됐다(closeout ③ 2단계가 `harvesting` 점유 후 직접 rebase·머지).
+   issue-runner 는 conflict PR 을 건드리지 않고 다음 closeout 틱에 맡긴다. 미완이므로
+   in-flight 로는 계속 계수한다(③ 배압 유지).
+4. CI green + 미해결 리뷰 코멘트 없음 → **손대지 않는다.** 사람 리뷰 대기이거나,
+   워커가 최종 `머지 판정: ✅` 를 못 찍고 죽은 **완결 유실** 상태다. 완결 유실 회수
+   (검증까지 도달한 PR 마감 / 검증 전 죽은 PR 재디스패치)는 **closeout ①-b 정체 스윕**이
+   소유한다(`finish-classify.sh` 로 결정적 분류). issue-runner 는 완결 유실 PR 에
+   최종 판정을 대리 append 하거나 완결 에이전트를 재디스패치하지 **않는다** — 완결
+   로직을 이 루프에 얹지 않고 마감 담당(closeout)에 일원화한다(역할 분리). 단계 라벨
+   `flow:*` 보정(규칙0)만 유지해 PR 리스트 자가설명·closeout 스윕 보조신호를 남긴다.
 
 `harvesting` 이벤트 = closeout 마감 진행 중 → **건드리지 않는다**(보수·rebase·리뷰 코멘트 해결 제외). closeout 가 머지/정리한다.
 
 ## ③ Dispatch — 남는 슬롯만큼만
 
 1. in-flight 계산: ①의 `working` + 이번 틱에 ②로 투입한 보수 + **빨간 PR**
-   (`pr_open` 중 CI 실패·미해결 리뷰 코멘트·conflict — ② 1~3 의 대상)의 수.
+   (`pr_open` 중 CI 실패·미해결 리뷰 코멘트 = ② 1~2 의 보수 대상, 그리고 conflict =
+   closeout 이관분이나 미완이라 배압으로 함께 계수)의 수.
    **CI green + 코멘트 없음 PR(② 4, 사람 리뷰 대기)은 슬롯을 점유하지 않는다** —
    에이전트가 손댈 일이 없는 휴면 상태이므로 새 일을 막지 않는다.
    `slots = MAX_AGENTS - in-flight`. slots ≤ 0 이면 건너뛴다.
@@ -203,8 +178,7 @@ N 도 디스패치당 1만 올린다.
 
 ## ④ Report
 
-한 줄 요약: `정리 N · 보수 N · 완결재파생 N · 신규 N · 대기(사람 리뷰) N · warn N`.
-`완결재파생` = 이번 틱 ② Maintain 4b 에서 인라인으로 최종 판정을 대리 append 한 PR 수.
+한 줄 요약: `정리 N · 보수 N · 신규 N · 대기(사람 리뷰) N · warn N`.
 warn 이 있으면 경로와 사유를 그 아래 나열.
 **토큰 관측 (소프트 예산)**: 완료 보고를 낸 워커가 있으면 이슈별 한 줄
 `토큰: <repo>#<num> <이번 보고치> (누적 <합>)` 을 추가하라. 이번 보고치는 완료
