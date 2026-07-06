@@ -75,58 +75,53 @@ Procedure:
    re-commit/re-push, and run it again — the human merge gate reads this result
    cache. Re-run it after every subsequent pushed commit so the cache holds the
    result for the latest HEAD.
-10. Open the PR. **It must be a standalone command with no cd**:
+10. Open the PR (**if this is a re-dispatch it already exists** — see below).
+   **It must be a standalone command with no cd**:
    `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`
-   (Prefixing cd breaks the PR hooks' if-matching, so the issue-reference check and
-   the codex review injection get skipped.) The body must include a dedicated line
-   `Closes #<NUM>` and a `## Test plan` section (checkboxes based on the
-   acceptance criteria). Immediately after creating the PR, leave the comment
-   `gh pr comment <PR_NUMBER> --repo <REPO> --body "Merge verdict: 🔄 in progress — verifier review and local CI not yet final, hold off merging
+   (Prefixing cd breaks the PR hooks' if-matching, so the issue-reference check gets
+   skipped.) The body must include a dedicated line `Closes #<NUM>` and a
+   `## Test plan` section (checkboxes based on the acceptance criteria). Immediately
+   after creating the PR, leave the comment
+   `gh pr comment <PR_NUMBER> --repo <REPO> --body "Merge verdict: 🔄 in progress — before verification (E2E·codex), hold off merging
 <!-- bodat:worker -->"`
-   (a human must be able to judge merge timing from the PR page alone).
-11. After creating the PR, **spawn the verifier review yourself** (the PostToolUse
-   hook's codex injection does not reach subagent contexts — do not wait for it).
-   Synchronous Agent tool call: subagent_type: "<VERIFIER>", prompt:
-   "Code review of PR #<PR_NUMBER> (<REPO>). Read the changes from
-   `git -C <WT_PATH> diff <DEFAULT_BRANCH>...HEAD` and review for:
-   (1) correctness bugs (2) missing edge cases (3) test adequacy
-   (4) obvious over-engineering. No code changes, read-only. Report in English,
-   classifying each finding as BLOCKER/WARN/NIT. If there are no findings, output 'CLEAN'."
-   If the call fails with an unknown subagent type error, retry **the same prompt**
-   with subagent_type: "general-purpose" (the contract follows the VERIFIER entry
-   in the dispatcher SKILL.md's ## Constants — same prompt, same contract).
-   If the verifier reports a BLOCKER, finish **only after a fix commit + push +
-   local CI re-run**. Never finish with an unresolved BLOCKER. Post the verifier
-   result as a **PR comment**, not in the body —
-   `gh pr comment <PR_NUMBER> --repo <REPO> --body "Verifier review: <CLEAN, or BLOCKER/WARN/NIT counts with a summary of each finding and how it was handled>
-<!-- bodat:worker -->"`
-   (comment even on CLEAN — it is the evidence that the review actually ran).
-12. Just before the merge-verdict comment, **reconcile the checkboxes in the
-    referenced issue (`#<NUM>`) body** (the global hook's issue-checkbox reconcile
-    does not reach subagent workers — same structure as the codex injection, so do
-    it yourself). Read the body with `gh issue view <NUM> --repo <REPO> --json body`,
-    set each issue acceptance-criteria/Test-plan line that corresponds to an item you
-    marked `[x]` in the PR `## Test plan` to `[x]`, and **leave** unfinished items as
-    `[ ]`, then write it back with `gh issue edit <NUM> --repo <REPO> --body` (items
-    that cannot be completed at PR time, like live verification, stay honestly `[ ]`
-    — their reasons are already stated in the PR `## Test plan` / merge-verdict
-    comment, so do not repeat them here). **Do not regenerate the whole body** —
-    conservatively replace only the mark in checkbox (`- [ ]`/`- [x]`) lines and
-    leave every other character of the body text unchanged (avoid text loss).
-13. Just before finishing, leave a merge-verdict comment on the PR — if every gate
-    (tests, local CI, verifier) passed:
-    `gh pr comment <PR_NUMBER> --repo <REPO> --body "Merge verdict: ✅ ready to merge — local CI pass (HEAD <sha>) · verifier <CLEAN or 'BLOCKER 0 / WARN n resolved'> · nothing unresolved
-<!-- bodat:worker -->"`,
-    or if anything is left unresolved: `--body "Merge verdict: ⚠ hold — <reason>
-<!-- bodat:worker -->"`.
-    This comment must be your last touch on the PR — if you end up adding commits
-    afterwards, post the verdict comment again. Then the final report: PR number/URL,
-    test results, how the verifier review was handled, anything left over.
+   (a human must be able to judge state from the PR page alone).
+   - **Re-dispatch detection/handling (verify-runner bounce-back).** If a PR already
+     exists for this branch (`gh pr list --repo <REPO> --head agent/issue-<NUM> --json number`),
+     `gh pr create` fails — that means you were **bounced back on verification failure**.
+     Read that PR's latest `Re-verify failed:` comment (`gh pr view <PR_NUMBER> --repo
+     <REPO> --json comments`) and **fix precisely what it names** (failing E2E test /
+     codex BLOCKER / deterministic CI failure) — run steps 1–9 against that failure
+     (fix→test→commit→push→local CI). Reuse the existing PR; do not open a new one.
+11. **Hand verification to verify-runner — the worker does NOT do codex or the final
+    verdict here.** (E2E test:system, codex correctness review, and `Merge verdict: ✅`
+    are all done serially by the verify-runner lane. Doing them inline in the worker
+    is exactly what caused drops and load spikes inside the timebox, which is why they
+    were split out.)
+   a. **Reconcile the referenced issue (`#<NUM>`) checkboxes.** Read the body with
+      `gh issue view <NUM> --repo <REPO> --json body`, set each issue
+      acceptance-criteria/Test-plan line corresponding to an item you marked `[x]` in
+      the PR `## Test plan` to `[x]`, and **leave** unfinished items `[ ]`, then write
+      it back with `gh issue edit <NUM> --repo <REPO> --body` (live/hardware checks that
+      cannot finish at PR time stay honestly `[ ]`). **Do not regenerate the whole
+      body** — conservatively replace only the mark in checkbox lines, leave every
+      other character unchanged (the global hook does not reach subagents, so do it yourself).
+   b. Set the stage label to `flow:verify`: `gh issue edit <PR_NUMBER> --repo <REPO>
+      --add-label "flow:verify"` (on a re-dispatch this label was removed — re-attach
+      it; verify-runner re-picks the PR). This `flow:*` attach is the narrow exception
+      in "Forbidden" below — coordination labels (agent-ready·needs-human·harvesting·
+      priority) are still off-limits.
+   c. Final report: PR number/URL, test results, anything left over. **Leave
+      `Merge verdict` at 🔄 and finish** (✅/⚠ are set by verify-runner after
+      verification). If you end up pushing more commits, re-run local CI and keep flow:verify.
 
-Forbidden: merging, pushing directly to main/master, changing issue labels,
-working on other issues, modifying anything outside <WT_PATH>.
-(Exception: syncing the checkbox marks in the referenced issue body, per step 12,
-is allowed — it is neither a label change nor working on another issue.)
+Forbidden: merging, pushing directly to main/master, changing coordination labels
+(agent-ready·agent:claimed·needs-human·harvesting·priority·area etc.), working on
+other issues, modifying anything outside <WT_PATH>, **spawning a codex verifier or
+posting the `Merge verdict: ✅`/`⚠` final verdict** (owned by verify-runner — do not).
+(Exception 1: syncing the checkbox marks in the referenced issue body per step 11a —
+neither a label change nor working on another issue. Exception 2: **this PR's stage
+label `flow:verify` (and `flow:ci` on re-CI)** attach/swap — only as directed in steps
+10·11. No other labels.)
 
 Past lessons:
 <LESSONS_OR_"none">

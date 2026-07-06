@@ -101,14 +101,15 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
 **0. 단계 라벨 보정 (best-effort, 스캔할 때 붙인다).** 이 PR 의 마지막 판정 코멘트를
 읽어(`gh pr view <pr> --repo <repo> --json comments`) 단계 라벨 `flow:*` 를 실제 상태에
-맞춘다 — 워커가 각 단계에서 직접 붙이지만 크래시·놓침이 있을 수 있어 스캔이 안전망이다.
-마지막 코멘트가 `머지 판정: ✅` → `flow:ready`, `검증자 리뷰:` 또는 `머지 판정: 🔄`(✅ 전)
-→ `flow:codex`, `머지 판정: ⚠ 보류` → flow:* 제거(needs-human 경로로 감). 목표 라벨과
-현재가 다를 때만 `gh issue edit <pr> --repo <repo> --add-label <목표> --remove-label <나머지 flow:*>`
-로 교체한다(멱등 — 같으면 skip, `--remove-label` 은 없는 라벨에 무해). `harvesting`
-PR 은 이 보정도 건너뛴다(closeout 소유 — 아래 `harvesting` 이벤트 규칙과 동일). 최초 CI·
-구현 단계는 PR 이 아직 없어 이슈 `agent:claimed` 로만 보인다(`flow:ci` 는 재-CI 도는
-PR 에만 뜬다).
+맞춘다 — 워커·verify-runner 가 각 단계에서 직접 붙이지만 크래시·놓침이 있을 수 있어
+스캔이 안전망이다. **단, `flow:verify` 또는 `harvesting` 라벨이 붙은 PR 은 이 보정을
+건너뛴다**(각각 verify-runner·closeout 소유 — 아래 소유 규칙과 동일). 그 외 PR 만 보정:
+마지막 코멘트가 `머지 판정: ✅` → `flow:ready`(closeout 이 집는다), `머지 판정: 🔄`(✅ 전)
+→ `flow:verify`(verify-runner 에 넘김 — 워커가 라벨을 못 붙이고 죽은 경우 안전망),
+`머지 판정: ⚠ 보류` → flow:* 제거(needs-human 경로). 목표 라벨과 현재가 다를 때만
+`gh issue edit <pr> --repo <repo> --add-label <목표> --remove-label <나머지 flow:*>` 로
+교체한다(멱등 — 같으면 skip, `--remove-label` 은 없는 라벨에 무해). 최초 CI·구현 단계는
+PR 이 아직 없어 이슈 `agent:claimed` 로만 보인다(`flow:ci` 는 재-CI 도는 PR 에만 뜬다).
 
 **서킷 브레이커 — 아래 1~3 의 모든 보수 디스패치 전 공통**:
 PR 본문에서 `<!-- repair-count: N -->` HTML 주석을 읽어라
@@ -146,6 +147,13 @@ N 도 디스패치당 1만 올린다.
 
 `harvesting` 이벤트 = closeout 마감 진행 중 → **건드리지 않는다**(보수·rebase·리뷰 코멘트 해결 제외). closeout 가 머지/정리한다.
 
+`flow:verify` PR = verify-runner 검증 진행 중(워커가 구현+결정적CI+PR 까지 마치고 넘김)
+→ **건드리지 않는다**(위 1~4 보수·규칙0 보정 모두 제외 — harvesting 과 동형). verify-runner
+가 E2E·codex 검증 후 통과면 `머지 판정: ✅`+`flow:ready` 로 closeout 에 넘기고, 실패면
+연결 이슈에 `agent-ready` 를 재부착해 반송한다(그때 이 루프의 Dispatch 가 같은 브랜치서
+워커를 다시 붙인다 — 정상 재디스패치). 결정적 CI 실패조차 verify-runner 가 반송으로
+처리하므로 issue-runner 는 flow:verify PR 의 CI 도 손대지 않는다(사각지대 방지).
+
 ## ③ Dispatch — 남는 슬롯만큼만
 
 1. in-flight 계산: ①의 `working` + 이번 틱에 ②로 투입한 보수 + **빨간 PR**
@@ -153,6 +161,10 @@ N 도 디스패치당 1만 올린다.
    closeout 이관분이나 미완이라 배압으로 함께 계수)의 수.
    **CI green + 코멘트 없음 PR(② 4, 사람 리뷰 대기)은 슬롯을 점유하지 않는다** —
    에이전트가 손댈 일이 없는 휴면 상태이므로 새 일을 막지 않는다.
+   **`flow:verify` PR 도 슬롯을 점유하지 않는다** — verify-runner 소유(이 루프 워커의
+   일이 아님)이므로 in-flight 에서 제외한다. 이것이 검증을 별도 레인으로 뺀 throughput
+   이득의 실체다: 워커가 PR 을 열고 `flow:verify` 로 넘기는 즉시 슬롯이 반납돼, 느린
+   E2E·codex 대기가 더 이상 이 루프의 5슬롯을 붙잡지 않는다.
    `slots = MAX_AGENTS - in-flight`. slots ≤ 0 이면 건너뛴다.
    **적체 배압**: 상태 무관 열린 PR 총수가 `MAX_OPEN_PRS` 이상이면 신규 디스패치를
    건너뛰고 ④ Report 에 "머지 대기 적체 N개" warn 을 올린다 (보수는 ② 에서 계속 돈다).
@@ -167,14 +179,14 @@ N 도 디스패치당 1만 올린다.
       (= `<repo-dir>/.loop/lessons.md`, 기록 경로와 동일 해석)가 있으면 내용을 읽어 둔다.
    d. 디스패치 직전 `~/.claude/skills/issue-runner/references/worker-template.md` 를
       읽고 placeholder(`<WT_PATH>` `<REPO>` `<NUM>` `<TITLE>` `<DEFAULT_BRANCH>`
-      `<REPO_DIR>` `<VERIFIER>` `<LESSONS_OR_"없음">`)를 채워 투입하라 (Agent 툴
-      백그라운드 디스패치 — 호출 시그니처는 템플릿 파일 상단에 있다).
+      `<REPO_DIR>` `<LESSONS_OR_"없음">`)를 채워 투입하라 (Agent 툴 백그라운드 디스패치
+      — 호출 시그니처는 템플릿 파일 상단에 있다).
       `<DEFAULT_BRANCH>` 는
       `gh repo view <repo> --json defaultBranchRef -q .defaultBranchRef.name` 으로 채운다.
       `<REPO_DIR>` 는 `$SCRIPTS/repo-dir.sh <repo>` 출력(메인 체크아웃 절대경로)으로
       채운다 — 워커의 codegraph 탐색(`-p`)이 이 경로의 인덱스를 읽는다.
-      `<VERIFIER>` 는 ## 상수의 VERIFIER 를 폴백 규칙까지 적용해 채운다
-      (codex 미설치면 `general-purpose`).
+      (워커는 더 이상 codex 검증자를 스폰하지 않는다 — 검증은 verify-runner 소유라
+      `<VERIFIER>` placeholder 가 필요 없다. VERIFIER 상수는 ① Reconcile 의 교훈 추출에만 쓰인다.)
 
 ## ④ Report
 

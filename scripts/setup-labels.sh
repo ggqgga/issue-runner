@@ -27,8 +27,10 @@ gh label create epic --repo "$repo" --color 0e8a16 \
 # PR 스캔 시 마지막 판정 코멘트로 best-effort 보정. 이후 harvesting→needs-human 으로 이어짐.
 gh label create "flow:ci" --repo "$repo" --color FEF2C0 \
   --description "워커가 이 PR 의 로컬 CI 를 (재)실행 중" --force
+gh label create "flow:verify" --repo "$repo" --color D4A5FF \
+  --description "결정적 CI 통과 — verify-runner 검증(E2E·codex) 대기·진행 중" --force
 gh label create "flow:codex" --repo "$repo" --color C5DEF5 \
-  --description "워커 검증자(codex) 리뷰 중 — 그린라이트 전" --force
+  --description "(레거시) 워커 인라인 검증 단계 — verify-runner 도입 후 flow:verify 로 대체" --force
 gh label create "flow:ready" --repo "$repo" --color 0E8A16 \
   --description "그린라이트(머지 판정 ✅) — closeout 마감 대기" --force
 

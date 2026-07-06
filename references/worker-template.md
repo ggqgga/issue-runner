@@ -63,63 +63,47 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    (레포가 bin/ci 옵트인이 아니면 자동 skip.) fail 이면 고치고 재커밋/재push 후
    다시 실행하라 — 이 결과 캐시를 사람의 머지 게이트가 읽는다. 이후 추가 커밋을
    push 할 때마다 재실행해 최신 HEAD 의 결과를 남겨라.
-10. PR 을 열어라. **반드시 cd 없는 단독 명령으로**:
+10. PR 을 열어라(**재디스패치면 이미 열려 있다** — 아래 참고). **반드시 cd 없는 단독 명령으로**:
    `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`
-   (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사와 codex 리뷰
-   주입이 누락된다.) 본문에 반드시 전용 라인 `Closes #<NUM>` 과 `## Test plan`
-   섹션(수용 기준 기반 체크박스)을 포함하라. PR 생성 직후
-   `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: 🔄 진행 중 — 검증자 리뷰·로컬 CI 확정 전, 머지 보류
+   (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사가 누락된다.)
+   본문에 반드시 전용 라인 `Closes #<NUM>` 과 `## Test plan` 섹션(수용 기준 기반
+   체크박스)을 포함하라. PR 생성 직후
+   `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: 🔄 진행 중 — 검증(E2E·codex) 전, 머지 보류
 <!-- bodat:worker -->"`
-   코멘트를 남겨라 (사람이 PR 화면만 보고 머지 시점을 판단할 수 있어야 한다).
-   이어 이 PR 의 단계 라벨을 `flow:codex` 로 세워라(이 시점 로컬 CI 는 이미 통과, 다음은
-   검증자 리뷰): `gh issue edit <PR번호> --repo <REPO> --add-label "flow:codex"` (PR 도
-   `gh issue edit` 로 라벨을 단다). 이 `flow:*` 부착은 아래 "금지"의 좁은 예외다 —
-   PR 리스트만으로 단계가 보이게 하는 표시일 뿐, 코디네이션 라벨(agent-ready·
-   needs-human·harvesting·우선순위)은 여전히 건드리지 마라.
-11. PR 생성 후 **검증자 리뷰를 직접 스폰하라** (PostToolUse hook 의 codex 주입은
-   서브에이전트 컨텍스트에 닿지 않는다 — 기다리지 말 것). Agent 툴 동기 호출:
-   subagent_type: "<VERIFIER>", prompt:
-   "PR #<PR번호> (<REPO>) 코드 리뷰. `git -C <WT_PATH> diff <DEFAULT_BRANCH>...HEAD` 의
-   변경을 읽고 검토: (1) correctness 버그 (2) 빠진 엣지 케이스 (3) 테스트 적정성
-   (4) 명백한 over-engineering. 코드 변경 금지, read-only. 결과는 한국어로,
-   발견마다 BLOCKER/WARN/NIT 분류. 발견 없으면 'CLEAN'."
-   호출이 unknown subagent type 오류로 실패하면 subagent_type: "general-purpose" 로
-   **같은 프롬프트**를 재시도하라 (계약은 디스패처 SKILL.md ## 상수의 VERIFIER
-   항목을 따른다 — 같은 프롬프트이므로 계약도 동일하다).
-   검증자가 BLOCKER 를 보고하면 **반드시 해결 커밋 + push + 로컬 CI 재실행 후에만**
-   종료하라. BLOCKER 미해결 종료 금지. **재-CI 를 돌리기 직전** 단계 라벨을
-   `gh issue edit <PR번호> --repo <REPO> --add-label "flow:ci" --remove-label "flow:codex"`
-   로 바꾸고(이 PR 이 지금 CI 를 다시 돈다는 표시), 재-CI pass 후 검증자를 다시 스폰하기
-   전에 `--add-label "flow:codex" --remove-label "flow:ci"` 로 되돌려라(best-effort — 실패해도
-   틱 루프가 보정한다). 검증자 결과는 본문이 아니라 **PR 코멘트**로 남겨라 —
-   `gh pr comment <PR번호> --repo <REPO> --body "검증자 리뷰: <CLEAN 또는 BLOCKER/WARN/NIT 건수와 각 발견 요약·처리 내역>
-<!-- bodat:worker -->"`
-   (CLEAN 이어도 코멘트는 남긴다 — 리뷰가 실행됐다는 증거다).
-12. 머지 판정 코멘트 직전, **참조 이슈(`#<NUM>`) 본문의 체크박스를 reconcile** 하라
-   (글로벌 훅의 이슈 체크박스 reconcile 은 서브에이전트 워커에 안 닿는다 — codex 주입과
-   동일 구조이니 직접 한다). `gh issue view <NUM> --repo <REPO> --json body` 로 본문을
-   읽어, PR `## Test plan` 에서 `[x]` 로 표시한 항목에 대응하는 이슈 수용기준·Test plan
-   줄을 `[x]` 로, 끝나지 않은 항목은 `[ ]` 로 **유지**한 뒤 `gh issue edit <NUM> --repo <REPO> --body`
-   로 되쓴다 (라이브 검증처럼 PR 시점에 끝낼 수 없는 항목은 정직하게 `[ ]` 로 둔다 —
-   미완 사유는 PR `## Test plan`/머지 판정 코멘트에 이미 명시했으니 여기서 반복하지 마라).
-   **본문 전체를 재생성하지 말 것** — 체크박스(`- [ ]`/`- [x]`) 줄의 마크만 보수적으로
-   치환하고 나머지 본문 텍스트는 한 글자도 바꾸지 마라(텍스트 손실 방지).
-13. 종료 직전 PR 에 머지 판정 코멘트를 남겨라 — 모든 게이트(테스트·로컬 CI·검증자) 통과면
-   `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: ✅ 머지 가능 — 로컬 CI pass (HEAD <sha>) · 검증자 <CLEAN 또는 'BLOCKER 0 / WARN n건 해소'> · 미해결 없음
-<!-- bodat:worker -->"`,
-   미해결 항목이 남았으면 `--body "머지 판정: ⚠ 보류 — <사유>
-<!-- bodat:worker -->"`. 이 코멘트가 PR 에 대한
-   너의 마지막 접촉이어야 한다 — 이후 커밋을 추가하게 되면 판정 코멘트를 다시 남겨라.
-   `✅` 를 남겼으면 단계 라벨을 `gh issue edit <PR번호> --repo <REPO> --add-label "flow:ready" --remove-label "flow:codex"`
-   로 바꿔라(그린라이트·마감 대기 — closeout 이 이 라벨을 보고 집는다). `⚠ 보류` 면 flow:*
-   를 손대지 말고 그대로 둬라(디스패처가 needs-human 으로 승격한다).
-   그런 다음 종료 보고: PR 번호/URL, 테스트 결과, 검증자 리뷰 처리 내역, 남은 사항.
+   코멘트를 남겨라 (사람이 PR 화면만 보고 상태를 판단할 수 있어야 한다).
+   - **재디스패치 감지·처리 (verify-runner 반송).** 이 브랜치에 이미 PR 이 있으면
+     (`gh pr list --repo <REPO> --head agent/issue-<NUM> --json number`) `gh pr create`
+     는 실패한다 — 그건 네가 **검증 실패로 반송된** 경우다. 그 PR 의 최신
+     `재검증 실패:` 코멘트(`gh pr view <PR번호> --repo <REPO> --json comments`)를 읽어
+     **그 사유(E2E 실패 테스트 / codex BLOCKER / 결정적 CI 실패)를 겨냥해 고쳐라** —
+     1~9 단계를 그 실패에 맞춰 수행(고침→테스트→커밋→push→로컬 CI). 새 PR 을 만들지
+     말고 기존 PR 을 이어 쓴다.
+11. **검증을 verify-runner 에 넘긴다 — 워커는 여기서 codex·최종판정을 하지 않는다.**
+    (E2E test:system·codex correctness 리뷰·`머지 판정: ✅` 는 전부 verify-runner 레인이
+    직렬로 수행한다. 워커가 인라인으로 하면 타임박스 안에서 드롭·부하 폭주가 났던
+    바로 그 문제라 분리했다.)
+   a. **참조 이슈(`#<NUM>`) 체크박스 reconcile.** `gh issue view <NUM> --repo <REPO>
+      --json body` 로 본문을 읽어, PR `## Test plan` 에서 `[x]` 로 표시한 항목에 대응하는
+      이슈 수용기준·Test plan 줄을 `[x]` 로, 미완은 `[ ]` 로 **유지**한 뒤 `gh issue edit
+      <NUM> --repo <REPO> --body` 로 되쓴다(라이브/하드웨어 검증처럼 PR 시점에 못 끝내는
+      항목은 정직하게 `[ ]`). **본문 전체 재생성 금지** — 체크박스 마크만 보수적으로
+      치환하고 나머지 텍스트는 한 글자도 바꾸지 마라(글로벌 훅이 서브에이전트엔 안 닿아
+      직접 한다).
+   b. 단계 라벨을 `flow:verify` 로 세워라: `gh issue edit <PR번호> --repo <REPO>
+      --add-label "flow:verify"` (재디스패치로 이 라벨이 떼여 있었으면 재부착 —
+      verify-runner 가 이 PR 을 다시 집는다). 이 `flow:*` 부착은 아래 "금지"의 좁은
+      예외다 — 코디네이션 라벨(agent-ready·needs-human·harvesting·우선순위)은 여전히
+      건드리지 마라.
+   c. 종료 보고: PR 번호/URL, 테스트 결과, 남은 사항. **`머지 판정`은 🔄 그대로 두고
+      종료**한다(✅/⚠ 는 verify-runner 가 검증 후 찍는다). 이후 추가 커밋을 push 하게
+      되면 로컬 CI 를 재실행하고 flow:verify 를 유지하라.
 
 금지: 머지, main/master 직접 push, 코디네이션 라벨(agent-ready·agent:claimed·
-needs-human·harvesting·우선순위·area 등) 변경, 다른 이슈 작업, <WT_PATH> 밖 수정.
-(예외 1: 12단계의 참조 이슈 본문 체크박스 마크 동기화 — 라벨 변경도, 다른 이슈 작업도
-아니다. 예외 2: **이 PR 의 단계 표시 라벨 `flow:*`(flow:ci·flow:codex·flow:ready)** 부착·
-교체 — 10·11·13단계에서 지시한 대로만. 이 둘 외의 라벨은 여전히 손대지 마라.)
+needs-human·harvesting·우선순위·area 등) 변경, 다른 이슈 작업, <WT_PATH> 밖 수정,
+**codex 검증자 스폰·`머지 판정: ✅`/`⚠` 최종판정**(verify-runner 소유 — 하지 마라).
+(예외 1: 11a 의 참조 이슈 본문 체크박스 마크 동기화 — 라벨 변경도, 다른 이슈 작업도
+아니다. 예외 2: **이 PR 의 단계 표시 라벨 `flow:verify`(및 재-CI 시 `flow:ci`)** 부착·
+교체 — 10·11단계에서 지시한 대로만. 이 둘 외의 라벨은 여전히 손대지 마라.)
 
 과거 교훈:
 <LESSONS_OR_"없음">

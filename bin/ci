@@ -67,7 +67,7 @@ for pair in "SKILL.md:SKILL.en.md" "skills/loop-issues/SKILL.md:skills/loop-issu
     fi
     # 필수 placeholder 존재 검사 — 디스패처가 런타임에 치환하는 계약
     # (<LESSONS_OR_ 는 언어별 접미사("없음"/"none")가 달라 접두만 본다)
-    for ph in '<WT_PATH>' '<REPO>' '<NUM>' '<TITLE>' '<DEFAULT_BRANCH>' '<VERIFIER>' '<LESSONS_OR_'; do
+    for ph in '<WT_PATH>' '<REPO>' '<NUM>' '<TITLE>' '<DEFAULT_BRANCH>' '<LESSONS_OR_'; do
       for f in "$ko" "$en"; do
         if ! grep -qF "$ph" "$f"; then
           echo "  ✗ 필수 placeholder 누락: $f 에 $ph 없음"

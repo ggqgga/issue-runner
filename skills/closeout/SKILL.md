@@ -84,7 +84,13 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 
 **대상**: `me=$(gh api user -q .login)` 후 `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc`(FIFO)로 열린 PR 을 모으고,
-head 가 `agent/issue-*` 이고 **`harvesting` 미부착**인 PR 마다 판정한다.
+head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify` 미부착**인 PR
+마다 판정한다. **`flow:verify` PR 은 verify-runner 가 검증 중(소유)이라 여기서 절대 집지
+않는다** — 이걸 빠뜨리면 finish-classify 가 `🔄`(verify-runner 가 아직 ✅ 안 찍음)를
+`stale_reverify` 로 오분류해 재디스패치하고, verify-runner 의 검증과 충돌한다(양쪽이
+같은 PR 을 물어뜯음). 검증 단계의 완결 유실 회수는 verify-runner 의 매 틱 재집(flow:verify
+라벨 잔존)이 소유한다 — closeout ①-b 는 **검증 이후**(✅+flow:ready 인데 closeout 머지가
+죽은 경우)와 CONFLICTING 입양만 맡는다.
 
 **1) CONFLICTING 먼저**: `gh pr view <pr> --repo <repo> --json mergeable` 가
 CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기고 ③ 2단계에서 closeout 이
@@ -125,9 +131,10 @@ CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기�
 후보**(`stale_inline`·CONFLICTING)를 합쳐 FIFO **첫 후보 1개만** 집는다. 한 번에 1개라
 모듈 겹침 판단은 불필요하다 (직렬 마감 — 이 PR 을 끝까지 마감한 뒤에야 ⑤ Drain 이
 다음 후보를 집는다). 집으면 즉시
-`gh issue edit <pr> --repo <repo> --add-label harvesting --remove-label "flow:ready" --remove-label "flow:codex" --remove-label "flow:ci"`
-으로 점유를 선언하라 — `harvesting` 이 있어야 issue-runner ② Maintain 이 이 PR 을
-건드리지 않고, 워커 단계 라벨(`flow:*`)은 이제 마감 단계로 넘어갔으니 함께 뗀다
+`gh issue edit <pr> --repo <repo> --add-label harvesting --remove-label "flow:ready" --remove-label "flow:codex" --remove-label "flow:ci" --remove-label "flow:verify"`
+으로 점유를 선언하라 — `harvesting` 이 있어야 issue-runner ② Maintain·verify-runner 가
+이 PR 을 건드리지 않고(verify-eligible 도 harvesting 을 제외한다), 워커·verify-runner
+단계 라벨(`flow:*`)은 이제 마감 단계로 넘어갔으니 함께 뗀다
 (PR 리스트에서 `harvesting` 하나만 남아 "마감 중"이 명확해진다. `--remove-label` 은
 없는 라벨엔 무해). 후보가 0이면 ③ 파이프라인을 건너뛰고 ④ Report 에 clean no-op 으로
 보고한다.
