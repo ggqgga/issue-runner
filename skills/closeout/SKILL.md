@@ -1,6 +1,6 @@
 ---
 name: closeout
-description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포준비·후속발행까지 자동 마감하는 루프. /loop 와 함께 (예 /loop 20m /closeout). 매 틱 Reconcile → Pick → 파이프라인 → Report.
+description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포준비·후속발행까지 자동 마감하는 루프. /loop 와 함께 (예 /loop 20m /closeout). 매 틱 Reconcile → Pick → 파이프라인 → (후보 남으면 Drain 반복) → Report. 한 틱이 eligible 큐를 다 비운다.
 ---
 
 # closeout — 마감 도크 틱
@@ -12,8 +12,14 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 
 ## 상수
 
-- `MAX_CLOSEOUT = 1` — 틱당 1 PR 을 끝까지 마감(직렬화 스로틀, 적체 상한이 아니다).
-  페이스는 `/loop` 주기로 조절한다 — 한 틱이 한 PR 의 1~6단계를 다 돈다.
+- `MAX_CLOSEOUT = 1` — **동시성 1**(한 번에 1 PR 만 끝까지 직렬 마감). 틱당 상한이
+  아니다 — 한 PR 이 종료 상태(success·approval-required·blocked·exhausted)에 닿으면
+  **다음 틱을 기다리지 말고** ①①-b② 로 되돌아 다음 후보를 집어 이어간다(아래 ⑤ Drain).
+  큐가 빌 때(② Pick 후보 0)만 틱을 끝내고 `/loop` 주기로 쉰다. 드레인은 유한하다 —
+  처리된 PR 은 eligible 에서 빠진다(머지→OPEN 목록서 소멸 · blocked→`needs-human` ·
+  approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스패치:` 마커+fresh updatedAt).
+  `/loop` 주기는 **빈 큐일 때의 재스캔 간격**만 조절한다(적체 소진 속도가 아니라). 한
+  틱이 하나씩만 처리해 적체가 쌓이던 문제를 이 드레인이 해소한다.
 - `REPAIR_RECUR_LIMIT = 2` — 같은 배포 후 실패가 N회 재발하면 agent-ready 재발행
   대신 `needs:human` 으로 승격한다 (5단계 서킷 브레이커).
 - `QUIET_TICKS = 3` — N틱 연속 후보·이벤트가 없으면 stagnated 로 보고한다. **①
@@ -113,11 +119,12 @@ CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기�
 입양 후보(rebase·`stale_inline`)는 ② Pick 이 소비하고, 재디스패치·needs-human 건수는
 ④ Report 에 집계한다.
 
-## ② Pick — 틱당 1 PR (MAX_CLOSEOUT=1)
+## ② Pick — 한 번에 1 PR (MAX_CLOSEOUT=1, 동시성 1)
 
 `$SCRIPTS/closeout-eligible.sh` 출력(✅ 마킹된 정상 후보)과 **①-b 스윕의 입양
-후보**(`stale_inline`·CONFLICTING)를 합쳐 FIFO **첫 후보 1개만** 집는다. 틱당 1개라
-모듈 겹침 판단은 불필요하다 (직렬 마감). 집으면 즉시
+후보**(`stale_inline`·CONFLICTING)를 합쳐 FIFO **첫 후보 1개만** 집는다. 한 번에 1개라
+모듈 겹침 판단은 불필요하다 (직렬 마감 — 이 PR 을 끝까지 마감한 뒤에야 ⑤ Drain 이
+다음 후보를 집는다). 집으면 즉시
 `gh issue edit <pr> --repo <repo> --add-label harvesting --remove-label "flow:ready" --remove-label "flow:codex" --remove-label "flow:ci"`
 으로 점유를 선언하라 — `harvesting` 이 있어야 issue-runner ② Maintain 이 이 PR 을
 건드리지 않고, 워커 단계 라벨(`flow:*`)은 이제 마감 단계로 넘어갔으니 함께 뗀다
@@ -313,13 +320,34 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
 epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생성한 번호를 원본 PR
 코멘트에 기록한다 (중복 발행 방지 마커).
 
+## ⑤ Drain — 다음 후보로 즉시 이어가기
+
+③ 파이프라인이 집은 PR 을 종료 상태(success·approval-required·blocked·exhausted)에
+닿게 한 **직후**, 그 PR 의 결과를 ④ Report 용으로 누적해 두고 **다음 틱을 기다리지
+말고 ①①-b② 로 되돌아간다** — 한 번에 하나씩만 처리해 적체가 쌓이던 문제를 이 드레인이
+한 틱 안에서 소진한다:
+
+- ① Reconcile + ①-b 정체 스윕 + ② Pick 을 다시 수행한다. ② Pick 이 **새 후보를
+  집으면**(이번에 처리한 PR 은 이미 eligible/입양후보에서 빠졌다) 그 PR 로 ③ 파이프라인을
+  즉시 이어간다.
+- ② Pick 후보가 **0이면** 큐가 빈 것이다 — 드레인을 멈추고 ④ Report 로 이 틱에서
+  처리한 **모든 PR 을 한 번에 집계**해 보고한 뒤, `/loop` 주기로 다음 틱을 예약한다.
+
+무한루프 방지: 각 반복은 eligible/입양후보를 최소 1개 줄인다(머지→OPEN 소멸 · blocked→
+`needs-human` · approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스패치:` 마커로
+재선정 배제(마커 후 새 활동 없으면 스윕이 재발행 안 함)). 같은 PR 이 두 번 집히면(마커
+누락 등 예상 밖) 그 PR 을 skip 하고 ④ Report 에 `BLOCKED: 재선정 루프 — #<pr>` 로 보고해
+드레인을 끊는다. 별도 상한이 필요하면 한 틱 드레인은 최대 eligible 스냅샷 길이만큼만
+돈다(스냅샷 이후 새로 열린 PR 은 다음 틱 몫).
+
 ## ④ Report
 
-한 줄 요약: `마감 N · 검증보류 N · 배포대기 N · 파생 N · 회수 N · 재디스패치 N · stale N`.
+드레인이 끝나면(② Pick 후보 0) 이 틱에서 처리한 **모든 PR 을 합산**해 한 줄 요약(N 은
+이 틱 누적치): `마감 N · 검증보류 N · 배포대기 N · 파생 N · 회수 N · 재디스패치 N · stale N`.
 ①-b 스윕이 입양해 마감·rebase 한 건은 `회수 N`(마감까지 갔으면 `마감` 에도 반영),
 `stale_reverify` 재디스패치·`held` needs-human 건은 `재디스패치 N` 으로 집계한다.
 
-종료 상태 6종을 명시한다:
+종료 상태 6종 — 처리한 PR **각각**에 대해 명시한다(드레인으로 여러 개면 PR 별로):
 - **success** — 1~6단계를 다 돌아 PR 을 머지하고 후속까지 발행함(입양·rebase 회수분 포함).
 - **clean no-op** — ② Pick 후보가 0이라 마감할 PR 이 없음(①-b 재디스패치만 있었어도 no-op 아님 — `재디스패치 N` 보고).
 - **blocked** — 1단계 검증이 BLOCKER 이거나 2단계 rebase 통합 실패라 보류(머지 안 함).
