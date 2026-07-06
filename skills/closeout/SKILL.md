@@ -41,6 +41,9 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
   차단·타임아웃·verdict 없는 응답 포함(실증 2026-06-24 #54: codex 가 sandbox 에서
   gh 네트워크 차단으로 verdict 미산출). 폴백 호출도 verdict 를 못 내면 BLOCKER 로
   간주해 보류 종료한다 (게이트 fail-closed).
+- `VERIFIER_TIMEOUT_MIN = 10` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
+  시각 + 이 값을 데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict
+  미산출로 간주한다 — codex 외부 CLI 스톨이 틱을 무한정 묶는 것을 막는 방어선(#96).
 - 절대 금지: production 무인 배포(4단계는 사람 게이트 — 실 배포 안 함) · 프로덕션
   포인터 브랜치(release 등) 무인 승격(검증된 SHA 를 프로덕션/워커가 당기는 브랜치로
   미는 것도 배포와 동급의 사람 게이트다) · main 직접
@@ -157,13 +160,20 @@ CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기�
 body` 로 파싱). 그런 다음 `gh pr diff <pr> --repo <repo>` 로 diff 를,
 `gh issue view <issue> --repo <repo>` 로 이슈 본문을 받아둔다(연결 이슈가 없으면
 `<ISSUE_BODY>` 는 빈 문자열). 이어 `references/verifier-prompt.md` 의 placeholder 를
-채워 `VERIFIER` 를 동기 호출한다: `<PR>`·`<REPO>`·`<BASE>`=default branch·
-`<PLAN_REF>`=이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<DIFF>`=위
+채워 `VERIFIER` 를 **`run_in_background: true` 로 스폰**한다: `<PR>`·`<REPO>`·`<BASE>`=default
+branch·`<PLAN_REF>`=이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<DIFF>`=위
 pr diff 출력·`<ISSUE_BODY>`=위 issue view 출력·`<LESSONS_OR_"없음">`=`$SCRIPTS/repo-dir.sh
 <repo>` 해석 경로 밑 `.loop/lessons.md` 내용(파일 없거나 비면 `없음`) — 검증자가 과거
 오판 패턴(인용 오판·base 맹점 등)을 반복하지 않게 하는 주입 (## 상수의 VERIFIER 계약·
 폴백을 따른다). 검증자 프롬프트는 diff·이슈 본문·lessons 를 본문으로 담고 있으므로
-검증자는 추가 네트워크 명령을 실행하지 않는다.
+검증자는 추가 네트워크 명령을 실행하지 않는다. 스폰 시각을 기록하고 TaskList/TaskOutput
+으로(예: 30초 간격) 폴링한다 — 스폰 시각 + `VERIFIER_TIMEOUT_MIN` 데드라인 안에 verdict
+가 나오면 그대로 쓴다. **데드라인을 넘기면 `TaskStop` 으로 그 태스크를 중단**하고
+verdict 미산출로 간주해 아래 BLOCKER 경로로 보류 종료한다(fail-closed — codex 스톨이
+틱을 무한정 묶지 못하게, #96). 폴백(## 상수 VERIFIER 의 general-purpose 재시도)도
+**동일한 배선**(새 스폰 시각 + 같은 `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시
+`TaskStop`)을 적용한다 — codex 스톨 후 폴백이 또 무한 스핀하지 못하게. 절대 머지로
+진행하지 않는다 — 타임아웃은 마감 보류(아래 BLOCKER 경로 = `needs-human`)로만 흐른다.
 - 동봉 실패 fail-closed: `gh pr diff` 가 실패하거나 diff 가 비면, 또는 diff 가
   검증자 컨텍스트에 다 안 들어갈 만큼 크면(판단이 서면) 검증을 통과로 보지 말고
   BLOCKER 경로로 보류 종료한다(머지 안 함) — 네트워크 비의존 경로가 조용히 깨진 채
@@ -171,7 +181,8 @@ pr diff 출력·`<ISSUE_BODY>`=위 issue view 출력·`<LESSONS_OR_"없음">`=`$
   머신 코멘트 마커(필수): 아래 `gh pr comment` 로 남기는 마감 검증 코멘트는 **마지막 줄에
   `<!-- bodat:worker -->`** 를 포함한다 — closeout-eligible 이 머신 코멘트를 사람 리뷰와
   구분하는 신호다(#72). 빠지면 그 PR 이 재평가 때 미해결 사람 코멘트로 오인돼 탈락한다.
-- BLOCKER → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>
+- BLOCKER(데드라인 초과 포함, 사유 예 `검증자 타임아웃(>VERIFIER_TIMEOUT_MIN분)`) →
+  `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>
   <!-- bodat:worker -->"`
   + `gh issue edit <issue> --repo <repo> --add-label needs-human`
   + `gh issue edit <pr> --repo <repo> --remove-label harvesting` →

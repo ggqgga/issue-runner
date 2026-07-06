@@ -56,6 +56,11 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
   produced no verdict because gh network was blocked in the sandbox). If the
   fallback call also produces no verdict, treat it as a BLOCKER and exit on hold
   (gate fail-closed).
+- `VERIFIER_TIMEOUT_MIN = 10` — wall-clock cap in minutes per `VERIFIER` (and
+  fallback) spawn. Poll against a deadline of spawn time + this value; if the
+  deadline is exceeded, cut it off with `TaskStop` and treat it as no verdict
+  produced — the guard rail that stops an external-CLI codex stall from
+  blocking the tick indefinitely (#96).
 - Absolutely forbidden: unattended production deploys (step 4 is a human gate — no
   real deploy) · unattended promotion of a production pointer branch (release etc. —
   pushing a verified SHA to a branch that production/workers pull is a human gate on
@@ -172,7 +177,7 @@ sources and embeds them in the prompt**. Get `<issue>` from the PR body's
 body`). Then get the diff via `gh pr diff <pr> --repo <repo>` and the issue body
 via `gh issue view <issue> --repo <repo>` (if there is no linked issue,
 `<ISSUE_BODY>` is the empty string). Then fill `references/verifier-prompt.md`'s
-placeholders and synchronously invoke `VERIFIER`: `<PR>`·`<REPO>`·`<BASE>`=default
+placeholders and **spawn `VERIFIER` with `run_in_background: true`**: `<PR>`·`<REPO>`·`<BASE>`=default
 branch·`<PLAN_REF>`=the issue's `## Plan` or the referenced `Plans/*.md` (empty
 string if none)·`<DIFF>`=the pr diff output above·`<ISSUE_BODY>`=the issue view
 output above·`<LESSONS_OR_"없음">`=the contents of `.loop/lessons.md` under the
@@ -180,7 +185,17 @@ path output by `$SCRIPTS/repo-dir.sh <repo>` (`없음` if the file is missing or
 empty) — an injection so the verifier does not repeat past misjudgment patterns
 (citation misreads·base blind spots·etc.) (following the VERIFIER contract and
 fallback in ## Constants). The verifier prompt carries the diff, issue body, and
-lessons inline, so the verifier runs no additional network commands.
+lessons inline, so the verifier runs no additional network commands. Record the
+spawn time and poll with TaskList/TaskOutput (e.g. every 30s) — if the verdict
+arrives within the deadline of spawn time + `VERIFIER_TIMEOUT_MIN`, use it as-is.
+**If the deadline is exceeded, cut the task off with `TaskStop`** and treat it as
+no verdict produced, falling through to the BLOCKER path below (fail-closed —
+so a codex stall cannot block the tick indefinitely, #96). The fallback
+(the general-purpose retry from `VERIFIER` in ## Constants) gets **the same
+wiring** (a fresh spawn time + the same `VERIFIER_TIMEOUT_MIN` deadline + `TaskStop`
+on overrun) — so the fallback cannot spin forever after a codex stall either.
+Never proceed to merge on a timeout — it only flows through the BLOCKER path
+below (`needs-human`, hold).
 - Embed-failure fail-closed: if `gh pr diff` fails or the diff is empty, or the
   diff is too large to fit the verifier's context (when you judge so), do not treat
   verification as passed — exit on hold via the BLOCKER path (no merge), so the
@@ -189,7 +204,8 @@ lessons inline, so the verifier runs no additional network commands.
   `gh pr comment` must include **a final line `<!-- bodat:worker -->`** — it is how
   closeout-eligible tells a machine comment from a human review (#72). Without it, on
   re-evaluation the PR is mistaken for an unresolved human comment and drops out.
-- BLOCKER → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
+- BLOCKER (including deadline overrun, e.g. reason `검증자 타임아웃
+  (>VERIFIER_TIMEOUT_MIN분)`) → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
   <!-- bodat:worker -->"`
   + `gh issue edit <issue> --repo <repo> --add-label needs-human`
   + `gh issue edit <pr> --repo <repo> --remove-label harvesting` →

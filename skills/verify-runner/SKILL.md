@@ -36,6 +36,9 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
   담겨 있다. **폴백**: (a) codex 미설치(Agent 툴 subagent_type 목록에 없거나 unknown
   타입 오류) 또는 (b) codex stall/실패로 verdict 미산출이면 `general-purpose` 로 같은
   프롬프트 재시도. 폴백도 verdict 를 못 내면 BLOCKER 로 간주(fail-closed).
+- `VERIFIER_TIMEOUT_MIN = 10` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
+  시각 + 이 값을 데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict
+  미산출로 간주한다 — codex 외부 CLI 스톨이 틱을 무한정 묶는 것을 막는 방어선(#96).
 - 절대 금지: PR 머지(closeout 독점) · main/release 직접 push · `harvesting` PR 접촉
   (closeout 소유) · issue-runner 워크트리/브랜치를 검증 목적 밖으로 조작 · `flow:verify`
   가 아닌 PR 에 손대기. **허용**: 검증 대상 PR 의 `flow:*` 라벨 교체(flow:verify→
@@ -102,10 +105,19 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
 `$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 `.loop/lessons.md`(없거나 비면 `없음`)를
 받아, `skills/verify-runner/references/verify-prompt.md` 의 placeholder(`<PR>`·`<REPO>`·
 `<BASE>`=default branch·`<DIFF>`·`<ISSUE_BODY>`·`<LESSONS_OR_"없음">`)를 채워 `VERIFIER`
-를 동기 호출한다(## 상수의 VERIFIER 계약·폴백 적용).
+를 **`run_in_background: true` 로 스폰**한다(## 상수의 VERIFIER 계약·폴백 적용). 스폰
+시각을 기록하고 TaskList/TaskOutput 으로(예: 30초 간격) 폴링한다 — 스폰 시각 +
+`VERIFIER_TIMEOUT_MIN` 데드라인 안에 verdict 가 나오면 그대로 쓴다. **데드라인을
+넘기면 `TaskStop` 으로 그 태스크를 중단**하고 verdict 미산출로 간주해 BLOCKER 로
+취급한다(fail-closed — codex 스톨이 틱을 무한정 묶지 못하게, #96). 폴백(## 상수
+VERIFIER 의 general-purpose 재시도)도 **동일한 배선**(새 스폰 시각 + 같은
+`VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을 적용한다 — codex 스톨 후
+폴백이 또 무한 스핀하지 못하게.
 - 동봉 실패 fail-closed: `gh pr diff` 가 실패하거나 diff 가 비면, 또는 diff 가 검증자
   컨텍스트에 다 안 들어갈 만큼 크면(판단이 서면) 통과로 보지 말고 BLOCKER 로 취급한다.
-- 검증자 BLOCKER → E2E 결과와 무관하게 **④ 재디스패치**(`codex BLOCKER: <요약>`).
+- 검증자 BLOCKER(데드라인 초과 포함) → E2E 결과와 무관하게 **④ 재디스패치**
+  (`codex BLOCKER: <요약>` 또는 타임아웃이면 `codex BLOCKER: 검증자 타임아웃
+  (>VERIFIER_TIMEOUT_MIN분)`).
 - 검증자 CLEAN/WARN → 통과. 결과를 PR 코멘트로 남긴다(closeout 2단계가 이 코멘트의
   BLOCKER 0 을 머지 게이트로 읽는다 — 마커·접두 정확히):
   `gh pr comment <pr> --repo <repo> --body "검증자 리뷰: <CLEAN 또는 'BLOCKER 0 / WARN n건'과 각 발견 요약>
@@ -122,7 +134,7 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
    → closeout `closeout-eligible.sh` 가 `머지 판정: ✅` 로 이 PR 을 집어 마감한다
    (**closeout 계약 무변경** — 기존 ✅ 마커 재사용). **success 종료.**
 
-**redispatched** — E2E 진짜 실패 / codex BLOCKER / 결정적 CI 실패:
+**redispatched** — E2E 진짜 실패 / codex BLOCKER(검증자 데드라인 초과 포함) / 결정적 CI 실패:
 1. `<!-- verify-attempt: N -->` 를 PR 본문에서 읽어(없으면 0) N+1 이 `VERIFY_ATTEMPTS_LIMIT`
    **미만**이면 재디스패치, **이상**이면 아래 held 로.
 2. 재디스패치: 실패 사유 코멘트(멱등 마커) —
