@@ -1,6 +1,6 @@
 ---
 name: closeout
-description: Loop that auto-closes the green PRs issue-runner opened — merge, doc reconcile, deploy prep, and follow-up issuance. Use with /loop (e.g. /loop 20m /closeout). Each tick performs Reconcile → Pick → pipeline → Report.
+description: Loop that auto-closes the green PRs issue-runner opened — merge, doc reconcile, deploy prep, and follow-up issuance. Use with /loop (e.g. /loop 20m /closeout). Each tick performs Reconcile → Pick → pipeline → (Drain repeats while candidates remain) → Report. One tick drains the whole eligible queue.
 ---
 
 > English translation of [SKILL.md](SKILL.md). The Korean original is the source of
@@ -17,9 +17,16 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
 
 ## Constants
 
-- `MAX_CLOSEOUT = 1` — close out 1 PR to completion per tick (a serialization
-  throttle, not a backlog cap). Pace is tuned by the `/loop` interval — one tick
-  runs all of steps 1–6 for one PR.
+- `MAX_CLOSEOUT = 1` — **concurrency 1** (only 1 PR closed out to completion at a
+  time, serially). Not a per-tick cap — when a PR reaches a terminal state
+  (success·approval-required·blocked·exhausted), **do not wait for the next tick**;
+  loop back to ①①-b② and pick the next candidate (see ⑤ Drain). Only end the tick and
+  rest for the `/loop` interval when the queue is empty (② Pick has 0 candidates). The
+  drain is finite — a processed PR drops out of eligible (merged→gone from the OPEN
+  list · blocked→`needs-human` · approval-required→`배포 대기:` marker · re-dispatch→PR
+  `재디스패치:` marker + fresh updatedAt). The `/loop` interval only tunes the
+  **re-scan cadence when the queue is empty** (not the drain rate). This drain fixes the
+  accumulation that built up when only one PR was processed per tick.
 - `REPAIR_RECUR_LIMIT = 2` — if the same post-deploy failure recurs N times,
   escalate to `needs:human` instead of re-issuing agent-ready (step-5 circuit
   breaker).
@@ -133,12 +140,13 @@ PR is created** (a repair, not a duplicate).
 Adopt candidates (rebase · `stale_inline`) are consumed by ② Pick; re-dispatch / needs-human
 counts are tallied in ④ Report.
 
-## ② Pick — 1 PR per tick (MAX_CLOSEOUT=1)
+## ② Pick — 1 PR at a time (MAX_CLOSEOUT=1, concurrency 1)
 
 Take the **first candidate** (FIFO) from `$SCRIPTS/closeout-eligible.sh` output (✅-marked
 normal candidates) merged with the **①-b sweep's adopt candidates** (`stale_inline` ·
-CONFLICTING). With
-1 per tick there is no module-overlap judgment to make (serial closeout). Once
+CONFLICTING). One
+at a time, there is no module-overlap judgment to make (serial closeout — only after this
+PR is closed out to completion does ⑤ Drain pick the next candidate). Once
 picked, immediately declare occupation with
 `gh issue edit <pr> --repo <repo> --add-label harvesting` — this label is what keeps
 issue-runner ② Maintain from touching this PR. If there are 0 candidates, skip the
@@ -359,14 +367,36 @@ agent-ready issue. Link it as a sub-issue if there is an epic, or as a standalon
 issue if not. Record the created number in a comment on the original PR (a
 duplicate-issuance marker).
 
+## ⑤ Drain — continue to the next candidate immediately
+
+**Right after** ③ Pipeline drives the picked PR to a terminal state
+(success·approval-required·blocked·exhausted), accumulate that PR's result for ④ Report and
+**loop back to ①①-b② without waiting for the next tick** — this drain exhausts the queue
+within one tick, fixing the accumulation that built up when only one PR was handled per tick:
+
+- Re-run ① Reconcile + ①-b stuck-PR sweep + ② Pick. If ② Pick **picks a new candidate** (the
+  PR just processed has already dropped out of eligible/adopt candidates), continue into ③
+  Pipeline with it immediately.
+- If ② Pick has **0 candidates**, the queue is empty — stop draining, report **all PRs
+  processed this tick at once** in ④ Report, then schedule the next tick on the `/loop` interval.
+
+Infinite-loop guard: each iteration reduces eligible/adopt candidates by ≥1 (merged→gone ·
+blocked→`needs-human` · approval-required→`배포 대기:` marker · re-dispatch→PR `재디스패치:`
+marker so it is not re-selected — the sweep won't re-issue with no new activity after the marker).
+If the same PR is picked twice (unexpected, e.g. a missing marker), skip it and report
+`BLOCKED: re-selection loop — #<pr>` in ④ Report to break the drain. If a hard cap is needed, one
+tick's drain runs at most the length of the eligible snapshot (PRs opened after the snapshot are
+the next tick's).
+
 ## ④ Report
 
-One-line summary: `closed N · verify-hold N · deploy-wait N · spinoff N · recovered N · re-dispatched N · stale N`.
+When the drain ends (② Pick has 0 candidates), report **all PRs processed this tick summed**
+(N is this tick's cumulative count): `closed N · verify-hold N · deploy-wait N · spinoff N · recovered N · re-dispatched N · stale N`.
 Count PRs the ①-b sweep adopted to close/rebase as `recovered N` (also reflected in `closed`
 if it became that tick's Pick), and `stale_reverify` re-dispatches / `held` needs-human as
 `re-dispatched N`.
 
-State the 6 exit states:
+State the 6 exit states — for **each** PR processed (per-PR when the drain handled several):
 - **success** — ran steps 1–6, merged the PR, and issued follow-ups (including adopt/rebase recoveries).
 - **clean no-op** — ② Pick had 0 candidates, so there was no PR to close (but if there were ①-b re-dispatches it is not a no-op — report `re-dispatched N`).
 - **blocked** — step-1 verification was a BLOCKER, or step-2 rebase integration failed, so it is on hold (no merge).
