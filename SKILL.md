@@ -10,8 +10,11 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
 ## 상수
 
-- `MAX_AGENTS = 5` — 동시 in-flight 이슈 상한 (in-flight 정의는 ③-1 —
-  사람 리뷰 대기 PR 은 점유하지 않는다)
+- `MAX_AGENTS = 3` — 동시 in-flight 이슈 상한 (in-flight 정의는 ③-1 —
+  사람 리뷰 대기 PR 은 점유하지 않는다). **2026-07 경합 실험으로 5→3 축소**: 워커는
+  전부 한 프로세스에서 도는 백그라운드 subagent 라 동시 N 개면 API·CPU 를 나눠 써
+  각자 ~1/N 로 throttle 된다(실측: 동시 0 워커 ~10분 vs 동시 1~4 ~30분). 처리량은
+  거의 보존되며 박스 부하·고아 위험이 준다. 여전히 느리면 2 로 더 낮춘다.
 - `MAX_OPEN_PRS = 10` — 열린 PR 총수 적체 상한. 도달 시 신규 디스패치만 멈춘다
   (보수는 계속) — 사람 머지가 밀릴 때 PR 끼리 rebase conflict 가 폭증하는 것을 막는
   배압(backpressure)
