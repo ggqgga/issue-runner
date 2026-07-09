@@ -216,34 +216,50 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 
 Eligibility: `open + agent-ready + ¬agent:claimed + all blockers CLOSED`. Sort: `P0 > P1 > P2 > none`, ties oldest-first.
 
-**Optional — local-ci merge gate.** GitHub Actions is not used; the repo ships hooks that cache local CI results on push and read them as a gate at `gh pr merge`. Install them at `~/.claude/hooks` and register in `~/.claude/settings.json`:
+**Optional — workflow hooks.** GitHub Actions isn't used. Instead the repo ships a set of Claude Code hooks (in [`hooks/`](hooks/)) that enforce the loop's hygiene — a local CI cache + merge gate, an automatic codex review on every PR, and two guards that keep work on topic branches and traceable to issues. Each is opt-in: symlink it and register it in `~/.claude/settings.json`.
+
+| Hook | Fires on | What it does |
+|---|---|---|
+| `local-ci.sh` | PostToolUse · `git push` | runs `bin/ci` in the background, caches the result, posts a commit status |
+| `ci-gate-before-pr-merge.sh` | PreToolUse · `gh pr merge` | blocks the merge unless the cached CI for that HEAD passed (fail-closed) |
+| `codex-review-on-pr-create.sh` | PostToolUse · `gh pr create` | tells Claude to spawn an independent `codex:codex-rescue` diff review in the background |
+| `warn-on-main-branch.sh` | PreToolUse · `Write`/`Edit` | non-blocking warning when you edit on `main`/`master` — branch first |
+| `require-issue-in-pr.sh` | PreToolUse · `gh pr create` | blocks a PR whose body has no dedicated `Closes/Refs #N` line (bypass with `(no-issue)`) |
 
 ```bash
 mkdir -p ~/.claude/hooks
-ln -s ~/Projects/refs/issue-runner/hooks/local-ci.sh                ~/.claude/hooks/
-ln -s ~/Projects/refs/issue-runner/hooks/ci-gate-before-pr-merge.sh ~/.claude/hooks/
+for h in local-ci ci-gate-before-pr-merge codex-review-on-pr-create warn-on-main-branch require-issue-in-pr; do
+  ln -s ~/Projects/refs/issue-runner/hooks/$h.sh ~/.claude/hooks/
+done
 ```
 
 ```json
 {
   "hooks": {
+    "PreToolUse": [
+      { "matcher": "Write|Edit", "hooks": [
+        { "type": "command", "command": "~/.claude/hooks/warn-on-main-branch.sh" }
+      ]},
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "~/.claude/hooks/ci-gate-before-pr-merge.sh",
+          "if": "Bash(gh pr merge*)", "timeout": 30 },
+        { "type": "command", "command": "~/.claude/hooks/require-issue-in-pr.sh",
+          "if": "Bash(gh pr create*)" }
+      ]}
+    ],
     "PostToolUse": [
       { "matcher": "Bash", "hooks": [
         { "type": "command", "command": "~/.claude/hooks/local-ci.sh",
-          "if": "Bash(git push*)", "timeout": 20 }
-      ]}
-    ],
-    "PreToolUse": [
-      { "matcher": "Bash", "hooks": [
-        { "type": "command", "command": "~/.claude/hooks/ci-gate-before-pr-merge.sh",
-          "if": "Bash(gh pr merge*)", "timeout": 30 }
+          "if": "Bash(git push*)", "timeout": 20 },
+        { "type": "command", "command": "~/.claude/hooks/codex-review-on-pr-create.sh",
+          "if": "Bash(gh pr create*)", "timeout": 30 }
       ]}
     ]
   }
 }
 ```
 
-The hooks are run by the Claude Code harness, so they fire only on `git push` / `gh pr merge` **inside a session**.
+The hooks are run by the Claude Code harness, so they fire only on the matching action **inside a session**. The two PR-create hooks and the codex review are no-ops without the `codex` plugin / a real PR, so it's safe to enable them all.
 
 **`repos.conf` — path mapping (only if needed).** Scripts look for a repo's checkout at `$HOME/Projects/<repo-name>` (override with `ISSUE_RUNNER_PROJECTS_ROOT`), cloning there if absent. If a checkout already lives elsewhere, map it in `repos.conf` (in this repo's root; gitignored — it's machine-specific):
 
@@ -300,7 +316,7 @@ acme/webapp ~/Work/clients/acme-webapp
 
 **Required:** [`gh`](https://cli.github.com/) (authenticated — `gh auth status`) · [`jq`](https://jqlang.github.io/jq/) · bash 3.2+ (stock macOS bash is fine — scripts are 3.2-compatible) · Claude Code with `/loop` and background subagents.
 
-**Optional:** the `codex` plugin (worker code review + lessons extraction) · [codegraph](https://github.com/colbymchenry/codegraph) (pre-indexed code graph — workers query it instead of grepping; falls back to grep/Read when absent) · the bundled local-ci hook set · `shellcheck` (this repo's own `bin/ci` runs it when installed).
+**Optional:** the `codex` plugin — its `codex:codex-rescue` subagent powers verify-runner's correctness review, closeout's plan-conformance check, and the dispatcher's lessons extraction; without it they fall back to a `general-purpose` reviewer, so the loop still runs · [codegraph](https://github.com/colbymchenry/codegraph) (pre-indexed code graph — workers query it instead of grepping; falls back to grep/Read when absent) · the bundled [local-ci hook set](#installation) · `shellcheck` (this repo's own `bin/ci` runs it when installed).
 
 ## Prior art
 

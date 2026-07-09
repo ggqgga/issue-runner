@@ -216,34 +216,50 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 
 자격 조건: `open + agent-ready + ¬agent:claimed + 모든 블로커 CLOSED`. 정렬: `P0 > P1 > P2 > 없음`, 동순위는 오래된 순.
 
-**(선택) local-ci 머지 게이트.** GitHub Actions 를 쓰지 않는다 — 레포에 동봉된 hook 이 push 시 로컬 CI 결과를 캐시하고 `gh pr merge` 때 게이트로 읽는다. `~/.claude/hooks` 에 설치하고 `~/.claude/settings.json` 에 등록한다:
+**(선택) 워크플로우 hook.** GitHub Actions 를 쓰지 않는다 — 대신 레포가 루프 위생을 강제하는 Claude Code hook 세트([`hooks/`](hooks/))를 동봉한다: 로컬 CI 캐시 + 머지 게이트, 모든 PR 에 자동 codex 리뷰, 그리고 작업을 토픽 브랜치·이슈 추적 가능 상태로 묶는 가드 2개. 각각 옵트인 — 심링크 후 `~/.claude/settings.json` 에 등록한다.
+
+| hook | 발동 | 하는 일 |
+|---|---|---|
+| `local-ci.sh` | PostToolUse · `git push` | `bin/ci` 를 백그라운드 실행, 결과 캐시, commit status 게시 |
+| `ci-gate-before-pr-merge.sh` | PreToolUse · `gh pr merge` | 해당 HEAD 의 캐시된 CI 가 통과가 아니면 머지 차단 (fail-closed) |
+| `codex-review-on-pr-create.sh` | PostToolUse · `gh pr create` | Claude 에게 독립 `codex:codex-rescue` diff 리뷰를 백그라운드 스폰하도록 지시 |
+| `warn-on-main-branch.sh` | PreToolUse · `Write`/`Edit` | `main`/`master` 에서 편집 시 비차단 경고 — 먼저 브랜치 |
+| `require-issue-in-pr.sh` | PreToolUse · `gh pr create` | 본문에 전용 `Closes/Refs #N` 라인 없는 PR 차단 (`(no-issue)` 로 우회) |
 
 ```bash
 mkdir -p ~/.claude/hooks
-ln -s ~/Projects/refs/issue-runner/hooks/local-ci.sh                ~/.claude/hooks/
-ln -s ~/Projects/refs/issue-runner/hooks/ci-gate-before-pr-merge.sh ~/.claude/hooks/
+for h in local-ci ci-gate-before-pr-merge codex-review-on-pr-create warn-on-main-branch require-issue-in-pr; do
+  ln -s ~/Projects/refs/issue-runner/hooks/$h.sh ~/.claude/hooks/
+done
 ```
 
 ```json
 {
   "hooks": {
+    "PreToolUse": [
+      { "matcher": "Write|Edit", "hooks": [
+        { "type": "command", "command": "~/.claude/hooks/warn-on-main-branch.sh" }
+      ]},
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "~/.claude/hooks/ci-gate-before-pr-merge.sh",
+          "if": "Bash(gh pr merge*)", "timeout": 30 },
+        { "type": "command", "command": "~/.claude/hooks/require-issue-in-pr.sh",
+          "if": "Bash(gh pr create*)" }
+      ]}
+    ],
     "PostToolUse": [
       { "matcher": "Bash", "hooks": [
         { "type": "command", "command": "~/.claude/hooks/local-ci.sh",
-          "if": "Bash(git push*)", "timeout": 20 }
-      ]}
-    ],
-    "PreToolUse": [
-      { "matcher": "Bash", "hooks": [
-        { "type": "command", "command": "~/.claude/hooks/ci-gate-before-pr-merge.sh",
-          "if": "Bash(gh pr merge*)", "timeout": 30 }
+          "if": "Bash(git push*)", "timeout": 20 },
+        { "type": "command", "command": "~/.claude/hooks/codex-review-on-pr-create.sh",
+          "if": "Bash(gh pr create*)", "timeout": 30 }
       ]}
     ]
   }
 }
 ```
 
-hook 은 Claude Code 하네스가 실행하므로 **세션 안에서의** `git push` / `gh pr merge` 에만 발동한다.
+hook 은 Claude Code 하네스가 실행하므로 **세션 안에서의** 해당 동작에만 발동한다. PR-create hook 2개와 codex 리뷰는 `codex` 플러그인/실제 PR 이 없으면 no-op 이라 전부 켜도 안전하다.
 
 **`repos.conf` — 경로 매핑 (필요할 때만).** 스크립트는 레포 체크아웃을 `$HOME/Projects/<레포명>` 에서 찾고(`ISSUE_RUNNER_PROJECTS_ROOT` 로 변경) 없으면 그리로 clone 한다. 다른 곳에 이미 있다면 이 레포 루트의 `repos.conf` 로 매핑한다(gitignore — 머신별 설정):
 
@@ -300,7 +316,7 @@ acme/webapp ~/Work/clients/acme-webapp
 
 **필수:** [`gh`](https://cli.github.com/) (인증 완료 — `gh auth status`) · [`jq`](https://jqlang.github.io/jq/) · bash 3.2+ (macOS 기본 bash 로 충분 — 스크립트는 3.2 호환) · `/loop` 과 백그라운드 서브에이전트를 지원하는 Claude Code.
 
-**선택:** `codex` 플러그인 (워커 코드 리뷰 + lessons 추출) · [codegraph](https://github.com/colbymchenry/codegraph) (사전 인덱싱 코드 그래프 — 워커가 grep 대신 조회, 없으면 grep/Read 폴백) · 동봉된 local-ci hook 세트 · `shellcheck` (이 레포 자체 `bin/ci` 가 설치 시 실행).
+**선택:** `codex` 플러그인 — `codex:codex-rescue` 서브에이전트가 verify-runner 의 correctness 리뷰·closeout 의 계획 부합 검증·디스패처의 lessons 추출을 맡는다. 없으면 `general-purpose` 리뷰어로 폴백하므로 루프는 그대로 돈다 · [codegraph](https://github.com/colbymchenry/codegraph) (사전 인덱싱 코드 그래프 — 워커가 grep 대신 조회, 없으면 grep/Read 폴백) · 동봉된 [local-ci hook 세트](#설치) · `shellcheck` (이 레포 자체 `bin/ci` 가 설치 시 실행).
 
 ## 참고 자료
 
