@@ -18,6 +18,9 @@
 Pair it with <code>/closeout</code> — the dock that verifies and ships.<br>
 Two loops, one repo, human gates where they matter.</p>
 
+<p>🇰🇷 <code>agent-ready</code> 이슈를 자동으로 집어 격리 worktree에서 구현하고 PR을 여는 자율 루프 — 머지는 사람 몫.<br>
+<strong>전체 한글 문서 → <a href="README.ko.md">README.ko.md</a></strong></p>
+
 </div>
 
 ---
