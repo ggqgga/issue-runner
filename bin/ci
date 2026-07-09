@@ -20,6 +20,15 @@ else
   echo "  shellcheck 미설치 — skip"
 fi
 
+echo "[hooks] 동봉 hook 은 전부 README 설치 섹션에 문서화 (영/한)"
+# ship 하는 모든 hooks/*.sh 는 두 README 에 파일명이 나타나야 한다 — 문서화 없이
+# hook 을 추가/이름변경하면 사용자가 등록법을 알 수 없다(설명·settings.json 누락 방지).
+for hp in hooks/*.sh; do
+  hb=$(basename "$hp")
+  grep -qF "$hb" README.md    || { echo "  ✗ README.md 에 hook '$hb' 문서 없음"; exit 1; }
+  grep -qF "$hb" README.ko.md || { echo "  ✗ README.ko.md 에 hook '$hb' 문서 없음"; exit 1; }
+done
+
 echo "[3/5] repo-dir.sh 스모크 테스트"
 out=$(ISSUE_RUNNER_PROJECTS_ROOT=/tmp scripts/repo-dir.sh owner/some-repo)
 [ "$out" = "/tmp/some-repo" ] || { echo "  ✗ 기본 경로 해석 실패: $out"; exit 1; }
@@ -455,10 +464,14 @@ rc=0; run_gate_rollup '[{"status":"COMPLETED","conclusion":"UNKNOWN_STATE"}]' ||
 rm -rf "$tmp"
 
 echo "[closeout] README 두 루프 분업 문서화 검사 (#45)"
-# closeout 루프 문서화 — 부하 핵심 문자열 + issue-runner 머지 불변 보존.
-for s in '/closeout' 'harvesting' 'MAX_CLOSEOUT' '머지는 항상 사람이 한다'; do
-  grep -qF "$s" README.md || { echo "  ✗ README.md 에 '$s' 없음"; exit 1; }
+# closeout 루프 문서화 — 언어중립 토큰은 영/한 두 README 모두, 머지 불변은 언어별 보존.
+# (README.md=영문 주 페이지, README.ko.md=한글 미러)
+for s in '/closeout' 'harvesting' 'MAX_CLOSEOUT'; do
+  grep -qF "$s" README.md    || { echo "  ✗ README.md 에 '$s' 없음"; exit 1; }
+  grep -qF "$s" README.ko.md || { echo "  ✗ README.ko.md 에 '$s' 없음"; exit 1; }
 done
+grep -qiF 'never merges'      README.md    || { echo "  ✗ README.md 에 머지 불변(never merges) 없음"; exit 1; }
+grep -qF '머지는 항상 사람이 한다' README.ko.md || { echo "  ✗ README.ko.md 에 머지 불변('머지는 항상 사람이 한다') 없음"; exit 1; }
 
 echo "[closeout] SKILL 3단계 캐시 보강(run-local-ci.sh) 문서화 검사 (#58)"
 # closeout ③ 3단계 doc push 직후 run-local-ci.sh 로 메인 slug 캐시를 채운다는
@@ -653,13 +666,15 @@ for f in SKILL.md SKILL.en.md; do
     || { echo "  ✗ $f lessons 트리거 단락에 commit statuses 신호·검증자 BLOCKER·NONE 규칙이 함께 있지 않음"; exit 1; }
 done
 
-echo "[lessons] README 이관 체크리스트·트러블슈팅 증상 검사 (#80 변경 2)"
-# 새 머신 체크리스트에 lessons.md 이관 항목(체크박스) + 트러블슈팅에 "과거 교훈: 없음" 증상.
-# lessons 는 gitignore 로컬 파일이라 머신 이관 절차에 없으면 자가학습이 조용히 리셋된다.
-grep -qE '^- \[ \].*lessons\.md' README.md \
-  || { echo "  ✗ README 새 머신 체크리스트에 lessons.md 이관 항목(체크박스) 없음"; exit 1; }
-grep -qF '과거 교훈: 없음' README.md \
-  || { echo "  ✗ README 트러블슈팅에 '과거 교훈: 없음' 증상 항목 없음"; exit 1; }
+echo "[lessons] README lessons 이관 유실 트러블슈팅 증상 검사 (#80 변경 2)"
+# lessons 는 gitignore 로컬 파일이라 머신 이관 시 빠뜨리면 자가학습이 조용히 리셋된다.
+# 이 증상이 영/한 두 README 트러블슈팅에 살아있어야 한다 — 'lessons.md' 단어는
+# 본문 여러 곳에 있어 느슨하므로(회귀 못 잡음), 트러블슈팅 전용 증상 문구를 정확히 잡는다:
+# 영문 "no prior lessons" · 한글 "과거 교훈: 없음".
+grep -qiF 'no prior lessons' README.md \
+  || { echo "  ✗ README.md 트러블슈팅에 'no prior lessons' 증상 항목 없음"; exit 1; }
+grep -qF '과거 교훈: 없음' README.ko.md \
+  || { echo "  ✗ README.ko.md 트러블슈팅에 '과거 교훈: 없음' 증상 항목 없음"; exit 1; }
 
 echo "[closeout] lessons 기록 배선 검사 (#80 변경 4 — 거짓 BLOCKER 반전·코드무관 스모크 실패)"
 # closeout 파이프라인에 반복 실증된 두 지점만 최소 배선: (a) 1단계 검증자 BLOCKER 가
