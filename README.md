@@ -32,6 +32,7 @@ issue-runner is a **loop-engineering dispatcher** for [Claude Code](https://clau
 - [Why issue-runner?](#why-issue-runner)
 - [How it works](#how-it-works)
 - [Quick start](#quick-start)
+- [Writing loop-ready issues](#writing-loop-ready-issues)
 - [The loop family — factory, lane, dock](#the-loop-family--factory-lane-dock)
 - [Shipping — main, release & the deploy gate](#shipping--main-release--the-deploy-gate)
 - [Guardrails](#guardrails)
@@ -51,15 +52,15 @@ Two properties make it safe to leave running:
 
 The single source of truth is **GitHub itself** — labels, assignees, PR state. There is no local state file to corrupt or sync; every tick reconciles against reality, so you can stop and resume the loop any time.
 
-### Why a skill, not a harness?
+### An orchestration layer, not a runtime
 
-issue-runner deliberately isn't a standalone runner with its own binary, daemon, and session store. It's a thin **skill** for Claude Code, and that shapes what it's good at:
+Make no mistake — issue-runner *does* orchestrate agents: it dispatches workers, manages their lifecycle, and holds the guardrails. In that sense it's harness-like. What it deliberately **isn't** is a standalone runtime: it brings no binary, daemon, or agent engine of its own. It's a thin **skill** (plus deterministic bash) that rides Claude Code's harness and points it at your issue backlog — it composes with the agent you already run instead of replacing it. That choice is the whole personality:
 
 - **Nothing to install or run.** ~15 bash scripts and some markdown, symlinked into `~/.claude/skills`. No runtime, no compile step, no background service — you can read the whole thing in an afternoon and audit exactly what it does to your repos.
 - **GitHub is the only state.** No proprietary session files to back up, corrupt, or sync (a small `.loop/lessons.md` cache aside). Because the truth lives in labels and PRs, the loop resumes cleanly after any interruption, is fully inspectable with plain `gh`, and lets two machines that never touch each other collaborate through the repo alone.
 - **It drains a backlog, not a task.** It picks the next ready issue itself and keeps a fleet moving across every opted-in repo, unattended. The goal isn't depth on one problem you're driving — it's throughput over a queue you curate.
 
-If you want a rich harness that drives one task deeply, reach for a runner. If you want your `agent-ready` backlog to quietly turn into reviewable PRs while you're away, that's this.
+If you want a standalone runner that drives one task deeply with its own runtime, reach for one of those. If you want your `agent-ready` backlog to quietly turn into reviewable PRs on top of Claude Code, that's this.
 
 ## How it works
 
@@ -100,6 +101,18 @@ ln -s ~/Projects/refs/issue-runner ~/.claude/skills/issue-runner
 Every 15 minutes a tick fires: the dispatcher claims the issue, a background worker implements it and opens a PR. You review and merge; the next tick's Reconcile cleans up the worktree and moves on.
 
 > **Tip — natural language works too.** Claude Code routes on skill descriptions, so "run the issue loop" or "put this issue on the loop" reach the same place. Full walkthrough in [Installation](#installation) and [Operating it](#operating-it).
+
+## Writing loop-ready issues
+
+This is the part that decides whether the whole thing works. The worker shares **none** of your planning context — the **issue body is the entire spec**. A vague issue doesn't produce a vague PR; it produces a confident PR that solves the wrong problem. Get the front door right and everything downstream is easy.
+
+So the repo ships a second skill, **[`/loop-issues`](skills/loop-issues/SKILL.md)**, as that front door — a gate that only lets an issue become `agent-ready` once it can actually be built unattended. It has **three modes**, all reachable by natural language:
+
+- **Close out one issue** ("put this on the loop") — take the issue at hand, run it through the checklist, and attach `agent-ready` + a priority **only if it passes**. If it doesn't, you get a list of what's missing instead of a bad dispatch.
+- **Create from a plan** ("make a loop issue for this" / "we'll put this on the loop") — when the work isn't an issue yet, it writes the spec into a **new** issue — decomposing *high*-difficulty work into sub-issues serialized with `Blocked by #N`, or attaching a **`## Plan`** (numbered tasks + the files each touches + a per-task verify command) — then closes it out. This plan-to-issue step is how a big idea becomes loop-ready work instead of one giant ambiguous ticket.
+- **Triage a backlog** ("analyze which issues can go on the loop") — sweeps your **opted-in** repos (the ones with the label set), skips issues already labeled `agent-ready`/`agent:claimed`/`needs-human`, and classifies the rest as **READY / FIXABLE / UNFIT**, proposing fixes for the fixable ones. Nothing is relabeled until you approve.
+
+The checklist every mode enforces, in short: a **self-contained spec** · **checkbox acceptance criteria** (no "works well") · a **`## Test plan`** with real commands · **dependencies** as `Blocked by #N` lines · a **priority** label · **epic → split, label only leaves** · **repo readiness** (label set present + build/test commands in the repo's `CLAUDE.md`) · **no collision** with another in-flight issue on the same module · and a **difficulty** judgment (high work gets decomposed or a `## Plan` first). Attach `agent-ready` **last**, after all of it — the dispatcher never adds it on its own.
 
 ## The loop family — factory, lane, dock
 

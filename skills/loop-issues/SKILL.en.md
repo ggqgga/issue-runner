@@ -1,6 +1,6 @@
 ---
 name: loop-issues
-description: Closing checklist before handing an issue to the issue-runner loop. Use on requests like "send this to the loop", "hand it to the loop", "put it on the loop", "finalize this issue", or "attach agent-ready". For batch-analysis requests over existing issues like "analyze which issues can go on the loop" or "analyze the issues and label them", use triage mode. Attach the agent-ready label only after the checklist passes.
+description: Closing checklist before handing an issue to the issue-runner loop. Use closing mode on requests like "send this to the loop", "hand it to the loop", "put it on the loop", "finalize this issue", or "attach agent-ready". Use creation mode on "make a loop issue for this", "we'll put this on the loop" (no issue exists yet, or starting from a plan/spec) — create the issue first, then close it out. For batch-analysis requests over existing issues like "analyze which issues can go on the loop" or "analyze the issues and label them", use triage mode. Attach the agent-ready label only after the checklist passes.
 ---
 
 > English translation of [SKILL.md](SKILL.md). The Korean original is the source of
@@ -9,9 +9,11 @@ description: Closing checklist before handing an issue to the issue-runner loop.
 
 # loop-issues — issue closing checklist
 
-There are two modes: **closing mode** (default — finalize the single issue at hand
-against the checklist) and **triage mode** (batch-analyze and classify the repo's
-existing open issues — see the "Triage mode" section below).
+There are three modes: **closing mode** (default — finalize the single issue at hand
+against the checklist), **creation mode** (no issue exists yet, or starting from a
+plan/spec — create the issue first, then close it out; see the "Creation mode"
+section below), and **triage mode** (batch-analyze and classify the repo's existing
+open issues — see the "Triage mode" section below).
 
 Before handing an issue to the loop, confirm **all** of the items below, and attach
 `agent-ready` only to issues that pass. The worker shares none of this session's
@@ -87,6 +89,34 @@ context — the issue body is the only spec.
 All items pass → `gh issue edit <N> --repo <owner/repo> --add-label agent-ready` +
 a priority label. Any item fails → report what needs fixing to the user and do not
 attach the label.
+
+## Creation mode — making issues from a plan or spec
+
+Trigger: the user wants to put work on the loop that isn't an issue yet — "make a
+loop issue for this", "we'll put this on the loop" (after discussing a plan/spec). If
+no issue exists, **create it first**, then run the closing checklist.
+
+1. **The scope is the user's.** Background, goal, and constraints come from this
+   session's discussion/plan — same rule as triage: the skill does not invent scope or
+   add requirements the human didn't set. If no plan was discussed, settle the spec
+   with the user first, then create.
+2. **Check repo readiness** (checklist item 7): if the target repo has no label set,
+   run `~/.claude/skills/issue-runner/scripts/setup-labels.sh <owner/repo>`; if
+   `CLAUDE.md` has no build/test commands, add them first (without them the worker
+   can't verify).
+3. **Write the body in checklist form**: background + `- [ ]` acceptance criteria +
+   `## Test plan` + (if there's a prerequisite) a dedicated `Blocked by #N` line — i.e.
+   a self-contained spec from the moment it's created.
+4. **Split large work** (checklist item 9): if it's high (several modules, or more
+   than one reasonable design), break it into independently-verifiable sub-issues
+   serialized with `Blocked by` (create each), or keep it whole and attach a `## Plan`
+   (numbered tasks + file paths + per-task verification). A parent gets only the `epic`
+   label; `agent-ready` goes on leaves only.
+5. **Create + close out**: `gh issue create --repo <owner/repo> --title ... --body ...`
+   (create blockers first to get their numbers), then run each issue through the
+   closing steps above to attach a priority + `agent-ready` (last). If any checklist
+   item fails, don't attach the label — report what's missing. Creating an issue does
+   not auto-enroll it.
 
 ## Triage mode — batch analysis of existing issues
 
