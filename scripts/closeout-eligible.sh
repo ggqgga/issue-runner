@@ -30,7 +30,16 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   head=$(printf '%s' "$meta" | jq -r '.headRefName')
   case "$head" in agent/issue-*) : ;; *) continue ;; esac
   printf '%s' "$meta" | jq -e '[.labels[].name]|index("harvesting")' >/dev/null && continue
-  [ "$(printf '%s' "$meta" | jq -r '.mergeable')" = "CONFLICTING" ] && continue
+  # flow:verify = verify-runner 소유(harvesting 동형). 정상 인계에선 verify-runner 가
+  # flow:verify 를 떼고 나서 ✅ 를 남기지만, ✅ 코멘트가 라벨 제거보다 먼저 달리면 두
+  # 루프(별도 프로세스)가 같은 PR 을 문다 — 라벨이 붙어 있는 한 closeout 은 손대지
+  # 않는다(verify-eligible.sh 의 harvesting 제외와 대칭).
+  printf '%s' "$meta" | jq -e '[.labels[].name]|index("flow:verify")' >/dev/null && continue
+  # mergeable 은 GitHub 이 지연 계산한다 — UNKNOWN 은 아직 미판정이므로 CONFLICTING 과
+  # 함께 skip 하고 다음 틱에 재시도한다(미판정 PR 을 머지 도크로 넘기지 않는다).
+  case "$(printf '%s' "$meta" | jq -r '.mergeable')" in
+    CONFLICTING|UNKNOWN) continue ;;
+  esac
 
   printf '%s' "$meta" \
     | jq -e '[.comments[].body] | map(select(startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))) | length > 0' \

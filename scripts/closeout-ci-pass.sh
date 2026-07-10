@@ -9,7 +9,8 @@
 #    판정은 SUCCESS-only allowlist (#51 수용기준: "전부 SUCCESS 면 exit 0").
 #    SUCCESS 가 아닌 종결 상태(CANCELLED·TIMED_OUT·STARTUP_FAILURE·미래/미열거 값
 #    포함)는 전부 fail — denylist 면 미열거 종결값이 새어 CI 미통과를 pass 로
-#    오인한다. (ci-gate 쪽은 아직 denylist 라 같은 갭 잔존 — 별건 후속.)
+#    오인한다. (ci-gate-before-pr-merge.sh 도 #60 에서 같은 good-then-negate allowlist 로
+#    정렬됨 — 두 파일이 "통과 모양" 정의를 공유한다.)
 set -uo pipefail
 repo=${1:?repo}; pr=${2:?pr_num}
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
