@@ -305,6 +305,46 @@ printf '%s' "$out" | jq -e 'select(.pr==5)' >/dev/null 2>&1 \
   || { echo "  ✗ eligible 마커: 중간 마커 코멘트가 사람으로 오인돼 탈락 out='$out'"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] eligible flow:verify 제외·mergeable UNKNOWN skip 스모크 (#102)"
+# closeout 은 verify-runner 소유 라벨(flow:verify) PR 과 mergeable 미판정(UNKNOWN) PR 을
+# 후보에서 제외해야 한다 — 두 루프가 같은 PR 을 무는 경합·미판정 머지 방지(#102 회귀 가드).
+elig="$PWD/scripts/closeout-eligible.sh"
+tmp=$(mktemp -d); mkdir -p "$tmp/stub" "$tmp/proj/r/bin" "$tmp/home"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/proj/r/bin/ci"; chmod +x "$tmp/proj/r/bin/ci"
+realroot=$(cd "$tmp/proj/r" && pwd -P)
+slug=$(printf '%s' "$realroot" | sed 's#[/ ]#_#g; s#^_##')
+mkdir -p "$tmp/home/.claude/.local-ci/$slug"
+echo pass > "$tmp/home/.claude/.local-ci/$slug/feed0070ab.result"   # 캐시 pass → ci-pass exit 0
+mkgh2() {  # $1 = labels JSON 배열, $2 = mergeable 값 → gh pr view headRefName 분기에 주입
+  cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
+  *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
+  *"pr view"*headRefName*)
+    echo '{"headRefName":"agent/issue-5","mergeable":"$2","labels":$1,"comments":[{"body":"머지 판정: ✅ 머지 가능 <!-- bodat:worker -->"}],"closingIssuesReferences":[{"number":5}]}' ;;
+  *) echo '' ;;
+esac
+STUB
+  chmod +x "$tmp/stub/gh"
+}
+run_elig2() { PATH="$tmp/stub:$PATH" HOME="$tmp/home" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" bash "$elig" 2>/dev/null; }
+# (a) 정상 인계: flow:verify 없음 + MERGEABLE + ✅ → 후보 출력
+mkgh2 '[]' 'MERGEABLE'
+out=$(run_elig2)
+printf '%s' "$out" | jq -e 'select(.pr==5)' >/dev/null 2>&1 \
+  || { echo "  ✗ eligible #102: 정상 인계 PR 이 후보에서 탈락 out='$out'"; rm -rf "$tmp"; exit 1; }
+# (b) flow:verify 라벨 부착(✅ 가 라벨 제거보다 먼저 달린 경합) → 탈락
+mkgh2 '[{"name":"flow:verify"}]' 'MERGEABLE'
+out=$(run_elig2)
+[ -z "$out" ] || { echo "  ✗ eligible #102: flow:verify PR 이 탈락 안 됨 out='$out'"; rm -rf "$tmp"; exit 1; }
+# (c) mergeable UNKNOWN(지연 계산 미완) → skip
+mkgh2 '[]' 'UNKNOWN'
+out=$(run_elig2)
+[ -z "$out" ] || { echo "  ✗ eligible #102: mergeable UNKNOWN PR 이 skip 안 됨 out='$out'"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
 echo "[closeout] 머신 코멘트 sentinel 마커 주입 지시 검사 (#72)"
 # 워커/closeout 머신 코멘트에 <!-- bodat:worker --> 마커를 박으라는 지시가 워커
 # 템플릿(한/영)+closeout SKILL(한/영) 양쪽에 있어야 한다. 빠지면 접두사 allowlist 회귀.
