@@ -11,11 +11,11 @@
   <img alt="Platform: macOS · Linux" src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux-blue.svg">
   <img alt="Runs on Claude Code" src="https://img.shields.io/badge/Claude_Code-%2Floop-8957e5.svg">
   <img alt="Requires gh + jq" src="https://img.shields.io/badge/requires-gh%20%C2%B7%20jq-2ea043.svg">
-  <img alt="Merges: always human" src="https://img.shields.io/badge/merges-always_human-d29922.svg">
+  <img alt="Deploy: always human" src="https://img.shields.io/badge/deploy-always_human-d29922.svg">
 </p>
 
-<p><strong>An issue&nbsp;→&nbsp;PR factory that never merges.</strong><br>
-Pair it with <code>/closeout</code> — the dock that verifies and ships.<br>
+<p><strong>An issue&nbsp;→&nbsp;PR factory. The loops own <code>main</code>; you own the release.</strong><br>
+Pair it with <code>/closeout</code> — the dock that verifies and merges.<br>
 Two loops, one repo, human gates where they matter.</p>
 
 <p>🇰🇷 <code>agent-ready</code> 이슈를 자동으로 집어 격리 worktree에서 구현하고 PR을 여는 자율 루프 — 머지는 사람 몫.<br>
@@ -26,6 +26,8 @@ Two loops, one repo, human gates where they matter.</p>
 ---
 
 issue-runner is a **loop-engineering dispatcher** for [Claude Code](https://claude.com/claude-code). Run it with `/loop`, and every tick it scans your GitHub account for issues you've labeled `agent-ready`, claims one, implements it in an isolated git worktree, and opens a PR — then moves to the next. You curate the issue queue and review the PRs. The loop does everything in between.
+
+> 📊 **See it run —** a [live-run case study](Docs/2026-06-12-live-run-case-study.md) *(written in Korean)*: the first unattended batch on a private Rails repo, with real numbers, timeline, and what broke.
 
 ## Contents
 
@@ -47,7 +49,7 @@ Coding agents can write the code. The bottleneck is everything *around* it — p
 
 Two properties make it safe to leave running:
 
-- **It never merges.** That's a hard invariant, not a setting. Merging stays with you — or, if you opt in, with a *separate* loop ([`/closeout`](#the-loop-family--factory-lane-dock)). "issue-runner never merges" and "merges can be automated" are about different actors, so they don't conflict.
+- **It never merges.** That's a hard invariant, not a setting. Merging stays with you — or, if you opt in, with a *separate* loop ([`/closeout`](#the-loop-family--factory-lane-dock)).
 - **Every guardrail caps the worst case.** Concurrency limit, per-PR repair circuit breaker, per-issue timebox, open-PR backpressure. Walking away costs you a bounded amount, never your whole repo. See [Guardrails](#guardrails).
 
 The single source of truth is **GitHub itself** — labels, assignees, PR state. There is no local state file to corrupt or sync; every tick reconciles against reality, so you can stop and resume the loop any time.
@@ -57,7 +59,7 @@ The single source of truth is **GitHub itself** — labels, assignees, PR state.
 Make no mistake — issue-runner *does* orchestrate agents: it dispatches workers, manages their lifecycle, and holds the guardrails. In that sense it's harness-like. What it deliberately **isn't** is a standalone runtime: it brings no binary, daemon, or agent engine of its own. It's a thin **skill** (plus deterministic bash) that rides Claude Code's harness and points it at your issue backlog — it composes with the agent you already run instead of replacing it. That choice is the whole personality:
 
 - **Nothing to install or run.** ~15 bash scripts and some markdown, symlinked into `~/.claude/skills`. No runtime, no compile step, no background service — you can read the whole thing in an afternoon and audit exactly what it does to your repos.
-- **GitHub is the only state.** No proprietary session files to back up, corrupt, or sync (a small `.loop/lessons.md` cache aside). Because the truth lives in labels and PRs, the loop resumes cleanly after any interruption, is fully inspectable with plain `gh`, and lets two machines that never touch each other collaborate through the repo alone.
+- **GitHub is the only state.** No proprietary session files to back up, corrupt, or sync (a small `.loop/lessons.md` cache aside). Because the truth lives in labels and PRs, the loop resumes cleanly after any interruption and is fully inspectable with plain `gh`.
 - **It drains a backlog, not a task.** It picks the next ready issue itself and keeps a fleet moving across every opted-in repo, unattended. The goal isn't depth on one problem you're driving — it's throughput over a queue you curate.
 
 If you want a standalone runner that drives one task deeply with its own runtime, reach for one of those. If you want your `agent-ready` backlog to quietly turn into reviewable PRs on top of Claude Code, that's this.
@@ -190,7 +192,7 @@ The loop is designed to run away safely — each limit bounds "the worst a human
 | `MAX_AGENTS` | `3` | Concurrent in-flight issues. In-flight = working + repairing + red PRs; a green PR waiting on human review does **not** hold a slot |
 | `MAX_OPEN_PRS` | `10` | Open-PR backpressure. On reaching it, new dispatch pauses (repairs continue) and Report raises a backlog warn |
 | `MAX_REPAIRS_PER_PR` | `3` | Repair cap per PR. Beyond it, the loop stops and labels the issue `needs-human` (circuit breaker) |
-| `ISSUE_TIMEBOX_HOURS` | `1` | A worker with no PR after this long is stopped and its worktree discarded; pushed commits survive for re-dispatch |
+| `ISSUE_TIMEBOX_HOURS` | `1` | A worker with no PR after this long is stopped and its worktree discarded; pushed commits survive for re-dispatch. The check runs on the 15-min tick, so the real ceiling is up to ~1h15m |
 | `SOFT_TOKEN_BUDGET_PER_ISSUE` | `300k` | Observation only — never interrupts, just flags a promotion recommendation in Report |
 
 And the invariant that isn't a number: **issue-runner never merges.** A `needs-human` issue means the loop has let go — a human clears the cause and removes the label to let it flow again.
