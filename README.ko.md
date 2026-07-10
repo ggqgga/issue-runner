@@ -11,11 +11,11 @@
   <img alt="Platform: macOS · Linux" src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux-blue.svg">
   <img alt="Runs on Claude Code" src="https://img.shields.io/badge/Claude_Code-%2Floop-8957e5.svg">
   <img alt="Requires gh + jq" src="https://img.shields.io/badge/requires-gh%20%C2%B7%20jq-2ea043.svg">
-  <img alt="Merges: always human" src="https://img.shields.io/badge/merges-always_human-d29922.svg">
+  <img alt="Deploy: always human" src="https://img.shields.io/badge/deploy-always_human-d29922.svg">
 </p>
 
-<p><strong>절대 머지하지 않는 이슈&nbsp;→&nbsp;PR 공장.</strong><br>
-검증·배포까지 잇는 도크 <code>/closeout</code> 과 짝을 이룬다.<br>
+<p><strong>이슈&nbsp;→&nbsp;PR 공장. 루프가 <code>main</code> 을 소유하고, 릴리스는 당신 몫.</strong><br>
+검증·머지까지 잇는 도크 <code>/closeout</code> 과 짝을 이룬다.<br>
 두 루프, 한 레포, 사람 게이트는 중요한 곳에만.</p>
 
 </div>
@@ -23,6 +23,8 @@
 ---
 
 issue-runner 는 [Claude Code](https://claude.com/claude-code) 를 위한 **루프 엔지니어링 디스패처**다. `/loop` 로 돌리면 매 틱마다 GitHub 계정 전체에서 `agent-ready` 라벨이 붙은 이슈를 훑어, 하나를 집어 격리된 git worktree 에서 구현하고 PR 을 연다 — 그리고 다음으로 넘어간다. 사람은 이슈 큐를 큐레이션하고 PR 을 리뷰한다. 그 사이의 모든 일을 루프가 한다.
+
+> 📊 **실전 기록 —** [실전 가동 케이스 스터디](Docs/2026-06-12-live-run-case-study.md): 비공개 Rails 레포에서 첫 무인 배치를 돌린 실측 수치·타임라인·무엇이 깨졌는지.
 
 ## 목차
 
@@ -44,7 +46,7 @@ issue-runner 는 [Claude Code](https://claude.com/claude-code) 를 위한 **루�
 
 켜두고 자리를 비워도 되는 두 가지 속성:
 
-- **절대 머지하지 않는다.** 설정이 아니라 하드 불변이다. 머지는 사람 몫으로 남는다 — 옵트인하면 *별도* 루프([`/closeout`](#루프-삼형제--공장레인도크))가 맡는다. "issue-runner 는 머지 안 함" 과 "머지가 자동화될 수 있음" 은 주체가 다르므로 모순이 아니다.
+- **절대 머지하지 않는다.** 설정이 아니라 하드 불변이다. 머지는 사람 몫으로 남는다 — 옵트인하면 *별도* 루프([`/closeout`](#루프-삼형제--공장레인도크))가 맡는다.
 - **모든 가드레일이 최악의 경우를 상한으로 묶는다.** 동시성 제한, PR 당 보수 서킷 브레이커, 이슈당 타임박스, 열린 PR 배압. 자리를 비운 대가는 유한하며, 레포 전체가 아니다. [가드레일](#가드레일) 참조.
 
 상태의 단일 진실 원천은 **GitHub 자체** — 라벨·assignee·PR 상태다. 손상되거나 어긋날 로컬 상태 파일이 없고, 매 틱 현실과 대조하므로 루프를 언제 멈췄다 재개해도 된다.
@@ -54,7 +56,7 @@ issue-runner 는 [Claude Code](https://claude.com/claude-code) 를 위한 **루�
 오해 없이 말하면 — issue-runner 는 분명 에이전트를 *오케스트레이션*한다: 워커를 스폰하고 생애주기를 관리하고 가드레일을 쥔다. 그 점에선 하네스적이다. 다만 *일부러* **자체 런타임이 아니다** — 바이너리·데몬·에이전트 엔진을 스스로 들고 있지 않다. Claude Code 의 하네스를 **타는** 얇은 **스킬**(+결정론 bash)이고, 그걸 내 이슈 백로그로 향하게 한다 — 이미 쓰는 에이전트를 교체가 아니라 **조합**한다. 그 선택이 성격 전부를 규정한다:
 
 - **설치하거나 띄울 게 없다.** bash 스크립트 ~15개와 마크다운을 `~/.claude/skills` 에 심링크할 뿐. 런타임도, 컴파일도, 백그라운드 서비스도 없다 — 반나절이면 전체를 읽고 레포에 무슨 짓을 하는지 정확히 감사할 수 있다.
-- **상태의 유일 원천은 GitHub.** 백업·손상·동기화할 독자 세션 파일이 없다(작은 `.loop/lessons.md` 캐시 예외). 진실이 라벨·PR 에 있으므로 어떤 중단 뒤에도 깨끗이 재개하고, 순수 `gh` 로 전부 조회되며, 서로 네트워크로 안 닿는 두 머신이 레포 하나만으로 협업한다.
+- **상태의 유일 원천은 GitHub.** 백업·손상·동기화할 독자 세션 파일이 없다(작은 `.loop/lessons.md` 캐시 예외). 진실이 라벨·PR 에 있으므로 어떤 중단 뒤에도 깨끗이 재개하고, 순수 `gh` 로 전부 조회된다.
 - **작업이 아니라 백로그를 비운다.** 다음 준비된 이슈를 스스로 골라, 옵트인한 모든 레포에 걸쳐 무인으로 워커 함대를 굴린다. 목표는 네가 운전하는 한 문제의 깊이가 아니라, 네가 큐레이션하는 큐의 처리량이다.
 
 자체 런타임으로 한 작업을 깊게 모는 독립 러너가 필요하면 그런 걸 써라. 자리를 비운 사이 `agent-ready` 백로그가 Claude Code 위에서 조용히 리뷰 가능한 PR 로 바뀌길 원하면, 그게 이것이다.
@@ -187,7 +189,7 @@ flowchart TD
 | `MAX_AGENTS` | `3` | 동시 in-flight 이슈. in-flight = 작업 중 + 보수 중 + 빨간 PR. 사람 리뷰만 기다리는 초록불 PR 은 슬롯을 점유하지 않는다 |
 | `MAX_OPEN_PRS` | `10` | 열린 PR 배압. 도달 시 신규 디스패치만 멈추고(보수는 계속) Report 에 적체 warn |
 | `MAX_REPAIRS_PER_PR` | `3` | PR 당 보수 상한. 초과하면 멈추고 이슈에 `needs-human` 라벨 (서킷 브레이커) |
-| `ISSUE_TIMEBOX_HOURS` | `1` | PR 없이 이만큼 지난 워커는 중단·worktree 폐기. push 된 커밋은 재디스패치용으로 보존 |
+| `ISSUE_TIMEBOX_HOURS` | `1` | PR 없이 이만큼 지난 워커는 중단·worktree 폐기. push 된 커밋은 재디스패치용으로 보존. 판정은 15분 틱에 이뤄지므로 실제 상한은 최대 ~1시간 15분 |
 | `SOFT_TOKEN_BUDGET_PER_ISSUE` | `300k` | 관측치 전용 — 중단하지 않고 Report 에 승격 권고만 표시 |
 
 그리고 숫자가 아닌 불변: **issue-runner 는 절대 머지하지 않는다.** `needs-human` 이슈는 루프가 손을 뗀 상태 — 사람이 원인을 보고 라벨을 제거해야 다시 흐른다.
