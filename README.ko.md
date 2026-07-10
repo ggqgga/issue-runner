@@ -133,7 +133,7 @@ flowchart LR
   V -.->|실패 반송| R
 ```
 
-세 루프가 충돌하지 않는 이유는 소유권이 **라벨 경계**이기 때문이다: closeout 이 PR 을 집으면 `harvesting` 라벨을 달고, issue-runner 는 `harvesting` PR 을 건드리지 않는다. verify-runner 도 `flow:verify` PR 을 같은 방식으로 점유한다. closeout 은 한 틱에 PR 하나를 끝까지 마감하며(`MAX_CLOSEOUT = 1`), 페이스는 `/loop` 주기로 조절한다. 그리고 자율에는 천장이 있다 — 루프는 `main` 머지·계획문서 reconcile·후속 이슈 발행까지 무인으로 하지만, **프로덕션 배포는 사람 게이트**다: closeout 이 "배포 대기" 이슈를 발행하고 거기서 멈춘다. 여기서 머지는 항상 사람이 한다는 issue-runner 불변은 그대로다. 상세는 [`skills/closeout/SKILL.md`](skills/closeout/SKILL.md).
+세 루프가 충돌하지 않는 이유는 소유권이 **라벨 경계**이기 때문이다: closeout 이 PR 을 집으면 `harvesting` 라벨을 달고, issue-runner 는 `harvesting` PR 을 건드리지 않는다. verify-runner 도 `flow:verify` PR 을 같은 방식으로 점유한다. closeout 은 한 틱에 PR 하나를 끝까지 마감하며(`MAX_CLOSEOUT = 1`), 페이스는 `/loop` 주기로 조절한다. 그리고 자율에는 천장이 있다 — 루프는 `main` 머지·계획문서 reconcile·후속 이슈 발행까지 무인으로 하지만, **프로덕션 배포는 사람 게이트**다: closeout 이 "배포 대기" 이슈를 발행하고 거기서 멈춘다. 상세는 [`skills/closeout/SKILL.md`](skills/closeout/SKILL.md).
 
 <details>
 <summary><b>왜 검증 레인을 따로 두나?</b></summary>
