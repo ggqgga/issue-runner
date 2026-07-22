@@ -55,6 +55,20 @@ if [ -z "$pr_num" ]; then
   exit 2
 fi
 
+# ── 문서 전용 PR 면제 (docs-only) ────────────────────────────────────
+# 변경 파일이 전부 문서(Plans/·Docs/·*.md)면 CI 게이트를 건너뛴다 — 코드 변경 0 이라
+# 테스트 영향이 없다(문서는 복잡한 CI 절차 없이 머지·배포). 파일 목록 조회 실패나
+# 빈 목록은 면제하지 않고(fail-safe) 아래 정상 게이트로 떨어진다. 코드 파일이 하나라도
+# 섞이면 nondoc 이 잡혀 게이트가 그대로 적용된다.
+files=$(gh_pr_view "$pr_num" --json files 2>/dev/null | jq -r '.files[].path // empty')
+if [ -n "$files" ]; then
+  nondoc=$(printf '%s\n' "$files" | grep -vE '^(Plans|Docs)/|\.md$' | head -1)
+  if [ -z "$nondoc" ]; then
+    printf 'PR #%s 문서 전용(Plans/·Docs/·*.md) — CI 게이트 면제, 머지 허용.\n' "$pr_num" >&2
+    exit 0
+  fi
+fi
+
 # ROOT — flag_repo 있으면 그 레포의 로컬 체크아웃(repo-dir.sh), 없으면 cwd(기존).
 # 훅은 개별 심링크라 인접 scripts/ 가 없을 수 있다 → 설치 경로로 폴백.
 if [ -n "$flag_repo" ]; then
