@@ -6,9 +6,38 @@
 set -euo pipefail
 repo="${1:?usage: make-worktree.sh <owner/repo> <num>}"
 num="${2:?usage: make-worktree.sh <owner/repo> <num>}"
-dir="$("$(cd "$(dirname "$0")" && pwd)/repo-dir.sh" "$repo")"
+here="$(cd "$(dirname "$0")" && pwd)"
+dir="$("$here/repo-dir.sh" "$repo")"
 branch="agent/issue-$num"
 wt="$dir/.claude/worktrees/issue-$num"
+
+# 시크릿 파일 — repos.conf 의 link-secrets 플래그가 있는 레포에서만 워크트리에 심링크
+# 한다(#109). 기본 off: 무인 워커 작업공간에 라이브 시크릿을 두지 않는다.
+secret_files=".env config/master.key"
+link_secrets=0
+if "$here/repo-flag.sh" "$repo" link-secrets; then link_secrets=1; fi
+
+# 플래그가 off 인데 이전(기본 on 시절)에 깔린 심링크가 남아 있으면 회수한다. 우리가
+# 만든 심링크만 지운다 — 실제 파일이면 손대지 않는다(워커가 만든 것일 수 있다).
+reap_secret_links() {
+  local w="$1" f
+  for f in $secret_files; do
+    if [ -L "$w/$f" ]; then
+      rm -f "$w/$f"
+      echo "secrets: 기존 심링크 회수 $f (repos.conf link-secrets 없음 — #109)" >&2
+    fi
+  done
+}
+
+link_secret_files() {
+  local w="$1" f
+  for f in $secret_files; do
+    if [ -f "$dir/$f" ] && [ ! -e "$w/$f" ]; then
+      mkdir -p "$(dirname "$w/$f")"
+      ln -s "$dir/$f" "$w/$f"
+    fi
+  done
+}
 
 [ -d "$dir/.git" ] || gh repo clone "$repo" "$dir"
 git -C "$dir" fetch origin --prune
@@ -22,6 +51,7 @@ grep -qx '.claude/' "$dir/.git/info/exclude" 2>/dev/null \
 
 if [ -d "$wt" ]; then
   echo "exists: $wt" >&2
+  if [ "$link_secrets" = 1 ]; then link_secret_files "$wt"; else reap_secret_links "$wt"; fi
   echo "$wt"
   exit 0
 fi
@@ -34,15 +64,24 @@ else
   git -C "$dir" worktree add "$wt" -b "$branch" "origin/$default" >/dev/null
 fi
 
-# 로컬 전용 gitignore 설정(.env·credentials key 등)을 worktree 에 심링크 —
-# git 추적 안 되는 파일이라 worktree 체크아웃에 안 깔린다. 메인 한 곳만 관리하고
-# worktree 가 그것을 참조 → 워커가 foreman run·credentials 의존 테스트를 메인과
-# 동일하게 돌릴 수 있다. 해당 파일이 없는 레포에선 각 항목이 자동 no-op.
-for f in .env config/master.key; do
-  if [ -f "$dir/$f" ] && [ ! -e "$wt/$f" ]; then
-    mkdir -p "$(dirname "$wt/$f")"
-    ln -s "$dir/$f" "$wt/$f"
-  fi
-done
+# 로컬 전용 gitignore 설정(.env·credentials key 등)의 심링크 — git 추적 안 되는
+# 파일이라 worktree 체크아웃에 안 깔린다. 메인 한 곳만 관리하고 worktree 가 그것을
+# 참조하면 워커가 foreman run·credentials 의존 테스트를 메인과 동일하게 돌릴 수 있다.
+#
+# 다만 그건 무인 워커의 작업공간에 **라이브 시크릿**을 놓는다는 뜻이고, 이슈 본문이
+# 곧 워커 프롬프트인 구조와 곱해지면 프롬프트 인젝션 → 유출 경로가 된다(#109).
+# 그래서 기본 off 이고, repos.conf 의 `link-secrets` 플래그로 레포별 opt-in 한다
+# (repos.conf 는 머신별·gitignore — 위험 지갑이 사용자 손에 남는다).
+# 플래그 없이 도는 레포에선 credential 의존 테스트가 못 돌 수 있다 — 워커는 그걸
+# 실패가 아니라 skip 으로 보고해야 한다(README 참조).
+if [ "$link_secrets" = 1 ]; then
+  link_secret_files "$wt"
+else
+  for f in $secret_files; do
+    if [ -f "$dir/$f" ]; then
+      echo "secrets: $f 미링크 (repos.conf link-secrets 없음 — #109)" >&2
+    fi
+  done
+fi
 
 echo "$wt"
