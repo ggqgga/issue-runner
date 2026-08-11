@@ -17,12 +17,20 @@
 # 최신 검증자가 CLEAN 인데 STALE_FINISH_MIN 넘게 최종 판정이 없으면 워커 사망 확실.
 # 진행 중 fix 루프는 최신 검증자 코멘트가 recent 이거나 non-CLEAN 이라 자동 제외된다.
 #
+# 워커 활동 = 코멘트 **또는 커밋**. bounce 후 attempt N+1 워커는 같은 브랜치에서
+# 이어가며 커밋은 하되 종료 직전에만 판정 코멘트를 찍는다 — 코멘트 시각만 보면
+# 낡은 🔄 만 남아 살아있는 워커를 사망(stale_reverify)으로 오판한다(#110, 실증
+# BodaT PR #2237). head 커밋 시각(FC_HEAD_AT)을 스테일 클록의 max 에 합류시켜 방어한다.
+#
 # 최신 `머지 판정:`/`검증자 리뷰:` 판정은 코멘트 배열의 **마지막 매칭**을 쓴다
 # (재리뷰·재판정 대비). 한/영 병행 워커라 영문 접두(Merge verdict/Verifier review)도 본다.
 #
 # 테스트/재현용 env 오버라이드 (없으면 gh/date 로 실측):
 #   FC_COMMENTS_JSON  코멘트 배열 JSON([{body,createdAt},...]) — gh 대체
 #   FC_FAILING        실패 체크 수(정수) — statusCheckRollup 대체
+#   FC_HEAD_AT        head 커밋 시각(ISO8601) — gh pr view --json commits 대체.
+#                      빈 값/파싱 불가면 epoch 0 취급(기존 판정에 영향 없음 — degrade,
+#                      fail-open 아님. #110).
 #   FC_NOW            현재 epoch(초) — date 대체
 #   STALE_FINISH_MIN  시간버퍼(분, 기본 30)
 set -uo pipefail
@@ -50,6 +58,13 @@ else
         | test("FAILURE|ERROR|CANCELLED|TIMED_OUT"))] | length' 2>/dev/null || echo 0)
 fi
 [ -n "$failing" ] || failing=0
+
+if [ -n "${FC_HEAD_AT+x}" ]; then
+  head_at="$FC_HEAD_AT"
+else
+  head_at=$(gh pr view "$pr" --repo "$repo" --json commits \
+    -q '.commits | last | .committedDate' 2>/dev/null)
+fi
 
 # ISO8601(...Z) → epoch. BSD(date -j -f) 우선, GNU(date -d) 폴백.
 iso_to_epoch() {
@@ -121,20 +136,27 @@ max_epoch() {
 }
 
 verdict_epoch=$(iso_to_epoch "$verdict_at")
+head_epoch=$(iso_to_epoch "${head_at:-}")
 
 if [ -z "$verifier_body" ]; then
-  # 검증자 부재 → 10단계 후 11단계 전 사망 가능. 🔄 판정 코멘트 기준 경과로 판별.
-  age=$((now - ${verdict_epoch:-$now}))
+  # 검증자 부재 → 10단계 후 11단계 전 사망 가능. 🔄 판정 코멘트 vs head 커밋 중
+  # 더 최신 쪽으로 경과를 잰다(#110 — attempt N+1 워커가 커밋만 하고 아직
+  # 판정을 안 찍은 창을 살아있음으로 인정).
+  ref_epoch_nv=$(max_epoch "$verdict_epoch" "$head_epoch")
+  age=$((now - ${ref_epoch_nv:-$now}))
   if [ "$age" -gt "$stale_sec" ]; then echo stale_reverify; else echo active; fi
   exit 0
 fi
 
-# 스테일 클록 = 가장 최신 워커 활동(검증자 시각 vs 이후 재-🔄 판정 시각). 검증자
-# CLEAN 뒤에 워커가 다시 🔄 를 찍고(재수정 루프) 새 검증자를 아직 안 올린 경우,
-# 최신 판정은 여전히 🔄 라 이 분기로 오는데 검증자 시각만 보면 살아있는 워커를
-# 사망으로 오판한다 → verdict_epoch 와의 max 로 방어.
+# 스테일 클록 = 가장 최신 워커 활동(검증자 시각 vs 이후 재-🔄 판정 시각 vs head 커밋
+# 시각). 검증자 CLEAN 뒤에 워커가 다시 🔄 를 찍고(재수정 루프) 새 검증자를 아직 안
+# 올린 경우, 최신 판정은 여전히 🔄 라 이 분기로 오는데 검증자 시각만 보면 살아있는
+# 워커를 사망으로 오판한다 → verdict_epoch 와의 max 로 방어. head 커밋도 같은 이유로
+# 합류(#110) — 검증자 CLEAN 뒤 워커가 커밋만 이어가고 아직 재-🔄 를 안 찍은 창도
+# 살아있음으로 인정해야 stale_inline 인라인 대리 판정이 덮치지 않는다.
 verifier_epoch=$(iso_to_epoch "$verifier_at")
 ref_epoch=$(max_epoch "$verifier_epoch" "$verdict_epoch")
+ref_epoch=$(max_epoch "$ref_epoch" "$head_epoch")
 age=$((now - ${ref_epoch:-$now}))
 if is_clean "$verifier_body"; then
   # 검증자 CLEAN — 최종 판정만 유실. 시간버퍼 초과면 인라인 대리 판정.
