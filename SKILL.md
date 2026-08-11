@@ -205,8 +205,15 @@ N 도 디스패치당 1만 올린다.
    보이는 이슈가 둘 이상이면 이번 틱에는 하나만 집는다. 판단이 서지 않으면 집는다
    (충돌은 다음 틱 rebase 가 풀어준다).
 4. 위에서부터 slots 개에 대해:
-   a. `$SCRIPTS/claim-issue.sh <repo> <num>` — 실패(이미 claim 등)하면 다음 후보로.
+   a. `$SCRIPTS/claim-issue.sh <repo> <num>` — 실패(이미 claim·잠금 경합 패배 등)하면
+      다음 후보로. 이 헬퍼가 라벨을 붙이기 전에 create-only 잠금 ref
+      (`refs/issue-runner/claim/<num>/<앵커>`)를 먼저 잡는다 — 라벨 부착은 멱등이라
+      그 자체로는 잠금이 못 되기 때문(#108). 두 루프 세션이 같은 이슈를 동시에
+      노려도 정확히 하나만 통과한다.
    b. `$SCRIPTS/make-worktree.sh <repo> <num>` — 마지막 줄이 worktree 경로.
+      시크릿(`.env`·`config/master.key`) 심링크는 기본 off 다 — repos.conf 에
+      `link-secrets` 를 켠 레포에서만 깔린다(#109). 안 켠 레포의 credential 의존
+      테스트는 실패가 아니라 **skip** 으로 보고한다.
    c. `$SCRIPTS/repo-dir.sh <repo>` 출력 경로의 `.loop/lessons.md`
       (= `<repo-dir>/.loop/lessons.md`, 기록 경로와 동일 해석)가 있으면 내용을 읽어 둔다.
       **`.loop/lessons-verifier.md` 는 읽지 마라** — 검증자용 사례집이라 구현 워커에겐

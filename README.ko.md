@@ -276,12 +276,17 @@ done
 
 hook 은 Claude Code 하네스가 실행하므로 **세션 안에서의** 해당 동작에만 발동한다. PR-create hook 2개와 codex 리뷰는 `codex` 플러그인/실제 PR 이 없으면 no-op 이라 전부 켜도 안전하다.
 
-**`repos.conf` — 경로 매핑 (필요할 때만).** 스크립트는 레포 체크아웃을 `$HOME/Projects/<레포명>` 에서 찾고(`ISSUE_RUNNER_PROJECTS_ROOT` 로 변경) 없으면 그리로 clone 한다. 다른 곳에 이미 있다면 이 레포 루트의 `repos.conf` 로 매핑한다(gitignore — 머신별 설정):
+**`repos.conf` — 경로 매핑과 레포별 플래그 (필요할 때만).** 스크립트는 레포 체크아웃을 `$HOME/Projects/<레포명>` 에서 찾고(`ISSUE_RUNNER_PROJECTS_ROOT` 로 변경) 없으면 그리로 clone 한다. 다른 곳에 이미 있다면 이 레포 루트의 `repos.conf` 로 매핑한다(gitignore — 머신별 설정):
 
 ```
-# <owner/repo> <절대경로>   — 한 줄에 하나
+# <owner/repo> <절대경로> [flag ...]   — 한 줄에 하나
 acme/webapp ~/Work/clients/acme-webapp
+acme/other  -                          link-secrets   # `-` = 기본 경로 그대로
 ```
+
+**`link-secrets` — 기본 off.** 워크트리는 새로 체크아웃되므로 gitignore 된 credential 파일(`.env`, `config/master.key`)이 안 깔린다. 메인 체크아웃에서 심링크해 주면 워커가 credential 의존 테스트(`foreman run`, Rails credentials 복호화)를 사람과 똑같이 돌릴 수 있다 — 대신 무인 워커의 작업공간에 **라이브 시크릿**을 놓는 것이고, 이슈 본문이 곧 워커 프롬프트라 프롬프트 인젝션이 훔칠 대상이 생긴다. 그래서 레포별 opt-in 이고, `repos.conf` 는 머신별·gitignore 라 그 판단이 사용자 손에 남는다.
+
+플래그가 없으면 `make-worktree.sh` 가 stderr 에 `secrets: … 미링크` 를 남기고, 이전 실행이 깔아둔 심링크가 있으면 회수한다. 그 레포의 credential 의존 테스트는 못 돈다 — 워커는 이를 실패가 아니라 **skip** 으로 보고하고 PR 본문에 명시해야 한다.
 
 </details>
 

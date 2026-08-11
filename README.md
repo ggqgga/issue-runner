@@ -279,12 +279,17 @@ done
 
 The hooks are run by the Claude Code harness, so they fire only on the matching action **inside a session**. The two PR-create hooks and the codex review are no-ops without the `codex` plugin / a real PR, so it's safe to enable them all.
 
-**`repos.conf` — path mapping (only if needed).** Scripts look for a repo's checkout at `$HOME/Projects/<repo-name>` (override with `ISSUE_RUNNER_PROJECTS_ROOT`), cloning there if absent. If a checkout already lives elsewhere, map it in `repos.conf` (in this repo's root; gitignored — it's machine-specific):
+**`repos.conf` — path mapping and per-repo flags (only if needed).** Scripts look for a repo's checkout at `$HOME/Projects/<repo-name>` (override with `ISSUE_RUNNER_PROJECTS_ROOT`), cloning there if absent. If a checkout already lives elsewhere, map it in `repos.conf` (in this repo's root; gitignored — it's machine-specific):
 
 ```
-# <owner/repo> <absolute-path>   — one per line
+# <owner/repo> <absolute-path> [flag ...]   — one per line
 acme/webapp ~/Work/clients/acme-webapp
+acme/other  -                          link-secrets   # `-` = keep the default path
 ```
+
+**`link-secrets` — off by default.** Worktrees are checked out fresh, so gitignored credential files (`.env`, `config/master.key`) are not present in them. Symlinking them from the main checkout lets a worker run credential-dependent tests (`foreman run`, decrypting Rails credentials) exactly as you would — but it also puts **live secrets** in an unattended worker's workspace, and the issue body *is* the worker's prompt, so a prompt injection has something to steal. It is therefore opt-in per repo, and `repos.conf` is machine-local and gitignored, so that decision stays in your hands.
+
+Without the flag, `make-worktree.sh` prints a `secrets: … 미링크` note on stderr and reaps any symlink a previous run left behind. Credential-dependent tests in that repo will not run — a worker should report them as **skipped**, not failed, and say so in the PR body.
 
 </details>
 

@@ -2,10 +2,30 @@
 # usage: claim-issue.sh <owner/repo> <issue-number>
 # 검색 인덱스 지연 방어: claim 직전에 직접 API로 라벨 재확인(이중 디스패치 방지),
 # claim 직후 재조회로 부착 확인.
+#
+# 라벨/assignee 부착은 **멱등**이라 그 자체로는 잠금이 못 된다 — 두 루프 세션이
+# 사전 재확인을 함께 통과하면 둘 다 "성공"해 같은 이슈를 집는다(#108). GitHub 에서
+# 진짜 원자적인 create-only 프리미티브는 **ref 생성**뿐(POST /git/refs 는 이미 있는
+# ref 에 422 를 낸다) — 그래서 라벨을 붙이기 전에 잠금 ref 를 먼저 잡는다.
+#
+#   잠금 ref: refs/issue-runner/claim/<이슈번호>/<앵커>
+#   앵커 = 원격 브랜치 agent/issue-<N> 의 head sha, 없으면 리터럴 `base`
+#
+# 앵커를 sha 로 두는 이유: 보수 재투입(re-dispatch)에서 브랜치는 정당하게 이미
+# 존재한다. attempt 마다 head sha 가 달라지므로 잠금도 attempt 마다 새로 열린다 —
+# 이전 attempt 의 잠금이 다음 attempt 를 막지 않는다(잠금 해제 배선·TTL 불필요).
+#
+# 남는 구멍 하나: 워커가 **커밋을 하나도 안 남기고** 죽으면 다음 attempt 의 앵커가
+# 이전과 같아 잠금이 이미 존재한다. 그 경우만 "경합 패배"와 "이전 attempt 의 스테일
+# 잠금"을 구분해야 하므로, 422 를 받으면 잠깐 기다렸다가 이슈를 다시 읽어
+# `agent:claimed` 유무로 판정한다(경쟁자가 살아 있으면 그 사이 라벨을 붙인다).
+#
+# env: CLAIM_STALE_WAIT  422 후 재조회까지 대기(초, 기본 5). 테스트에서 0 으로 낮춘다.
 set -euo pipefail
 repo="${1:?usage: claim-issue.sh <owner/repo> <num>}"
 num="${2:?usage: claim-issue.sh <owner/repo> <num>}"
 me=$(gh api user -q .login)
+stale_wait=${CLAIM_STALE_WAIT:-5}
 
 # 사전 재확인 — 직접 API (인덱스 지연 없음)
 pre=$(gh issue view "$num" --repo "$repo" --json labels,state)
@@ -18,6 +38,41 @@ fi
 # 후보에 남아 있어도, 사람이 라벨을 떼기 전에는 claim 금지
 if printf '%s' "$pre" | jq -e '.labels | map(.name) | index("needs-human")' >/dev/null; then
   echo "skip: $repo#$num needs-human" >&2; exit 1
+fi
+
+# ── 원자적 잠금 (#108) ──
+# 앵커 결정: 원격 브랜치가 있으면 그 head sha(재투입), 없으면 기본 브랜치 head 를
+# 잠금 ref 의 객체로 쓰고 이름 앵커는 `base`(신규). 이름이 같으면 sha 값이 달라도
+# 중재는 성립한다 — 중재는 ref **이름** 으로 이뤄진다.
+lock_key=base
+lock_sha=$(gh api "repos/$repo/git/ref/heads/agent/issue-$num" -q '.object.sha' 2>/dev/null || true)
+if [ -n "$lock_sha" ]; then
+  lock_key="$lock_sha"
+else
+  default=$(gh api "repos/$repo" -q '.default_branch' 2>/dev/null || true)
+  [ -n "$default" ] || { echo "claim 중단: $repo 기본 브랜치 조회 실패" >&2; exit 1; }
+  lock_sha=$(gh api "repos/$repo/git/ref/heads/$default" -q '.object.sha' 2>/dev/null || true)
+fi
+# 앵커 sha 를 못 구하면 잠금 없이 claim 하지 않는다(fail-closed — 안 집는 쪽이 안전).
+[ -n "$lock_sha" ] || { echo "claim 중단: $repo#$num 잠금 앵커 sha 조회 실패" >&2; exit 1; }
+
+lock_ref="refs/issue-runner/claim/$num/$lock_key"
+lock_rc=0
+lock_out=$(gh api "repos/$repo/git/refs" -f ref="$lock_ref" -f sha="$lock_sha" 2>&1) || lock_rc=$?
+if [ "$lock_rc" != 0 ]; then
+  case "$lock_out" in
+    *"already exists"*) : ;;      # "Reference already exists" (422) — 정상 중재 결과
+    # 422 가 아닌 실패(네트워크·권한)는 중재 결과를 모른다 → fail-closed
+    *) echo "claim 중단: $repo#$num 잠금 ref 생성 실패 — $lock_out" >&2; exit 1 ;;
+  esac
+  # 경합 패배 vs 이전 attempt 의 스테일 잠금 구분 — 경쟁자가 살아 있으면 이 사이에
+  # agent:claimed 를 붙인다.
+  [ "$stale_wait" = 0 ] || sleep "$stale_wait"
+  recheck=$(gh issue view "$num" --repo "$repo" --json labels 2>/dev/null || echo '{"labels":[]}')
+  if printf '%s' "$recheck" | jq -e '.labels | map(.name) | index("agent:claimed")' >/dev/null; then
+    echo "skip: $repo#$num 잠금 경합 패배(다른 세션이 claim)" >&2; exit 1
+  fi
+  echo "note: $repo#$num 잠금 ref 기존재하나 claim 라벨 없음 — 이전 attempt 의 스테일 잠금으로 보고 진행" >&2
 fi
 
 gh issue edit "$num" --repo "$repo" --add-label "agent:claimed" --add-assignee "$me" >/dev/null

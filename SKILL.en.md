@@ -202,10 +202,17 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
    tick. If you cannot tell, pick it (a conflict gets resolved by the next tick's
    rebase).
 4. For up to `slots` candidates in priority order:
-   a. `$SCRIPTS/claim-issue.sh <repo> <num>` — on failure (already claimed, etc.)
-      move on to the next candidate.
+   a. `$SCRIPTS/claim-issue.sh <repo> <num>` — on failure (already claimed, lost
+      the lock race, etc.) move on to the next candidate. Before touching labels
+      the helper takes a create-only lock ref
+      (`refs/issue-runner/claim/<num>/<anchor>`) — label writes are idempotent and
+      therefore cannot serve as a lock on their own (#108). Two loop sessions
+      racing for the same issue leave exactly one winner.
    b. `$SCRIPTS/make-worktree.sh <repo> <num>` — the last output line is the
-      worktree path.
+      worktree path. Secret symlinks (`.env`, `config/master.key`) are off by
+      default — they appear only in repos that opt in via `link-secrets` in
+      `repos.conf` (#109). In repos without it, credential-dependent tests are
+      reported as **skipped**, not failed.
    c. If the `.loop/lessons.md` under the path output by `$SCRIPTS/repo-dir.sh
       <repo>` (= `<repo-dir>/.loop/lessons.md`, same interpretation as the record
       path) exists, read its contents.
