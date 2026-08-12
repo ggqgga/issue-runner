@@ -200,5 +200,61 @@ assert "head미설정·검증자부재분기·불변" stale_reverify '[
   {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}
 ]'
 
+# 25) 실 수집 경로 — FC_HEAD_AT 미설정 시 `gh pr view` 를 어떤 인자로 부르는지 고정한다.
+#     위 18~24 는 전부 FC_HEAD_AT 주입 경로라, gh 호출 인자가 깨져도(예 `--json commits`
+#     누락) head_at 이 조용히 빈 값으로 degrade 되며 통과한다 — 이번 PR 핵심 수정이
+#     실환경에서만 죽는 사각지대. 스텁 gh 로 인자를 캡처해 그 계약을 검증한다
+#     (네트워크 무접속 유지 — PATH 에 스텁을 앞세울 뿐 실제 gh 는 안 부른다).
+stub=$(mktemp -d)
+cat > "$stub/gh" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >> "$STUB_CAPTURE"
+# 실제 gh 와 같은 계약: --json commits + -q 로 committedDate 를 요구할 때만 값을 준다.
+case "$*" in
+  *"--json commits"*"committedDate"*) echo "$STUB_HEAD_AT" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$stub/gh"
+capture="$stub/capture"
+
+# (a) head 커밋이 신선하면(2분 전) 판정 코멘트가 스테일(60분 전)이어도 active —
+#     실 수집 경로로 커밋 신선도가 실제로 합류하는지 end-to-end 로 본다.
+got=$(PATH="$stub:$PATH" STUB_CAPTURE="$capture" STUB_HEAD_AT="2026-07-05T11:58:00Z" \
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
+  FC_COMMENTS_JSON='[{"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}]' \
+  "$SUT" owner/repo 1 2>/dev/null)
+if [ "$got" = active ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ 실수집경로·커밋신선→active — 기대=active 실제=$got"
+fi
+# (b) 그 호출이 실제로 `--json commits` + committedDate 쿼리를 넘겼는지 (인자 계약).
+if grep -q -- '--json commits' "$capture" && grep -q 'committedDate' "$capture"; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "  ✗ 실수집경로 인자 계약 — gh 호출에 '--json commits'/committedDate 없음:"
+  sed 's/^/      /' "$capture"
+fi
+# (c) 같은 실 경로에서 head 커밋도 스테일(40분 전)이면 stale_reverify (가드가 게이트를
+#     무력화하지 않는다 — 신선도 합류가 항상-active 로 새지 않음).
+: > "$capture"
+got=$(PATH="$stub:$PATH" STUB_CAPTURE="$capture" STUB_HEAD_AT="2026-07-05T11:20:00Z" \
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
+  FC_COMMENTS_JSON='[{"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}]' \
+  "$SUT" owner/repo 1 2>/dev/null)
+if [ "$got" = stale_reverify ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ 실수집경로·커밋스테일→stale_reverify — 기대=stale_reverify 실제=$got"
+fi
+# (d) gh 가 빈 값을 주는 경우(권한·네트워크 실패 등) → 기존 판정으로 degrade, 크래시 없음.
+: > "$capture"
+got=$(PATH="$stub:$PATH" STUB_CAPTURE="$capture" STUB_HEAD_AT="" \
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
+  FC_COMMENTS_JSON='[{"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}]' \
+  "$SUT" owner/repo 1 2>/dev/null)
+if [ "$got" = stale_reverify ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ 실수집경로·gh빈값→기존판정 — 기대=stale_reverify 실제=$got"
+fi
+rm -rf "$stub"
+
 echo "finish-classify.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]
