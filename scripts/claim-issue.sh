@@ -20,12 +20,15 @@
 # 잠금"을 구분해야 하므로, 422 를 받으면 잠깐 기다렸다가 이슈를 다시 읽어
 # `agent:claimed` 유무로 판정한다(경쟁자가 살아 있으면 그 사이 라벨을 붙인다).
 #
-# env: CLAIM_STALE_WAIT  422 후 재조회까지 대기(초, 기본 5). 테스트에서 0 으로 낮춘다.
+# env: CLAIM_STALE_WAIT  422 후 소유자 확인에 쓸 총 대기창(초, 기본 15). 0 이면 1회만 조회.
+#      CLAIM_POLL_STEP   그 대기창 안에서의 재조회 간격(초, 기본 3).
 set -euo pipefail
 repo="${1:?usage: claim-issue.sh <owner/repo> <num>}"
 num="${2:?usage: claim-issue.sh <owner/repo> <num>}"
 me=$(gh api user -q .login)
-stale_wait=${CLAIM_STALE_WAIT:-5}
+stale_wait=${CLAIM_STALE_WAIT:-15}
+poll_step=${CLAIM_POLL_STEP:-3}
+[ "$poll_step" -gt 0 ] 2>/dev/null || poll_step=3
 
 # 사전 재확인 — 직접 API (인덱스 지연 없음)
 pre=$(gh issue view "$num" --repo "$repo" --json labels,state)
@@ -65,14 +68,31 @@ if [ "$lock_rc" != 0 ]; then
     # 422 가 아닌 실패(네트워크·권한)는 중재 결과를 모른다 → fail-closed
     *) echo "claim 중단: $repo#$num 잠금 ref 생성 실패 — $lock_out" >&2; exit 1 ;;
   esac
-  # 경합 패배 vs 이전 attempt 의 스테일 잠금 구분 — 경쟁자가 살아 있으면 이 사이에
-  # agent:claimed 를 붙인다.
-  [ "$stale_wait" = 0 ] || sleep "$stale_wait"
-  recheck=$(gh issue view "$num" --repo "$repo" --json labels 2>/dev/null || echo '{"labels":[]}')
-  if printf '%s' "$recheck" | jq -e '.labels | map(.name) | index("agent:claimed")' >/dev/null; then
-    echo "skip: $repo#$num 잠금 경합 패배(다른 세션이 claim)" >&2; exit 1
-  fi
-  echo "note: $repo#$num 잠금 ref 기존재하나 claim 라벨 없음 — 이전 attempt 의 스테일 잠금으로 보고 진행" >&2
+  # 경합 패배 vs 이전 attempt 의 스테일 잠금 구분 — 살아있는 경쟁자는 잠금을 잡은 직후
+  # agent:claimed 를 붙이므로 그 라벨이 소유자 생존의 증거다.
+  #
+  # 조회를 **한 번**만 하면 "잠금은 잡았는데 라벨 부착이 느려진 살아있는 소유자"를
+  # 스테일로 오판해 원자성이 다시 깨진다 → 대기창을 잘게 나눠 반복 확인한다. 라벨이
+  # 늦게라도 뜨면 패배로 접는다. 그래도 남는 잔여 위험은 "소유자가 잠금만 잡고 대기창
+  # 내내 침묵" 한 경우 하나이며, 이는 영구 교착(422=무조건 패배)을 피하기 위해 받아들인
+  # 절충이다(#108 — 사람 결정).
+  waited=0
+  while :; do
+    if ! recheck=$(gh issue view "$num" --repo "$repo" --json labels 2>/dev/null) || [ -z "$recheck" ]; then
+      # 소유자를 확인하지 못했다 = 중재 결과를 모른다 → 안 집는다(fail-closed).
+      echo "claim 중단: $repo#$num 잠금 후 재조회 실패 — 잠금 소유자 확인 불가" >&2; exit 1
+    fi
+    if printf '%s' "$recheck" | jq -e '.labels | map(.name) | index("agent:claimed")' >/dev/null; then
+      echo "skip: $repo#$num 잠금 경합 패배(다른 세션이 claim)" >&2; exit 1
+    fi
+    [ "$waited" -lt "$stale_wait" ] || break
+    step=$poll_step
+    if [ $((waited + step)) -gt "$stale_wait" ]; then step=$((stale_wait - waited)); fi
+    [ "$step" -gt 0 ] || break
+    sleep "$step"
+    waited=$((waited + step))
+  done
+  echo "note: $repo#$num 잠금 ref 기존재하나 ${stale_wait}초 동안 claim 라벨 없음 — 이전 attempt 의 스테일 잠금으로 보고 진행" >&2
 fi
 
 gh issue edit "$num" --repo "$repo" --add-label "agent:claimed" --add-assignee "$me" >/dev/null

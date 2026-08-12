@@ -863,6 +863,21 @@ printf 'worker-local\n' > "$w/.env"
 w=$(run_mkwt "$tmp/off.conf" 6)
 [ -f "$w/.env" ] && ! [ -L "$w/.env" ] \
   || { echo "  ✗ make-worktree 회수: 심링크 아닌 실제 파일을 지웠다"; rm -rf "$tmp"; exit 1; }
+# (e) 우리 대상이 아닌 심링크는 회수 대상 아님 — "우리가 만든 것만 지운다"가 계약.
+printf 'other\n' > "$tmp/other.env"
+rm -f "$w/.env"; ln -s "$tmp/other.env" "$w/.env"
+w=$(run_mkwt "$tmp/off.conf" 6)
+[ -L "$w/.env" ] && [ "$(readlink "$w/.env")" = "$tmp/other.env" ] \
+  || { echo "  ✗ make-worktree 회수: 우리 것 아닌 심링크를 지웠다"; rm -rf "$tmp"; exit 1; }
+# (f) 플래그 on 이어도 다른 대상의 심링크를 조용히 갈아끼우지 않는다.
+w=$(run_mkwt "$tmp/on.conf" 6)
+[ "$(readlink "$w/.env")" = "$tmp/other.env" ] \
+  || { echo "  ✗ make-worktree on: 기존 심링크 대상을 덮어썼다"; rm -rf "$tmp"; exit 1; }
+# (g) 깨진 심링크가 있어도 플래그 on 이 크래시하지 않는다 (`[ ! -e ]` 가 참이라
+#     대상 확인 없이 ln -s 를 부르면 "File exists" 로 죽는 경로).
+rm -f "$w/.env"; ln -s "$tmp/does-not-exist" "$w/.env"
+rc=0; w=$(run_mkwt "$tmp/on.conf" 6) || rc=$?
+[ "$rc" = 0 ] || { echo "  ✗ make-worktree on: 깨진 심링크에서 exit $rc (크래시)"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
 echo "[#108] claim-issue.sh 원자적 잠금 스모크 (경합 1명만 통과·스테일 잠금 진행·fail-closed)"
@@ -914,39 +929,128 @@ case "$out" in
   *"claimed: o/r#5"*) : ;;
   *) echo "  ✗ claim 스테일 잠금: 재디스패치가 막혔다 (exit $rc out='$out')"; rm -rf "$tmp"; exit 1 ;;
 esac
+# fail-closed 케이스들의 판정 기준 — exit code·"claimed:" 부재만으로는 약하다.
+# claim 을 진행했는데 그 뒤(post-check)에서 죽어도 같은 관측이 나오기 때문. 그래서
+# "라벨 부착(gh issue edit)이 **아예 일어나지 않았다**"를 직접 단정한다. 아래 스텁들은
+# issue edit 을 $tmp/claimed sentinel 로 기록하고, post-check 는 그 뒤라 통과시킨다.
+assert_no_edit() {  # $1=케이스명 $2=rc $3=stdout
+  [ "$2" = 1 ] || { echo "  ✗ claim $1: exit $2 (기대 1)"; rm -rf "$tmp"; exit 1; }
+  case "$3" in *"claimed:"*) echo "  ✗ claim $1: claim 됨"; rm -rf "$tmp"; exit 1 ;; esac
+  [ ! -f "$tmp/claimed" ] || { echo "  ✗ claim $1: 라벨 부착까지 진행됨(fail-open)"; rm -rf "$tmp"; exit 1; }
+}
 # (c) fail-closed: 잠금 생성이 422 아닌 이유로 실패하면 claim 하지 않는다.
 cat > "$tmp/stub/gh" <<STUB
 #!/bin/sh
 case "\$*" in
   *"api user"*) echo "tester" ;;
   *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
-  *"--json labels"*) echo '{"labels":[]}' ;;
+  *"--json labels"*)
+    if [ -f "$tmp/claimed" ]; then echo '{"labels":[{"name":"agent:claimed"}]}'
+    else echo '{"labels":[]}'; fi ;;
   *"git/ref/heads/agent/issue-5"*) exit 1 ;;
   *".default_branch"*) echo "main" ;;
   *"git/ref/heads/main"*) echo "deadbeef" ;;
   *"git/refs"*) echo '{"message":"Bad credentials","status":"401"}'; exit 1 ;;
+  *"issue edit"*) : > "$tmp/claimed" ;;
   *) echo "" ;;
 esac
 STUB
 chmod +x "$tmp/stub/gh"
+rm -f "$tmp/claimed"
 rc=0; out=$(run_claim) || rc=$?
-[ "$rc" = 1 ] || { echo "  ✗ claim fail-closed: 잠금 401 인데 exit $rc (기대 1)"; rm -rf "$tmp"; exit 1; }
-case "$out" in *"claimed:"*) echo "  ✗ claim fail-closed: 잠금 실패인데 claim 됨"; rm -rf "$tmp"; exit 1 ;; esac
+assert_no_edit "fail-closed(잠금 401)" "$rc" "$out"
 # (d) 앵커 sha 조회 실패(기본 브랜치 미확인) → 잠금 없이 claim 금지
 cat > "$tmp/stub/gh" <<STUB
 #!/bin/sh
 case "\$*" in
   *"api user"*) echo "tester" ;;
   *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
+  *"--json labels"*)
+    if [ -f "$tmp/claimed" ]; then echo '{"labels":[{"name":"agent:claimed"}]}'
+    else echo '{"labels":[]}'; fi ;;
   *"git/ref/heads/agent/issue-5"*) exit 1 ;;
   *".default_branch"*) exit 1 ;;
+  *"issue edit"*) : > "$tmp/claimed" ;;
   *) echo "" ;;
 esac
 STUB
 chmod +x "$tmp/stub/gh"
+rm -f "$tmp/claimed"
 rc=0; out=$(run_claim) || rc=$?
-[ "$rc" = 1 ] || { echo "  ✗ claim 앵커 실패: exit $rc (기대 1)"; rm -rf "$tmp"; exit 1; }
-case "$out" in *"claimed:"*) echo "  ✗ claim 앵커 실패인데 claim 됨"; rm -rf "$tmp"; exit 1 ;; esac
+assert_no_edit "기본 브랜치 조회 실패" "$rc" "$out"
+# (d2) 기본 브랜치는 알아냈지만 그 head sha 를 못 읽는 경우 — (d) 는 기본 브랜치 가드에서
+#      먼저 걸려 이 경로(앵커 sha 가드)를 지나가지 않으므로 따로 덮는다.
+cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
+  *"--json labels"*)
+    if [ -f "$tmp/claimed" ]; then echo '{"labels":[{"name":"agent:claimed"}]}'
+    else echo '{"labels":[]}'; fi ;;
+  *"git/ref/heads/agent/issue-5"*) exit 1 ;;
+  *".default_branch"*) echo "main" ;;
+  *"git/ref/heads/main"*) exit 1 ;;
+  *"issue edit"*) : > "$tmp/claimed" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+rm -f "$tmp/claimed"
+rc=0; out=$(run_claim) || rc=$?
+assert_no_edit "앵커 sha 조회 실패" "$rc" "$out"
+# (e) 잠금 후 재조회 자체가 실패 → 소유자 확인 불가 → claim 금지(fail-closed).
+#     ("라벨 없음" 으로 대체하면 스테일 잠금으로 오인해 살아있는 소유자를 덮친다.)
+#     재조회는 edit **전**이라 sentinel 이 없을 때만 실패시킨다 — post-check(edit 후)는
+#     통과시켜야, 이 케이스가 "재조회에서 닫혔는지"를 post-check 사망과 구분해 잡는다.
+cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
+  *"--json labels"*)
+    if [ -f "$tmp/claimed" ]; then echo '{"labels":[{"name":"agent:claimed"}]}'; else exit 1; fi ;;
+  *"git/ref/heads/agent/issue-5"*) exit 1 ;;
+  *".default_branch"*) echo "main" ;;
+  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  *"git/refs"*) echo '{"message":"Reference already exists","status":"422"}'; exit 1 ;;
+  *"issue edit"*) : > "$tmp/claimed" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+rm -f "$tmp/claimed"
+rc=0; out=$(run_claim) || rc=$?
+assert_no_edit "잠금 후 재조회 실패" "$rc" "$out"
+# (f) live-holder 지연 경합: 잠금은 남이 잡았고 라벨은 **늦게** 뜬다. 재조회가 1회면
+#     "라벨 없음 = 스테일" 로 오판해 살아있는 소유자를 덮친다 → 대기창 안에서 반복
+#     조회하다 라벨이 뜨면 패배로 접어야 한다. 스텁은 첫 조회에만 라벨을 숨긴다.
+rm -f "$tmp/rechecks"
+cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
+  *"--json labels"*)
+    n=0; [ -f "$tmp/rechecks" ] && n=\$(cat "$tmp/rechecks")
+    n=\$((n + 1)); echo "\$n" > "$tmp/rechecks"
+    if [ "\$n" -le 1 ]; then echo '{"labels":[]}'
+    else echo '{"labels":[{"name":"agent:claimed"}]}'; fi ;;
+  *"git/ref/heads/agent/issue-5"*) exit 1 ;;
+  *".default_branch"*) echo "main" ;;
+  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  *"git/refs"*) echo '{"message":"Reference already exists","status":"422"}'; exit 1 ;;
+  *"issue edit"*) : > "$tmp/claimed" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+rc=0
+out=$(PATH="$tmp/stub:$PATH" CLAIM_STALE_WAIT=2 CLAIM_POLL_STEP=1 bash "$claim" o/r 5 2>/dev/null) || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ claim live-holder 지연: exit $rc (기대 1 — 살아있는 소유자를 덮쳤다)"; rm -rf "$tmp"; exit 1; }
+case "$out" in *"claimed:"*) echo "  ✗ claim live-holder 지연: 늦게 뜬 라벨을 못 보고 claim 됨"; rm -rf "$tmp"; exit 1 ;; esac
+[ "$(cat "$tmp/rechecks")" -ge 2 ] \
+  || { echo "  ✗ claim live-holder 지연: 재조회가 1회뿐(대기창 폴링 미동작)"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
 echo "[#108] SKILL 원자적 claim 잠금 문서화 검사 — 한/영 동기"
