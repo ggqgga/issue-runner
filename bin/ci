@@ -900,6 +900,13 @@ case "\$*" in
   *"git/ref/heads/agent/issue-5"*) exit 1 ;;      # 원격 브랜치 없음 → 앵커 base
   *".default_branch"*) echo "main" ;;
   *"git/ref/heads/main"*) echo "deadbeef" ;;
+  # 잠금 ref 와 takeover ref 는 **별개의 create-only 자원**이다 — 한 파일로 흉내내면
+  # takeover 가 1차 잠금의 422 를 물려받아 스테일 인수 경로를 검증할 수 없다.
+  *"git/refs"*takeover*)
+    if [ -f "$tmp/takeover" ]; then
+      echo '{"message":"Reference already exists","status":"422"}'; exit 1
+    fi
+    : > "$tmp/takeover"; echo '{"ref":"refs/issue-runner/claim/5/base/takeover"}' ;;
   *"git/refs"*)
     if [ -f "$tmp/lock" ]; then
       echo '{"message":"Reference already exists","status":"422"}'; exit 1
@@ -913,7 +920,7 @@ chmod +x "$tmp/stub/gh"
 run_claim() { PATH="$tmp/stub:$PATH" CLAIM_STALE_WAIT=0 bash "$claim" o/r 5 2>/dev/null; }
 # (a) 경합: 사전 재확인은 둘 다 통과하지만 잠금은 하나만 잡는다. 패배자의 재조회는
 #     승자가 붙인 agent:claimed 를 본다 → 정확히 1회만 "claimed:".
-rm -f "$tmp/lock" "$tmp/claimed"
+rm -f "$tmp/lock" "$tmp/claimed" "$tmp/takeover"
 wins=0
 rc=0; out=$(run_claim) || rc=$?
 case "$out" in *"claimed: o/r#5"*) wins=$((wins + 1)) ;; esac
@@ -923,12 +930,72 @@ case "$out" in *"claimed: o/r#5"*) wins=$((wins + 1)) ;; esac
 [ "$rc" = 1 ] || { echo "  ✗ claim 경합: 패배자 exit $rc (기대 1)"; rm -rf "$tmp"; exit 1; }
 # (b) 스테일 잠금: 잠금 ref 는 있는데(이전 attempt) 재조회에 agent:claimed 가 없다 →
 #     죽은 attempt 의 잔여 잠금으로 보고 진행해야 한다(재디스패치가 영구히 막히면 안 됨).
-rm -f "$tmp/claimed"; : > "$tmp/lock"   # 잠금만 남고 claim 라벨은 없는 상태(죽은 attempt)
+rm -f "$tmp/claimed" "$tmp/takeover"; : > "$tmp/lock"  # 잠금만 남음(커밋 0 으로 죽은 attempt)
 rc=0; out=$(run_claim) || rc=$?
 case "$out" in
   *"claimed: o/r#5"*) : ;;
   *) echo "  ✗ claim 스테일 잠금: 재디스패치가 막혔다 (exit $rc out='$out')"; rm -rf "$tmp"; exit 1 ;;
 esac
+# (b2) 스테일 잠금에 **신규 세션 둘이 동시에** 들어오는 경우 — 1차 잠금은 이미 남이 만든
+#      것이라 이들 사이의 중재력이 없다. takeover ref 가 중재하지 않으면 둘 다 라벨 없음을
+#      보고 둘 다 claim 한다(원자성 재파괴). 정확히 1회만 통과해야 한다.
+#
+#      스모크는 두 호출을 순차로 돌리므로, 승자가 붙인 라벨을 패배자의 **1차 재조회**가
+#      보면 takeover 에 닿기 전에 "경합 패배"로 닫혀 이 경로를 검증하지 못한다(동시 실행이
+#      아닌 데서 오는 인공물). 그래서 재조회 응답을 호출별 카운터로 제어해 "둘 다 대기창
+#      내내 라벨 없음" 을 고정한다 — 그러면 takeover 만이 유일한 중재자가 된다.
+mkdir -p "$tmp/stub2"
+cat > "$tmp/stub2/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
+  *"--json labels"*)
+    n=0; [ -f "\$STUB_COUNTER" ] && n=\$(cat "\$STUB_COUNTER")
+    n=\$((n + 1)); echo "\$n" > "\$STUB_COUNTER"
+    # 앞의 STUB_EMPTY_UNTIL 회는 라벨 없음(= 잠금 후 재조회), 그 뒤는 부착됨(= post-check).
+    if [ "\$n" -le "\$STUB_EMPTY_UNTIL" ]; then echo '{"labels":[]}'
+    else echo '{"labels":[{"name":"agent:claimed"}]}'; fi ;;
+  *"git/ref/heads/agent/issue-5"*) exit 1 ;;
+  *".default_branch"*) echo "main" ;;
+  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  *"git/refs"*takeover*)
+    if [ -f "$tmp/takeover" ]; then
+      echo '{"message":"Reference already exists","status":"422"}'; exit 1
+    fi
+    : > "$tmp/takeover"; echo '{"ref":"x/takeover"}' ;;
+  *"git/refs"*) echo '{"message":"Reference already exists","status":"422"}'; exit 1 ;;
+  *"issue edit"*) : > "$tmp/claimed2" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$tmp/stub2/gh"
+rm -f "$tmp/takeover" "$tmp/claimed2" "$tmp/c1" "$tmp/c2"
+wins=0
+# 세션 A: 재조회 1회는 라벨 없음 → takeover 획득 → edit → post-check(2회차)는 부착 확인
+outA=$(PATH="$tmp/stub2:$PATH" CLAIM_STALE_WAIT=0 STUB_COUNTER="$tmp/c1" STUB_EMPTY_UNTIL=1 \
+  bash "$claim" o/r 5 2>&1) || true
+case "$outA" in *"claimed: o/r#5"*) wins=$((wins + 1)) ;; esac
+# 세션 B: 재조회(1회차)에 라벨 없음 → takeover 만이 중재 → 422 → 패배.
+#   B 도 A 와 같은 EMPTY_UNTIL=1 을 쓴다 — 중재가 없으면 B 가 edit 까지 가고 그때의
+#   post-check(2회차)는 부착을 보게 되므로, 이중 claim 이 `wins=2` 로 그대로 드러난다
+#   (실환경 등가). B 를 항상-빈으로 두면 변이가 post-check 실패로 가려진다.
+outB=$(PATH="$tmp/stub2:$PATH" CLAIM_STALE_WAIT=0 STUB_COUNTER="$tmp/c2" STUB_EMPTY_UNTIL=1 \
+  bash "$claim" o/r 5 2>&1) || true
+case "$outB" in *"claimed: o/r#5"*) wins=$((wins + 1)) ;; esac
+[ "$wins" = 1 ] \
+  || { echo "  ✗ claim 스테일 잠금 동시 2회: 통과 $wins 회 (기대 1 — 인수 중재 없이 이중 claim)"; rm -rf "$tmp"; exit 1; }
+case "$outB" in
+  *"인수 경합 패배"*) : ;;
+  *) echo "  ✗ claim 스테일 잠금 동시 2회: 패배 사유가 인수 경합이 아니다 (outB='$outB')"; rm -rf "$tmp"; exit 1 ;;
+esac
+# (b3) takeover 까지 스테일(인수한 워커도 커밋 0 으로 사망) → fail-closed 로 닫는다.
+#      인수의 인수를 허용하면 무한 후퇴 끝에 이중 claim 이 되므로 의도된 절충이다.
+rm -f "$tmp/claimed"; : > "$tmp/lock"; : > "$tmp/takeover"
+rc=0; out=$(run_claim) || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ claim takeover 스테일: exit $rc (기대 1 — fail-closed)"; rm -rf "$tmp"; exit 1; }
+case "$out" in *"claimed:"*) echo "  ✗ claim takeover 스테일: claim 됨"; rm -rf "$tmp"; exit 1 ;; esac
+[ ! -f "$tmp/claimed" ] || { echo "  ✗ claim takeover 스테일: 라벨 부착까지 진행됨"; rm -rf "$tmp"; exit 1; }
 # fail-closed 케이스들의 판정 기준 — exit code·"claimed:" 부재만으로는 약하다.
 # claim 을 진행했는데 그 뒤(post-check)에서 죽어도 같은 관측이 나오기 때문. 그래서
 # "라벨 부착(gh issue edit)이 **아예 일어나지 않았다**"를 직접 단정한다. 아래 스텁들은

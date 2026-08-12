@@ -207,7 +207,10 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       the helper takes a create-only lock ref
       (`refs/issue-runner/claim/<num>/<anchor>`) — label writes are idempotent and
       therefore cannot serve as a lock on their own (#108). Two loop sessions
-      racing for the same issue leave exactly one winner.
+      racing for the same issue leave exactly one winner. When a previous attempt
+      died without committing and only its lock remains, the helper takes over by
+      creating `<anchor>/takeover` — also create-only, so that race likewise
+      leaves one winner and atomicity holds on the stale-takeover path too.
    b. `$SCRIPTS/make-worktree.sh <repo> <num>` — the last output line is the
       worktree path. Secret symlinks (`.env`, `config/master.key`) are off by
       default — they appear only in repos that opt in via `link-secrets` in

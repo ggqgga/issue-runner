@@ -15,10 +15,25 @@
 # 존재한다. attempt 마다 head sha 가 달라지므로 잠금도 attempt 마다 새로 열린다 —
 # 이전 attempt 의 잠금이 다음 attempt 를 막지 않는다(잠금 해제 배선·TTL 불필요).
 #
-# 남는 구멍 하나: 워커가 **커밋을 하나도 안 남기고** 죽으면 다음 attempt 의 앵커가
-# 이전과 같아 잠금이 이미 존재한다. 그 경우만 "경합 패배"와 "이전 attempt 의 스테일
-# 잠금"을 구분해야 하므로, 422 를 받으면 잠깐 기다렸다가 이슈를 다시 읽어
-# `agent:claimed` 유무로 판정한다(경쟁자가 살아 있으면 그 사이 라벨을 붙인다).
+# 워커가 **커밋을 하나도 안 남기고** 죽으면 다음 attempt 의 앵커가 이전과 같아 잠금이
+# 이미 존재한다. 그 경우만 "경합 패배"와 "이전 attempt 의 스테일 잠금"을 구분해야
+# 하므로, 422 를 받으면 대기창 동안 이슈를 반복 조회해 `agent:claimed` 유무로 판정한다
+# (경쟁자가 살아 있으면 그 사이 라벨을 붙인다).
+#
+# 스테일로 판정해도 **그대로 진행하면 안 된다** — 신규 세션 둘이 같은 스테일 잠금에
+# 동시에 들어오면 둘 다 422 를 받고 둘 다 라벨 없음을 보므로 둘 다 claim 한다(1차 잠금은
+# 남이 만든 것이라 이들 사이의 중재력이 없다). 그래서 인수 자체를 create-only ref 로
+# 한 번 더 중재한다:
+#
+#   takeover ref: refs/issue-runner/claim/<이슈번호>/<앵커>/takeover
+#
+# 이걸 잡은 하나만 진행하고 나머지는 패배로 접는다. takeover 도 이미 있으면 그 자리에서
+# 닫는다(fail-closed) — 인수의 인수를 허용하면 무한 후퇴 끝에 결국 이중 claim 이 된다.
+#
+# 남는 절충: 인수한 워커까지 **커밋 없이** 죽으면 그 앵커에서는 더 이상 자동 재투입이
+# 안 된다(사람이 ref 를 지워야 풀린다). 커밋이 하나라도 생기면 앵커 sha 가 바뀌어 잠금
+# 전체가 새로 열리므로, 이 교착은 "두 번 연속 커밋 0 으로 사망" 에만 걸린다 — 이중
+# claim(작업 유실)보다 이쪽이 안전하다는 판단(#108).
 #
 # env: CLAIM_STALE_WAIT  422 후 소유자 확인에 쓸 총 대기창(초, 기본 15). 0 이면 1회만 조회.
 #      CLAIM_POLL_STEP   그 대기창 안에서의 재조회 간격(초, 기본 3).
@@ -73,9 +88,7 @@ if [ "$lock_rc" != 0 ]; then
   #
   # 조회를 **한 번**만 하면 "잠금은 잡았는데 라벨 부착이 느려진 살아있는 소유자"를
   # 스테일로 오판해 원자성이 다시 깨진다 → 대기창을 잘게 나눠 반복 확인한다. 라벨이
-  # 늦게라도 뜨면 패배로 접는다. 그래도 남는 잔여 위험은 "소유자가 잠금만 잡고 대기창
-  # 내내 침묵" 한 경우 하나이며, 이는 영구 교착(422=무조건 패배)을 피하기 위해 받아들인
-  # 절충이다(#108 — 사람 결정).
+  # 늦게라도 뜨면 패배로 접는다.
   waited=0
   while :; do
     if ! recheck=$(gh issue view "$num" --repo "$repo" --json labels 2>/dev/null) || [ -z "$recheck" ]; then
@@ -92,7 +105,25 @@ if [ "$lock_rc" != 0 ]; then
     sleep "$step"
     waited=$((waited + step))
   done
-  echo "note: $repo#$num 잠금 ref 기존재하나 ${stale_wait}초 동안 claim 라벨 없음 — 이전 attempt 의 스테일 잠금으로 보고 진행" >&2
+  # 여기까지 오면 "이전 attempt 의 스테일 잠금" 판정이다. **그대로 진행하면 원자성이
+  # 다시 깨진다** — 스테일 잠금에 신규 세션이 둘 동시에 들어오면 둘 다 422 를 받고 둘 다
+  # 대기창 내내 라벨 없음을 보므로 둘 다 claim 한다(1차 잠금은 이미 남이 만든 것이라
+  # 중재력이 없다). 그래서 스테일 인수 자체를 **또 하나의 create-only ref** 로 중재한다:
+  # takeover ref 를 잡은 하나만 진행하고 나머지는 패배로 접는다.
+  takeover_ref="$lock_ref/takeover"
+  to_rc=0
+  to_out=$(gh api "repos/$repo/git/refs" -f ref="$takeover_ref" -f sha="$lock_sha" 2>&1) || to_rc=$?
+  if [ "$to_rc" != 0 ]; then
+    case "$to_out" in
+      *"already exists"*)
+        # takeover 도 이미 있다 = 다른 세션이 이 스테일 잠금을 먼저 인수했다. 그 세션이
+        # 라벨을 붙였는지와 무관하게 **여기서 닫는다**(fail-closed) — 인수의 인수를
+        # 허용하면 무한 후퇴가 되고, 그 끝은 결국 이중 claim 이다.
+        echo "skip: $repo#$num 스테일 잠금 인수 경합 패배(다른 세션이 인수)" >&2; exit 1 ;;
+      *) echo "claim 중단: $repo#$num takeover ref 생성 실패 — $to_out" >&2; exit 1 ;;
+    esac
+  fi
+  echo "note: $repo#$num 잠금 ref 기존재하나 ${stale_wait}초 동안 claim 라벨 없음 — 스테일 잠금 인수(takeover)로 진행" >&2
 fi
 
 gh issue edit "$num" --repo "$repo" --add-label "agent:claimed" --add-assignee "$me" >/dev/null
