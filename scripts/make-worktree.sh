@@ -17,25 +17,44 @@ secret_files=".env config/master.key"
 link_secrets=0
 if "$here/repo-flag.sh" "$repo" link-secrets; then link_secrets=1; fi
 
-# 플래그가 off 인데 이전(기본 on 시절)에 깔린 심링크가 남아 있으면 회수한다. 우리가
-# 만든 심링크만 지운다 — 실제 파일이면 손대지 않는다(워커가 만든 것일 수 있다).
+# 플래그가 off 인데 이전(기본 on 시절)에 깔린 심링크가 남아 있으면 회수한다.
+# **우리가 만든 것만** 지운다 = 대상이 정확히 메인 체크아웃의 같은 파일($dir/$f)인
+# 심링크. 실제 파일이나 다른 곳을 가리키는 심링크는 워커/사용자 소유물이라 보존한다.
 reap_secret_links() {
-  local w="$1" f
+  local w="$1" f tgt
   for f in $secret_files; do
     if [ -L "$w/$f" ]; then
-      rm -f "$w/$f"
-      echo "secrets: 기존 심링크 회수 $f (repos.conf link-secrets 없음 — #109)" >&2
+      tgt=$(readlink "$w/$f")
+      if [ "$tgt" = "$dir/$f" ]; then
+        rm -f "$w/$f"
+        echo "secrets: 기존 심링크 회수 $f (repos.conf link-secrets 없음 — #109)" >&2
+      else
+        echo "secrets: $f 는 우리가 만든 심링크가 아님(→ $tgt) — 보존" >&2
+      fi
     fi
   done
 }
 
+# 심링크 생성. 이미 우리 대상을 가리키면 no-op, 다른 대상을 가리키는 심링크(깨진 것
+# 포함)나 실제 파일이 있으면 덮어쓰지 않고 경고만 한다 — 워커가 의도적으로 둔 것을
+# 조용히 갈아끼우면 디버깅이 불가능해진다. (`[ ! -e ]` 는 깨진 심링크에 참이라
+# 대상 확인 없이 ln -s 를 부르면 "File exists" 로 죽는다.)
 link_secret_files() {
-  local w="$1" f
+  local w="$1" f tgt
   for f in $secret_files; do
-    if [ -f "$dir/$f" ] && [ ! -e "$w/$f" ]; then
-      mkdir -p "$(dirname "$w/$f")"
-      ln -s "$dir/$f" "$w/$f"
+    [ -f "$dir/$f" ] || continue
+    if [ -L "$w/$f" ]; then
+      tgt=$(readlink "$w/$f")
+      if [ "$tgt" = "$dir/$f" ]; then continue; fi
+      echo "secrets: $f 에 다른 대상(→ $tgt)의 심링크가 있어 건드리지 않음" >&2
+      continue
     fi
+    if [ -e "$w/$f" ]; then
+      echo "secrets: $f 가 실제 파일로 있어 심링크하지 않음" >&2
+      continue
+    fi
+    mkdir -p "$(dirname "$w/$f")"
+    ln -s "$dir/$f" "$w/$f"
   done
 }
 
