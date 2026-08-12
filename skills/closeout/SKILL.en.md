@@ -124,7 +124,7 @@ separate freshness gate needed:
 |---|---|---|
 | `done_verdict` | latest `머지 판정: ✅` | eligible.sh's normal path handles it — sweep skips |
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). |
-| `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). Re-add `agent-ready` + remove `agent:claimed` on the linked issue → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). |
+| `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). Re-add `agent-ready` + remove `agent:claimed` on the linked issue → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
 | `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — attach `needs-human` to the linked issue, closeout leaves it (no auto-progress). |
 | `active` | in progress · buffer not reached · not our shape | **Leave it** (next tick). |
 

@@ -14,12 +14,13 @@ NOW=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "2026-07-05T12:00:00Z" +%s 2>/dev/null 
 
 pass=0
 fail=0
-# assert <name> <expected> <comments-json>
+# assert <name> <expected> <comments-json> [head_at]
+# head_at 미지정 시 FC_HEAD_AT="" 로 명시 고정 — 실호출(gh) 경로로 새지 않게(네트워크 무접속 유지).
 assert() {
-  local name="$1" expect="$2" comments="$3"
+  local name="$1" expect="$2" comments="$3" head_at="${4:-}"
   local got
   got=$(FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
-    FC_COMMENTS_JSON="$comments" "$SUT" owner/repo 1 2>/dev/null)
+    FC_COMMENTS_JSON="$comments" FC_HEAD_AT="$head_at" "$SUT" owner/repo 1 2>/dev/null)
   if [ "$got" = "$expect" ]; then
     pass=$((pass + 1))
   else
@@ -120,7 +121,7 @@ assert "재-🔄후→active" active '[
 
 # 13) CI 실패 방어 가드 — 🔄 + 검증자 CLEAN + 30분 초과라도 failing>0 이면 active
 #     (규칙1 대상, 완결 판별 안 함).
-got_ci=$(FC_NOW="$NOW" FC_FAILING=2 STALE_FINISH_MIN=30 \
+got_ci=$(FC_NOW="$NOW" FC_FAILING=2 STALE_FINISH_MIN=30 FC_HEAD_AT="" \
   FC_COMMENTS_JSON='[
     {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
     {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:00:30Z"}
@@ -151,6 +152,109 @@ assert "blocker0-resolved→clean" stale_inline '[
   {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
   {"body":"검증자 리뷰: BLOCKER 0 / WARN 2건 해소\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:00:30Z"}
 ]'
+
+# ── #110 커밋 신선도 합류 ──────────────────────────────────────────────
+
+# 18) 실증 회귀 — 판정 🔄(36분 전) + 검증자 부재 + FC_HEAD_AT(2분 전) → active
+#     (현행/미구현 시 stale_reverify — 실증 BodaT PR #2237 재현).
+assert "실증회귀·커밋신선→active" active '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:24:00Z"}
+]' "2026-07-05T11:58:00Z"
+
+# 19) 같은 입력에서 FC_HEAD_AT(40분 전) → stale_reverify (진짜 사망은 여전히 잡힌다).
+assert "커밋도스테일→stale_reverify" stale_reverify '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:24:00Z"}
+]' "2026-07-05T11:20:00Z"
+
+# 20) 검증자 CLEAN(40분 전) + FC_HEAD_AT(2분 전) → active (stale_inline 억제 — 살아있는
+#     워커를 인라인 대리 판정이 덮치면 안 된다).
+assert "CLEAN후커밋신선→active(억제)" active '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:20:00Z"}
+]' "2026-07-05T11:58:00Z"
+
+# 21) 검증자 CLEAN(40분 전) + FC_HEAD_AT(40분 전, 역시 스테일) → stale_inline (무회귀).
+assert "CLEAN+커밋둘다스테일→stale_inline" stale_inline '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:20:00Z"}
+]' "2026-07-05T11:20:00Z"
+
+# 22) FC_HEAD_AT 파싱 불가 쓰레기 값 → 크래시 없이 빈 epoch 취급, 기존 판정(stale_reverify) 유지.
+assert "커밋쓰레기값→기존판정유지" stale_reverify '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}
+]' "not-a-real-timestamp"
+
+# 23a) 검증자 부재 분기의 커밋 신호 버퍼 경계 — 정확히 30분 전 → active(무접촉).
+assert "커밋경계=30→active" active '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}
+]' "2026-07-05T11:30:00Z"
+
+# 23b) 31분 전(초과) → stale_reverify.
+assert "커밋경계>30→stale_reverify" stale_reverify '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}
+]' "2026-07-05T11:29:00Z"
+
+# 24) FC_HEAD_AT 미설정(기존 6개 케이스 대표 재확인) — 판정 4~17 은 이미 head_at 없이
+#     돌아 불변을 증명하지만, 검증자 부재 분기(4)를 명시적으로 한 번 더 고정한다.
+assert "head미설정·검증자부재분기·불변" stale_reverify '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}
+]'
+
+# 25) 실 수집 경로 — FC_HEAD_AT 미설정 시 `gh pr view` 를 어떤 인자로 부르는지 고정한다.
+#     위 18~24 는 전부 FC_HEAD_AT 주입 경로라, gh 호출 인자가 깨져도(예 `--json commits`
+#     누락) head_at 이 조용히 빈 값으로 degrade 되며 통과한다 — 이번 PR 핵심 수정이
+#     실환경에서만 죽는 사각지대. 스텁 gh 로 인자를 캡처해 그 계약을 검증한다
+#     (네트워크 무접속 유지 — PATH 에 스텁을 앞세울 뿐 실제 gh 는 안 부른다).
+stub=$(mktemp -d)
+cat > "$stub/gh" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >> "$STUB_CAPTURE"
+# 실제 gh 와 같은 계약: --json commits + -q 로 committedDate 를 요구할 때만 값을 준다.
+case "$*" in
+  *"--json commits"*"committedDate"*) echo "$STUB_HEAD_AT" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$stub/gh"
+capture="$stub/capture"
+
+# (a) head 커밋이 신선하면(2분 전) 판정 코멘트가 스테일(60분 전)이어도 active —
+#     실 수집 경로로 커밋 신선도가 실제로 합류하는지 end-to-end 로 본다.
+got=$(PATH="$stub:$PATH" STUB_CAPTURE="$capture" STUB_HEAD_AT="2026-07-05T11:58:00Z" \
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
+  FC_COMMENTS_JSON='[{"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}]' \
+  "$SUT" owner/repo 1 2>/dev/null)
+if [ "$got" = active ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ 실수집경로·커밋신선→active — 기대=active 실제=$got"
+fi
+# (b) 그 호출이 실제로 `--json commits` + committedDate 쿼리를 넘겼는지 (인자 계약).
+if grep -q -- '--json commits' "$capture" && grep -q 'committedDate' "$capture"; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "  ✗ 실수집경로 인자 계약 — gh 호출에 '--json commits'/committedDate 없음:"
+  sed 's/^/      /' "$capture"
+fi
+# (c) 같은 실 경로에서 head 커밋도 스테일(40분 전)이면 stale_reverify (가드가 게이트를
+#     무력화하지 않는다 — 신선도 합류가 항상-active 로 새지 않음).
+: > "$capture"
+got=$(PATH="$stub:$PATH" STUB_CAPTURE="$capture" STUB_HEAD_AT="2026-07-05T11:20:00Z" \
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
+  FC_COMMENTS_JSON='[{"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}]' \
+  "$SUT" owner/repo 1 2>/dev/null)
+if [ "$got" = stale_reverify ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ 실수집경로·커밋스테일→stale_reverify — 기대=stale_reverify 실제=$got"
+fi
+# (d) gh 가 빈 값을 주는 경우(권한·네트워크 실패 등) → 기존 판정으로 degrade, 크래시 없음.
+: > "$capture"
+got=$(PATH="$stub:$PATH" STUB_CAPTURE="$capture" STUB_HEAD_AT="" \
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
+  FC_COMMENTS_JSON='[{"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}]' \
+  "$SUT" owner/repo 1 2>/dev/null)
+if [ "$got" = stale_reverify ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ 실수집경로·gh빈값→기존판정 — 기대=stale_reverify 실제=$got"
+fi
+rm -rf "$stub"
 
 echo "finish-classify.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]
