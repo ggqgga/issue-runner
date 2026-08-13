@@ -319,6 +319,27 @@ from the PR-branch worktree (obtained via `$SCRIPTS/make-worktree.sh <repo> <N>`
 `gh pr view <pr> --repo <repo> --json headRefName`, idempotent) so it is included in
 the squash merge (no direct push to main). If there is an epic, leave a progress rollup
 comment.
+- **Absorb surface corrections (into the same commit).** Among step 1's verifier
+  WARN/NIT findings, the **surface-correction** class does not go to step 6 as a spinoff
+  issue — **fix it here** and carry it in this commit. The PR-branch worktree is already
+  checked out and the cache reinforcement below re-runs local CI on the new SHA, so this
+  costs **zero extra cycles** — whereas issuing it spends a whole dispatch→implement→
+  verify→closeout lap on a one-line fix.
+  **The criterion, one line: does this change flip the pass/fail of any test at all?**
+  If none, fix it here; if even one, it is a step-6 issue. What the criterion admits —
+  comment prose, terminology/notation unification, numbers and coordinates inside
+  comments, dead-reference removal, **test names** (the description string in `test "…"`
+  executes but does not flip pass/fail). What it blocks — new assertions·new guards·
+  added coverage·constant values·execution branches. "While I'm fixing the comment, one
+  more assertion" is an issue.
+  - State what was fixed in a comment on the original PR:
+    `표면 교정(closeout 3단계): <file> — <what>`. Closeout merges what it fixed itself,
+    so that fact must be visible to a human.
+  - If the cache reinforcement below is non-zero (local CI failed), **revert that
+    correction commit** and take the normal fail-closed path — a surface correction must
+    never become the reason a merge is blocked.
+  - Do not touch it if the verifier raised a BLOCKER or this PR is heading to hold/
+    re-dispatch (passing PRs only — the same discipline as verify-runner ⓪).
 - **cache supplement (right after push, option 1).** Once the doc commit is pushed,
   **right after** call `$SCRIPTS/run-local-ci.sh <repo> <N>` once (`<N>`=the issue
   number parsed above — identifies the worktree path `issue-<N>`; distinct from
@@ -403,6 +424,15 @@ body's `follow-up:` items + adjacent work the step-1 diff review flagged, and is
 agent-ready issue. Link it as a sub-issue if there is an epic, or as a standalone
 issue if not. Record the created number in a comment on the original PR (a
 duplicate-issuance marker).
+- **Do not issue what step 3 already absorbed.** A finding that passed step 3's
+  "absorb surface corrections" criterion (does this flip the pass/fail of any test?)
+  and rode along in that commit is not remaining work. When one finding mixes surface
+  and code (e.g. "the terminology diverged + the count has no guard"), step 3 takes the
+  surface and **only the code part** becomes an issue — do not restate the already-fixed
+  part in the issue body (the next worker will go fix it again).
+  Why this clause exists: it stops a full issue→PR→verify→closeout lap from running for
+  one line of comment prose, and such a lap was measured to spawn fresh comment findings
+  of its own, lengthening the chain.
 
 ## ⑤ Drain — continue to the next candidate immediately
 
