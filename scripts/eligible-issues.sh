@@ -49,13 +49,25 @@ while [ "$i" -lt "$count" ]; do
   # 사람 개입 대기(needs-human) 제외 — 사람이 라벨을 떼기 전에는 재디스패치 금지
   case ",$labels," in *",needs-human,"*) continue ;; esac
 
+  # 검증/마감 레인 이슈 제외 (진행 라벨 미러) — 원 이슈에 flow:verify/flow:ready/harvesting
+  # 가 미러링돼 있으면 구현이 끝나 다운스트림(verify-runner·closeout) 소유다. agent:claimed
+  # 가 스윕에 스트립돼도 이 플로우 라벨이 재디스패치를 막는다(중복 워커 방지 + 이슈 리스트
+  # 진행 가시화). 반송은 verify-runner 가 flow:verify 를 떼고 agent-ready 만 남기므로 이
+  # 필터에 안 걸려 정상 재디스패치된다.
+  case ",$labels," in *",flow:verify,"*|*",flow:ready,"*|*",harvesting,"*) continue ;; esac
+
   # 블로커 = 본문 "Blocked by #N" 라인의 N ∪ blocked-by:<N> 라벨의 N (OR·dedupe).
   # 라벨 방식은 이슈 목록에서 블로킹이 한눈에 보이는 게 요점(#85). 새 search 쿼리를
   # 추가하지 않고 이미 받은 labels 배열에서만 파싱한다(gh search 부정라벨 오파싱 #21).
   body=$(gh issue view "$num" --repo "$repo" --json body -q '.body // ""')
+  # -o 로 "blocked by #N" 매치 구간 자체만 뽑는다(매칭 라인 전체가 아니라) — 매칭
+  # 라인 전체를 넘겨서 grep -oE로 다시 훑으면 같은 줄 뒤쪽에 문맥상 언급된 무관한
+  # #M(예: 참조 PR)까지 블로커로 오인한다(#1457 실측: "Blocked by #1454 — ... #1446(...)"
+  # 한 줄에서 #1446까지 집힘). -o 매치 자체는 "Blocked by #1454"로 끊겨 뒤쪽 무관
+  # 언급을 애초에 안 본다.
   body_blockers=$(printf '%s' "$body" \
-    | grep -iE '^[[:space:]]*blocked[- ]by[[:space:]]+#[0-9]+' \
-    | grep -oE '#[0-9]+' | tr -d '#' || true)
+    | grep -oiE '^[[:space:]]*blocked[- ]by[[:space:]]+#[0-9]+' \
+    | grep -oE '[0-9]+$' || true)
   label_blockers=$(printf '%s' "$row" \
     | jq -r '[.labels[].name | select(startswith("blocked-by:")) | ltrimstr("blocked-by:")] | .[]' \
     2>/dev/null || true)
@@ -70,7 +82,12 @@ while [ "$i" -lt "$count" ]; do
   blocked=false
   for b in $blockers; do
     if gh_out=$(gh issue view "$b" --repo "$repo" --json state -q '.state' 2>&1); then
-      [ "$gh_out" = "CLOSED" ] || { blocked=true; break; }
+      # 블로커가 PR이면 gh issue view도 조회는 되지만 종료 상태가 CLOSED가 아니라
+      # MERGED로 나온다(#1457 실측: #1446은 PR, state=MERGED) — MERGED도 종료로 인정.
+      case "$gh_out" in
+        CLOSED|MERGED) ;;
+        *) blocked=true; break ;;
+      esac
     elif printf '%s' "$gh_out" | grep -qi 'could not resolve to an issue'; then
       echo "warn: $repo#$num blocked-by #$b 미존재 — 영구 정체 방지 위해 게이트 무시(통과)" >&2
     else

@@ -10,6 +10,17 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 중요: 셸 cwd 는 Bash 호출 간 유지되지 않는다. 모든 셸 명령은
 `cd <WT_PATH> && <명령>` 복합 형태로 실행하거나 절대 경로(`git -C <WT_PATH>`)를 써라.
 
+🔴 **백그라운드 실행 금지 (최우선 규율).** 어떤 명령도 `run_in_background: true` 로
+돌리지 마라. 너는 서브에이전트라 **백그라운드 작업의 완료 알림을 받지 못한다** — 턴을
+끝내는 순간 그 결과는 회수되지 않고 너는 영원히 대기 상태로 멈춘다(실측 반복 발생).
+"이 명령은 120초를 넘으니 백그라운드로" 는 여기서 **작업을 잃는 길**이다.
+- 오래 걸리는 명령(`bin/ci`, `bin/rails test`, `run-local-ci.sh` 등)은 Bash 툴의
+  `timeout` 파라미터를 **최대 600000ms(10분)까지 올려 포그라운드로** 돌려라.
+- 그래도 모자라면 명령을 쪼개라(파일 단위 테스트 실행 등).
+- 이미 백그라운드로 띄워버렸다면 재실행부터 하지 마라 — `TaskList`/`TaskOutput` 으로
+  그 작업의 출력을 **먼저 회수**하고, 비었거나 죽었을 때만 포그라운드로 다시 돌려라
+  (특히 크롬 스위트는 중복 실행이 머신 전체를 무너뜨린다).
+
 탐색 도구: <REPO_DIR>/.codegraph 인덱스가 있으면 기존 코드 탐색에 반복 grep/Read
 스캔 대신 codegraph CLI 를 우선 사용하라 (PATH: ~/.local/bin) —
 `codegraph query|callers|callees|impact -p <REPO_DIR> <심볼>`,
@@ -97,9 +108,11 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
       직접 한다).
    b. 단계 라벨을 `flow:verify` 로 세워라: `gh issue edit <PR번호> --repo <REPO>
       --add-label "flow:verify"` (재디스패치로 이 라벨이 떼여 있었으면 재부착 —
-      verify-runner 가 이 PR 을 다시 집는다). 이 `flow:*` 부착은 아래 "금지"의 좁은
-      예외다 — 코디네이션 라벨(agent-ready·needs-human·harvesting·우선순위)은 여전히
-      건드리지 마라.
+      verify-runner 가 이 PR 을 다시 집는다). **원 이슈에도 미러링**: `gh issue edit <NUM>
+      --repo <REPO> --add-label "flow:verify" --remove-label "agent:claimed"` — 이슈 리스트만
+      봐도 단계(구현→검증)가 보이고 eligible 재출현(중복 디스패치)을 막는다. 이 `flow:*`
+      부착은 아래 "금지"의 좁은 예외다 — 그 외 코디네이션 라벨(agent-ready·needs-human·
+      harvesting·우선순위)은 여전히 건드리지 마라.
    c. 종료 보고: PR 번호/URL, 테스트 결과, 남은 사항. **`머지 판정`은 🔄 그대로 두고
       종료**한다(✅/⚠ 는 verify-runner 가 검증 후 찍는다). 이후 추가 커밋을 push 하게
       되면 로컬 CI 를 재실행하고 flow:verify 를 유지하라.

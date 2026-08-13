@@ -62,6 +62,24 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   list 가 항상 빈값이라 이 신호가 실질 트리거다) · (4) **검증자 리뷰 코멘트의 BLOCKER**
   — PR 의 `마감 검증:`·`검증자 리뷰:` 코멘트에 BLOCKER 가 있었던 경우(`--json comments`).
 
+  ⚠️ **리베이스는 (3) 을 무력화한다 — "실패 이력 없음"을 판정으로 믿지 마라.**
+  closeout 이 conflict 를 rebase 하면 커밋 SHA 가 바뀌고 **리베이스 이전 SHA 는 PR 에서
+  사라진다**. 커밋 열거로도 타임라인으로도 못 찾는다 — `head_ref_force_pushed` 이벤트의
+  `commit_id` 는 push **이후** SHA 만 담고, 이전 `committed` 이벤트는 남지 않는다
+  (2026-08-11 PR#2290·#2276 실측). 커밋 상태는 SHA 에 붙으므로 SHA 를 모르면 조회 자체가
+  불가능하고, `run-local-ci.sh` 는 코멘트를 남기지 않아 GitHub 어디에도 흔적이 없다.
+  그래서 **리베이스된 PR 에서 (3) 이 비면 그건 "없음"이 아니라 "미상"이다.**
+  판별: `gh api repos/<repo>/issues/<pr>/timeline --jq '[.[]|select(.event=="head_ref_force_pushed")]|length'`
+  가 0 보다 크면 커밋 열거가 불완전하다. 그때는 —
+  ⓐ 컨텍스트(워커 완료 보고·이전 틱 Report 의 `run-local-ci` 결과)에 리베이스 **이전 SHA**
+  가 있으면 그 SHA 로 `gh api repos/<repo>/commits/<sha>/statuses` 를 직접 조회해 판정하라.
+  ⓑ 이전 SHA 를 모르면 (3) 을 미상으로 두고 나머지 신호(1·2·4)로만 판단한 뒤,
+  ④ Report 에 **"리베이스로 실패 이력 판별 불가"** 한 줄을 남겨라. 조용히 '없음'으로
+  넘기지 마라 — 유실이 안 보이는 것이 이 사각지대의 성질이고, 그러면 리베이스를 거친
+  PR 의 교훈은 영구히 학습 경로에서 빠진다.
+  (교훈이 이미 `lessons.md` 에 같은 내용으로 있으면 중복 append 하지 마라 — 20줄 캡이
+  막으려는 희석이 그것이다. 그 경우 Report 에 "기존 교훈과 동일 — 미기록"으로 적는다.)
+
   > "PR #<pr> (<repo>)의 리뷰 코멘트와 CI 실패 로그를 읽고, 객관적 실패 사실에서
   > 재발 방지 교훈을 딱 1줄로: '<상황>일 때 <구체 행동>하라' 형식. 추측·일반론 금지.
   > 실패 사실이 없으면 'NONE' 출력."
@@ -71,6 +89,13 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   가리키게 하는 유일한 해석)에 `- [YYYY-MM-DD PR#<pr>] <교훈>` 형식으로 append.
   **20줄 초과 시 가장 오래된 줄 삭제** (context rot 방어). lessons를 CLAUDE.md로 옮기는
   것은 사람만 한다.
+  **라우팅 — `lessons.md` 는 구현 교훈 전용이다.** 이 파일은 ③-4d 에서 **워커 프롬프트에
+  그대로 실린다. 그래서 담기는 것은 "다음 구현자가 같은 코드를 다시 짤 때 쓸 지식"뿐이다.
+  교훈이 **검증 판정 계열**(검증자가 무엇을 오판했나 · false BLOCKER 를 어떻게 뒤집었나 ·
+  BLOCKER vs WARN 경계)이면 여기 쓰지 말고 같은 디렉토리의 **`.loop/lessons-verifier.md`**
+  에 append 하라 — 그 파일은 verify-runner ③-3 과 closeout 1단계가 검증자 프롬프트에
+  주입한다(캡·형식은 closeout 쪽 규칙을 따른다). 두 파일을 섞으면 양쪽 프롬프트가 서로
+  무관한 지식으로 희석된다.
 - `rejected` — 사람이 PR을 거부함. **살아있는 워커가 있으면 `merged` 와 동일하게
   `TaskStop` 으로 먼저 중단**(고아 방지). lessons 단계 동일하게 수행. 이슈는 재디스패치하지
   않는다 (agent-ready가 이미 제거됨).
@@ -184,6 +209,8 @@ N 도 디스패치당 1만 올린다.
    b. `$SCRIPTS/make-worktree.sh <repo> <num>` — 마지막 줄이 worktree 경로.
    c. `$SCRIPTS/repo-dir.sh <repo>` 출력 경로의 `.loop/lessons.md`
       (= `<repo-dir>/.loop/lessons.md`, 기록 경로와 동일 해석)가 있으면 내용을 읽어 둔다.
+      **`.loop/lessons-verifier.md` 는 읽지 마라** — 검증자용 사례집이라 구현 워커에겐
+      무관하고 프롬프트만 부풀린다(① 의 라우팅 항목 참조).
    d. 디스패치 직전 `~/.claude/skills/issue-runner/references/worker-template.md` 를
       읽고 placeholder(`<WT_PATH>` `<REPO>` `<NUM>` `<TITLE>` `<DEFAULT_BRANCH>`
       `<REPO_DIR>` `<LESSONS_OR_"없음">`)를 채워 투입하라 (Agent 툴 백그라운드 디스패치

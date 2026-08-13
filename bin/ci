@@ -719,12 +719,16 @@ grep -qF '과거 교훈: 없음' README.ko.md \
 echo "[closeout] lessons 기록 배선 검사 (#80 변경 4 — 거짓 BLOCKER 반전·코드무관 스모크 실패)"
 # closeout 파이프라인에 반복 실증된 두 지점만 최소 배선: (a) 1단계 검증자 BLOCKER 가
 # 사람/후속 확인으로 거짓 판정으로 뒤집힌 경우, (b) 5단계 스모크 실패가 코드무관
-# (인프라/플레이크)으로 판명된 경우 — 각각 대상 레포 lessons.md 에 1줄 append.
+# (인프라/플레이크)으로 판명된 경우 — 각각 대상 레포 검증자 사례집에 1줄 append.
+# 파일명은 `lessons-verifier.md`(검증 판정 계열) — 워커용 `lessons.md` 와 분리돼 있다.
+# 정규식이 `lessons(-verifier)?\.md` 로 둘 다 받는 이유: 아직 분리 안 한 레포는 폴백으로
+# `lessons.md` 를 쓰므로 그 서술도 유효하다. 접미 없는 `lessons.md` 만 박아 두면 분리
+# 이후 서술이 통째로 거짓이 되고, 반대로 `-verifier` 만 강제하면 폴백 서술이 막힌다.
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
-  grep -qF 'lessons.md' "$f" || { echo "  ✗ $f 에 closeout lessons 기록 배선 없음"; exit 1; }
-  awk 'BEGIN{RS="";ok=0} /lessons\.md/ && /BLOCKER/ {ok=1} END{exit ok?0:1}' "$f" \
+  grep -qE 'lessons(-verifier)?\.md' "$f" || { echo "  ✗ $f 에 closeout lessons 기록 배선 없음"; exit 1; }
+  awk 'BEGIN{RS="";ok=0} /lessons(-verifier)?\.md/ && /BLOCKER/ {ok=1} END{exit ok?0:1}' "$f" \
     || { echo "  ✗ $f: 거짓 BLOCKER 반전 시 lessons 기록 지시(같은 단락) 없음"; exit 1; }
-  awk 'BEGIN{RS="";ok=0} /lessons\.md/ && (/스모크/ || /smoke/) {ok=1} END{exit ok?0:1}' "$f" \
+  awk 'BEGIN{RS="";ok=0} /lessons(-verifier)?\.md/ && (/스모크/ || /smoke/) {ok=1} END{exit ok?0:1}' "$f" \
     || { echo "  ✗ $f: 코드무관 스모크 실패 시 lessons 기록 지시(같은 단락) 없음"; exit 1; }
 done
 
@@ -735,8 +739,8 @@ echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4
 grep -qF '<LESSONS_OR_' skills/closeout/references/verifier-prompt.md \
   || { echo "  ✗ verifier-prompt.md 에 <LESSONS_OR_ placeholder 없음"; exit 1; }
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
-  awk 'BEGIN{RS="";ok=0} /<LESSONS_OR_/ && /lessons\.md/ {ok=1} END{exit ok?0:1}' "$f" \
-    || { echo "  ✗ $f: 1단계 검증자에 lessons 주입(<LESSONS_OR_ ← lessons.md) 지시 없음"; exit 1; }
+  awk 'BEGIN{RS="";ok=0} /<LESSONS_OR_/ && /lessons(-verifier)?\.md/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f: 1단계 검증자에 lessons 주입(<LESSONS_OR_ ← lessons-verifier.md) 지시 없음"; exit 1; }
 done
 
 echo "[test] finish-classify.sh 분류 픽스처 테스트 (#88)"

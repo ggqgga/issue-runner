@@ -43,7 +43,28 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
   (closeout 소유) · issue-runner 워크트리/브랜치를 검증 목적 밖으로 조작 · `flow:verify`
   가 아닌 PR 에 손대기. **허용**: 검증 대상 PR 의 `flow:*` 라벨 교체(flow:verify→
   flow:ready), 재디스패치 시 연결 이슈 `agent-ready` 재부착·`agent:claimed` 제거
-  (검증 실패 반송 — worker-template 이 이 반송을 받아 고친다).
+  (검증 실패 반송 — worker-template 이 이 반송을 받아 고친다), 아래 **주석 직접 수정**.
+
+## ⓪ 주석 오류 직접 수정 (WARN/NIT 중 주석만)
+
+검증에서 **주석·문서 문자열이 사실과 다르다**고 실측된 건은 반송하지 말고 이 루프가
+**직접 고친다**. 반송 한 바퀴(이슈→디스패치→구현→검증→마감)를 한 줄 고치자고 돌리는 게
+낭비이고, 이 레포에선 틀린 주석이 실제 결함의 진원이기 때문이다(오서술 하나 고치려고 PR
+하나가 따로 돈 전례가 있다).
+
+**대상은 주석·문서뿐이다.** 실행되는 코드·테스트 로직·상수값은 손대지 마라 — 그건 이슈
+발행(또는 재디스패치) 대상이다. "테스트를 한 줄 더 넣으면 닫힌다" 류 커버리지 공백도
+코드라서 여기 해당 없음. 판정 기준: **지우고 다시 실행해도 동작이 한 톨도 안 바뀌는가.**
+
+절차 (통과 판정 PR 한정 — 재디스패치·보류 건은 손대지 않는다):
+1. 대상 worktree 에서 주석만 수정 → `git commit` → PR head 브랜치로 push.
+2. **재게이트**: 새 SHA 로 `$SCRIPTS/run-local-ci.sh <repo> <issue>` 를 돌려 캐시를
+   채운다(커밋을 얹으면 로컬 CI 캐시가 SHA 기준이라 `ci=revalidate` 가 되고, 안 채우면
+   closeout 이 막힌다). 비0이면 그 커밋을 되돌리고 WARN 으로만 보고하라.
+3. **공개**: `검증자 리뷰:` 코멘트에 `verify-runner 직접 수정: <파일> — <무엇을>` 을
+   명시한다. 자기가 고친 것을 자기가 그린라이트하는 구조라, 그 사실이 closeout·사람에게
+   보여야 한다.
+4. E2E 는 재실행하지 않는다(주석은 실행되지 않는다 — 결정적 CI 재통과로 충분).
 
 ## ① Reconcile
 
@@ -66,13 +87,39 @@ verify-eligible 출력의 **첫 후보 1개만** 집는다(FIFO·직렬). `flow:
 ## ③ Verify — 집은 PR 을 검증한다
 
 **0. CI 상태 분기 (verify-eligible 의 `ci` 필드).**
-- `fail` → 결정적 CI 가 실패다(코드 회귀). 검증하지 말고 **④ 재디스패치**(코드 반송)
-  로 바로 간다 — 사유 = `결정적 CI 실패`.
+- `fail` → 결정적 CI 가 실패다. **단, 코드 회귀인지 먼저 확인한다** — 아래 `fail` 원인
+  분류를 거쳐 코드 회귀면 검증하지 말고 **④ 재디스패치**(코드 반송), 사유 = `결정적 CI
+  실패`. 인프라 자가체크면 재디스패치하지 말고 **flake_retry**(라벨 유지 → 다음 틱 재집).
 - `revalidate` → rebase 등으로 현재 HEAD 의 로컬 CI 캐시가 비었다. worktree 를 PR
   head 로 동기화하고(아래 1단계 worktree 확보에 이어) `$SCRIPTS/run-local-ci.sh
   <repo> <issue>` 로 캐시를 채운다. 비0(통합 깨짐)이면 ④ 재디스패치(`결정적 CI 실패
   — rebase 통합`). 0이면 E2E 로 진행.
 - `pass` → 바로 E2E 로.
+
+**`fail` 원인 분류 — 코드 회귀 vs 인프라 자가체크.** `fail` 을 본 즉시 캐시 로그
+(`~/.claude/.local-ci/<slug>/<sha>.log`, slug=`repo-dir.sh` 경로의 `/`·공백→`_`)를
+읽어 **어느 step 이 죽었는지** 확인한다. 판별 기준은 한 가지다 — **그 실패가 PR diff
+와 인과로 닿는가.** 닿지 않는 실패는 반송해도 워커가 고칠 수 없어 반송 자체가 낭비다
+(무한 반송 → 이슈만 오염).
+
+인과로 안 닿는 대표 부류(**재디스패치 금지**):
+- **툴 자가체크** — 툴이 "내 버전이 최신인가"를 자기 자신에게 묻고 실패하는 것.
+  전례: brakeman `--ensure-latest` 는 상류가 패치 릴리스를 내는 순간 **스캔을 시작도
+  안 하고** exit 5 로 죽어(출력이 버전 한 줄뿐, 경고 리포트 없음) 코드와 무관하게
+  전 브랜치를 동시에 빨갛게 만들었다. PR 7건이 12틱 묶였고 재실행은 영원히 무의미했다
+  (`bin/brakeman` 에서 그 플래그를 제거해 해소 — #2768).
+- **환경·네트워크** — 젬/npm advisory DB fetch 실패, 레지스트리 타임아웃, 디스크·포트.
+- **base 자체가 빨강** — 같은 실패가 `origin/<base>` 에서도 재현되면 PR 무죄다
+  (`git -C <wt> checkout origin/<base>` 후 그 step 만 단독 재현).
+
+**전 브랜치 동시 빨강은 이 부류의 지문이다.** 이번 틱 verify-eligible 이 전부 `fail`
+이고 실패 step·메시지가 같으면 코드 회귀가 아니다 — 그 PR 들이 서로 다른 파일을 건드리는데
+같은 지점에서 죽을 확률은 없다.
+
+처리: 사유를 **한 번만** PR 코멘트로 남기고(같은 마커가 이미 있으면 재발행 금지 —
+/loop 스팸 방지) `flow:verify` 를 **그대로 둔 채** flake_retry 로 ④ Report 에 올린다.
+해소가 이 루프 권한 밖이면(젬 범프·툴 설정 변경 등) 그 사실과 해소 방법을 사람이 읽을
+코멘트에 명시하라 — 라벨이 남아 있으므로 해소 즉시 다음 틱이 자동으로 재집는다.
 
 **1. worktree 확보·동기화.** `$SCRIPTS/make-worktree.sh <repo> <issue>` 로 worktree
 경로를 얻고(마지막 줄), **PR 의 현재 head 로 강제 동기화**한다(기존 worktree 는 옛 SHA
@@ -102,8 +149,9 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
 **3. codex correctness 리뷰.** 검증자가 sandbox 에서 네트워크에 못 닿아도 판정하도록
 **메인 세션이 원문을 프롬프트에 동봉**한다. `gh pr diff <pr> --repo <repo>` 로 diff,
 `gh issue view <issue> --repo <repo>` 로 이슈 본문(연결 이슈 없으면 빈 문자열),
-`$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 `.loop/lessons.md`(없거나 비면 `없음`)를
-받아, `skills/verify-runner/references/verify-prompt.md` 의 placeholder(`<PR>`·`<REPO>`·
+`$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 **`.loop/lessons-verifier.md`**(검증 판정
+사례집 — 과거 false BLOCKER 를 뒤집은 기록)를 받아,
+`skills/verify-runner/references/verify-prompt.md` 의 placeholder(`<PR>`·`<REPO>`·
 `<BASE>`=default branch·`<DIFF>`·`<ISSUE_BODY>`·`<LESSONS_OR_"없음">`)를 채워 `VERIFIER`
 를 **`run_in_background: true` 로 스폰**한다(## 상수의 VERIFIER 계약·폴백 적용). 스폰
 시각을 기록하고 TaskList/TaskOutput 으로(예: 30초 간격) 폴링한다 — 스폰 시각 +
@@ -113,6 +161,11 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
 VERIFIER 의 general-purpose 재시도)도 **동일한 배선**(새 스폰 시각 + 같은
 `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을 적용한다 — codex 스톨 후
 폴백이 또 무한 스핀하지 못하게.
+- **lessons 파일 해석**: `.loop/lessons-verifier.md` 가 있으면 그것을 쓴다. 없으면
+  `.loop/lessons.md` 로 폴백하고(아직 분리 안 한 레포), 둘 다 없거나 비면 `없음`.
+  두 파일은 대상이 다르다 — `lessons.md` 는 **구현 워커**용(issue-runner 가 주입),
+  `lessons-verifier.md` 는 **검증자**용이다. 검증자 프롬프트에 구현 교훈을 섞지 마라
+  (오판 방지 신호가 희석된다).
 - 동봉 실패 fail-closed: `gh pr diff` 가 실패하거나 diff 가 비면, 또는 diff 가 검증자
   컨텍스트에 다 안 들어갈 만큼 크면(판단이 서면) 통과로 보지 말고 BLOCKER 로 취급한다.
 - 검증자 BLOCKER(데드라인 초과 포함) → E2E 결과와 무관하게 **④ 재디스패치**
@@ -132,7 +185,9 @@ VERIFIER 의 general-purpose 재시도)도 **동일한 배선**(새 스폰 시�
 <!-- bodat:worker -->"`
 3. 라벨 인계: `gh issue edit <pr> --repo <repo> --add-label flow:ready --remove-label flow:verify`
    → closeout `closeout-eligible.sh` 가 `머지 판정: ✅` 로 이 PR 을 집어 마감한다
-   (**closeout 계약 무변경** — 기존 ✅ 마커 재사용). **success 종료.**
+   (**closeout 계약 무변경** — 기존 ✅ 마커 재사용).
+   **원 이슈 미러**(연결 이슈 있으면): `gh issue edit <issue> --repo <repo> --add-label flow:ready --remove-label flow:verify`
+   — 이슈 리스트만 봐도 단계(검증→마감)가 보이게. **success 종료.**
 
 **redispatched** — E2E 진짜 실패 / codex BLOCKER(검증자 데드라인 초과 포함) / 결정적 CI 실패:
 1. `<!-- verify-attempt: N -->` 를 PR 본문에서 읽어(없으면 0) N+1 이 `VERIFY_ATTEMPTS_LIMIT`
@@ -144,7 +199,8 @@ VERIFIER 의 general-purpose 재시도)도 **동일한 배선**(새 스폰 시�
    (/loop 스팸 방지). PR 본문 주석을 `<!-- verify-attempt: N+1 -->` 로 갱신
    (`gh pr edit <pr> --repo <repo> --body ...` — 나머지 본문 보존).
 3. 라벨·반송: `gh issue edit <pr> --repo <repo> --remove-label flow:verify` +
-   연결 이슈에 `gh issue edit <issue> --repo <repo> --add-label agent-ready --remove-label agent:claimed`.
+   연결 이슈에 `gh issue edit <issue> --repo <repo> --add-label agent-ready --remove-label flow:verify --remove-label agent:claimed`
+   (원 이슈 미러도 함께 원복 — 워커가 이슈에 단 `flow:verify` 를 떼고 `agent-ready` 로 되돌린다).
    → issue-runner Dispatch 가 기존 `agent/issue-<issue>` worktree/브랜치를 재사용해
    같은 PR 브랜치에서 워커를 다시 붙인다(새 PR 안 생김). 워커는 위 `재검증 실패:`
    코멘트를 읽고 고친 뒤 다시 `flow:verify` 로 넘긴다(worker-template 절차). **redispatched 종료.**
@@ -153,7 +209,7 @@ VERIFIER 의 general-purpose 재시도)도 **동일한 배선**(새 스폰 시�
 **held** — 재디스패치 상한 초과(VERIFY_ATTEMPTS_LIMIT) 또는 연결 이슈 부재:
 `gh pr comment <pr> --repo <repo> --body "검증 보류: <사유> — 사람 확인 필요
 <!-- bodat:worker -->"` + `gh issue edit <pr> --repo <repo> --remove-label flow:verify` +
-(연결 이슈 있으면) `gh issue edit <issue> --repo <repo> --add-label needs-human`. **held 종료.**
+(연결 이슈 있으면) `gh issue edit <issue> --repo <repo> --add-label needs-human --remove-label flow:verify`. **held 종료.**
 
 **flake_retry** — 검증을 아예 못 돌린 일시 장애(worktree fetch 실패·make-worktree 오류
 등, 판정 아님): `flow:verify` 를 **그대로 두고** ④ Report 에 warn 으로 올린다 → 다음
