@@ -363,13 +363,43 @@ comment.
 `references/deploy-check-issue.md` (`<DEPLOY_CMD>`=the repo's deploy entrypoint, or
 "the repo's deploy procedure" if unknown; `<VERIFY_URL>`=the production base URL the
 step-5 smoke drives — leave it blank if unknown so step 5 falls back as URL-unreachable;
-`<LIVE_CHECKS>`=carry over verbatim the items from the PR test plan·issue body marked
+`<LIVE_CHECKS>`=carry over the items from the PR test plan·issue body marked
 as **only performable after merge** — e.g. "post-deploy live verification",
-hardware/real-device checks — or "없음" if none; this is the sole hand-off destination
-for out-of-merge-scope verification the step-1 verifier excluded from the merge gate),
-issue a deploy-request issue with `gh issue create --repo <repo> --label needs-human`,
-leave the marker `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`,
-then **exit as approval-required**.
+hardware/real-device checks; this is the sole hand-off destination
+for out-of-merge-scope verification the step-1 verifier excluded from the merge gate).
+
+**`<LIVE_CHECKS>` must take one of two shapes — no free prose.**
+- If there is **nothing at all** for a human to do after deploy, exactly the one word
+  `없음`. Do not append an explanation after it.
+- Otherwise a **`- [ ]` checkbox list**. One line = one action a human performs.
+  Background·rationale·caveats go in `## 변경 요약`; leave only the actions here.
+
+Why the shape is enforced: the branch below reads this section to decide whether an issue
+is filed at all, and free prose leaves that decision to per-tick interpretation, which
+drifts (measured 2026-08-12~13: of 186 deploy-check issues, **zero** used checkboxes —
+all prose). A sentence like "없음. 주석 13줄이 전부다 — 관찰 가능한 변화가 없다" is clear
+to a human but is not `없음` to a machine branch.
+
+**Branch — if there is nothing to step through, do not create an issue.**
+
+- **If it is `없음`: do not file an issue.** Leave only the marker `gh pr comment <pr>
+  --repo <repo> --body "배포 대기(검증 항목 없음) — 승격 시 함께 올라간다`\n`<!-- bodat:worker -->"`
+  and **exit as approval-required**. **Skip the step-5 smoke too** (there is no reason to
+  open Chrome for zero items — measured: 39 of the 64 `없음` issues ran a smoke anyway).
+  - Why this is not a loss: **the deploy issue was never the source of truth for what is
+    undeployed.** ④ Report's `승격 대기 N커밋` and the promotion side's
+    `git merge-base --is-ancestor` + tags already hold that. The issue is a **container for
+    human actions**, not a deploy ledger.
+  - The PR dropping out of the promoter's list is also intended — there is nothing to look at.
+- **If there is at least one checkbox:** as before, file the deploy-request issue with
+  `gh issue create --repo <repo> --label needs-human`, leave the marker
+  `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
+  **exit as approval-required**. The checkbox list is exactly what closing that issue requires.
+
+**Do not batch.** Never merge several deploy-wait issues into one — a long-lived issue that
+keeps accruing items loses its closing moment and becomes an issue that never ends (user
+decision, 2026-08-13). The axis that shrinks the count is **not merging them, but never
+creating the ones with nothing to step through**.
 
 **Step 5 — post-deploy handling (Chrome smoke).** For a deploy issue a human has
 reported deployed, without any new detection mechanism (no polling/timing), actively run
@@ -381,6 +411,12 @@ if a prior tick died before cleanup and left a smoke page, `close_page` it first
 `navigate_page` to `<VERIFY_URL>`, and compare each item via
 `evaluate_script`/`take_snapshot` to produce a per-item pass/fail (distinguish
 structure/empty-state confirmation from real-data render confirmation in the result).
+- **No items to step through — do not smoke.** A PR that step 4 routed down the `없음`
+  branch has no issue, so it is not a step-5 subject at all. Even when a deploy issue
+  exists, if `## 라이브/하드웨어 검증 항목` holds no `- [ ]` at all, do not open Chrome —
+  a smoke with zero items to compare has not passed anything, it **looked at nothing**,
+  yet it prints as `✅ 스모크 0/0 통과` and reads as verified (a false green). Leave the
+  reason as a comment instead: `스모크 생략: 밟을 항목 0`.
 - **Already-closed deploy issue — skip the smoke.** If the deploy issue is already
   CLOSED and has a verification/deploy-complete comment, treat step 5 as complete —
   do not re-smoke, proceed to the next step (the case where the human gate finished
