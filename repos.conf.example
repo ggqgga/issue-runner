@@ -1,6 +1,18 @@
-# repos.conf — 레포가 기본 위치($HOME/Projects/<레포명>)에 없을 때만 매핑을 적는다.
-# 형식: <owner/repo> <절대경로>   (공백 구분 — 경로에 공백이 있으면 안 된다)
+# repos.conf — 레포가 기본 위치($HOME/Projects/<레포명>)에 없거나, 레포별 플래그가
+# 필요할 때만 줄을 적는다.
+# 형식: <owner/repo> <절대경로> [flag ...]   (공백 구분 — 경로에 공백이 있으면 안 된다)
 # 이 파일을 repos.conf 로 복사해 자기 머신에 맞게 수정 (repos.conf 는 gitignore됨).
+#
+# 경로 자리에 `-` 를 적으면 "기본 경로 그대로" — 플래그만 주고 싶을 때 쓴다.
+#
+# 플래그:
+#   link-secrets  워크트리에 메인 체크아웃의 .env·config/master.key 를 심링크한다.
+#                 기본은 off — 무인 워커 작업공간에 라이브 시크릿을 두지 않는다(#109).
+#                 켠 레포에서만 워커가 credential 의존 테스트(foreman run 등)를
+#                 메인과 동일하게 돌릴 수 있다. 이슈 본문이 곧 워커 프롬프트라는
+#                 점을 감안해 신뢰하는 레포에만 켜라.
 #
 # 예:
 # acme/webapp ~/Work/clients/acme-webapp
+# acme/webapp ~/Work/clients/acme-webapp link-secrets
+# acme/other  -                          link-secrets

@@ -801,4 +801,350 @@ for f in SKILL.md SKILL.en.md; do
     || { echo "  ✗ $f 에 finish-classify.sh 분기 배선 없음"; exit 1; }
 done
 
+echo "[#109] repo-flag.sh repos.conf 플래그 파싱 스모크"
+# 3번째 이후 필드가 플래그. 주석 줄 무시, 경로 자리 `-` 는 기본 경로 폴백(repo-dir.sh).
+tmp=$(mktemp -d)
+cat > "$tmp/repos.conf" <<'EOF'
+# acme/commented /x link-secrets
+acme/plain /path/to/plain
+acme/flagged /path/to/flagged link-secrets
+acme/multi /path/to/multi other-flag link-secrets
+acme/dashpath - link-secrets
+EOF
+rflag() { ISSUE_RUNNER_REPOS_CONF="$tmp/repos.conf" bash scripts/repo-flag.sh "$1" link-secrets; }
+rflag acme/flagged || { echo "  ✗ repo-flag: 플래그 있는 줄을 못 읽음"; rm -rf "$tmp"; exit 1; }
+rflag acme/multi   || { echo "  ✗ repo-flag: 플래그 2개 중 뒤쪽을 못 읽음"; rm -rf "$tmp"; exit 1; }
+if rflag acme/plain;     then echo "  ✗ repo-flag: 플래그 없는 줄이 통과"; rm -rf "$tmp"; exit 1; fi
+if rflag acme/commented; then echo "  ✗ repo-flag: 주석 줄이 통과"; rm -rf "$tmp"; exit 1; fi
+if rflag acme/absent;    then echo "  ✗ repo-flag: conf 에 없는 레포가 통과"; rm -rf "$tmp"; exit 1; fi
+# conf 자체가 없으면 전부 off (기본 안전값)
+if ISSUE_RUNNER_REPOS_CONF="$tmp/nope.conf" bash scripts/repo-flag.sh acme/flagged link-secrets; then
+  echo "  ✗ repo-flag: conf 부재인데 통과"; rm -rf "$tmp"; exit 1
+fi
+# 경로 자리 `-` → 기본 경로 해석으로 폴백
+out=$(ISSUE_RUNNER_REPOS_CONF="$tmp/repos.conf" ISSUE_RUNNER_PROJECTS_ROOT=/tmp \
+  bash scripts/repo-dir.sh acme/dashpath)
+[ "$out" = "/tmp/dashpath" ] || { echo "  ✗ repo-dir: '-' 경로 폴백 실패: $out"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
+echo "[#109] make-worktree.sh 시크릿 심링크 opt-in 스모크 (기본 off·플래그 on·회수)"
+# 기본은 워크트리에 라이브 시크릿을 안 깐다. repos.conf link-secrets 를 켠 레포에서만
+# 심링크하고, 껐는데 이전에 깔린 심링크가 남아 있으면 회수한다.
+mkwt="$PWD/scripts/make-worktree.sh"
+tmp=$(mktemp -d); mkdir -p "$tmp/stub" "$tmp/proj"
+printf '#!/bin/sh\ncase "$*" in *defaultBranchRef*) echo main ;; *) echo "" ;; esac\n' > "$tmp/stub/gh"
+chmod +x "$tmp/stub/gh"
+git init -q --bare "$tmp/origin.git"
+git init -q -b main "$tmp/proj/r"
+git -C "$tmp/proj/r" config user.email t@t; git -C "$tmp/proj/r" config user.name t
+git -C "$tmp/proj/r" commit -q --allow-empty -m init
+git -C "$tmp/proj/r" remote add origin "$tmp/origin.git"
+git -C "$tmp/proj/r" push -q -u origin main
+printf 'SECRET=live\n' > "$tmp/proj/r/.env"          # 메인 체크아웃의 라이브 시크릿
+printf 'o/r - link-secrets\n' > "$tmp/on.conf"
+printf 'o/r -\n'              > "$tmp/off.conf"
+run_mkwt() {  # $1=conf $2=issue-num
+  ISSUE_RUNNER_REPOS_CONF="$1" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" PATH="$tmp/stub:$PATH" \
+    bash "$mkwt" o/r "$2" 2>/dev/null
+}
+# (a) 플래그 off → 심링크 미생성
+w=$(run_mkwt "$tmp/off.conf" 5)
+[ -d "$w" ] || { echo "  ✗ make-worktree off: worktree 미생성"; rm -rf "$tmp"; exit 1; }
+[ ! -e "$w/.env" ] || { echo "  ✗ make-worktree off: .env 가 워크트리에 깔림(유출 벡터 잔존)"; rm -rf "$tmp"; exit 1; }
+# (b) 플래그 on → 심링크 생성 + 메인 파일을 가리킴
+w=$(run_mkwt "$tmp/on.conf" 6)
+[ -L "$w/.env" ] || { echo "  ✗ make-worktree on: .env 심링크 미생성"; rm -rf "$tmp"; exit 1; }
+grep -q 'SECRET=live' "$w/.env" || { echo "  ✗ make-worktree on: 심링크가 메인 .env 를 안 가리킴"; rm -rf "$tmp"; exit 1; }
+# (c) 같은 worktree 를 플래그 off 로 재실행 → 기존 심링크 회수
+w=$(run_mkwt "$tmp/off.conf" 6)
+[ ! -e "$w/.env" ] || { echo "  ✗ make-worktree 회수: 기존 .env 심링크가 안 지워짐"; rm -rf "$tmp"; exit 1; }
+# (d) 워커가 만든 실제 파일은 회수 대상 아님(심링크만 지운다)
+printf 'worker-local\n' > "$w/.env"
+w=$(run_mkwt "$tmp/off.conf" 6)
+[ -f "$w/.env" ] && ! [ -L "$w/.env" ] \
+  || { echo "  ✗ make-worktree 회수: 심링크 아닌 실제 파일을 지웠다"; rm -rf "$tmp"; exit 1; }
+# (e) 우리 대상이 아닌 심링크는 회수 대상 아님 — "우리가 만든 것만 지운다"가 계약.
+printf 'other\n' > "$tmp/other.env"
+rm -f "$w/.env"; ln -s "$tmp/other.env" "$w/.env"
+w=$(run_mkwt "$tmp/off.conf" 6)
+[ -L "$w/.env" ] && [ "$(readlink "$w/.env")" = "$tmp/other.env" ] \
+  || { echo "  ✗ make-worktree 회수: 우리 것 아닌 심링크를 지웠다"; rm -rf "$tmp"; exit 1; }
+# (f) 플래그 on 이어도 다른 대상의 심링크를 조용히 갈아끼우지 않는다.
+w=$(run_mkwt "$tmp/on.conf" 6)
+[ "$(readlink "$w/.env")" = "$tmp/other.env" ] \
+  || { echo "  ✗ make-worktree on: 기존 심링크 대상을 덮어썼다"; rm -rf "$tmp"; exit 1; }
+# (g) 깨진 심링크가 있어도 플래그 on 이 크래시하지 않는다 (`[ ! -e ]` 가 참이라
+#     대상 확인 없이 ln -s 를 부르면 "File exists" 로 죽는 경로).
+rm -f "$w/.env"; ln -s "$tmp/does-not-exist" "$w/.env"
+rc=0; w=$(run_mkwt "$tmp/on.conf" 6) || rc=$?
+[ "$rc" = 0 ] || { echo "  ✗ make-worktree on: 깨진 심링크에서 exit $rc (크래시)"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
+echo "[#108] claim-issue.sh 원자적 잠금 스모크 (경합 1명만 통과·스테일 잠금 진행·fail-closed)"
+# 잠금 = create-only ref(POST /git/refs). 상태 있는 gh 스텁(잠금 파일 카운터)으로
+# 첫 호출만 201, 이후 422 를 내게 해 "정확히 하나만 claim" 을 검증한다.
+claim="$PWD/scripts/claim-issue.sh"
+tmp=$(mktemp -d); mkdir -p "$tmp/stub"
+# 상태 있는 스텁: $tmp/lock = 잠금 ref 존재, $tmp/claimed = agent:claimed 부착됨.
+# 사전 재확인(--json labels,state)은 **항상** OPEN·라벨 없음을 돌려준다 — 두 경쟁자가
+# 원자화 이전처럼 나란히 게이트를 통과하는 상황을 고정 재현하기 위함(그래야 이 스모크가
+# 잠금만 검증한다). 그 뒤의 조회(--json labels)는 실제 상태를 따른다.
+cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
+  *"--json labels"*)
+    if [ -f "$tmp/claimed" ]; then echo '{"labels":[{"name":"agent:claimed"}]}'
+    else echo '{"labels":[]}'; fi ;;
+  *"git/ref/heads/agent/issue-5"*) exit 1 ;;      # 원격 브랜치 없음 → 앵커 base
+  *".default_branch"*) echo "main" ;;
+  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  # 잠금 ref 와 takeover ref 는 **별개의 create-only 자원**이다 — 한 파일로 흉내내면
+  # takeover 가 1차 잠금의 422 를 물려받아 스테일 인수 경로를 검증할 수 없다.
+  #
+  # 단 **D/F(디렉토리/파일) 충돌은 반드시 재현한다**: git ref 네임스페이스는 파일시스템
+  # 처럼 동작해 앵커 ref 가 있으면 그 하위의 takeover 자식 ref 는 거부된다(실측: 422
+  # `Reference update failed` — `already exists` 가 아니다). takeover 는 정의상 1차 잠금이
+  # 있을 때만 시도되므로, 자식 경로를 쓰면 인수가 **항상** 실패한다. 이 규칙이 없으면
+  # 스텁이 불가능한 동작을 성공으로 흉내내 그 회귀를 통째로 놓친다(실증: 그렇게 통과한
+  # 스모크가 codex 재검증까지 CLEAN 을 받았다).
+  # 패턴은 **앵커 무관**이어야 한다 — 자식형만 슬래시-takeover 를 포함하고 형제형(하이픈)은
+  # 포함하지 않으므로, 앵커가 `base` 든 40자 sha 든 규칙이 그대로 성립한다. 리터럴 앵커에
+  # 묶으면 앵커 형태가 바뀌는 순간 규칙이 조용히 무력화된다(전건 초록불 채로).
+  *"git/refs"*"/takeover"*)
+    echo '{"message":"Reference update failed","status":"422"}'; exit 1 ;;
+  *"git/refs"*takeover*)
+    if [ -f "$tmp/takeover" ]; then
+      echo '{"message":"Reference already exists","status":"422"}'; exit 1
+    fi
+    : > "$tmp/takeover"; echo '{"ref":"refs/issue-runner/claim/5/base-takeover"}' ;;
+  *"git/refs"*)
+    if [ -f "$tmp/lock" ]; then
+      echo '{"message":"Reference already exists","status":"422"}'; exit 1
+    fi
+    : > "$tmp/lock"; echo '{"ref":"refs/issue-runner/claim/5/base"}' ;;
+  *"issue edit"*) : > "$tmp/claimed" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+run_claim() { PATH="$tmp/stub:$PATH" CLAIM_STALE_WAIT=0 bash "$claim" o/r 5 2>/dev/null; }
+# (a) 경합: 사전 재확인은 둘 다 통과하지만 잠금은 하나만 잡는다. 패배자의 재조회는
+#     승자가 붙인 agent:claimed 를 본다 → 정확히 1회만 "claimed:".
+rm -f "$tmp/lock" "$tmp/claimed" "$tmp/takeover"
+wins=0
+rc=0; out=$(run_claim) || rc=$?
+case "$out" in *"claimed: o/r#5"*) wins=$((wins + 1)) ;; esac
+rc=0; out=$(run_claim) || rc=$?
+case "$out" in *"claimed: o/r#5"*) wins=$((wins + 1)) ;; esac
+[ "$wins" = 1 ] || { echo "  ✗ claim 경합: 통과 $wins 회 (기대 1 — 이중 claim)"; rm -rf "$tmp"; exit 1; }
+[ "$rc" = 1 ] || { echo "  ✗ claim 경합: 패배자 exit $rc (기대 1)"; rm -rf "$tmp"; exit 1; }
+# (b) 스테일 잠금: 잠금 ref 는 있는데(이전 attempt) 재조회에 agent:claimed 가 없다 →
+#     죽은 attempt 의 잔여 잠금으로 보고 진행해야 한다(재디스패치가 영구히 막히면 안 됨).
+rm -f "$tmp/claimed" "$tmp/takeover"; : > "$tmp/lock"  # 잠금만 남음(커밋 0 으로 죽은 attempt)
+rc=0; out=$(run_claim) || rc=$?
+case "$out" in
+  *"claimed: o/r#5"*) : ;;
+  *) echo "  ✗ claim 스테일 잠금: 재디스패치가 막혔다 (exit $rc out='$out')"; rm -rf "$tmp"; exit 1 ;;
+esac
+# (b2) 스테일 잠금에 **신규 세션 둘이 동시에** 들어오는 경우 — 1차 잠금은 이미 남이 만든
+#      것이라 이들 사이의 중재력이 없다. takeover ref 가 중재하지 않으면 둘 다 라벨 없음을
+#      보고 둘 다 claim 한다(원자성 재파괴). 정확히 1회만 통과해야 한다.
+#
+#      스모크는 두 호출을 순차로 돌리므로, 승자가 붙인 라벨을 패배자의 **1차 재조회**가
+#      보면 takeover 에 닿기 전에 "경합 패배"로 닫혀 이 경로를 검증하지 못한다(동시 실행이
+#      아닌 데서 오는 인공물). 그래서 재조회 응답을 호출별 카운터로 제어해 "둘 다 대기창
+#      내내 라벨 없음" 을 고정한다 — 그러면 takeover 만이 유일한 중재자가 된다.
+mkdir -p "$tmp/stub2"
+cat > "$tmp/stub2/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
+  *"--json labels"*)
+    n=0; [ -f "\$STUB_COUNTER" ] && n=\$(cat "\$STUB_COUNTER")
+    n=\$((n + 1)); echo "\$n" > "\$STUB_COUNTER"
+    # 앞의 STUB_EMPTY_UNTIL 회는 라벨 없음(= 잠금 후 재조회), 그 뒤는 부착됨(= post-check).
+    if [ "\$n" -le "\$STUB_EMPTY_UNTIL" ]; then echo '{"labels":[]}'
+    else echo '{"labels":[{"name":"agent:claimed"}]}'; fi ;;
+  *"git/ref/heads/agent/issue-5"*) exit 1 ;;
+  *".default_branch"*) echo "main" ;;
+  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  # D/F 충돌 재현(메인 스텁과 동일 계약) — 자식 경로면 인수가 항상 실패해야 한다.
+  *"git/refs"*"/takeover"*)
+    echo '{"message":"Reference update failed","status":"422"}'; exit 1 ;;
+  *"git/refs"*takeover*)
+    if [ -f "$tmp/takeover" ]; then
+      echo '{"message":"Reference already exists","status":"422"}'; exit 1
+    fi
+    : > "$tmp/takeover"; echo '{"ref":"x-takeover"}' ;;
+  *"git/refs"*) echo '{"message":"Reference already exists","status":"422"}'; exit 1 ;;
+  *"issue edit"*) : > "$tmp/claimed2" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$tmp/stub2/gh"
+rm -f "$tmp/takeover" "$tmp/claimed2" "$tmp/c1" "$tmp/c2"
+wins=0
+# 세션 A: 재조회 1회는 라벨 없음 → takeover 획득 → edit → post-check(2회차)는 부착 확인
+outA=$(PATH="$tmp/stub2:$PATH" CLAIM_STALE_WAIT=0 STUB_COUNTER="$tmp/c1" STUB_EMPTY_UNTIL=1 \
+  bash "$claim" o/r 5 2>&1) || true
+case "$outA" in *"claimed: o/r#5"*) wins=$((wins + 1)) ;; esac
+# 세션 B: 재조회(1회차)에 라벨 없음 → takeover 만이 중재 → 422 → 패배.
+#   B 도 A 와 같은 EMPTY_UNTIL=1 을 쓴다 — 중재가 없으면 B 가 edit 까지 가고 그때의
+#   post-check(2회차)는 부착을 보게 되므로, 이중 claim 이 `wins=2` 로 그대로 드러난다
+#   (실환경 등가). B 를 항상-빈으로 두면 변이가 post-check 실패로 가려진다.
+outB=$(PATH="$tmp/stub2:$PATH" CLAIM_STALE_WAIT=0 STUB_COUNTER="$tmp/c2" STUB_EMPTY_UNTIL=1 \
+  bash "$claim" o/r 5 2>&1) || true
+case "$outB" in *"claimed: o/r#5"*) wins=$((wins + 1)) ;; esac
+[ "$wins" = 1 ] \
+  || { echo "  ✗ claim 스테일 잠금 동시 2회: 통과 $wins 회 (기대 1 — 인수 중재 없이 이중 claim)"; rm -rf "$tmp"; exit 1; }
+case "$outB" in
+  *"인수 경합 패배"*) : ;;
+  *) echo "  ✗ claim 스테일 잠금 동시 2회: 패배 사유가 인수 경합이 아니다 (outB='$outB')"; rm -rf "$tmp"; exit 1 ;;
+esac
+# (b3) takeover 까지 스테일(인수한 워커도 커밋 0 으로 사망) → fail-closed 로 닫는다.
+#      인수의 인수를 허용하면 무한 후퇴 끝에 이중 claim 이 되므로 의도된 절충이다.
+rm -f "$tmp/claimed"; : > "$tmp/lock"; : > "$tmp/takeover"
+rc=0; out=$(run_claim) || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ claim takeover 스테일: exit $rc (기대 1 — fail-closed)"; rm -rf "$tmp"; exit 1; }
+case "$out" in *"claimed:"*) echo "  ✗ claim takeover 스테일: claim 됨"; rm -rf "$tmp"; exit 1 ;; esac
+[ ! -f "$tmp/claimed" ] || { echo "  ✗ claim takeover 스테일: 라벨 부착까지 진행됨"; rm -rf "$tmp"; exit 1; }
+# fail-closed 케이스들의 판정 기준 — exit code·"claimed:" 부재만으로는 약하다.
+# claim 을 진행했는데 그 뒤(post-check)에서 죽어도 같은 관측이 나오기 때문. 그래서
+# "라벨 부착(gh issue edit)이 **아예 일어나지 않았다**"를 직접 단정한다. 아래 스텁들은
+# issue edit 을 $tmp/claimed sentinel 로 기록하고, post-check 는 그 뒤라 통과시킨다.
+assert_no_edit() {  # $1=케이스명 $2=rc $3=stdout
+  [ "$2" = 1 ] || { echo "  ✗ claim $1: exit $2 (기대 1)"; rm -rf "$tmp"; exit 1; }
+  case "$3" in *"claimed:"*) echo "  ✗ claim $1: claim 됨"; rm -rf "$tmp"; exit 1 ;; esac
+  [ ! -f "$tmp/claimed" ] || { echo "  ✗ claim $1: 라벨 부착까지 진행됨(fail-open)"; rm -rf "$tmp"; exit 1; }
+}
+# (c) fail-closed: 잠금 생성이 422 아닌 이유로 실패하면 claim 하지 않는다.
+cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
+  *"--json labels"*)
+    if [ -f "$tmp/claimed" ]; then echo '{"labels":[{"name":"agent:claimed"}]}'
+    else echo '{"labels":[]}'; fi ;;
+  *"git/ref/heads/agent/issue-5"*) exit 1 ;;
+  *".default_branch"*) echo "main" ;;
+  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  *"git/refs"*) echo '{"message":"Bad credentials","status":"401"}'; exit 1 ;;
+  *"issue edit"*) : > "$tmp/claimed" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+rm -f "$tmp/claimed"
+rc=0; out=$(run_claim) || rc=$?
+assert_no_edit "fail-closed(잠금 401)" "$rc" "$out"
+# (d) 앵커 sha 조회 실패(기본 브랜치 미확인) → 잠금 없이 claim 금지
+cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
+  *"--json labels"*)
+    if [ -f "$tmp/claimed" ]; then echo '{"labels":[{"name":"agent:claimed"}]}'
+    else echo '{"labels":[]}'; fi ;;
+  *"git/ref/heads/agent/issue-5"*) exit 1 ;;
+  *".default_branch"*) exit 1 ;;
+  *"issue edit"*) : > "$tmp/claimed" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+rm -f "$tmp/claimed"
+rc=0; out=$(run_claim) || rc=$?
+assert_no_edit "기본 브랜치 조회 실패" "$rc" "$out"
+# (d2) 기본 브랜치는 알아냈지만 그 head sha 를 못 읽는 경우 — (d) 는 기본 브랜치 가드에서
+#      먼저 걸려 이 경로(앵커 sha 가드)를 지나가지 않으므로 따로 덮는다.
+cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
+  *"--json labels"*)
+    if [ -f "$tmp/claimed" ]; then echo '{"labels":[{"name":"agent:claimed"}]}'
+    else echo '{"labels":[]}'; fi ;;
+  *"git/ref/heads/agent/issue-5"*) exit 1 ;;
+  *".default_branch"*) echo "main" ;;
+  *"git/ref/heads/main"*) exit 1 ;;
+  *"issue edit"*) : > "$tmp/claimed" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+rm -f "$tmp/claimed"
+rc=0; out=$(run_claim) || rc=$?
+assert_no_edit "앵커 sha 조회 실패" "$rc" "$out"
+# (e) 잠금 후 재조회 자체가 실패 → 소유자 확인 불가 → claim 금지(fail-closed).
+#     ("라벨 없음" 으로 대체하면 스테일 잠금으로 오인해 살아있는 소유자를 덮친다.)
+#     재조회는 edit **전**이라 sentinel 이 없을 때만 실패시킨다 — post-check(edit 후)는
+#     통과시켜야, 이 케이스가 "재조회에서 닫혔는지"를 post-check 사망과 구분해 잡는다.
+cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
+  *"--json labels"*)
+    if [ -f "$tmp/claimed" ]; then echo '{"labels":[{"name":"agent:claimed"}]}'; else exit 1; fi ;;
+  *"git/ref/heads/agent/issue-5"*) exit 1 ;;
+  *".default_branch"*) echo "main" ;;
+  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  *"git/refs"*) echo '{"message":"Reference already exists","status":"422"}'; exit 1 ;;
+  *"issue edit"*) : > "$tmp/claimed" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+rm -f "$tmp/claimed"
+rc=0; out=$(run_claim) || rc=$?
+assert_no_edit "잠금 후 재조회 실패" "$rc" "$out"
+# (f) live-holder 지연 경합: 잠금은 남이 잡았고 라벨은 **늦게** 뜬다. 재조회가 1회면
+#     "라벨 없음 = 스테일" 로 오판해 살아있는 소유자를 덮친다 → 대기창 안에서 반복
+#     조회하다 라벨이 뜨면 패배로 접어야 한다. 스텁은 첫 조회에만 라벨을 숨긴다.
+rm -f "$tmp/rechecks"
+cat > "$tmp/stub/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"--json labels,state"*) echo '{"state":"OPEN","labels":[]}' ;;
+  *"--json labels"*)
+    n=0; [ -f "$tmp/rechecks" ] && n=\$(cat "$tmp/rechecks")
+    n=\$((n + 1)); echo "\$n" > "$tmp/rechecks"
+    if [ "\$n" -le 1 ]; then echo '{"labels":[]}'
+    else echo '{"labels":[{"name":"agent:claimed"}]}'; fi ;;
+  *"git/ref/heads/agent/issue-5"*) exit 1 ;;
+  *".default_branch"*) echo "main" ;;
+  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  *"git/refs"*) echo '{"message":"Reference already exists","status":"422"}'; exit 1 ;;
+  *"issue edit"*) : > "$tmp/claimed" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+rc=0
+out=$(PATH="$tmp/stub:$PATH" CLAIM_STALE_WAIT=2 CLAIM_POLL_STEP=1 bash "$claim" o/r 5 2>/dev/null) || rc=$?
+[ "$rc" = 1 ] || { echo "  ✗ claim live-holder 지연: exit $rc (기대 1 — 살아있는 소유자를 덮쳤다)"; rm -rf "$tmp"; exit 1; }
+case "$out" in *"claimed:"*) echo "  ✗ claim live-holder 지연: 늦게 뜬 라벨을 못 보고 claim 됨"; rm -rf "$tmp"; exit 1 ;; esac
+[ "$(cat "$tmp/rechecks")" -ge 2 ] \
+  || { echo "  ✗ claim live-holder 지연: 재조회가 1회뿐(대기창 폴링 미동작)"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
+echo "[#108] SKILL 원자적 claim 잠금 문서화 검사 — 한/영 동기"
+# 디스패치 4a 가 라벨이 아니라 create-only ref 로 중재한다는 지시가 한/영 양쪽에.
+for f in SKILL.md SKILL.en.md; do
+  awk 'BEGIN{RS="";ok=0} /claim-issue\.sh/ && /refs\/issue-runner\/claim/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f: claim-issue.sh 단락에 잠금 ref(refs/issue-runner/claim) 설명 없음"; exit 1; }
+done
+
+echo "[#109] 시크릿 opt-in(link-secrets) 문서화 검사 — README 한/영 + SKILL 한/영"
+for f in README.md README.ko.md SKILL.md SKILL.en.md; do
+  grep -qF 'link-secrets' "$f" || { echo "  ✗ $f 에 link-secrets 문서 없음"; exit 1; }
+done
+
 echo "CI pass"
