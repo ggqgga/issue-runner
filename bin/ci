@@ -751,6 +751,32 @@ grep -qiF 'flip the pass/fail of any test' skills/closeout/SKILL.en.md \
 grep -qiF 'Do not issue what step 3 already absorbed' skills/closeout/SKILL.en.md \
   || { echo "  ✗ closeout SKILL.en.md: 6단계 비발행 미러 없음"; exit 1; }
 
+echo "[배포검증] 밟을 항목 0 이면 이슈·스모크 없음 — 형태 고정 + 묶기 금지 검사"
+# 배포검증 이슈 186건(2026-08-12~13) 중 64건이 '밟을 항목 없음' 이었는데 전부 이슈가 됐고
+# 그중 39건은 Chrome 스모크까지 돌았다(항목 0 을 대조 → `✅ 스모크 0/0` = 거짓 초록).
+# 반대로 항목 있는 120건의 스모크 통과는 16건(13%)뿐이라 나머지는 사람이 닫았다.
+# 그래서 (a) `<LIVE_CHECKS>` 형태를 `없음` 단독 또는 `- [ ]` 목록으로 고정하고
+# (b) `없음` 이면 이슈를 안 만들고 5단계도 건너뛴다. 형태 고정이 빠지면 분기가 산문
+# 해석으로 되돌아가 조용히 무력화된다(실측: 186건 중 체크박스 사용 0건).
+# (c) 묶기 금지 — 장수 이슈는 닫히는 시점을 잃는다(사용자 결정).
+grep -qF '`<LIVE_CHECKS>` 는 두 형태 중 하나여야 한다' skills/closeout/SKILL.md \
+  || { echo "  ✗ closeout SKILL.md: <LIVE_CHECKS> 형태 고정 지시 없음"; exit 1; }
+grep -qF '없음` 인 경우: 이슈를 발행하지 않는다' skills/closeout/SKILL.md \
+  || { echo "  ✗ closeout SKILL.md 4단계: 항목 없음 → 이슈 미발행 분기 없음"; exit 1; }
+grep -qF '밟을 항목이 없으면 스모크하지 않는다' skills/closeout/SKILL.md \
+  || { echo "  ✗ closeout SKILL.md 5단계: 항목 0 스모크 생략 지시 없음"; exit 1; }
+grep -qF '묶지 않는다' skills/closeout/SKILL.md \
+  || { echo "  ✗ closeout SKILL.md: 배포 이슈 묶기 금지 지시 없음(장수 이슈 방지)"; exit 1; }
+grep -qF 'must take one of two shapes' skills/closeout/SKILL.en.md \
+  || { echo "  ✗ closeout SKILL.en.md: <LIVE_CHECKS> 형태 고정 미러 없음"; exit 1; }
+grep -qF 'do not create an issue' skills/closeout/SKILL.en.md \
+  || { echo "  ✗ closeout SKILL.en.md: 항목 없음 → 이슈 미발행 미러 없음"; exit 1; }
+grep -qF 'Do not batch' skills/closeout/SKILL.en.md \
+  || { echo "  ✗ closeout SKILL.en.md: 묶기 금지 미러 없음"; exit 1; }
+# 템플릿이 체크박스 형태를 안내하는지 — 여기가 흔들리면 발행되는 이슈가 다시 산문이 된다.
+grep -qF -e '- [ ]` 체크박스 목록만' skills/closeout/references/deploy-check-issue.md \
+  || { echo "  ✗ deploy-check-issue.md: 체크박스 형태 안내 없음"; exit 1; }
+
 echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4)"
 # 1단계 검증자가 과거 오판 패턴(인용 오판·base 맹점 등)을 반복하지 않도록 lessons 를
 # 프롬프트에 주입한다 — 프롬프트가 유일한 전달 경로라는 기존 계약 유지.
