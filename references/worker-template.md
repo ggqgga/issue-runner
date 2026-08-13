@@ -80,7 +80,10 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    **credential 의존 테스트가 시크릿 부재로 못 도는 경우**(워크트리에 `.env`·
    `config/master.key` 가 없음 — repos.conf `link-secrets` 미설정 레포의 기본값, #109):
    그건 **실패가 아니라 skip** 이다. 억지로 시크릿을 만들거나 그 테스트를 지우지 말고,
-   PR 본문에 어떤 테스트를 왜 못 돌렸는지 한 줄로 명시하라.
+   PR 본문에 어떤 테스트를 왜 못 돌렸는지 한 줄로 명시하라. 그 때문에 `bin/ci` 전체가
+   non-zero 로 끝나 캐시에 fail 이 박히면 그건 네가 고칠 수 있는 상태가 아니다 —
+   이슈 코멘트에 `BLOCKED:` 로 사유를 남기고 멈춰라(사람이 link-secrets 를 켜거나
+   테스트 범위를 조정한다). 캐시를 우회하거나 초록으로 위장하지 마라.
 10. PR 을 열어라(**재디스패치면 이미 열려 있다** — 아래 참고). **반드시 cd 없는 단독 명령으로**:
    `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`
    (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사가 누락된다.)

@@ -211,7 +211,10 @@ N 도 디스패치당 1만 올린다.
       그 자체로는 잠금이 못 되기 때문(#108). 두 루프 세션이 같은 이슈를 동시에
       노려도 정확히 하나만 통과한다. 이전 attempt 가 커밋 없이 죽어 잠금만 남은
       경우는 `<앵커>-takeover` 를 다시 create-only 로 잡아 인수한다(자식 경로는 git ref D/F 충돌로 불가 — 형제 이름이어야 한다) — 그 경합도
-      하나만 통과하므로 스테일 인수 경로에서 원자성이 깨지지 않는다.
+      하나만 통과하므로 스테일 인수 경로에서 원자성이 깨지지 않는다. 인수한 워커까지
+      커밋 없이 죽으면 그 앵커는 막힌다 — 그때만 사람이 두 ref 를 지워 푼다:
+      `gh api repos/<repo>/git/matching-refs/issue-runner/claim/<num> -q '.[].ref'` 로
+      확인하고 `gh api -X DELETE repos/<repo>/git/refs/<ref에서 refs/ 뗀 나머지>`.
    b. `$SCRIPTS/make-worktree.sh <repo> <num>` — 마지막 줄이 worktree 경로.
       시크릿(`.env`·`config/master.key`) 심링크는 기본 off 다 — repos.conf 에
       `link-secrets` 를 켠 레포에서만 깔린다(#109). 안 켠 레포의 credential 의존

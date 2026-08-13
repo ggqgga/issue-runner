@@ -904,12 +904,15 @@ case "\$*" in
   # takeover 가 1차 잠금의 422 를 물려받아 스테일 인수 경로를 검증할 수 없다.
   #
   # 단 **D/F(디렉토리/파일) 충돌은 반드시 재현한다**: git ref 네임스페이스는 파일시스템
-  # 처럼 동작해 `…/base` 가 있으면 그 하위 `…/base/takeover` 는 거부된다(실측: 422
+  # 처럼 동작해 앵커 ref 가 있으면 그 하위의 takeover 자식 ref 는 거부된다(실측: 422
   # `Reference update failed` — `already exists` 가 아니다). takeover 는 정의상 1차 잠금이
   # 있을 때만 시도되므로, 자식 경로를 쓰면 인수가 **항상** 실패한다. 이 규칙이 없으면
   # 스텁이 불가능한 동작을 성공으로 흉내내 그 회귀를 통째로 놓친다(실증: 그렇게 통과한
   # 스모크가 codex 재검증까지 CLEAN 을 받았다).
-  *"git/refs"*"/base/takeover"*)
+  # 패턴은 **앵커 무관**이어야 한다 — 자식형만 슬래시-takeover 를 포함하고 형제형(하이픈)은
+  # 포함하지 않으므로, 앵커가 `base` 든 40자 sha 든 규칙이 그대로 성립한다. 리터럴 앵커에
+  # 묶으면 앵커 형태가 바뀌는 순간 규칙이 조용히 무력화된다(전건 초록불 채로).
+  *"git/refs"*"/takeover"*)
     echo '{"message":"Reference update failed","status":"422"}'; exit 1 ;;
   *"git/refs"*takeover*)
     if [ -f "$tmp/takeover" ]; then
@@ -969,7 +972,7 @@ case "\$*" in
   *".default_branch"*) echo "main" ;;
   *"git/ref/heads/main"*) echo "deadbeef" ;;
   # D/F 충돌 재현(메인 스텁과 동일 계약) — 자식 경로면 인수가 항상 실패해야 한다.
-  *"git/refs"*"/base/takeover"*)
+  *"git/refs"*"/takeover"*)
     echo '{"message":"Reference update failed","status":"422"}'; exit 1 ;;
   *"git/refs"*takeover*)
     if [ -f "$tmp/takeover" ]; then

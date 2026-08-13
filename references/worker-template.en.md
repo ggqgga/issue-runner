@@ -82,7 +82,10 @@ Procedure:
    (no `.env` / `config/master.key` in the worktree — the default for repos without
    `link-secrets` in repos.conf, #109): that is a **skip, not a failure**. Do not
    fabricate secrets and do not delete those tests; state in the PR body, in one
-   line, which tests you could not run and why.
+   line, which tests you could not run and why. If that makes the whole `bin/ci` run
+   exit non-zero so a fail lands in the cache, that is not a state you can fix — leave
+   a `BLOCKED:` comment on the issue with the reason and stop (a human enables
+   link-secrets or narrows the test scope). Never bypass the cache or fake a green.
 10. Open the PR (**if this is a re-dispatch it already exists** — see below).
    **It must be a standalone command with no cd**:
    `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`
