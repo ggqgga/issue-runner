@@ -165,6 +165,18 @@ updated), then retry `--add-label harvesting` exactly once. If the retry also
 fails, **do not loop further** (no infinite loop): skip this PR and report
 `BLOCKED: harvesting label provisioning failed — <repo>` in ④ Report.
 
+**Mirror onto the source issue (progress visibility).** Right after parsing `<issue>`
+(the PR body's `Closes #N`/`Refs #N`) in ③-1, if there is a linked issue run
+`gh issue edit <issue> --repo <repo> --add-label harvesting --remove-label flow:ready --remove-label flow:verify`
+so "closing out" also shows on the issue list — the stage (verify→closeout) is then
+visible from the issue list alone (it shows only briefly, since a successful merge
+closes the issue via `Closes #N`). And at **every point after ③ that re-attaches
+`agent-ready`/`needs-human` to the linked issue fail-closed** (delegation failure·
+conflict needing human judgment·incomplete doc reconcile·etc.), add
+`--remove-label harvesting --remove-label flow:ready --remove-label flow:verify` to that
+`gh issue edit <issue>` so the issue's label ladder returns to waiting/human-waiting
+(prevents stale stage-label residue).
+
 ## ③ Pipeline — steps 1–6
 
 For the picked PR, perform the 6 steps below in order. At the end of each step, plant
@@ -180,10 +192,14 @@ via `gh issue view <issue> --repo <repo>` (if there is no linked issue,
 placeholders and **spawn `VERIFIER` with `run_in_background: true`**: `<PR>`·`<REPO>`·`<BASE>`=default
 branch·`<PLAN_REF>`=the issue's `## Plan` or the referenced `Plans/*.md` (empty
 string if none)·`<DIFF>`=the pr diff output above·`<ISSUE_BODY>`=the issue view
-output above·`<LESSONS_OR_"없음">`=the contents of `.loop/lessons.md` under the
-path output by `$SCRIPTS/repo-dir.sh <repo>` (`없음` if the file is missing or
-empty) — an injection so the verifier does not repeat past misjudgment patterns
-(citation misreads·base blind spots·etc.) (following the VERIFIER contract and
+output above·`<LESSONS_OR_"없음">`=the contents of **`.loop/lessons-verifier.md`**
+(the verdict casebook) under the path output by `$SCRIPTS/repo-dir.sh <repo>` — an
+injection so the verifier does not repeat past misjudgment patterns (citation
+misreads·base blind spots·etc.). If that file is absent, fall back to
+`.loop/lessons.md` (repos that have not split it yet); `없음` if both are missing or
+empty. The two files have different audiences — `lessons.md` is for the
+**implementing worker**, so do not mix it into the verifier prompt (it dilutes the
+misjudgment-prevention signal) (following the VERIFIER contract and
 fallback in ## Constants). The verifier prompt carries the diff, issue body, and
 lessons inline, so the verifier runs no additional network commands. Record the
 spawn time and poll with TaskList/TaskOutput (e.g. every 30s) — if the verdict
@@ -218,9 +234,13 @@ below (`needs-human`, hold).
   re-verification is CLEAN/WARN, or a human removed `needs-human` and the original
   flowed through unchanged — that BLOCKER was a false judgment that got reversed.
   Append one line `- [YYYY-MM-DD PR#<pr>] <false-BLOCKER pattern → recurrence-
-  prevention action>` to `.loop/lessons.md` under the path output by
-  `$SCRIPTS/repo-dir.sh <repo>` (20-line cap — drop the oldest line on overflow,
-  isomorphic to issue-runner's Reconcile lessons). This record is fed back into
+  prevention action>` to **`.loop/lessons-verifier.md`** under the path output by
+  `$SCRIPTS/repo-dir.sh <repo>` (create it if absent — this is the verifier's
+  casebook, kept separate from the worker's `lessons.md`). **Cap: 20 entries** —
+  on overflow drop the oldest **entry as a whole**, not by line: this file mixes
+  multi-line cases starting with `##`, and cutting by line tears the prose apart
+  (an entry = one line starting with `- [`, or a `##` header through just before the
+  next entry). This record is fed back into
   the next verification via the `<LESSONS_OR_"없음">` injection above, preventing
   recurrence of the same misjudgment (citation misreads·base blind spots·etc.).
   (If it was not a reversal — a normal CLEAN — do not record.)
@@ -299,6 +319,27 @@ from the PR-branch worktree (obtained via `$SCRIPTS/make-worktree.sh <repo> <N>`
 `gh pr view <pr> --repo <repo> --json headRefName`, idempotent) so it is included in
 the squash merge (no direct push to main). If there is an epic, leave a progress rollup
 comment.
+- **Absorb surface corrections (into the same commit).** Among step 1's verifier
+  WARN/NIT findings, the **surface-correction** class does not go to step 6 as a spinoff
+  issue — **fix it here** and carry it in this commit. The PR-branch worktree is already
+  checked out and the cache reinforcement below re-runs local CI on the new SHA, so this
+  costs **zero extra cycles** — whereas issuing it spends a whole dispatch→implement→
+  verify→closeout lap on a one-line fix.
+  **The criterion, one line: does this change flip the pass/fail of any test at all?**
+  If none, fix it here; if even one, it is a step-6 issue. What the criterion admits —
+  comment prose, terminology/notation unification, numbers and coordinates inside
+  comments, dead-reference removal, **test names** (the description string in `test "…"`
+  executes but does not flip pass/fail). What it blocks — new assertions·new guards·
+  added coverage·constant values·execution branches. "While I'm fixing the comment, one
+  more assertion" is an issue.
+  - State what was fixed in a comment on the original PR:
+    `표면 교정(closeout 3단계): <file> — <what>`. Closeout merges what it fixed itself,
+    so that fact must be visible to a human.
+  - If the cache reinforcement below is non-zero (local CI failed), **revert that
+    correction commit** and take the normal fail-closed path — a surface correction must
+    never become the reason a merge is blocked.
+  - Do not touch it if the verifier raised a BLOCKER or this PR is heading to hold/
+    re-dispatch (passing PRs only — the same discipline as verify-runner ⓪).
 - **cache supplement (right after push, option 1).** Once the doc commit is pushed,
   **right after** call `$SCRIPTS/run-local-ci.sh <repo> <N>` once (`<N>`=the issue
   number parsed above — identifies the worktree path `issue-<N>`; distinct from
@@ -363,8 +404,9 @@ structure/empty-state confirmation from real-data render confirmation in the res
     out to be code-unrelated (infra outage·flake·transient verify-URL error·etc.),
     separately from the publish path above, append one line
     `- [YYYY-MM-DD PR#<pr>] <smoke-misjudgment pattern → recurrence-prevention action>`
-    to `.loop/lessons.md` under the path output by `$SCRIPTS/repo-dir.sh <repo>`
-    (same 20-line cap). A failure that turns out to be a code defect is not recorded
+    to **`.loop/lessons-verifier.md`** under the path output by `$SCRIPTS/repo-dir.sh <repo>`
+    (same file and cap as step 1 — it is a verdict-misjudgment class, so it belongs in
+    the verifier's casebook). A failure that turns out to be a code defect is not recorded
     here — the publish path handles it.
 - **Browser cleanup — leak prevention (common exit; green·fail·degrade all).** **After**
   leaving the smoke-verdict comment above, always close the chrome-devtools page this tick
@@ -382,6 +424,15 @@ body's `follow-up:` items + adjacent work the step-1 diff review flagged, and is
 agent-ready issue. Link it as a sub-issue if there is an epic, or as a standalone
 issue if not. Record the created number in a comment on the original PR (a
 duplicate-issuance marker).
+- **Do not issue what step 3 already absorbed.** A finding that passed step 3's
+  "absorb surface corrections" criterion (does this flip the pass/fail of any test?)
+  and rode along in that commit is not remaining work. When one finding mixes surface
+  and code (e.g. "the terminology diverged + the count has no guard"), step 3 takes the
+  surface and **only the code part** becomes an issue — do not restate the already-fixed
+  part in the issue body (the next worker will go fix it again).
+  Why this clause exists: it stops a full issue→PR→verify→closeout lap from running for
+  one line of comment prose, and such a lap was measured to spawn fresh comment findings
+  of its own, lengthening the chain.
 
 ## ⑤ Drain — continue to the next candidate immediately
 

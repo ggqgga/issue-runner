@@ -149,6 +149,15 @@ CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기�
 재시도한다. 재시도도 실패하면 **더 반복하지 말고**(무한루프 금지) 이 PR 을 skip 하고
 ④ Report 에 `BLOCKED: harvesting 라벨 보강 실패 — <repo>` 로 보고한다.
 
+**원 이슈 미러(진행 가시화).** ③-1 에서 `<issue>`(PR 본문 `Closes #N`/`Refs #N`)를 파싱한
+직후, 연결 이슈가 있으면 `gh issue edit <issue> --repo <repo> --add-label harvesting --remove-label flow:ready --remove-label flow:verify`
+로 "마감 중"을 이슈 리스트에도 남긴다 — 이슈 리스트만 봐도 단계(검증→마감)가 보이게
+(머지 성공 시 `Closes #N` 으로 이슈가 닫히므로 잠깐만 보인다). 그리고 ③ 이후 **fail-closed
+로 연결 이슈에 `agent-ready`/`needs-human` 을 되붙이는 모든 지점**(위임 fail·conflict
+사람판단·문서 reconcile 미완 등)에서는 그 `gh issue edit <issue>` 에
+`--remove-label harvesting --remove-label flow:ready --remove-label flow:verify` 를 함께 넣어
+이슈 라벨 사다리를 대기/사람대기 상태로 되돌린다(스테일 단계 라벨 잔재 방지).
+
 ## ③ 파이프라인 — 1~6단계
 
 집은 PR 에 대해 아래 6단계를 순서대로 수행한다. 각 단계 끝에 마커 명령을 박아
@@ -163,8 +172,11 @@ body` 로 파싱). 그런 다음 `gh pr diff <pr> --repo <repo>` 로 diff 를,
 채워 `VERIFIER` 를 **`run_in_background: true` 로 스폰**한다: `<PR>`·`<REPO>`·`<BASE>`=default
 branch·`<PLAN_REF>`=이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<DIFF>`=위
 pr diff 출력·`<ISSUE_BODY>`=위 issue view 출력·`<LESSONS_OR_"없음">`=`$SCRIPTS/repo-dir.sh
-<repo>` 해석 경로 밑 `.loop/lessons.md` 내용(파일 없거나 비면 `없음`) — 검증자가 과거
-오판 패턴(인용 오판·base 맹점 등)을 반복하지 않게 하는 주입 (## 상수의 VERIFIER 계약·
+<repo>` 해석 경로 밑 **`.loop/lessons-verifier.md`**(검증 판정 사례집) 내용 — 검증자가 과거
+오판 패턴(인용 오판·base 맹점 등)을 반복하지 않게 하는 주입. 그 파일이 없으면
+`.loop/lessons.md` 로 폴백(아직 분리 안 한 레포), 둘 다 없거나 비면 `없음`. 두 파일은
+대상이 다르다 — `lessons.md` 는 **구현 워커**용이니 검증자 프롬프트에 섞지 마라
+(오판 방지 신호가 희석된다) (## 상수의 VERIFIER 계약·
 폴백을 따른다). 검증자 프롬프트는 diff·이슈 본문·lessons 를 본문으로 담고 있으므로
 검증자는 추가 네트워크 명령을 실행하지 않는다. 스폰 시각을 기록하고 TaskList/TaskOutput
 으로(예: 30초 간격) 폴링한다 — 스폰 시각 + `VERIFIER_TIMEOUT_MIN` 데드라인 안에 verdict
@@ -193,9 +205,12 @@ verdict 미산출로 간주해 아래 BLOCKER 경로로 보류 종료한다(fail
 - **거짓 BLOCKER 반전 기록 (lessons).** 이 PR 에 이전 틱의 `마감 검증: ⚠ 보류 — …`
   BLOCKER 코멘트가 이미 있는데(직전 BLOCKER) 이번 재검증이 CLEAN/WARN 이거나 사람이
   `needs-human` 을 떼고 원안 그대로 흐른 경우 — 그 BLOCKER 는 거짓 판정으로 뒤집힌
-  것이다. `$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 `.loop/lessons.md` 에
+  것이다. `$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 **`.loop/lessons-verifier.md`** 에
   `- [YYYY-MM-DD PR#<pr>] <거짓 BLOCKER 패턴 → 재발 방지 행동>` 1줄을 append 한다
-  (20줄 캡 — 초과 시 가장 오래된 줄 삭제, issue-runner Reconcile lessons 와 동형).
+  (파일이 없으면 새로 만든다 — 이건 검증자용이라 워커용 `lessons.md` 와 섞지 않는다).
+  **캡: 항목 20개** — 초과 시 가장 오래된 **항목 하나를 통째로** 삭제한다(줄 단위가
+  아니다. 이 파일에는 `##` 로 시작하는 여러 줄짜리 사례가 섞여 있어 줄을 자르면 산문이
+  찢어진다. 항목 = `- [` 로 시작하는 한 줄, 또는 `##` 헤더부터 다음 항목 직전까지).
   이 기록은 위 `<LESSONS_OR_"없음">` 주입으로 다음 검증에 되먹여져 같은 오판(인용
   오판·base 맹점 등)의 재발을 막는다. (반전이 아니면 — 정상 CLEAN — 기록하지 않는다.)
 
@@ -265,6 +280,22 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 `agent/issue-<N>` 에서 파싱(`gh pr view <pr> --repo <repo> --json headRefName`), 멱등)
 에서 커밋·push 하여 squash 머지에 포함시킨다 (main 직접 push 금지). epic 이 있으면
 진행 롤업 코멘트를 남긴다.
+- **표면 교정 흡수 (같은 커밋에 얹는다).** 1단계 검증자의 WARN/NIT 중 **표면 교정**
+  부류는 6단계 파생 이슈로 넘기지 말고 **여기서 직접 고쳐** 이 커밋에 같이 싣는다.
+  이미 PR 브랜치 worktree 를 잡았고 아래 캐시 보강이 새 SHA 로 로컬 CI 를 다시 돌리므로
+  **추가 사이클이 0**이다 — 반면 이슈로 내보내면 디스패치→구현→검증→마감 한 바퀴가
+  한 줄 고치자고 통째로 돈다.
+  **판정 기준 한 줄: 이 변경으로 통과/실패가 바뀌는 테스트가 하나도 없는가.**
+  없으면 여기서 고치고, 하나라도 있으면 6단계 이슈다. 이 기준이 받는 것 — 주석 문장,
+  용어·표기 통일, 주석 안의 수치·좌표, 죽은 참조 제거, **테스트 이름**(`test "…"` 의
+  설명 문자열은 실행되지만 통과/실패를 안 바꾼다). 이 기준이 막는 것 — 새 단언·새
+  가드·커버리지 추가·상수값·실행 분기. "주석만 고치는 김에 단언 하나" 는 이슈다.
+  - 고친 것을 **원본 PR 코멘트에 명시**한다: `표면 교정(closeout 3단계): <파일> — <무엇을>`.
+    자기가 고친 것을 자기가 머지하는 구조라 그 사실이 사람에게 보여야 한다.
+  - 아래 캐시 보강이 비0(로컬 CI 실패)이면 **그 교정 커밋을 되돌리고** 원래 fail-closed
+    경로로 간다 — 표면 교정이 머지를 막는 사유가 되어선 안 된다.
+  - 검증자가 BLOCKER 를 냈거나 이 PR 이 보류·재디스패치로 가는 중이면 손대지 않는다
+    (통과 판정 PR 한정 — verify-runner ⓪ 과 같은 규율).
 - **캐시 보강 (push 직후, 옵션1).** doc 커밋을 push 했으면 **그 직후**
   `$SCRIPTS/run-local-ci.sh <repo> <N>` 를 1회 호출한다 (`<N>`=위에서 파싱한 이슈
   번호 — worktree 경로 `issue-<N>` 식별용; `closeout-ci-pass.sh` 의 `<pr>` 와 다름).
@@ -320,9 +351,9 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
   승격한다 (**exhausted 종료**). 배포 이슈는 닫지 않는다.
   - **코드무관 스모크 실패 기록 (lessons).** 그 스모크 실패가 코드 무관(인프라 장애·
     플레이크·검증 URL 일시 오류 등)으로 판명되면, 위 발행 경로와 별개로
-    `$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 `.loop/lessons.md` 에
+    `$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 **`.loop/lessons-verifier.md`** 에
     `- [YYYY-MM-DD PR#<pr>] <스모크 오판 패턴 → 재발 방지 행동>` 1줄을 append 한다
-    (20줄 캡 동일). 코드 결함으로 판명된 실패는 여기 기록하지 않는다 — 발행 경로가 담당.
+    (위 1단계와 같은 파일·같은 캡 — 판정 오판 계열이라 검증자 사례집에 쌓인다). 코드 결함으로 판명된 실패는 여기 기록하지 않는다 — 발행 경로가 담당.
 - **브라우저 정리 — 누수 방지 (공통 종료, green·fail·degrade 모두).** 위 스모크 판정
   코멘트를 남긴 **뒤**, 이 틱이 연 chrome-devtools 페이지를 `list_pages`→`close_page` 로
   반드시 닫는다 — 세 종료 경로 어느 쪽으로 빠졌든 예외 없이(정리 전에 return 하지 마라).
@@ -337,6 +368,13 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
 인접 작업을 `references/spinoff-issue.md` 로 채워 agent-ready 이슈로 발행한다.
 epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생성한 번호를 원본 PR
 코멘트에 기록한다 (중복 발행 방지 마커).
+- **3단계가 이미 흡수한 표면 교정은 여기서 발행하지 않는다.** 3단계 "표면 교정 흡수"
+  기준(통과/실패가 바뀌는 테스트가 하나도 없는가)을 통과해 그 커밋에 실린 건은 남은
+  작업이 아니다. 한 발견에 표면과 코드가 섞여 있으면(예: "용어가 갈렸다 + 셈값 가드가
+  없다") 표면은 3단계가 먹고 **코드 부분만** 이슈로 낸다 — 이슈 본문에 이미 고쳐진
+  부분을 다시 적지 마라(다음 워커가 그걸 또 고치러 간다).
+  이 절이 있는 이유: 이슈→PR→검증→마감 한 바퀴가 주석 한 줄을 고치자고 도는 것을
+  막으려는 것이고, 그렇게 돈 PR 이 또 새 주석 지적을 낳아 사슬이 길어지는 것을 실측했다.
 
 ## ⑤ Drain — 다음 후보로 즉시 이어가기
 

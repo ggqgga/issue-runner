@@ -719,14 +719,37 @@ grep -qF '과거 교훈: 없음' README.ko.md \
 echo "[closeout] lessons 기록 배선 검사 (#80 변경 4 — 거짓 BLOCKER 반전·코드무관 스모크 실패)"
 # closeout 파이프라인에 반복 실증된 두 지점만 최소 배선: (a) 1단계 검증자 BLOCKER 가
 # 사람/후속 확인으로 거짓 판정으로 뒤집힌 경우, (b) 5단계 스모크 실패가 코드무관
-# (인프라/플레이크)으로 판명된 경우 — 각각 대상 레포 lessons.md 에 1줄 append.
+# (인프라/플레이크)으로 판명된 경우 — 각각 대상 레포 검증자 사례집에 1줄 append.
+# 파일명은 `lessons-verifier.md`(검증 판정 계열) — 워커용 `lessons.md` 와 분리돼 있다.
+# 정규식이 `lessons(-verifier)?\.md` 로 둘 다 받는 이유: 아직 분리 안 한 레포는 폴백으로
+# `lessons.md` 를 쓰므로 그 서술도 유효하다. 접미 없는 `lessons.md` 만 박아 두면 분리
+# 이후 서술이 통째로 거짓이 되고, 반대로 `-verifier` 만 강제하면 폴백 서술이 막힌다.
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
-  grep -qF 'lessons.md' "$f" || { echo "  ✗ $f 에 closeout lessons 기록 배선 없음"; exit 1; }
-  awk 'BEGIN{RS="";ok=0} /lessons\.md/ && /BLOCKER/ {ok=1} END{exit ok?0:1}' "$f" \
+  grep -qE 'lessons(-verifier)?\.md' "$f" || { echo "  ✗ $f 에 closeout lessons 기록 배선 없음"; exit 1; }
+  awk 'BEGIN{RS="";ok=0} /lessons(-verifier)?\.md/ && /BLOCKER/ {ok=1} END{exit ok?0:1}' "$f" \
     || { echo "  ✗ $f: 거짓 BLOCKER 반전 시 lessons 기록 지시(같은 단락) 없음"; exit 1; }
-  awk 'BEGIN{RS="";ok=0} /lessons\.md/ && (/스모크/ || /smoke/) {ok=1} END{exit ok?0:1}' "$f" \
+  awk 'BEGIN{RS="";ok=0} /lessons(-verifier)?\.md/ && (/스모크/ || /smoke/) {ok=1} END{exit ok?0:1}' "$f" \
     || { echo "  ✗ $f: 코드무관 스모크 실패 시 lessons 기록 지시(같은 단락) 없음"; exit 1; }
 done
+
+echo "[표면교정] 3단계 흡수·6단계 비발행·verify ⓪ 이 같은 한 줄 기준을 쓰는지 검사"
+# 표면 교정(주석·용어·수치·테스트 이름)을 이슈로 내보내면 한 줄 고치자고 디스패치→구현→
+# 검증→마감 한 바퀴가 돌고, 그 PR 이 또 새 주석 지적을 낳아 사슬이 길어진다(실측).
+# 그래서 세 지점이 **같은 경계**를 써야 한다 — 경계가 갈리면 같은 발견이 어느 루프에
+# 걸리느냐로 처리가 달라진다. 기준 문장은 "통과/실패가 바뀌는 테스트가 없는가" 다.
+# 한/영이 갈리지 않게 두 미러를 함께 본다(영문은 pass/fail 표현).
+for f in skills/closeout/SKILL.md skills/verify-runner/SKILL.md; do
+  grep -qF '통과/실패가 바뀌는 테스트가 하나도 없는가' "$f" \
+    || { echo "  ✗ $f: 표면 교정 판정 기준 한 줄 없음"; exit 1; }
+  grep -qF '테스트 이름' "$f" \
+    || { echo "  ✗ $f: 표면 교정 허용 목록에 '테스트 이름' 없음(옛 '주석만' 경계로 되돌아감)"; exit 1; }
+done
+grep -qF '3단계가 이미 흡수한 표면 교정은 여기서 발행하지 않는다' skills/closeout/SKILL.md \
+  || { echo "  ✗ closeout SKILL.md 6단계에 표면 교정 비발행 지시 없음"; exit 1; }
+grep -qiF 'flip the pass/fail of any test' skills/closeout/SKILL.en.md \
+  || { echo "  ✗ closeout SKILL.en.md: 표면 교정 기준 미러 없음"; exit 1; }
+grep -qiF 'Do not issue what step 3 already absorbed' skills/closeout/SKILL.en.md \
+  || { echo "  ✗ closeout SKILL.en.md: 6단계 비발행 미러 없음"; exit 1; }
 
 echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4)"
 # 1단계 검증자가 과거 오판 패턴(인용 오판·base 맹점 등)을 반복하지 않도록 lessons 를
@@ -735,8 +758,8 @@ echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4
 grep -qF '<LESSONS_OR_' skills/closeout/references/verifier-prompt.md \
   || { echo "  ✗ verifier-prompt.md 에 <LESSONS_OR_ placeholder 없음"; exit 1; }
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
-  awk 'BEGIN{RS="";ok=0} /<LESSONS_OR_/ && /lessons\.md/ {ok=1} END{exit ok?0:1}' "$f" \
-    || { echo "  ✗ $f: 1단계 검증자에 lessons 주입(<LESSONS_OR_ ← lessons.md) 지시 없음"; exit 1; }
+  awk 'BEGIN{RS="";ok=0} /<LESSONS_OR_/ && /lessons(-verifier)?\.md/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f: 1단계 검증자에 lessons 주입(<LESSONS_OR_ ← lessons-verifier.md) 지시 없음"; exit 1; }
 done
 
 echo "[test] finish-classify.sh 분류 픽스처 테스트 (#88)"
