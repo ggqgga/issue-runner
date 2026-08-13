@@ -210,7 +210,7 @@ N 도 디스패치당 1만 올린다.
       (`refs/issue-runner/claim/<num>/<앵커>`)를 먼저 잡는다 — 라벨 부착은 멱등이라
       그 자체로는 잠금이 못 되기 때문(#108). 두 루프 세션이 같은 이슈를 동시에
       노려도 정확히 하나만 통과한다. 이전 attempt 가 커밋 없이 죽어 잠금만 남은
-      경우는 `<앵커>/takeover` 를 다시 create-only 로 잡아 인수한다 — 그 경합도
+      경우는 `<앵커>-takeover` 를 다시 create-only 로 잡아 인수한다(자식 경로는 git ref D/F 충돌로 불가 — 형제 이름이어야 한다) — 그 경합도
       하나만 통과하므로 스테일 인수 경로에서 원자성이 깨지지 않는다.
    b. `$SCRIPTS/make-worktree.sh <repo> <num>` — 마지막 줄이 worktree 경로.
       시크릿(`.env`·`config/master.key`) 심링크는 기본 off 다 — repos.conf 에

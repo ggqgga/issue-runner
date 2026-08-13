@@ -78,6 +78,11 @@ Procedure:
    re-commit/re-push, and run it again — the human merge gate reads this result
    cache. Re-run it after every subsequent pushed commit so the cache holds the
    result for the latest HEAD.
+   **If credential-dependent tests cannot run because the secrets are absent**
+   (no `.env` / `config/master.key` in the worktree — the default for repos without
+   `link-secrets` in repos.conf, #109): that is a **skip, not a failure**. Do not
+   fabricate secrets and do not delete those tests; state in the PR body, in one
+   line, which tests you could not run and why.
 10. Open the PR (**if this is a re-dispatch it already exists** — see below).
    **It must be a standalone command with no cd**:
    `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`

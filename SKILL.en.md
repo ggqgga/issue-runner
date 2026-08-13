@@ -209,7 +209,8 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       therefore cannot serve as a lock on their own (#108). Two loop sessions
       racing for the same issue leave exactly one winner. When a previous attempt
       died without committing and only its lock remains, the helper takes over by
-      creating `<anchor>/takeover` — also create-only, so that race likewise
+      creating `<anchor>-takeover` (a sibling — a child path is impossible due to
+      git's ref D/F conflict) — also create-only, so that race likewise
       leaves one winner and atomicity holds on the stale-takeover path too.
    b. `$SCRIPTS/make-worktree.sh <repo> <num>` — the last output line is the
       worktree path. Secret symlinks (`.env`, `config/master.key`) are off by

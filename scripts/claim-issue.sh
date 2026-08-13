@@ -25,7 +25,14 @@
 # 남이 만든 것이라 이들 사이의 중재력이 없다). 그래서 인수 자체를 create-only ref 로
 # 한 번 더 중재한다:
 #
-#   takeover ref: refs/issue-runner/claim/<이슈번호>/<앵커>/takeover
+#   takeover ref: refs/issue-runner/claim/<이슈번호>/<앵커>-takeover
+#
+# **형제 이름이어야 한다 — 자식(`<앵커>/takeover`)은 구조적으로 불가능하다.** git ref
+# 네임스페이스는 파일시스템처럼 동작해서 `…/base` 가 존재하면 그 하위 `…/base/takeover`
+# 는 D/F(디렉토리/파일) 충돌로 거부된다. takeover 시도는 정의상 1차 잠금이 이미 존재할
+# 때만 도달하므로 자식 이름이면 **항상** 실패한다(실측 2026-08-12: 자식 생성 → 422
+# `Reference update failed`, 형제 생성 → 201). 게다가 그 422 메시지엔 `already exists`
+# 가 없어 아래 case 의 일반 분기로 떨어져 인수가 영구 불가가 된다.
 #
 # 이걸 잡은 하나만 진행하고 나머지는 패배로 접는다. takeover 도 이미 있으면 그 자리에서
 # 닫는다(fail-closed) — 인수의 인수를 허용하면 무한 후퇴 끝에 결국 이중 claim 이 된다.
@@ -110,7 +117,8 @@ if [ "$lock_rc" != 0 ]; then
   # 대기창 내내 라벨 없음을 보므로 둘 다 claim 한다(1차 잠금은 이미 남이 만든 것이라
   # 중재력이 없다). 그래서 스테일 인수 자체를 **또 하나의 create-only ref** 로 중재한다:
   # takeover ref 를 잡은 하나만 진행하고 나머지는 패배로 접는다.
-  takeover_ref="$lock_ref/takeover"
+  # 형제 이름(하이픈) — 자식 경로는 D/F 충돌로 항상 실패한다(위 헤더 주석).
+  takeover_ref="${lock_ref}-takeover"
   to_rc=0
   to_out=$(gh api "repos/$repo/git/refs" -f ref="$takeover_ref" -f sha="$lock_sha" 2>&1) || to_rc=$?
   if [ "$to_rc" != 0 ]; then

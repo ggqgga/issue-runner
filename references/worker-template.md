@@ -77,6 +77,10 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    (레포가 bin/ci 옵트인이 아니면 자동 skip.) fail 이면 고치고 재커밋/재push 후
    다시 실행하라 — 이 결과 캐시를 사람의 머지 게이트가 읽는다. 이후 추가 커밋을
    push 할 때마다 재실행해 최신 HEAD 의 결과를 남겨라.
+   **credential 의존 테스트가 시크릿 부재로 못 도는 경우**(워크트리에 `.env`·
+   `config/master.key` 가 없음 — repos.conf `link-secrets` 미설정 레포의 기본값, #109):
+   그건 **실패가 아니라 skip** 이다. 억지로 시크릿을 만들거나 그 테스트를 지우지 말고,
+   PR 본문에 어떤 테스트를 왜 못 돌렸는지 한 줄로 명시하라.
 10. PR 을 열어라(**재디스패치면 이미 열려 있다** — 아래 참고). **반드시 cd 없는 단독 명령으로**:
    `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`
    (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사가 누락된다.)
