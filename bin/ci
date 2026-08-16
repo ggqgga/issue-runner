@@ -791,6 +791,9 @@ done
 echo "[test] finish-classify.sh 분류 픽스처 테스트 (#88)"
 bash scripts/tests/finish-classify.test.sh
 
+echo "[test] release-labels.sh 라벨 해제 규칙 테스트 (#117)"
+bash scripts/tests/release-labels.test.sh
+
 echo "[#88] 완결 유실 재파생 배선 검사 — 한/영 SKILL 동기"
 # STALE_FINISH_MIN 상수 + finish-classify.sh 분기 + 4b 인라인 대리 판정 배선이
 # 한/영 SKILL 양쪽에 있어야 한다(완결 유실 갭 자가 재파생 — 규칙4 분리).
