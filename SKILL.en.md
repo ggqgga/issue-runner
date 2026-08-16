@@ -63,7 +63,11 @@ maintenance must come before new work).
 
 Run `$SCRIPTS/reconcile.sh` and handle each event:
 
-- `merged` — successful completion. **Orphan-worker cleanup (first)**: if this
+- `merged` — the PR merged. ★**This does not mean the issue closed**★ — a PR that
+  lands only part of the work uses `Refs` instead of `Closes`, so the issue stays
+  OPEN and `release-labels.sh` keeps `agent-ready` in that case, letting a later
+  tick pick up the remaining half (#117 — it used to strip the label
+  unconditionally, silently stranding the issue). **Orphan-worker cleanup (first)**: if this
   issue's worker is still alive (check TaskList for the `implement <repo>#<num>`
   background agent), stop it with `TaskStop` — the PR has merged so the worker's
   work is moot, and if left alone it holds the already-closed PR and spins forever

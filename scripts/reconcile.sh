@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # claim 된 이슈 전수 점검. 이벤트를 JSON lines 로 출력하고 안전 정리를 수행.
 # 이벤트:
-#   merged   — PR 머지됨 → worktree 제거 + claim 해제 (이슈는 Closes 로 자동 닫힘)
+#   merged   — PR 머지됨 → worktree 제거 + 라벨 해제(release-labels.sh).
+#              ★이슈가 자동으로 닫힌다고 가정하지 않는다★ — 일부만 착지한 PR 은 closeout
+#              규약상 `Closes` 대신 `Refs` 를 써서 트래커를 살려 둔다. 그 경우 이슈는
+#              OPEN 으로 남고 agent-ready 도 유지돼야 다음 틱이 남은 절반을 집는다(#117).
 #   rejected — PR 이 머지 없이 닫힘 → 정리 + agent-ready 도 제거 (자동 재시도 금지)
 #   pr_open  — PR 열려 있음 (failing 카운트 포함 → Maintain 단계 입력)
 #   harvesting — closeout 가 점유한 OPEN PR (harvesting 라벨) → Maintain 제외, 건드리지 않음
@@ -72,7 +75,9 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
   case "$prstate" in
     MERGED)
       if safe_remove_worktree; then
-        gh issue edit "$num" --repo "$repo" --remove-label "agent:claimed" >/dev/null 2>&1 || true
+        # 라벨 해제는 스윕과 **같은 규칙**을 쓴다(#117) — 이슈가 아직 OPEN(Refs 부분착지)이면
+        # agent-ready 를 남긴다. 종전엔 이 분기와 스윕이 서로 다른 목록을 떼어 갈렸다.
+        "$SCRIPT_DIR/release-labels.sh" "$repo" "$num"
         printf '%s\n' "$repo#$prnum" >> "$seen_file"  # 아래 스윕이 이 머지를 중복 발행하지 않게
         printf '{"event":"merged","repo":"%s","number":%s,"pr":%s}\n' "$repo" "$num" "$prnum"
       fi ;;
@@ -124,10 +129,9 @@ sweep_repos | while IFS= read -r srepo; do
         # cutoff 이전 머지는 씨딩만(재발행 금지). 이후(최근) 머지만 발행.
         [[ "$smerged" > "$cutoff" ]] || continue
         "$SCRIPT_DIR/cleanup-worktree.sh" "$srepo" "$snum" >/dev/null 2>&1 || true
-        gh issue edit "$snum" --repo "$srepo" \
-          --remove-label "agent:claimed" --remove-label "agent-ready" \
-          --remove-label "flow:verify" --remove-label "flow:ready" \
-          --remove-label "harvesting" >/dev/null 2>&1 || true
+        # 위 MERGED 분기와 **같은 헬퍼**(#117) — 이슈가 OPEN 이면 agent-ready 를 남긴다.
+        # 종전엔 여기서 무조건 떼어, `Refs` 로 일부만 착지시킨 이슈가 조용히 좌초했다.
+        "$SCRIPT_DIR/release-labels.sh" "$srepo" "$snum"
         printf '{"event":"merged","repo":"%s","number":%s,"pr":%s}\n' "$srepo" "$snum" "$spr"
       done
 done
