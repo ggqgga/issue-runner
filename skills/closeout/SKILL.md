@@ -21,7 +21,7 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
   `/loop` 주기는 **빈 큐일 때의 재스캔 간격**만 조절한다(적체 소진 속도가 아니라). 한
   틱이 하나씩만 처리해 적체가 쌓이던 문제를 이 드레인이 해소한다.
 - `REPAIR_RECUR_LIMIT = 2` — 같은 배포 후 실패가 N회 재발하면 agent-ready 재발행
-  대신 `needs:human` 으로 승격한다 (5단계 서킷 브레이커).
+  대신 `needs-human` 으로 승격한다 (5단계 서킷 브레이커).
 - `QUIET_TICKS = 3` — N틱 연속 후보·이벤트가 없으면 stagnated 로 보고한다. **①
   Reconcile·② Pick 은 이후에도 매 틱 그대로 수행**한다 — 둘 다 `gh api` 조회뿐이라
   비용이 사실상 0 이고(실제 비용은 ③ 파이프라인에서만 발생), 새 PR 은 이미 진행
@@ -387,9 +387,12 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
   `needs-human` 라벨을 제거하고 배포 이슈를 close 한다(남은 게이트가 검증뿐이고 그게
   통과했으므로 closeout 이 종결 — 미결 결정의 권장안).
 - **fail (한 건이라도 실패)** → 직접 고치지 않고 기존 발행 경로: 자동수정 가능하면
-  `references/spinoff-issue.md` 로 agent-ready 이슈, 라이브 검증이 필요하면
-  `needs:human` 이슈. 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복되면 `needs:human` 으로
-  승격한다 (**exhausted 종료**). 배포 이슈는 닫지 않는다.
+  `references/spinoff-issue.md` 로 agent-ready 이슈(**6단계의 "발행 명령" 형태를 그대로
+  쓴다** — `--label agent-ready --label <P1|P2>`. 여기도 산문으로 대신하지 마라),
+  라이브 검증이 필요하면 `--label needs-human` 이슈. 같은 실패가 `REPAIR_RECUR_LIMIT`
+  회 반복되면 `needs-human` 으로 승격한다 (**exhausted 종료**). 배포 이슈는 닫지 않는다.
+  라벨명은 `needs-human`(하이픈)이다 — `needs:human` 은 존재하지 않는 라벨이라
+  `gh issue create` 가 통째로 실패한다(콜론형은 `needs:hardware` 뿐).
   - **코드무관 스모크 실패 기록 (lessons).** 그 스모크 실패가 코드 무관(인프라 장애·
     플레이크·검증 URL 일시 오류 등)으로 판명되면, 위 발행 경로와 별개로
     `$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 **`.loop/lessons-verifier.md`** 에
@@ -409,6 +412,34 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
 인접 작업을 `references/spinoff-issue.md` 로 채워 agent-ready 이슈로 발행한다.
 epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생성한 번호를 원본 PR
 코멘트에 기록한다 (중복 발행 방지 마커).
+
+- **발행 명령 (필수 형태 — 산문으로 대체하지 마라).** 본문은 채운
+  `spinoff-issue.md` 를 파일로 써서 `--body-file` 로 넘긴다(템플릿은 **본문 전용**이라
+  라벨을 거기 적으면 이슈 본문에 렌더된다 — 라벨은 반드시 명령줄에서 준다):
+
+  ```
+  gh issue create --repo <repo> --title "<제목>" --body-file <본문파일> \
+    --label agent-ready --label <P1|P2> [--label <레포 규약 라벨>...]
+  ```
+
+  **`--label agent-ready` 는 생략 불가**다 — `eligible-issues.sh` 의 디스패치 자격이
+  `open + agent-ready + ¬agent:claimed` 라, 이 라벨이 없으면 이슈는 생성되고도
+  issue-runner 가 **영원히 집지 않는다**(실증 2026-08-13 BoDAT: 6단계가 3축 라벨만 달고
+  agent-ready 를 빠뜨려 열린 이슈 17건이 루프 밖에 재고로 남음 — 4단계는 명령에
+  `--label needs-human` 이 박혀 있어 186건 전건 정상이었다. 명령이 있는 단계는 안 새고,
+  산문뿐인 단계가 샜다). 우선순위(`P1`/`P2`)도 함께 단다 — 없으면 정렬에서 최하위로
+  밀린다(`P0 > P1 > P2 > 없음`). 그 밖의 축(BoDAT 의 `difficulty:*`·`frontend`/`backend`·
+  `area:*`·`needs:hardware`)은 **레포 규약을 따라 추가**하되, 규약 라벨을 다느라
+  `agent-ready` 를 대체하지 마라 — 위 실측의 실패 형태가 정확히 그것이다.
+- **라벨 부재 fail-closed (② Pick 의 harvesting 보강과 동형).** `gh issue create` 는
+  `--label` 이 없는 라벨이면 **이슈 자체를 안 만들고 실패**한다(무해한 `--remove-label`
+  과 다르다). `'agent-ready' not found` 류로 실패하면 `$SCRIPTS/setup-labels.sh <repo>`
+  를 **1회** 호출한 뒤 같은 명령을 **1회만** 재시도한다. 재시도도 실패하면 더 반복하지
+  말고 **라벨 없이 이슈만 만들고**(발행 유실 방지) ④ Report 에
+  `BLOCKED: 파생 이슈 라벨 부착 실패 — #<번호>` 로 올린다.
+- **발행 직후 확인.** `gh issue view <번호> --repo <repo> --json labels` 로
+  `agent-ready` 가 실제로 붙었는지 확인하고, 안 붙었으면
+  `gh issue edit <번호> --repo <repo> --add-label agent-ready` 로 보강한다.
 - **3단계가 이미 흡수한 표면 교정은 여기서 발행하지 않는다.** 3단계 "표면 교정 흡수"
   기준(통과/실패가 바뀌는 테스트가 하나도 없는가)을 통과해 그 커밋에 실린 건은 남은
   작업이 아니다. 한 발견에 표면과 코드가 섞여 있으면(예: "용어가 갈렸다 + 셈값 가드가
@@ -458,7 +489,7 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
 - **clean no-op** — ② Pick 후보가 0이라 마감할 PR 이 없음(①-b 재디스패치만 있었어도 no-op 아님 — `재디스패치 N` 보고).
 - **blocked** — 1단계 검증이 BLOCKER 이거나 2단계 rebase 통합 실패라 보류(머지 안 함).
 - **approval-required** — 4단계에서 배포 이슈를 발행하고 사람 게이트 대기.
-- **exhausted** — 5단계 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복돼 needs:human 승격.
+- **exhausted** — 5단계 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복돼 needs-human 승격.
 - **stagnated** — `QUIET_TICKS` 연속 조용함(①-b 스윕은 stagnated 여도 매 틱 돈다).
 
 `QUIET_TICKS` 연속으로 조용해도 ①②는 다음 틱에도 그대로 수행한다 — stagnated 는
