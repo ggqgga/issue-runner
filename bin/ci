@@ -20,6 +20,13 @@ else
   echo "  shellcheck 미설치 — skip"
 fi
 
+echo "[lint] 인용 안 한 heredoc 본문의 미이스케이프 백틱·\$( 검사 (#119)"
+# 구분자를 인용하지 않은 heredoc 은 본문의 백틱·$( 를 **바깥 셸이 전개**한다 — 스텁 주석에
+# 백틱을 쓰면 그 안이 실행되고 그 자리가 빈 문자열로 치환돼 주석이 조용히 지워진다.
+# bin/ci 자신도 검사 대상이다(그 결함이 실제로 여기 있었다).
+scripts/lint-heredoc.sh scripts/*.sh hooks/*.sh bin/ci \
+  || { echo "  ↑ 백틱은 \\\` 로, 명령치환은 \\\$( 로 이스케이프하거나 <<'DELIM' 로 인용하라"; exit 1; }
+
 echo "[hooks] 동봉 hook 은 전부 README 설치 섹션에 문서화 (영/한)"
 # ship 하는 모든 hooks/*.sh 는 두 README 에 파일명이 나타나야 한다 — 문서화 없이
 # hook 을 추가/이름변경하면 사용자가 등록법을 알 수 없다(설명·settings.json 누락 방지).
@@ -913,12 +920,12 @@ case "\$*" in
   #
   # 단 **D/F(디렉토리/파일) 충돌은 반드시 재현한다**: git ref 네임스페이스는 파일시스템
   # 처럼 동작해 앵커 ref 가 있으면 그 하위의 takeover 자식 ref 는 거부된다(실측: 422
-  # `Reference update failed` — `already exists` 가 아니다). takeover 는 정의상 1차 잠금이
+  # \`Reference update failed\` — \`already exists\` 가 아니다). takeover 는 정의상 1차 잠금이
   # 있을 때만 시도되므로, 자식 경로를 쓰면 인수가 **항상** 실패한다. 이 규칙이 없으면
   # 스텁이 불가능한 동작을 성공으로 흉내내 그 회귀를 통째로 놓친다(실증: 그렇게 통과한
   # 스모크가 codex 재검증까지 CLEAN 을 받았다).
   # 패턴은 **앵커 무관**이어야 한다 — 자식형만 슬래시-takeover 를 포함하고 형제형(하이픈)은
-  # 포함하지 않으므로, 앵커가 `base` 든 40자 sha 든 규칙이 그대로 성립한다. 리터럴 앵커에
+  # 포함하지 않으므로, 앵커가 \`base\` 든 40자 sha 든 규칙이 그대로 성립한다. 리터럴 앵커에
   # 묶으면 앵커 형태가 바뀌는 순간 규칙이 조용히 무력화된다(전건 초록불 채로).
   *"git/refs"*"/takeover"*)
     echo '{"message":"Reference update failed","status":"422"}'; exit 1 ;;
