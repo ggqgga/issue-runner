@@ -380,26 +380,37 @@ drifts (measured 2026-08-12~13: of 186 deploy-check issues, **zero** used checkb
 all prose). A sentence like "없음. 주석 13줄이 전부다 — 관찰 가능한 변화가 없다" is clear
 to a human but is not `없음` to a machine branch.
 
-**Branch — if there is nothing to step through, do not create an issue.**
+**Branch — once it is merged, always create a promotion ticket (user decision, 2026-08-16).**
 
-- **If it is `없음`: do not file an issue.** Leave only the marker `gh pr comment <pr>
-  --repo <repo> --body "배포 대기(검증 항목 없음) — 승격 시 함께 올라간다`\n`<!-- bodat:worker -->"`
-  and **exit as approval-required**. **Skip the step-5 smoke too** (there is no reason to
-  open Chrome for zero items — measured: 39 of the 64 `없음` issues ran a smoke anyway).
-  - Why this is not a loss: **the deploy issue was never the source of truth for what is
-    undeployed.** ④ Report's `승격 대기 N커밋` and the promotion side's
-    `git merge-base --is-ancestor` + tags already hold that. The issue is a **container for
-    human actions**, not a deploy ledger.
-  - The PR dropping out of the promoter's list is also intended — there is nothing to look at.
-- **If there is at least one checkbox:** as before, file the deploy-request issue with
-  `gh issue create --repo <repo> --label needs-human`, leave the marker
-  `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
-  **exit as approval-required**. The checkbox list is exactly what closing that issue requires.
+**A merged PR files exactly one deploy-wait issue, without exception.** Do not judge — even
+if it is tests-only or a one-line comment, being merged means it entered the promotion scope,
+and that fact must be visible to a human. File it with
+`gh issue create --repo <repo> --label needs-human`, leave the marker
+`gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
+**exit as approval-required**.
+
+Why this rule was flipped: the previous rule created no issue when `<LIVE_CHECKS>` was `없음`,
+justified by "④ Report's `승격 대기 N커밋` holds the unpromoted state". But that Report line
+turns out to be easy to omit (observed 2026-08-16: three consecutive closeouts had neither an
+issue nor the number, so the merged work looked like it had evaporated) — leaving us **unable
+to tell whether there is anything to promote at all**. Do not leave the ledger to the report
+alone; keep it as an issue too.
+
+**The `<LIVE_CHECKS>` shape discipline still stands, though** — it no longer decides whether an
+issue is filed, but this section still decides the step-5 smoke:
+
+- **If there is at least one checkbox**, that list is what closing the issue requires, and
+  step 5 checks it with a Chrome smoke.
+- **If it is `없음`**, append `(승격만)` (promotion-only) to the issue title and leave `없음`
+  as-is in the body's `## 라이브/하드웨어 검증 항목`. **Skip the step-5 smoke** — a smoke with
+  zero items to check did not pass anything, it looked at nothing, yet it prints as
+  `✅ 스모크 0/0 통과` and reads as verified (false green). A human closes this issue once the
+  promotion is done.
 
 **Do not batch.** Never merge several deploy-wait issues into one — a long-lived issue that
 keeps accruing items loses its closing moment and becomes an issue that never ends (user
-decision, 2026-08-13). The axis that shrinks the count is **not merging them, but never
-creating the ones with nothing to step through**.
+decision, 2026-08-13). Even as the count grows, keep **one PR = one ticket = a container with
+a clear closing moment**.
 
 **Step 5 — post-deploy handling (Chrome smoke).** For a deploy issue a human has
 reported deployed, without any new detection mechanism (no polling/timing), actively run
