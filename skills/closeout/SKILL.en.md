@@ -28,7 +28,7 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
   **re-scan cadence when the queue is empty** (not the drain rate). This drain fixes the
   accumulation that built up when only one PR was processed per tick.
 - `REPAIR_RECUR_LIMIT = 2` — if the same post-deploy failure recurs N times,
-  escalate to `needs:human` instead of re-issuing agent-ready (step-5 circuit
+  escalate to `needs-human` instead of re-issuing agent-ready (step-5 circuit
   breaker).
 - `QUIET_TICKS = 3` — if there are no candidates/events for N consecutive ticks,
   report stagnated. **① Reconcile and ② Pick still run every tick afterwards** —
@@ -444,9 +444,13 @@ structure/empty-state confirmation from real-data render confirmation in the res
   deploy issue (the only remaining gate was verification and it passed, so closeout
   finalizes — the recommended option of the open decision).
 - **fail (any item fails)** → do not fix it directly; use the existing publish path: an
-  agent-ready issue via `references/spinoff-issue.md` if auto-fixable, a `needs:human`
-  issue if live verification is needed. If the same failure recurs `REPAIR_RECUR_LIMIT`
-  times, escalate to `needs:human` (**exhausted exit**). Do not close the deploy issue.
+  agent-ready issue via `references/spinoff-issue.md` if auto-fixable (**use step 6's
+  "issuance command" form verbatim** — `--label agent-ready --label <P1|P2>`; no prose
+  substitute here either), a `--label needs-human` issue if live verification is needed.
+  If the same failure recurs `REPAIR_RECUR_LIMIT`
+  times, escalate to `needs-human` (**exhausted exit**). Do not close the deploy issue.
+  The label is `needs-human` (hyphen) — `needs:human` does not exist and makes
+  `gh issue create` fail outright (the only colon form is `needs:hardware`).
   - **Record a code-unrelated smoke failure (lessons).** If that smoke failure turns
     out to be code-unrelated (infra outage·flake·transient verify-URL error·etc.),
     separately from the publish path above, append one line
@@ -471,6 +475,38 @@ body's `follow-up:` items + adjacent work the step-1 diff review flagged, and is
 agent-ready issue. Link it as a sub-issue if there is an epic, or as a standalone
 issue if not. Record the created number in a comment on the original PR (a
 duplicate-issuance marker).
+
+- **Issuance command (required form — do not substitute prose).** Write the filled
+  `spinoff-issue.md` to a file and pass it via `--body-file` (the template is
+  **body-only** — labels written there render into the issue body; labels must come
+  from the command line):
+
+  ```
+  gh issue create --repo <repo> --title "<title>" --body-file <body-file> \
+    --label agent-ready --label <P1|P2> [--label <repo-convention label>...]
+  ```
+
+  **`--label agent-ready` is not optional** — `eligible-issues.sh` gates dispatch on
+  `open + agent-ready + ¬agent:claimed`, so without it the issue is created but
+  issue-runner **never picks it up** (measured 2026-08-13 on BoDAT: step 6 attached only
+  the 3-axis convention labels and dropped agent-ready, stranding 17 open issues outside
+  the loop — while step 4, whose command literally carries `--label needs-human`, was
+  correct on all 186. The step with a command did not leak; the prose-only step did).
+  Attach a priority (`P1`/`P2`) too — without one it sorts last (`P0 > P1 > P2 > none`).
+  Add the other axes per repo convention (BoDAT: `difficulty:*`·`frontend`/`backend`·
+  `area:*`·`needs:hardware`), but **never let convention labels displace `agent-ready`** —
+  that is exactly the observed failure shape.
+- **Missing-label fail-closed (isomorphic to ② Pick's harvesting top-up).**
+  `gh issue create` **fails without creating the issue** when a `--label` does not exist
+  (unlike the harmless `--remove-label`). On a `'agent-ready' not found`-type failure,
+  call `$SCRIPTS/setup-labels.sh <repo>` **once** and retry the same command **once**.
+  If the retry also fails, do not loop further — **create the issue without labels**
+  (never lose the issuance) and report `BLOCKED: spinoff issue labeling failed —
+  #<number>` in ④ Report.
+- **Verify right after issuance.** Check with
+  `gh issue view <number> --repo <repo> --json labels` that `agent-ready` actually
+  landed; if not, top it up with
+  `gh issue edit <number> --repo <repo> --add-label agent-ready`.
 - **Do not issue what step 3 already absorbed.** A finding that passed step 3's
   "absorb surface corrections" criterion (does this flip the pass/fail of any test?)
   and rode along in that commit is not remaining work. When one finding mixes surface
@@ -516,7 +552,7 @@ State the 6 exit states — for **each** PR processed (per-PR when the drain han
 - **blocked** — step-1 verification was a BLOCKER, or step-2 rebase integration failed, so it is on hold (no merge).
 - **approval-required** — step 4 issued a deploy issue and is awaiting the human gate.
 - **exhausted** — the same step-5 failure recurred `REPAIR_RECUR_LIMIT` times,
-  escalated to needs:human.
+  escalated to needs-human.
 - **stagnated** — quiet for `QUIET_TICKS` consecutive ticks.
 
 Even after `QUIET_TICKS` consecutive quiet ticks, ①② still run on every tick —
