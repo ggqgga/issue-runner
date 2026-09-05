@@ -39,6 +39,12 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
 - `VERIFIER_TIMEOUT_MIN = 10` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
   시각 + 이 값을 데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict
   미산출로 간주한다 — codex 외부 CLI 스톨이 틱을 무한정 묶는 것을 막는 방어선(#96).
+- `AUX_REVIEWERS = pr-review-toolkit:silent-failure-hunter, pr-review-toolkit:pr-test-analyzer`
+  — **보조 리뷰어**(비게이트). Codex 와 같은 동봉 diff 를 받아 조용한 실패(삼킨 예외·근거 없는
+  폴백)와 테스트 갭을 찾는다. 판정에 **들어가지 않는다**(BLOCKER 는 `VERIFIER` 만) — Codex 와
+  겹치는지 대조 기록을 쌓는 단계이고 게이트 승격은 사람이 정한다(사용자 결정 2026-09-05).
+  타입이 없으면(플러그인 미설치) 건너뛰고 코멘트에 `보조 리뷰: 미설치` 를 적는다. 데드라인은
+  `VERIFIER_TIMEOUT_MIN` 과 같다 — 넘기면 `TaskStop` 하고 `보조 리뷰: 타임아웃` 으로 적는다.
 - 절대 금지: PR 머지(closeout 독점) · main/release 직접 push · `harvesting` PR 접촉
   (closeout 소유) · issue-runner 워크트리/브랜치를 검증 목적 밖으로 조작 · `flow:verify`
   가 아닌 PR 에 손대기. **허용**: 검증 대상 PR 의 `flow:*` 라벨 교체(flow:verify→
@@ -185,6 +191,23 @@ VERIFIER 의 general-purpose 재시도)도 **동일한 배선**(새 스폰 시�
   `gh pr comment <pr> --repo <repo> --body "검증자 리뷰: <CLEAN 또는 'BLOCKER 0 / WARN n건'과 각 발견 요약>
 <!-- bodat:worker -->"`
 
+**3-b. 보조 리뷰 (`AUX_REVIEWERS`, 비게이트).** ③-3 의 Codex 스폰과 **같은 시점**에, 같은 동봉
+diff·이슈 본문으로 `AUX_REVIEWERS` 두 타입을 각각 `run_in_background: true` 로 스폰한다(직렬 레인의
+벽시계를 늘리지 않게 Codex 와 병렬). 프롬프트 계약은 `references/verify-prompt.md` 와 같은 뼈대
+— 동봉 텍스트만 근거·gh/git 실행 금지·read-only·한국어 — 에 역할만 바꾼다: silent-failure-hunter
+는 "이 diff 가 예외를 삼키거나·조용히 폴백하거나·실패를 로그 없이 넘기는 지점", pr-test-analyzer
+는 "이 diff 의 동작 중 테스트가 안 덮는 것". 발견마다 한 줄(파일:줄 — 무엇). 발견 없으면 'CLEAN'.
+결과는 판정에 쓰지 않고 ③-3 의 `검증자 리뷰:` 코멘트 **끝에** 덧붙인다:
+`보조 리뷰(pr-review-toolkit): 조용한 실패 n건 · 테스트 갭 n건` + 발견 한 줄씩(CLEAN 이면 0건).
+Codex 가 BLOCKER 로 재디스패치할 때도 이 줄은 붙인다 — 워커가 함께 읽고 고친다.
+
+**3-c. 보안 경계 표식 (`claude-security` 는 사람 전용).** 동봉 diff 의 파일 목록이 대상 레포
+CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을 더 붙인다:
+`🔒 보안 경계 변경: <파일들> — 배포 전 사람 세션에서 /claude-security scan changes 권고`.
+게이트 아님. `claude-security` 스킬은 `disable-model-invocation` 이라 이 루프가 대신 돌릴 수
+없다 — deploy-* 스킬 2절이 이 표식을 읽어 사용자에게 제안한다. CLAUDE.md 에 그 절이 없는
+레포는 표식을 생략한다.
+
 ## ④ Classify — 판정과 인계
 
 **passed** — E2E pass(또는 해당 없음) + codex BLOCKER 0:
@@ -261,3 +284,4 @@ warn(flake_retry·동봉 실패 등)이 있으면 경로·사유를 아래 나�
 - 의존: 결정적 헬퍼는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)의
   `verify-eligible.sh`·`closeout-ci-pass.sh`·`run-local-ci.sh`·`make-worktree.sh`·
   `repo-dir.sh`, 검증자 프롬프트는 `skills/verify-runner/references/verify-prompt.md`.
+  보조 리뷰어는 `pr-review-toolkit@claude-plugins-official` 플러그인(미설치면 3-b 는 자동 skip).
