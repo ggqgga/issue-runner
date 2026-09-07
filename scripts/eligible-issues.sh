@@ -6,7 +6,21 @@
 # 주의: search API는 인덱스 지연이 있다 — 최종 재확인은 claim-issue.sh가 직접 API로 한다.
 set -euo pipefail
 
-me=$(gh api user -q .login)
+# REST /user 503 부분 장애 폴백 (reconcile.sh 와 동일) — 빈/오염된 me 로 빈 큐를
+# 위장하지 않는다. gh 는 실패해도 에러 본문을 stdout 으로 뱉으므로 로그인 형식을
+# 반드시 검증한다(안 하면 q=user:{"message":...} 로 422 가 난다).
+me=""
+for _try in 1 2 3; do
+  for _cand in "$(gh api user -q .login 2>/dev/null)" \
+               "$(gh api graphql -f query='{viewer{login}}' --jq .data.viewer.login 2>/dev/null)"; do
+    if printf '%s' "$_cand" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}$'; then me="$_cand"; break 2; fi
+  done
+  sleep 2
+done
+if [ -z "$me" ]; then
+  echo "eligible-issues: GitHub 사용자 확인 실패 (REST /user·GraphQL viewer 모두 응답 없음)" >&2
+  exit 1
+fi
 
 # 세션 레포 스코프 (#40): 실행 cwd 의 .loop/repos 가 있으면 그 목록(owner/repo,
 # 줄당 하나, # 주석·빈 줄 허용)의 레포만 처리한다. 없으면 계정 전체(기존 동작).

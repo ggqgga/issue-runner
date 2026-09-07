@@ -14,7 +14,22 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-me=$(gh api user -q .login)
+# REST /user 가 503 을 뱉는 GitHub 부분 장애가 실측된다 — 그때 me 가 오염되어 아래
+# gh search 가 통째로 오사용/422 에러를 내고 큐가 빈 것과 구분이 안 된다. GraphQL
+# viewer 로 폴백하되, gh 는 실패해도 에러 본문을 stdout 으로 뱉으므로 로그인 형식을
+# 반드시 검증한다. 둘 다 실패하면 조용히 넘기지 말고 즉시 종료한다(fail-loud).
+me=""
+for _try in 1 2 3; do
+  for _cand in "$(gh api user -q .login 2>/dev/null)" \
+               "$(gh api graphql -f query='{viewer{login}}' --jq .data.viewer.login 2>/dev/null)"; do
+    if printf '%s' "$_cand" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}$'; then me="$_cand"; break 2; fi
+  done
+  sleep 2
+done
+if [ -z "$me" ]; then
+  echo "reconcile: GitHub 사용자 확인 실패 (REST /user·GraphQL viewer 모두 응답 없음)" >&2
+  exit 1
+fi
 
 # 세션 레포 스코프 (#40): 실행 cwd 의 .loop/repos 가 있으면 그 목록(owner/repo,
 # 줄당 하나, # 주석·빈 줄 허용)의 레포만 점검한다. 없으면 계정 전체(기존 동작).
@@ -37,8 +52,23 @@ cutoff=$(date -u -v-30M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
   || date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "0000")
 
 # 주의: --state 미지정 = open+closed 모두 (merged PR 이 이슈를 자동으로 닫으므로 필수)
-claimed=$(gh search issues "label:agent:claimed" --owner "$me" \
-  --json repository,number --limit 100)
+# GitHub 부분 장애(간헐 503)에서 이 조회가 실패하면 빈 결과가 되어 "claim 된 이슈 없음"
+# 과 구분이 안 된다 — 스테일 claim 정리·머지 감지가 조용히 통째로 스킵된다(fail-open).
+# 재시도하고, 그래도 실패하면 조용히 넘기지 말고 종료한다(fail-loud).
+claimed=""
+for _try in 1 2 3; do
+  if claimed=$(gh search issues "label:agent:claimed" --owner "$me" \
+                 --json repository,number --limit 100 2>/dev/null) \
+     && printf '%s' "$claimed" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    break
+  fi
+  claimed=""
+  sleep 3
+done
+if [ -z "$claimed" ]; then
+  echo "reconcile 중단: agent:claimed 조회 실패 — 빈 결과와 구분 불가라 정리를 건너뛴다" >&2
+  exit 1
+fi
 
 printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
   repo=$(printf '%s' "$row" | jq -r '.repository.nameWithOwner')
@@ -56,8 +86,30 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
     "$SCRIPT_DIR/cleanup-worktree.sh" "$repo" "$num"
   }
 
-  pr=$(gh pr list --repo "$repo" --head "$branch" --state all \
-    --json number,state,statusCheckRollup,labels --limit 1 2>/dev/null | jq -c '.[0] // empty')
+  prs=$(gh pr list --repo "$repo" --head "$branch" --state all \
+    --json number,state,mergedAt,statusCheckRollup,labels --limit 20 2>/dev/null || true)
+  printf '%s' "$prs" | jq -e 'type=="array"' >/dev/null 2>&1 || prs='[]'
+
+  # 브랜치 이름이 이슈 번호에서 나오므로(agent/issue-<N>) 이슈를 **다시 집으면 이전
+  # attempt 가 남긴 머지 PR 이 그대로 잡힌다**. 거르지 않으면 살아있는 워커의 worktree·
+  # claim 이 false merged 로 지워진다 (2026-08-16 #3447 실측: 라벨 부착 → 다음 틱 파괴가
+  # 3회 반복됐고 1회는 미push 작업이 유실됐다).
+  # 판별선은 "이 브랜치에 머지된 PR 이 있나" 가 아니라 "**이번 claim** 이 머지로 끝났나"
+  # 다 — mergedAt 이 현재 claim 시각보다 이르면 그 머지는 옛 이력이다. 브랜치 존재
+  # 여부로는 못 가른다(정상 머지 후에도 브랜치가 지워져 둘이 같은 모습이 된다).
+  if printf '%s' "$prs" | jq -e 'any(.[]; .state=="MERGED")' >/dev/null 2>&1; then
+    # grep 으로 형태를 검증한다 — `gh api -q` 는 실패 응답의 에러 JSON 을 stdout 으로
+    # 흘리고(claim-issue.sh 와 같은 함정), --paginate 는 페이지마다 값을 한 줄씩 낸다.
+    claimed_at=$(gh api "repos/$repo/issues/$num/timeline?per_page=100" --paginate \
+      --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed") | .created_at] | last // empty' \
+      2>/dev/null | grep -E '^[0-9]{4}-' | tail -n1 || true)
+    if [ -n "$claimed_at" ]; then
+      prs=$(printf '%s' "$prs" | jq -c --arg c "$claimed_at" \
+        '[.[] | select((.state == "MERGED" and (.mergedAt // "") < $c) | not)]')
+    fi
+  fi
+
+  pr=$(printf '%s' "$prs" | jq -c '.[0] // empty')
 
   if [ -z "$pr" ]; then
     if [ -d "$wt" ]; then

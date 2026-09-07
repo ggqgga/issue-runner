@@ -10,14 +10,24 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
 ## 상수
 
-- `MAX_AGENTS = 3` — 동시 in-flight 이슈 상한 (in-flight 정의는 ③-1 —
+- `MAX_AGENTS = 4` — 동시 in-flight 이슈 상한 (in-flight 정의는 ③-1 —
   사람 리뷰 대기 PR 은 점유하지 않는다). **2026-07 경합 실험으로 5→3 축소**: 워커는
   전부 한 프로세스에서 도는 백그라운드 subagent 라 동시 N 개면 API·CPU 를 나눠 써
   각자 ~1/N 로 throttle 된다(실측: 동시 0 워커 ~10분 vs 동시 1~4 ~30분). 처리량은
   거의 보존되며 박스 부하·고아 위험이 준다. 여전히 느리면 2 로 더 낮춘다.
-- `MAX_OPEN_PRS = 10` — 열린 PR 총수 적체 상한. 도달 시 신규 디스패치만 멈춘다
+  **2026-08-14 에 3→4 로 상향** — 대기 이슈 적체 해소 요청. 단, 이 값만 올리면
+  `MAX_OPEN_PRS` 에 더 빨리 닿을 뿐이라 그것도 함께 올렸다(둘은 짝이다).
+  ⚠️ 상향의 실제 상한은 API 가 아니라 **머신 부하**다: 이 루프의 워커 N 개 +
+  verify-runner(헤드리스 크롬 E2E) + closeout(재-CI) 이 같은 10코어를 나눠 쓰고,
+  각 `bin/ci` 가 병렬 테스트 프로세스를 또 띄운다. 4 를 넘기면 동시 `bin/ci` 경합
+  플레이크(`lessons.md` 의 #2672·#2685·#3077, `poll_health_timeout_test` 부하
+  타이밍)가 늘어 워커가 무죄 입증에 시간을 쓰게 된다 — 5 이상은 실측 없이 올리지 마라.
+- `MAX_OPEN_PRS = 14` — 열린 PR 총수 적체 상한. 도달 시 신규 디스패치만 멈춘다
   (보수는 계속) — 사람 머지가 밀릴 때 PR 끼리 rebase conflict 가 폭증하는 것을 막는
-  배압(backpressure)
+  배압(backpressure).
+  **2026-08-14 에 10→14 로 상향** — 사람 대기(needs-human·사람 게이트) PR 이 상시
+  2~3건 캡을 영구 점유해 실효 캡이 7 로 떨어져 있었다(2026-08-13 실측: 10칸 중 3칸).
+  14 는 그 상시 점유분을 흡수한 값이다. 사람 대기 PR 이 정리되면 다시 낮춰도 된다.
 - `MAX_REPAIRS_PER_PR = 3` — PR 1개당 보수 디스패치 상한 (② Maintain 서킷 브레이커)
 - `ISSUE_TIMEBOX_HOURS = 1` — PR 없는 `working` 이슈에 허용하는 claim 경과 시간
   (① Reconcile timebox)

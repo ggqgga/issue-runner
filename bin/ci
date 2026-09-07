@@ -917,7 +917,7 @@ case "\$*" in
     else echo '{"labels":[]}'; fi ;;
   *"git/ref/heads/agent/issue-5"*) exit 1 ;;      # 원격 브랜치 없음 → 앵커 base
   *".default_branch"*) echo "main" ;;
-  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  *"git/ref/heads/main"*) echo "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" ;;   # 40자 hex — claim-issue.sh 가 앵커 sha 형태를 검증한다
   # 잠금 ref 와 takeover ref 는 **별개의 create-only 자원**이다 — 한 파일로 흉내내면
   # takeover 가 1차 잠금의 422 를 물려받아 스테일 인수 경로를 검증할 수 없다.
   #
@@ -988,7 +988,7 @@ case "\$*" in
     else echo '{"labels":[{"name":"agent:claimed"}]}'; fi ;;
   *"git/ref/heads/agent/issue-5"*) exit 1 ;;
   *".default_branch"*) echo "main" ;;
-  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  *"git/ref/heads/main"*) echo "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" ;;   # 40자 hex — claim-issue.sh 가 앵커 sha 형태를 검증한다
   # D/F 충돌 재현(메인 스텁과 동일 계약) — 자식 경로면 인수가 항상 실패해야 한다.
   *"git/refs"*"/takeover"*)
     echo '{"message":"Reference update failed","status":"422"}'; exit 1 ;;
@@ -1049,7 +1049,7 @@ case "\$*" in
     else echo '{"labels":[]}'; fi ;;
   *"git/ref/heads/agent/issue-5"*) exit 1 ;;
   *".default_branch"*) echo "main" ;;
-  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  *"git/ref/heads/main"*) echo "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" ;;   # 40자 hex — claim-issue.sh 가 앵커 sha 형태를 검증한다
   *"git/refs"*) echo '{"message":"Bad credentials","status":"401"}'; exit 1 ;;
   *"issue edit"*) : > "$tmp/claimed" ;;
   *) echo "" ;;
@@ -1112,7 +1112,7 @@ case "\$*" in
     if [ -f "$tmp/claimed" ]; then echo '{"labels":[{"name":"agent:claimed"}]}'; else exit 1; fi ;;
   *"git/ref/heads/agent/issue-5"*) exit 1 ;;
   *".default_branch"*) echo "main" ;;
-  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  *"git/ref/heads/main"*) echo "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" ;;   # 40자 hex — claim-issue.sh 가 앵커 sha 형태를 검증한다
   *"git/refs"*) echo '{"message":"Reference already exists","status":"422"}'; exit 1 ;;
   *"issue edit"*) : > "$tmp/claimed" ;;
   *) echo "" ;;
@@ -1138,7 +1138,7 @@ case "\$*" in
     else echo '{"labels":[{"name":"agent:claimed"}]}'; fi ;;
   *"git/ref/heads/agent/issue-5"*) exit 1 ;;
   *".default_branch"*) echo "main" ;;
-  *"git/ref/heads/main"*) echo "deadbeef" ;;
+  *"git/ref/heads/main"*) echo "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" ;;   # 40자 hex — claim-issue.sh 가 앵커 sha 형태를 검증한다
   *"git/refs"*) echo '{"message":"Reference already exists","status":"422"}'; exit 1 ;;
   *"issue edit"*) : > "$tmp/claimed" ;;
   *) echo "" ;;
