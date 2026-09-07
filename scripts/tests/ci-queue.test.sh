@@ -216,6 +216,15 @@ rc=0; "$SUT" wait "$S11" --timeout 1 >/dev/null 2>&1 || rc=$?
 assert_eq "wait 타임아웃 exit" "$rc" 124
 wait $p11
 
+echo "[ci-queue] 10z) 같은 초 티켓 정렬 — pid 0패딩이라 9 < 10 (사전순 뒤집힘 없음)"
+t9="$QDIR/0000000001.0000000009.$(fake_sha 9)"; t10="$QDIR/0000000001.0000000010.$(fake_sha 1)"
+sleep 300 & longlived=$!
+printf 'slug=x\n' > "$t9"; printf 'slug=x\n' > "$t10"
+# 살아있는 것처럼 보이게 이름의 pid 를 longlived 로 — 정렬만 보므로 pid 필드는 패딩 형식만 맞으면 된다
+first=$(for t in "$QDIR"/*; do [ -f "$t" ] && printf '%s\n' "${t##*/}"; done | head -1)
+assert_eq "같은 초 정렬 9 먼저" "$first" "${t9##*/}"
+rm -f "$t9" "$t10"; kill $longlived 2>/dev/null; wait $longlived 2>/dev/null; longlived=""
+
 echo "[ci-queue] 11a) wait 경계 — 비정수 --timeout 은 usage(64) · 큐 부재 + timeout<grace 는 2(124 아님)"
 rc=0; "$SUT" wait "$S1" --timeout abc >/dev/null 2>&1 || rc=$?
 assert_eq "비정수 timeout" "$rc" 64

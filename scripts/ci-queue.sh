@@ -11,7 +11,7 @@
 # `bin/ci` 를 **박스 전체에서 한 번에 하나만** 돌린다. 워크트리·레포 무관.
 #
 # 큐 = $HOME/.claude/.local-ci/.queue/ (local-ci 캐시 예외 안 — CLAUDE.md 규칙)
-#   티켓  = <epoch10>.<pid>.<sha>  파일(내용 slug=). 이름 정렬 = FIFO.
+#   티켓  = <epoch10>.<pid10>.<sha>  파일(내용 slug=). 이름 정렬 = FIFO(같은 초는 pid 순 — 둘 다 0패딩이라 사전순=수순).
 #   실행권 = .queue/.running/ 디렉터리(mkdir 원자 토큰) + 그 안의 pid·ticket.
 # 각 잡은 **자기 프로세스 안에서** 기다리다 실행한다 — 런너 데몬이 없으니 "런너가
 # 죽으면 큐가 멈춤"이 없다. 죽은 pid 의 티켓·.running 은 지나가는 대기자가 치운다.
@@ -71,12 +71,10 @@ reap() {
     fi
   done
   if [ -d "$RUNNING" ]; then
+    # 실행권엔 나이 규칙을 두지 않는다 — pid 가 살아 있는 실행 중 잡의 실행권을 뺏으면 다음 잡이 겹쳐
+    # 돈다(11c2 테스트가 잡은 결함). pid 재사용으로 굳은 .running 은 그 pid 가 끝나면 풀린다.
     if [ -f "$RUNNING/pid" ]; then
-      # pid 사망, 또는 pid 재사용 대비 같은 나이 백스톱(실행 티켓의 epoch 기준)
-      if ! alive "$(cat "$RUNNING/pid" 2>/dev/null)"; then rm -rf "$RUNNING"
-      elif [ -n "$run_t" ] && [ "$run_t" != "${TICKET:-}" ] && [ $((now - ${run_t%%.*})) -gt "$MAX_AGE" ]; then
-        rm -rf "$RUNNING"; log "유령 실행권 회수(나이 ${MAX_AGE}s 초과) $run_t"
-      fi
+      alive "$(cat "$RUNNING/pid" 2>/dev/null)" || rm -rf "$RUNNING"
     elif [ -n "$(find "$RUNNING" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
       rm -rf "$RUNNING"
     fi
@@ -233,7 +231,7 @@ cmd_run() {
     *) log "$short 같은 SHA 의 다른 잡을 기다리다 실패(exit $rc)"; return "$rc" ;;
   esac
 
-  TICKET=$(printf '%010d.%d.%s' "$(date +%s)" "$$" "$SHA")
+  TICKET=$(printf '%010d.%010d.%s' "$(date +%s)" "$$" "$SHA")
   if ! printf 'slug=%s\n' "$SLUG" > "$QDIR/$TICKET" 2>/dev/null; then
     log "$short 티켓을 쓸 수 없음($QDIR — 권한/디스크?)"; return 3
   fi

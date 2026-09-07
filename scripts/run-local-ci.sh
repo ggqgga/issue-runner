@@ -10,7 +10,7 @@
 # 가드는 전역 hook(local-ci.sh / ci-gate-before-pr-merge.sh)과 동일해야 한다 —
 # hook 은 `[ -x bin/ci ]` 단독 가드라 config/ci.rb 를 추가로 요구하면
 # 비-Rails 레포(예: Python)에서 여기만 skip 되어 캐시가 안 남고 머지 게이트에 걸린다.
-# 종료 코드: pass=0, fail=1 (워커가 실패를 인지하고 고치도록).
+# 종료 코드: 큐(ci-queue.sh run)의 것을 그대로 — 0=pass · 1=fail · 2=폐기(HEAD 이동) · 3=부재 · 124=대기 포기.
 set -uo pipefail
 repo="${1:?usage: run-local-ci.sh <owner/repo> <num>}"
 num="${2:?usage: run-local-ci.sh <owner/repo> <num>}"
@@ -41,4 +41,4 @@ case "$rc" in
   2) echo "run-local-ci: 폐기 ($short) — 실행 시점 HEAD 가 달라 결과 없음. 현재 HEAD 로 다시 호출하라" >&2 ;;
   *) echo "run-local-ci: 큐 실행 실패 (exit $rc, $short)" >&2 ;;
 esac
-[ "$rc" = 0 ]
+exit "$rc"   # 큐의 계약을 그대로 전달(0 pass · 1 fail · 2 폐기 · 3 부재 · 124) — 2 를 1 로 뭉개면 호출자가 재시도 정책을 오판한다
