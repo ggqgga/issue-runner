@@ -98,6 +98,14 @@ if [ -n "$ROOT" ] && [ -x "$ROOT/bin/ci" ]; then
   result="$dir/$sha.result"
   log="$dir/$sha.log"
 
+  # cwd 슬러그에 없으면 다른 슬러그(워크트리에서 push 한 결과)를 SHA 로 찾는다(#127).
+  # SHA 는 커밋 고유값이고 큐가 실행 직전 HEAD==SHA 를 검사하므로, 어느 워크트리에서 돌았든
+  # 같은 커밋의 결과다 — 워크트리 cwd 로 옮겨 머지해야 하던 함정을 닫는다.
+  if [ ! -f "$result" ]; then
+    alt=$(ls "$HOME/.claude/.local-ci"/*/"$sha.result" 2>/dev/null | head -1)
+    if [ -n "$alt" ]; then result="$alt"; log="${alt%.result}.log"; fi
+  fi
+
   if [ -f "$result" ]; then
     verdict=$(cat "$result" 2>/dev/null)
     [ "$verdict" = pass ] && exit 0
@@ -106,23 +114,28 @@ if [ -n "$ROOT" ] && [ -x "$ROOT/bin/ci" ]; then
     exit 2
   fi
 
-  # 결과 없음 — 진행 중인지 미실행인지 구분. local-ci.sh 와 동일하게 소유 PID 생존으로
-  # 판단(pid 미기록이면 30분 backstop). 죽은 락은 '미실행'으로 떨어뜨려 재push 를 유도.
-  lock_active=0
-  if [ -d "$dir/.lock" ]; then
-    if [ -f "$dir/.lock/pid" ]; then
-      lp=$(cat "$dir/.lock/pid" 2>/dev/null)
-      { [ -n "$lp" ] && kill -0 "$lp" 2>/dev/null; } && lock_active=1
-    elif [ -z "$(find "$dir/.lock" -maxdepth 0 -mmin +30 2>/dev/null)" ]; then
-      lock_active=1
-    fi
-  fi
-  if [ "$lock_active" = 1 ]; then
-    printf 'PR #%s 로컬 CI 진행 중(%s) — 완료 알림 후 다시 머지하세요.\n' "$pr_num" "$short" >&2
-    exit 2
-  fi
-  printf 'PR #%s 로컬 CI 결과 없음(%s).\n해당 커밋을 push 하면 자동 실행되거나, 레포에서 `bin/ci` 를 돌린 뒤 머지하세요.\n' \
-    "$pr_num" "$short" >&2
+  # 결과 없음 — 박스 전역 큐(scripts/ci-queue.sh, #127)에 물어 "실행 중 / 대기열 N번째 / 없음"
+  # 을 구분해 안내한다. 판정은 셋 다 차단(exit 2) — 기다리는 통로는 `ci-queue.sh wait <SHA>`
+  # 를 백그라운드 Bash 로 띄우는 것(끝나면 세션이 깨어난다).
+  q=""
+  for cand in "$(dirname "$0")/../scripts/ci-queue.sh" \
+              "$HOME/.claude/skills/issue-runner/scripts/ci-queue.sh"; do
+    [ -x "$cand" ] && { q="$cand"; break; }
+  done
+  qs=none
+  [ -n "$q" ] && qs=$("$q" status "$sha" 2>/dev/null || echo none)
+  case "$qs" in
+    running)
+      printf 'PR #%s 로컬 CI 실행 중(%s). 기다리려면 `%s wait %s` 를 run_in_background 로 띄우세요 — 끝나면 깨어납니다.\n' \
+        "$pr_num" "$short" "$q" "$sha" >&2
+      exit 2 ;;
+    queued*)
+      printf 'PR #%s 로컬 CI 대기열 %s번째(%s). 기다리려면 `%s wait %s` 를 run_in_background 로 띄우세요 — 끝나면 깨어납니다.\n' \
+        "$pr_num" "${qs#queued }" "$short" "$q" "$sha" >&2
+      exit 2 ;;
+  esac
+  printf 'PR #%s 로컬 CI 결과 없음(%s) — 큐에도 없습니다.\n해당 커밋을 단독 `git push` 하면 훅이 큐에 넣거나, 워크트리에서 `%s run <ROOT> %s` 로 직접 넣은 뒤 머지하세요.\n' \
+    "$pr_num" "$short" "${q:-ci-queue.sh}" "$sha" >&2
   exit 2
 fi
 

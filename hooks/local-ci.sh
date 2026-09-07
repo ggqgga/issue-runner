@@ -36,7 +36,7 @@ lead=$(printf '%s' "$cmd" \
 if [ -n "$lead" ]; then
   case "$lead" in
     "~") lead=$HOME ;;
-    "~/"*) lead="$HOME/${lead#\~/}" ;;
+    \~/*) lead="$HOME/${lead#\~/}" ;;
     /*) ;;
     *) lead="$base/$lead" ;;
   esac
@@ -89,7 +89,8 @@ fi
 
 Q="$(cd "$(dirname "$Q")" && pwd)/ci-queue.sh"
 
-ahead=$(ls "$HOME/.claude/.local-ci/.queue" 2>/dev/null | grep -vc '^\.')
+ahead=0
+for t in "$HOME/.claude/.local-ci/.queue"/*; do [ -f "$t" ] && ahead=$((ahead + 1)); done
 # 백그라운드 — hook 반환 후에도 생존(nohup + fd 리다이렉트 + </dev/null + disown)
 nohup "$Q" run "$ROOT" "$SHA" >/dev/null 2>&1 </dev/null &
 disown 2>/dev/null

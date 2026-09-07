@@ -31,19 +31,16 @@ slug=$(printf '%s' "$dir" | sed 's#[/ ]#_#g; s#^_##')
 out="$HOME/.claude/.local-ci/$slug"
 mkdir -p "$out"
 
-if (cd "$wt" && bin/ci >"$out/$sha.log" 2>&1); then verdict=pass; else verdict=fail; fi
-printf '%s\n' "$verdict" > "$out/$sha.result"
-echo "run-local-ci: $verdict ($short) → $out/$sha.result"
-
-# GitHub commit status 게시 — 웹 머지 UI에서도 local-ci 결과가 보이게 (#6).
-# 실패(네트워크, 미push SHA 등)는 경고만 — CI 판정/exit code 에 영향 없음.
-if [ "$verdict" = "pass" ]; then state=success; else state=failure; fi
-if gh api "repos/$repo/statuses/$sha" \
-     -f state="$state" -f context=local-ci \
-     -f description="bin/ci $verdict ($short)" >/dev/null 2>&1; then
-  echo "run-local-ci: commit status 게시됨 — local-ci=$state ($short)"
-else
-  echo "run-local-ci: 경고 — commit status 게시 실패 ($repo@$short), CI 판정에는 영향 없음" >&2
-fi
-
-[ "$verdict" = "pass" ]
+# 박스 전역 큐 경유(#127) — 다른 세션·워크트리의 bin/ci 와 직렬화된다. 동기: 큐에서 기다렸다
+# 실행하고 돌아온다(기존 계약 그대로 — 호출자는 끝날 때까지 블록). 결과 위치는 위 슬러그로
+# 지정하고, commit status(pending 대기열→실행 중→success/failure) 도 큐가 게시한다(#6).
+# 종료 코드: 0=pass · 1=fail · 2=폐기(실행 시점 HEAD ≠ sha — 그 사이 워크트리가 움직임) · 3=워크트리 부재.
+rc=0
+"$(cd "$(dirname "$0")" && pwd)/ci-queue.sh" run "$wt" "$sha" --slug "$slug" --repo "$repo" || rc=$?
+case "$rc" in
+  0) echo "run-local-ci: pass ($short) → $out/$sha.result" ;;
+  1) echo "run-local-ci: fail ($short) → $out/$sha.result" ;;
+  2) echo "run-local-ci: 폐기 ($short) — 실행 시점 HEAD 가 달라 결과 없음. 현재 HEAD 로 다시 호출하라" >&2 ;;
+  *) echo "run-local-ci: 큐 실행 실패 (exit $rc, $short)" >&2 ;;
+esac
+[ "$rc" = 0 ]

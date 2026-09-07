@@ -238,8 +238,16 @@ Eligibility: `open + agent-ready + ¬agent:claimed + all blockers CLOSED`. Sort:
 
 | Hook | Fires on | What it does |
 |---|---|---|
-| `local-ci.sh` | PostToolUse · `git push` | runs `bin/ci` in the background, caches the result, posts a commit status |
-| `ci-gate-before-pr-merge.sh` | PreToolUse · `gh pr merge` | blocks the merge unless the cached CI for that HEAD passed (fail-closed) |
+| `local-ci.sh` | PostToolUse · `git push` | enqueues `bin/ci` for that HEAD on the **box-wide FIFO** (`scripts/ci-queue.sh`), caches the result, posts a commit status; tells the session which `wait` command to run in the background so it is woken when the verdict lands |
+| `ci-gate-before-pr-merge.sh` | PreToolUse · `gh pr merge` | blocks the merge unless the cached CI for that HEAD passed (fail-closed); a missing result is reported as *running / queued Nth / absent* |
+
+**One `bin/ci` at a time, machine-wide.** Every entry point — the push hook, the loop's `run-local-ci.sh`, and a session calling it directly — goes through `scripts/ci-queue.sh`, a ticket lock with no daemon: tickets live in `~/.claude/.local-ci/.queue/`, the oldest live ticket that manages `mkdir .running` runs, dead PIDs are reaped by whoever passes by. Two worktrees (or two sessions) pushing back-to-back no longer race the same test database or saturate the box; the second one simply waits its turn. A job whose repo HEAD has moved by the time it reaches the front is dropped (exit 2) — the newer push holds its own ticket.
+
+```bash
+scripts/ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo owner/repo]   # enqueue + run (blocks; 0 pass · 1 fail · 2 dropped · 3 no ROOT)
+scripts/ci-queue.sh status [<SHA>]                                          # running / queued N / none
+scripts/ci-queue.sh wait <SHA> [--timeout <sec>]                            # block until the verdict — run it with run_in_background so the session is woken
+```
 | `codex-review-on-pr-create.sh` | PostToolUse · `gh pr create` | tells Claude to spawn an independent `codex:codex-rescue` diff review in the background |
 | `warn-on-main-branch.sh` | PreToolUse · `Write`/`Edit` | non-blocking warning when you edit on `main`/`master` — branch first |
 | `require-issue-in-pr.sh` | PreToolUse · `gh pr create` | blocks a PR whose body has no dedicated `Closes/Refs #N` line (bypass with `(no-issue)`) |

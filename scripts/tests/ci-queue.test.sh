@@ -214,5 +214,58 @@ rc=0; "$SUT" wait "$S11" --timeout 1 >/dev/null 2>&1 || rc=$?
 assert_eq "wait 타임아웃 exit" "$rc" 124
 wait $p11
 
+echo "[ci-gate] 12) 게이트 — 다른 슬러그의 result 도 SHA 로 찾고, 결과 없음은 실행 중/대기열/없음으로 안내"
+GATE="$DIR/../hooks/ci-gate-before-pr-merge.sh"
+G=$(make_repo g1); GSHA=$(head_of "$G")
+# gh 스텁을 게이트용으로 교체 — PR head SHA 는 GATE_SHA, 파일은 코드(문서 면제 아님)
+cat > "$TMP/stub/gh" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >> "${GH_LOG:?}"
+case "$*" in
+  *"pr view"*headRefOid*) printf '{"headRefOid":"%s"}\n' "${GATE_SHA:?}" ;;
+  *"pr view"*files*) echo '{"files":[{"path":"app/x.rb"}]}' ;;
+  *) echo '' ;;
+esac
+exit 0
+STUB
+run_gate() {  # <sha> → rc, stderr 를 $TMP/gate.err 에
+  printf '{"tool_input":{"command":"gh pr merge 5 --squash"}}' \
+    | (cd "$G" && GATE_SHA="$1" bash "$GATE") >/dev/null 2>"$TMP/gate.err"
+}
+# (a) cwd 슬러그엔 없고 딴 슬러그에 pass → 통과(exit 0)
+mkdir -p "$HOME/.claude/.local-ci/some_worktree_slug"
+echo pass > "$HOME/.claude/.local-ci/some_worktree_slug/$GSHA.result"
+rc=0; run_gate "$GSHA" || rc=$?
+assert_eq "게이트 교차 슬러그 pass" "$rc" 0
+# (b) 딴 슬러그에 fail → 차단 + 로그 꼬리
+echo fail > "$HOME/.claude/.local-ci/some_worktree_slug/$GSHA.result"
+echo "boom" > "$HOME/.claude/.local-ci/some_worktree_slug/$GSHA.log"
+rc=0; run_gate "$GSHA" || rc=$?
+assert_eq "게이트 교차 슬러그 fail" "$rc" 2
+grep -q boom "$TMP/gate.err" && ok || bad "게이트 fail 로그 꼬리 없음: $(cat "$TMP/gate.err")"
+rm -rf "$HOME/.claude/.local-ci/some_worktree_slug"
+# (c) 결과 없음 + 큐에 없음 → 차단, '큐에도 없습니다'
+rc=0; run_gate "$GSHA" || rc=$?
+assert_eq "게이트 결과·큐 부재" "$rc" 2
+grep -q "큐에도 없습니다" "$TMP/gate.err" && ok || bad "게이트 부재 안내 없음: $(cat "$TMP/gate.err")"
+# (d) 실행 중 → '실행 중' + wait 안내 · (e) 대기열 → '대기열 1번째'
+G2=$(make_repo g2); G2SHA=$(head_of "$G2")
+CI_SLEEP=4 "$SUT" run "$G2" "$G2SHA" >/dev/null 2>&1 &
+pg2=$!
+sleep 1.5
+rc=0; run_gate "$G2SHA" || rc=$?
+assert_eq "게이트 실행 중 차단" "$rc" 2
+grep -q "실행 중" "$TMP/gate.err" && grep -q "wait $G2SHA" "$TMP/gate.err" && ok || bad "게이트 실행 중 안내: $(cat "$TMP/gate.err")"
+"$SUT" run "$G" "$GSHA" >/dev/null 2>&1 &
+pg1=$!
+sleep 0.5
+rc=0; run_gate "$GSHA" || rc=$?
+assert_eq "게이트 대기열 차단" "$rc" 2
+grep -q "대기열 1번째" "$TMP/gate.err" && ok || bad "게이트 대기열 안내: $(cat "$TMP/gate.err")"
+wait $pg2 $pg1
+# 잡이 끝난 뒤엔 같은 SHA 가 통과
+rc=0; run_gate "$GSHA" || rc=$?
+assert_eq "게이트 완료 후 통과" "$rc" 0
+
 echo "ci-queue: $pass passed, $fail failed"
 [ "$fail" = 0 ]

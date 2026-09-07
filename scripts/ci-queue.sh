@@ -59,7 +59,8 @@ reap() {
 
 # 살아 있는 티켓을 FIFO 순으로
 tickets() {
-  ls "$QDIR" 2>/dev/null | grep -v '^\.' | sort
+  local t
+  for t in "$QDIR"/*; do [ -f "$t" ] && basename "$t"; done | sort
 }
 
 # 정렬된 티켓 목록에서 <ticket> 의 순번(1부터)
