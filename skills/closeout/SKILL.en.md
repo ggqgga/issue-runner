@@ -188,7 +188,8 @@ the marker command (① Reconcile marker table) so the next tick can resume idem
 no subagent spawn, polling, or `TaskStop` wiring:
 1. correctness: `codex-review-gate.sh --base origin/<default> --cd <worktree> --out <scratch>/a` →
    last stdout line `verdict=… p1= p2=`, body in `a/review.md`. `[P1]` = BLOCKER.
-2. plan conformance: `codex-review-gate.sh --prompt "<instructions>" --cd <worktree> --out <scratch>/b` —
+2. plan conformance: `codex-review-gate.sh --base origin/<default> --prompt "<instructions>" --cd <worktree> --out <scratch>/b`
+   (the helper prefixes the `--base` range to the prompt so the reviewer actually reads the committed diff — without it, only the working tree) —
    the instructions are `references/verifier-prompt.md` with placeholders filled: `<PR>`·`<REPO>`·`<BASE>`=default
    branch·`<PLAN_REF>`=the issue's `## Plan` or the referenced `Plans/*.md` (empty string if none)·`<ISSUE_BODY>`=
    `gh issue view <issue> --repo <repo>` output (empty string if no linked issue)·`<LESSONS_OR_"없음">`=the contents
@@ -203,7 +204,7 @@ call returns **exit 2 (`verdict=NONE`) = no verdict** (codex missing · model er
 `run_in_background` + the `VERIFIER_TIMEOUT_MIN` deadline + `TaskStop` on overrun). If the fallback also produces no
 verdict, exit on hold via the BLOCKER path below (fail-closed — never proceed to merge, #96). A model error in the
 helper's stderr (404 · not supported · requires a newer version) is not a stall — quote it verbatim in the comment.
-- Combining verdicts: BLOCKER from either call → BLOCKER. Both CLEAN/WARN/NIT → pass (WARN counts add up).
+- Combining verdicts: BLOCKER from either call → BLOCKER. Both CLEAN/NIT/WARN → pass (`[P3+]` = NIT is non-blocking; WARN counts add up).
   Machine-comment marker (required): the closeout-verification comment posted below via
   `gh pr comment` must include **a final line `<!-- bodat:worker -->`** — it is how
   closeout-eligible tells a machine comment from a human review (#72). Without it, on

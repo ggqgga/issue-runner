@@ -8,7 +8,8 @@
 #
 # 실행: codex exec review <스코프> -m M -c model_reasoning_effort='"E"' --ephemeral --json -o <out>/review.md
 #       + 절감 오버라이드(web_search 끔·memories 생성 끔·reasoning 숨김). 리뷰는 작업 트리를 바꾸지 않는다.
-# 판정: 리뷰 본문의 `[P1]` → BLOCKER · `[P2]` → WARN · `[P3]`/기타 항목 → NIT · 항목 0 → CLEAN.
+# 판정(내장 리뷰어 출력은 마크다운 — 요약 문단 + `- [P<n>] 제목 — 파일:줄` 항목; --json 스트림엔 agent_message 텍스트만
+# 있고 구조화 findings 는 없다, 0.153.4 실측): 리뷰 본문의 `[P1]` → BLOCKER · `[P2]` → WARN · `[P3]`/기타 항목 → NIT · 항목 0 → CLEAN.
 # 출력: 진행은 stderr. stdout **마지막 줄** `verdict=<BLOCKER|WARN|NIT|CLEAN> p1=<n> p2=<n> p3=<n> model=<M> secs=<t>`
 #       (호출자가 파싱). 본문은 <out>/review.md (기본 out = mktemp -d, 경로를 stderr 에 찍는다).
 # 종료: 0 = 비차단(CLEAN/NIT/WARN) · 1 = BLOCKER · 2 = 리뷰 미산출(codex 부재·모델 오류·타임아웃·본문 없음 —
@@ -42,7 +43,18 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ ${#SCOPE[@]} -gt 0 ] || [ -n "$PROMPT" ] || usage
-[ ${#SCOPE[@]} -gt 0 ] && [ -n "$PROMPT" ] && usage   # codex 는 스코프와 커스텀 프롬프트를 동시에 안 받는다
+# codex 는 스코프 플래그와 커스텀 프롬프트를 동시에 안 받는다 — --prompt 에 --base/--commit 을 같이 주면
+# 그 범위를 프롬프트 머리에 명시해 넘긴다(계획 부합 검토가 커밋된 diff 를 실제로 보게 — 안 그러면 작업 트리만 본다).
+if [ -n "$PROMPT" ] && [ ${#SCOPE[@]} -gt 0 ]; then
+  case "${SCOPE[0]}" in
+    --base)   PROMPT="Review ONLY the committed changes \`git diff ${SCOPE[1]}...HEAD\` (run it yourself; ignore the working tree). $PROMPT" ;;
+    --commit) PROMPT="Review ONLY the changes introduced by commit ${SCOPE[1]} (\`git show ${SCOPE[1]}\`; run it yourself). $PROMPT" ;;
+    *) usage ;;
+  esac
+  RANGE_CHECK=("${SCOPE[@]}"); SCOPE=()
+else
+  RANGE_CHECK=("${SCOPE[@]+"${SCOPE[@]}"}")   # bash 3.2: 빈 배열 확장은 set -u 에 걸린다
+fi
 
 command -v codex >/dev/null 2>&1 || { log "codex CLI 없음 — 폴백(general-purpose)으로"; echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=0"; exit 2; }
 [ -n "$OUT" ] || OUT=$(mktemp -d)
@@ -50,6 +62,23 @@ mkdir -p "$OUT" 2>/dev/null || { log "out 디렉터리 생성 실패: $OUT"; exi
 REVIEW="$OUT/review.md"; EVENTS="$OUT/events.jsonl"; ERR="$OUT/stderr.log"
 rm -f "$REVIEW"
 
+# 범위에 변경이 없으면 리뷰를 돌리지 않고 미산출(2) — "볼 게 없어서 깨끗함"이 CLEAN 으로 새지 않게(fail-closed)
+none() { echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=${1:-0}"; exit 2; }
+if [ ${#RANGE_CHECK[@]} -gt 0 ]; then
+  g=(git); [ -n "$CD" ] && g=(git -C "$CD")
+  case "${RANGE_CHECK[0]}" in
+    --base)
+      "${g[@]}" rev-parse --verify -q "${RANGE_CHECK[1]}" >/dev/null 2>&1 || { log "base 를 풀 수 없음: ${RANGE_CHECK[1]}"; none; }
+      "${g[@]}" diff --quiet "${RANGE_CHECK[1]}...HEAD" 2>/dev/null && { log "변경 없음: ${RANGE_CHECK[1]}...HEAD — 리뷰할 diff 가 없다"; none; } ;;
+    --commit)
+      [ -n "$("${g[@]}" show --stat --format= "${RANGE_CHECK[1]}" 2>/dev/null)" ] || { log "커밋을 풀 수 없거나 변경 없음: ${RANGE_CHECK[1]}"; none; } ;;
+    --uncommitted)
+      [ -n "$("${g[@]}" status --porcelain 2>/dev/null)" ] || { log "미커밋 변경 없음"; none; } ;;
+  esac
+fi
+
+# 실행 — 별도 프로세스 그룹으로 띄운다. code_mode_host 는 끈다: 0.153 cask 에 호스트 바이너리가 없어 도구 호출마다
+# 협상 타임아웃(~45s)을 먹는다(실측: 11회 호출에 7회 타임아웃 → 7분). 끄면 shell 도구가 바로 뜬다.
 # 실행 — 별도 프로세스 그룹으로 띄워 타임아웃 시 손자(codex 가 띄운 셸)까지 함께 끊는다.
 start=$SECONDS
 set -m
@@ -57,11 +86,11 @@ set -m
   if [ -n "$PROMPT" ]; then
     exec codex exec review "$PROMPT" -m "$MODEL" -c model_reasoning_effort="\"$EFFORT\"" \
       -c web_search='"disabled"' -c memories.generate_memories=false -c hide_agent_reasoning=true \
-      --ephemeral --json -o "$REVIEW"
+      -c features.code_mode_host=false --ephemeral --json -o "$REVIEW"
   else
     exec codex exec review "${SCOPE[@]}" -m "$MODEL" -c model_reasoning_effort="\"$EFFORT\"" \
       -c web_search='"disabled"' -c memories.generate_memories=false -c hide_agent_reasoning=true \
-      --ephemeral --json -o "$REVIEW"
+      -c features.code_mode_host=false --ephemeral --json -o "$REVIEW"
   fi
 ) >"$EVENTS" 2>"$ERR" &
 child=$!
@@ -85,14 +114,19 @@ if grep -q -E 'does not exist or you do not have access|not supported when using
   log "가용 모델 확인: codex debug models · config 의 model 은 유효 모델로(0.153 은 미설정 시 Astra 기본)"
   echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=$secs"; exit 2
 fi
+if grep -q -i -E 'unable to inspect|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review' "$REVIEW" 2>/dev/null; then
+  log "리뷰어가 대상을 못 봤다고 답함 — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
+  none "$secs"
+fi
 if [ "$rc" != 0 ] || [ ! -s "$REVIEW" ]; then
   log "리뷰 미산출(exit $rc, review.md $( [ -s "$REVIEW" ] && echo 있음 || echo 없음)) — fail-closed. 로그: $ERR"
   echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=$secs"; exit 2
 fi
 
 # 판정 — 내장 리뷰어 항목 형식 `- [P1] 제목 — 파일:줄`. 본문에 항목이 하나도 없으면 CLEAN.
-p1=$(grep -c -E '^\s*-\s*\[P1\]' "$REVIEW"); p2=$(grep -c -E '^\s*-\s*\[P2\]' "$REVIEW")
-p3=$(grep -c -E '^\s*-\s*\[P[3-9]\]' "$REVIEW")
+# 항목 = `- ` 로 시작하는 줄 안의 `[P<n>]` 토큰(볼드·번호 변형 허용). 항목 줄에 없는 `[P1]` 언급은 세지 않는다.
+p1=$(grep -c -E '^\s*[-*]\s.*\[P1\]' "$REVIEW"); p2=$(grep -c -E '^\s*[-*]\s.*\[P2\]' "$REVIEW")
+p3=$(grep -c -E '^\s*[-*]\s.*\[P[3-9]\]' "$REVIEW")
 if   [ "$p1" -gt 0 ]; then verdict=BLOCKER; code=1
 elif [ "$p2" -gt 0 ]; then verdict=WARN; code=0
 elif [ "$p3" -gt 0 ]; then verdict=NIT; code=0

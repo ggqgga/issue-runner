@@ -168,7 +168,8 @@ CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기�
 Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에이전트 스폰·폴링·`TaskStop` 배선 없음:
 1. correctness: `codex-review-gate.sh --base origin/<default> --cd <worktree> --out <스크래치>/a` →
    stdout 마지막 줄 `verdict=… p1= p2=`, 본문 `a/review.md`. `[P1]` = BLOCKER.
-2. 계획 부합: `codex-review-gate.sh --prompt "<지시>" --cd <worktree> --out <스크래치>/b` — 지시문은
+2. 계획 부합: `codex-review-gate.sh --base origin/<default> --prompt "<지시>" --cd <worktree> --out <스크래치>/b`
+   (헬퍼가 `--base` 범위를 프롬프트 머리에 명시해 리뷰어가 커밋된 diff 를 실제로 본다 — 없으면 작업 트리만 본다) — 지시문은
    `references/verifier-prompt.md` 의 placeholder 를 채운 것: `<PR>`·`<REPO>`·`<BASE>`=default branch·
    `<PLAN_REF>`=이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<ISSUE_BODY>`=`gh issue view <issue>
    --repo <repo>` 출력(연결 이슈 없으면 빈 문자열)·`<LESSONS_OR_"없음">`=`$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑
@@ -181,7 +182,7 @@ Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에
 diff·이슈 본문·lessons 를 프롬프트에 동봉, `run_in_background` + `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을
 쓴다. 폴백도 미산출이면 아래 BLOCKER 경로로 보류 종료한다(fail-closed — 절대 머지로 진행하지 않는다, #96).
 헬퍼 stderr 의 모델 오류 원문(404·not supported·requires a newer version)은 "스톨"이 아니다 — 코멘트에 그대로 남긴다.
-- 판정 합산: 두 호출 중 하나라도 BLOCKER → BLOCKER. 둘 다 CLEAN/WARN/NIT → 통과(WARN 수는 합산).
+- 판정 합산: 두 호출 중 하나라도 BLOCKER → BLOCKER. 둘 다 CLEAN/NIT/WARN → 통과(`[P3+]` = NIT 는 비차단, WARN 수는 합산).
   머신 코멘트 마커(필수): 아래 `gh pr comment` 로 남기는 마감 검증 코멘트는 **마지막 줄에
   `<!-- bodat:worker -->`** 를 포함한다 — closeout-eligible 이 머신 코멘트를 사람 리뷰와
   구분하는 신호다(#72). 빠지면 그 PR 이 재평가 때 미해결 사람 코멘트로 오인돼 탈락한다.

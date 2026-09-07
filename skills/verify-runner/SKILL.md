@@ -177,7 +177,7 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
 - 검증자 BLOCKER(데드라인 초과 포함) → E2E 결과와 무관하게 **④ 재디스패치**
   (`codex BLOCKER: <review.md 의 P1 제목들>` 또는 미산출이면 `codex BLOCKER: 검증자 미산출
   (<헬퍼 stderr 사유 — 타임아웃 >VERIFIER_TIMEOUT_MIN분 / 모델 오류 원문>)`).
-- 검증자 CLEAN/WARN → 통과. 결과를 PR 코멘트로 남긴다(closeout 2단계가 이 코멘트의
+- 검증자 CLEAN/NIT/WARN → 통과(`[P3+]` = NIT 는 비차단). 결과를 PR 코멘트로 남긴다(closeout 2단계가 이 코멘트의
   BLOCKER 0 을 머지 게이트로 읽는다 — 마커·접두 정확히):
   `gh pr comment <pr> --repo <repo> --body "검증자 리뷰: <CLEAN 또는 'BLOCKER 0 / WARN n건'> · <model>/<secs>s
 <review.md 본문>
