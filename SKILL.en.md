@@ -240,6 +240,12 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       the index at this path.
       Fill `<VERIFIER>` from ## Constants with the fallback rule applied
       (`general-purpose` if codex is not installed).
+      Instead of a codex verifier, the worker **nests one self-review pre-reviewer
+      (`general-purpose`) before opening its PR** (template step 9-b — non-gating, fail-open,
+      one round; outcome recorded in the PR body's `## Pre-review` section). Nothing for the
+      dispatcher to do — the worker blocks while it waits for the reviewer, so the number of
+      concurrent API streams does not grow and `MAX_AGENTS` stays as is. Measure the effect
+      by verify-runner bounces (`재검증 실패:` comments).
 
 ## ④ Report
 

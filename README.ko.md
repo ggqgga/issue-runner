@@ -72,7 +72,7 @@ issue-runner 는 [Claude Code](https://claude.com/claude-code) 를 위한 **루�
 | ③ **Dispatch** | 남는 슬롯만큼 신규 이슈 claim → worktree 생성 → 백그라운드 워커 투입 |
 | ④ **Report** | 한 줄 요약 — `정리 N · 보수 N · 신규 N · 대기 N · warn N` |
 
-워커는 매 커밋마다 push 하므로 worktree 는 언제 버려져도 되는 상태다. 루프가 버리지 않는 유일한 예외는 dirty/미push worktree — 안전하게 **보존하고 warn** 한다. 그때만 사람이 확인한다.
+워커는 PR 을 열기 전에 새 컨텍스트의 **사전 리뷰어** 하나를 중첩 스폰한다(`general-purpose`, 비게이트, fail-open, 1라운드 — `references/worker-template.md` 9-b). 명백한 스펙·correctness 누락을 검증 레인 전에 걸러 verify-runner 반송을 줄인다. 워커는 매 커밋마다 push 하므로 worktree 는 언제 버려져도 되는 상태다. 루프가 버리지 않는 유일한 예외는 dirty/미push worktree — 안전하게 **보존하고 warn** 한다. 그때만 사람이 확인한다.
 
 ## 빠른 시작
 
