@@ -110,8 +110,10 @@ done
 secs=$((SECONDS - start))
 
 # 모델·인증 오류는 원문을 그대로 보여준다 — "스톨"로 오진하지 않게(메모리: 5.5 404 · 5.4 not supported · astra newer version)
-if grep -q -E 'does not exist or you do not have access|not supported when using Codex|requires a newer version of Codex|401 Unauthorized|token invalid' "$ERR" "$EVENTS" 2>/dev/null; then
-  log "모델/인증 오류 — $(grep -o -E '"message":"[^"]{0,140}|status [0-9]{3}[^,]{0,100}' "$ERR" "$EVENTS" | head -1)"
+# **$ERR(=codex 자신의 stderr)만** 본다. $EVENTS 에는 리뷰어가 읽은 파일 내용이 들어가는데, 이 스크립트가 바로
+# 아래 패턴 문자열들을 담고 있어 이 레포를 리뷰하면 자기참조로 매번 "모델 오류"가 되어 늘 폴백으로 떨어졌다(#137 실측).
+if grep -q -E 'does not exist or you do not have access|not supported when using Codex|requires a newer version of Codex|401 Unauthorized|token invalid' "$ERR" 2>/dev/null; then
+  log "모델/인증 오류 — $(grep -o -E '"message":"[^"]{0,140}|status [0-9]{3}[^,]{0,100}' "$ERR" | head -1)"
   log "가용 모델 확인: codex debug models · config 의 model 은 유효 모델로(0.153 은 미설정 시 Astra 기본)"
   echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=$secs"; exit 2
 fi
@@ -126,7 +128,8 @@ fi
 
 # 판정 — 내장 리뷰어 항목 형식 `- [P1] 제목 — 파일:줄`. 본문에 항목이 하나도 없으면 CLEAN.
 # 항목 = `- ` 로 시작하는 줄 안의 `[P<n>]` 토큰(볼드·번호 변형 허용). 항목 줄에 없는 `[P1]` 언급은 세지 않는다.
-p1=$(grep -c -E '^\s*[-*]\s.*\[P1\]' "$REVIEW"); p2=$(grep -c -E '^\s*[-*]\s.*\[P2\]' "$REVIEW")
+# P0 은 P1 과 함께 BLOCKER 로 센다 — 안 그러면 최우선 발견이 어느 카운터에도 안 잡혀 CLEAN 으로 샌다(#137).
+p1=$(grep -c -E '^\s*[-*]\s.*\[P[01]\]' "$REVIEW"); p2=$(grep -c -E '^\s*[-*]\s.*\[P2\]' "$REVIEW")
 p3=$(grep -c -E '^\s*[-*]\s.*\[P[3-9]\]' "$REVIEW")
 if   [ "$p1" -gt 0 ]; then verdict=BLOCKER; code=1
 elif [ "$p2" -gt 0 ]; then verdict=WARN; code=0
