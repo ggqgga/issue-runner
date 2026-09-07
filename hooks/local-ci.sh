@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# local-ci.sh — `git push` 직후 레포의 bin/ci 를 백그라운드로 돌려
-# GitHub Actions 를 대체한다(Actions 과금 0). 결과는 HEAD SHA 키로 캐시되고,
-# 머지 게이트(ci-gate-before-pr-merge.sh)가 이를 읽어 판정한다.
-# 동시에 GitHub commit status(컨텍스트 local-ci, 무료 REST — Actions 아님)를
-# pending→success/failure 로 게시해 PR 체크 영역에서도 결과가 보인다.
+# local-ci.sh — `git push` 직후 레포의 bin/ci 를 **박스 전역 큐**(scripts/ci-queue.sh)에
+# 넣는다. GitHub Actions 대체(과금 0). 결과는 HEAD SHA 키로 캐시되고, 머지 게이트
+# (ci-gate-before-pr-merge.sh)가 이를 읽어 판정한다. commit status(컨텍스트 local-ci)는
+# 큐가 대기열→실행 중→success/failure 로 게시한다.
 #
-# bin/ci 는 언어 무관 컨벤션 — Rails 8 네이티브(bin/ci + config/ci.rb)든
-# 직접 작성한 폴리글롯 스크립트(예: Temphra 의 Python+TS)든 실행 파일이기만
-# 하면 된다. 전역 hook(모든 프로젝트 공용)이라 bin/ci 없는 레포에선 무조건
-# no-op — 타 프로젝트 안전. PostToolUse(Bash, if: git push*). macOS bash 3.2 대상.
+# 이 훅은 얇다 — ROOT·SHA 를 정해 큐에 백그라운드로 넘기고 즉시 반환. 직렬화·dedup·
+# 유령 회수·status 게시는 전부 ci-queue.sh 의 몫(Plans/ci-queue.md, #127). 예전의
+# 워크트리별 락("다른 검사 진행 중 — 건너뜀")은 없다 — 못 잡으면 버리는 게 아니라 줄을 선다.
+#
+# ROOT 는 **세션 cwd 가 아니라** 훅 입력의 `cwd` 를 기준으로, 명령 앞머리의
+# `cd <경로> &&` / `cd <경로>;` 를 따라간 곳에서 `git rev-parse --show-toplevel` 로 잡는다
+# (예전엔 세션 cwd 라 `cd <워크트리> && git push` 가 메인 체크아웃 HEAD 를 검사했다).
+#
+# bin/ci 는 언어 무관 컨벤션 — 실행 파일이기만 하면 된다. 전역 hook 이라 bin/ci 없는
+# 레포에선 no-op. PostToolUse(Bash, if: git push*). macOS bash 3.2 대상.
 set -u
 
 input=$(cat)
@@ -21,97 +26,77 @@ printf '%s' "$cmd" \
   | grep -qE '(^|[[:space:];|&])git[[:space:]]+push([[:space:]]|$)' \
   || exit 0
 
-# repo 루트 — git repo 아니면 no-op
-ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-cd "$ROOT" || exit 0
+# 기준 디렉터리 — 훅 입력 cwd(없으면 프로세스 cwd)
+base=$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null)
+[ -n "$base" ] && [ -d "$base" ] || base=$PWD
 
-# opt-in 가드 — 실행 가능한 bin/ci 를 가진 레포만(언어 무관). 그 외 no-op.
-[ -x bin/ci ] || exit 0
-
-# mise toolchain 해결 — shim 을 PATH 맨 앞에(quality-gate.sh 와 동일 이유:
-# 시스템 ruby 로 잡혀 Gemfile 파싱이 깨지는 것 방지). shim 부재 시 무해.
-if [ -d "$HOME/.local/share/mise/shims" ]; then
-  PATH="$HOME/.local/share/mise/shims:$PATH"; export PATH
+# 명령 앞머리 `cd <경로> &&|;` — 그 경로로 옮긴다(따옴표 벗김·~ 전개·상대경로는 base 기준)
+lead=$(printf '%s' "$cmd" \
+  | sed -n -E 's/^[[:space:]]*cd[[:space:]]+("([^"]*)"|'"'"'([^'"'"']*)'"'"'|([^;&|[:space:]]+))[[:space:]]*(&&|;).*/\2\3\4/p')
+if [ -n "$lead" ]; then
+  case "$lead" in
+    "~") lead=$HOME ;;
+    "~/"*) lead="$HOME/${lead#\~/}" ;;
+    /*) ;;
+    *) lead="$base/$lead" ;;
+  esac
+  [ -d "$lead" ] && base=$lead
 fi
 
-SHA=$(git rev-parse HEAD 2>/dev/null) || exit 0
+# repo 루트 — git repo 아니면 no-op
+ROOT=$(git -C "$base" rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -n "$ROOT" ] || exit 0
+
+# opt-in 가드 — 실행 가능한 bin/ci 를 가진 레포만(언어 무관). 그 외 no-op.
+[ -x "$ROOT/bin/ci" ] || exit 0
+
+SHA=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null) || exit 0
+short=$(printf '%s' "$SHA" | cut -c1-8)
 SLUG=$(printf '%s' "$ROOT" | sed 's#[/ ]#_#g; s#^_##')
-NAME=$(basename "$ROOT")
 DIR="$HOME/.claude/.local-ci/$SLUG"
 mkdir -p "$DIR" 2>/dev/null
 
 # 7일 지난 캐시 prune
 find "$DIR" -type f -mtime +7 -delete 2>/dev/null
 
-RESULT="$DIR/$SHA.result"
-LOG="$DIR/$SHA.log"
-LOCK="$DIR/.lock"
-
-# dedup — 이 SHA 이미 검사됐으면 재실행 안 함
-[ -f "$RESULT" ] && { printf '로컬 CI: %s 이미 검사됨(%s)\n' "$(printf '%s' "$SHA" | cut -c1-8)" "$(cat "$RESULT")" >&2; exit 0; }
-
-# repo 단위 lock(mkdir = 원자 토큰) — 동시 bin/ci 의 테스트 DB 경합 방지.
-# mkdir 성공 = 소유. 회수는 mtime 이 아니라 소유 PID 생존으로 판단 — 느린 실행이
-# 아직 살아있으면(>10분이어도) 절대 뺏지 않는다(락 탈취 후 이중 rm 경쟁 방지).
-short=$(printf '%s' "$SHA" | cut -c1-8)
-# 락이 죽었나? pid 살아있으면 살아있음. pid 미기록(갓 생성 중)이면 30분 backstop.
-lock_dead() {
-  if [ -f "$LOCK/pid" ]; then
-    p=$(cat "$LOCK/pid" 2>/dev/null)
-    [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 1
-    return 0
-  fi
-  [ -n "$(find "$LOCK" -maxdepth 0 -mmin +30 2>/dev/null)" ] && return 0
-  return 1
-}
-got_lock=0
-if mkdir "$LOCK" 2>/dev/null; then
-  got_lock=1
-elif lock_dead; then
-  rm -rf "$LOCK" 2>/dev/null
-  mkdir "$LOCK" 2>/dev/null && got_lock=1
-fi
-if [ "$got_lock" != 1 ]; then
-  printf '로컬 CI: 다른 검사 진행 중 — %s 는 건너뜀(완료 후 재push 시 검사)\n' "$short" >&2
+# dedup(빠른 길) — 이 SHA 이미 검사됐으면 큐에 넣지 않는다(큐도 같은 검사를 하지만 프로세스 절약)
+if [ -f "$DIR/$SHA.result" ]; then
+  printf '로컬 CI: %s 이미 검사됨(%s)\n' "$short" "$(cat "$DIR/$SHA.result")" >&2
   exit 0
 fi
 
-# 백그라운드 실행 — hook 반환 후에도 생존(nohup + fd 리다이렉트 + </dev/null + disown).
-# 값은 환경변수로 주입(문자열 보간 회피).
-RESULT="$RESULT" LOG="$LOG" LOCK="$LOCK" SHA="$SHA" ROOT="$ROOT" NAME="$NAME" \
-nohup bash -c '
-  echo $$ > "$LOCK/pid" 2>/dev/null   # 락 소유권(자기 PID) 기록 — 첫 동작
-  cd "$ROOT" || { [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK" 2>/dev/null; exit 0; }
-  # 시작 status(pending) — PR 체크 영역에 "실행 중" 표시. 게시 실패는 무시
-  # (gh 미설치/미인증/원격 부재여도 로컬 CI 본연 동작엔 영향 없음).
-  if command -v gh >/dev/null 2>&1; then
-    gh api "repos/{owner}/{repo}/statuses/$SHA" -f state=pending \
-      -f context="local-ci" -f description="bin/ci 실행 중 (로컬)" >/dev/null 2>&1
-  fi
-  ci_start=$SECONDS
-  if bin/ci >"$LOG" 2>&1; then verdict=pass; else verdict=fail; fi
-  dur=$(( SECONDS - ci_start ))
-  printf "%s\n" "$verdict" > "$RESULT"
-  # 결과 status 게시 — PR/커밋 페이지에 ✅/❌ 로 반영. 머지 게이트는 여전히
-  # 로컬 캐시($RESULT)로 판정하므로 status 는 표시용(네트워크 단절에도 게이트 무손상).
-  if command -v gh >/dev/null 2>&1; then
-    if [ "$verdict" = pass ]; then st=success; ds="bin/ci 통과 (로컬, ${dur}s)"
-    else st=failure; ds="bin/ci 실패 (로컬, ${dur}s) — 로그: ~/.claude/.local-ci"; fi
-    gh api "repos/{owner}/{repo}/statuses/$SHA" -f state="$st" \
-      -f context="local-ci" -f description="$ds" >/dev/null 2>&1
-  fi
-  # 여전히 자신이 소유할 때만 락 해제 — stale 회수로 새 소유자가 들어왔으면 그 락을 보존
-  [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK" 2>/dev/null
-  if command -v osascript >/dev/null 2>&1; then
-    short=$(printf "%s" "$SHA" | cut -c1-8)
-    if [ "$verdict" = pass ]; then
-      osascript -e "display notification \"로컬 CI 통과 $short\" with title \"✅ $NAME\"" >/dev/null 2>&1
-    else
-      osascript -e "display notification \"로컬 CI 실패 $short — bin/ci 로그 확인\" with title \"❌ $NAME\"" >/dev/null 2>&1
-    fi
-  fi
-' >/dev/null 2>&1 </dev/null &
+# ci-queue.sh 위치 — 훅은 개별 심링크라 인접 scripts/ 가 없을 수 있다 → 심링크를 따라간 실제
+# 위치의 ../scripts, 그다음 설치 경로로 폴백(ci-gate 의 repo-dir.sh 관행).
+src="$0"
+while [ -L "$src" ]; do
+  d=$(cd "$(dirname "$src")" && pwd); src=$(readlink "$src")
+  case "$src" in /*) ;; *) src="$d/$src" ;; esac
+done
+here=$(cd "$(dirname "$src")" && pwd)
+Q=""
+for cand in "$here/../scripts/ci-queue.sh" "$HOME/.claude/skills/issue-runner/scripts/ci-queue.sh"; do
+  [ -x "$cand" ] && { Q="$cand"; break; }
+done
+if [ -z "$Q" ]; then
+  printf '로컬 CI: ci-queue.sh 를 찾지 못해 %s 를 큐에 넣지 못했습니다 (issue-runner 설치 확인)\n' "$short" >&2
+  exit 0
+fi
+
+# mise toolchain — shim 을 PATH 앞에(큐도 같은 처리를 하지만 훅 환경에서 먼저 보장)
+if [ -d "$HOME/.local/share/mise/shims" ]; then
+  PATH="$HOME/.local/share/mise/shims:$PATH"; export PATH
+fi
+
+Q="$(cd "$(dirname "$Q")" && pwd)/ci-queue.sh"
+
+ahead=$(ls "$HOME/.claude/.local-ci/.queue" 2>/dev/null | grep -vc '^\.')
+# 백그라운드 — hook 반환 후에도 생존(nohup + fd 리다이렉트 + </dev/null + disown)
+nohup "$Q" run "$ROOT" "$SHA" >/dev/null 2>&1 </dev/null &
 disown 2>/dev/null
 
-printf '로컬 CI 백그라운드 시작 (%s) — 완료 시 알림, 머지는 게이트가 판정\n' "$short" >&2
+# 세션에 직접 알린다(additionalContext) — 결과를 기다리는 표준 통로는 `wait` 를 백그라운드
+# Bash 로 띄우는 것. 끝나면 명령이 종료되고 Claude Code 가 세션을 깨운다 — sleep 폴링 금지.
+msg=$(printf '로컬 CI 큐 등록: %s (앞에 %s건 — 박스 전체 직렬, 다른 세션·워크트리 포함). 결과 대기는 지금 이 명령을 Bash run_in_background=true 로 실행하세요: %s wait %s  — pass/fail/폐기가 정해지면 명령이 끝나고 세션이 자동으로 깨어납니다(종료 코드 0=pass·1=fail·2=큐에 없음·124=타임아웃). sleep 폴링·bin/ci 직접 실행 금지. 머지는 게이트가 판정.' \
+  "$short" "$ahead" "$Q" "$SHA")
+printf '%s' "$msg" | jq -Rs '{ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: . } }'
 exit 0
