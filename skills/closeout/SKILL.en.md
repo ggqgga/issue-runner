@@ -182,45 +182,34 @@ conflict needing human judgment·incomplete doc reconcile·etc.), add
 For the picked PR, perform the 6 steps below in order. At the end of each step, plant
 the marker command (① Reconcile marker table) so the next tick can resume idempotently.
 
-**Step 1 — plan-conformance verification.** So the verifier can judge even when it
-cannot reach gh·git network in the sandbox, **the main session first fetches the
-sources and embeds them in the prompt**. Get `<issue>` from the PR body's
-`Closes #N` / `Refs #N` line (parse via `gh pr view <pr> --repo <repo> --json
-body`). Then get the diff via `gh pr diff <pr> --repo <repo>` and the issue body
-via `gh issue view <issue> --repo <repo>` (if there is no linked issue,
-`<ISSUE_BODY>` is the empty string). Then fill `references/verifier-prompt.md`'s
-placeholders and **spawn `VERIFIER` with `run_in_background: true`**: `<PR>`·`<REPO>`·`<BASE>`=default
-branch·`<PLAN_REF>`=the issue's `## Plan` or the referenced `Plans/*.md` (empty
-string if none)·`<DIFF>`=the pr diff output above·`<ISSUE_BODY>`=the issue view
-output above·`<LESSONS_OR_"없음">`=the contents of **`.loop/lessons-verifier.md`**
-(the verdict casebook) under the path output by `$SCRIPTS/repo-dir.sh <repo>` — an
-injection so the verifier does not repeat past misjudgment patterns (citation
-misreads·base blind spots·etc.). If that file is absent, fall back to
-`.loop/lessons.md` (repos that have not split it yet); `없음` if both are missing or
-empty. The two files have different audiences — `lessons.md` is for the
-**implementing worker**, so do not mix it into the verifier prompt (it dilutes the
-misjudgment-prevention signal) (following the VERIFIER contract and
-fallback in ## Constants). The verifier prompt carries the diff, issue body, and
-lessons inline, so the verifier runs no additional network commands. Record the
-spawn time and poll with TaskList/TaskOutput (e.g. every 30s) — if the verdict
-arrives within the deadline of spawn time + `VERIFIER_TIMEOUT_MIN`, use it as-is.
-**If the deadline is exceeded, cut the task off with `TaskStop`** and treat it as
-no verdict produced, falling through to the BLOCKER path below (fail-closed —
-so a codex stall cannot block the tick indefinitely, #96). The fallback
-(the general-purpose retry from `VERIFIER` in ## Constants) gets **the same
-wiring** (a fresh spawn time + the same `VERIFIER_TIMEOUT_MIN` deadline + `TaskStop`
-on overrun) — so the fallback cannot spin forever after a codex stall either.
-Never proceed to merge on a timeout — it only flows through the BLOCKER path
-below (`needs-human`, hold).
-- Embed-failure fail-closed: if `gh pr diff` fails or the diff is empty, or the
-  diff is too large to fit the verifier's context (when you judge so), do not treat
-  verification as passed — exit on hold via the BLOCKER path (no merge), so the
-  network-independent path does not silently break and leak through to a merge.
+**Step 1 — plan-conformance verification — built-in reviewer.** Get `<issue>` from the PR body's
+`Closes #N` / `Refs #N` line (parse via `gh pr view <pr> --repo <repo> --json body`). Verification is
+**two synchronous calls** of `$SCRIPTS/codex-review-gate.sh` (#134, Plans/codex-native-review-gate.md) —
+no subagent spawn, polling, or `TaskStop` wiring:
+1. correctness: `codex-review-gate.sh --base origin/<default> --cd <worktree> --out <scratch>/a` →
+   last stdout line `verdict=… p1= p2=`, body in `a/review.md`. `[P1]` = BLOCKER.
+2. plan conformance: `codex-review-gate.sh --base origin/<default> --prompt "<instructions>" --cd <worktree> --out <scratch>/b`
+   (the helper prefixes the `--base` range to the prompt so the reviewer actually reads the committed diff — without it, only the working tree) —
+   the instructions are `references/verifier-prompt.md` with placeholders filled: `<PR>`·`<REPO>`·`<BASE>`=default
+   branch·`<PLAN_REF>`=the issue's `## Plan` or the referenced `Plans/*.md` (empty string if none)·`<ISSUE_BODY>`=
+   `gh issue view <issue> --repo <repo>` output (empty string if no linked issue)·`<LESSONS_OR_"없음">`=the contents
+   of **`.loop/lessons-verifier.md`** (the verdict casebook — injects past misjudgment patterns; fall back to
+   `.loop/lessons.md`, `없음` if both are missing or empty. `lessons.md` is for the **implementing worker** — do not
+   mix it in, it dilutes the misjudgment-prevention signal) under the path from `$SCRIPTS/repo-dir.sh <repo>`.
+   `<DIFF>` is not embedded — the built-in reviewer reads the worktree itself. The instructions state "judge only
+   whether this change meets the plan / issue AC; unmet or out-of-scope = `[P1]`, minor deviation = `[P2]`".
+The helper has its own timeout (`CODEX_GATE_TIMEOUT`, default 900s = in step with `VERIFIER_TIMEOUT_MIN`). If either
+call returns **exit 2 (`verdict=NONE`) = no verdict** (codex missing · model error · timeout), only then use the
+`VERIFIER` fallback from ## Constants (general-purpose, with the diff, issue body, and lessons embedded in the prompt,
+`run_in_background` + the `VERIFIER_TIMEOUT_MIN` deadline + `TaskStop` on overrun). If the fallback also produces no
+verdict, exit on hold via the BLOCKER path below (fail-closed — never proceed to merge, #96). A model error in the
+helper's stderr (404 · not supported · requires a newer version) is not a stall — quote it verbatim in the comment.
+- Combining verdicts: BLOCKER from either call → BLOCKER. Both CLEAN/NIT/WARN → pass (`[P3+]` = NIT is non-blocking; WARN counts add up).
   Machine-comment marker (required): the closeout-verification comment posted below via
   `gh pr comment` must include **a final line `<!-- bodat:worker -->`** — it is how
   closeout-eligible tells a machine comment from a human review (#72). Without it, on
   re-evaluation the PR is mistaken for an unresolved human comment and drops out.
-- BLOCKER (including deadline overrun, e.g. reason `검증자 타임아웃
+- BLOCKER (including no-verdict, e.g. reason `검증자 미산출 — 타임아웃
   (>VERIFIER_TIMEOUT_MIN분)`) → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
   <!-- bodat:worker -->"`
   + `gh issue edit <issue> --repo <repo> --add-label needs-human`
