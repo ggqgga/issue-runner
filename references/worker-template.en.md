@@ -37,9 +37,11 @@ Procedure:
    **Exploration delegation (optional)**: for broad surveys (affected files, existing
    idioms, where the tests live) you may nest an `Explore` subagent via the Agent tool
    and take back only its conclusion (read-only — it saves your own context). A nested
-   Agent call is always accepted in the background and its result comes back as a
-   **completion notification** — continue after you receive it (the "no background"
-   rule above is about long-running Bash commands). Look up single files/symbols yourself.
+   Agent call is always accepted in the background and **returns a task id** — do not end
+   your turn waiting for a notification; call `TaskOutput(task_id, block: true,
+   timeout: 600000)` with that id to **collect the result blocking** (the "no background"
+   rule above is about long-running Bash commands; this is the collection path). Look up
+   single files/symbols yourself.
 2. Read the 'Past lessons' below and avoid repeating the same mistakes.
 3. Read the issue with `gh issue view <NUM> --repo <REPO> --json state,body`.
    **If state is CLOSED, terminate immediately as a no-op** — the issue is already
@@ -95,23 +97,34 @@ Procedure:
 9-b. **Pre-PR review — once, non-gating.** After local CI passes and before opening the
    PR, nest a fresh-context reviewer via the Agent tool — `subagent_type: "general-purpose"`
    (**no codex-family types** — the verification gate is owned by verify-runner and a codex
-   CLI stall must not enter the worker).
-   - **Embed** in the prompt: the full output of `cd <WT_PATH> && git diff
-     origin/<DEFAULT_BRANCH>...HEAD` plus the issue body you read in step 3. The reviewer
-     judges from the embedded text only and runs no gh/git (read-only, no code changes).
+   CLI stall must not enter the worker). **On a re-dispatch (bounce) skip 9-b** — the bounce
+   comment already is a fresh-eyes review; leave the PR body's old `## Pre-review` as is.
+   - First produce `cd <WT_PATH> && git diff origin/<DEFAULT_BRANCH>...HEAD`. **If the output
+     is empty or an error, do not spawn** — record `not run: no diff (<reason>)` and go to
+     step 10.
+   - **Embed** in the prompt: that full diff output plus the issue body you read in step 3.
+     The reviewer judges from the embedded text only and runs no gh/git (read-only, no code
+     changes).
    - Required contract: spec conformance against the issue's acceptance criteria +
      correctness (edge cases, swallowed exceptions, unjustified fallbacks, whether tests
      verify real behavior). One line per finding: `BLOCKER/WARN/NIT` + `file:line — what`;
-     exactly `CLEAN` when there are none.
-   - Handling: fix BLOCKER and WARN, re-commit, re-push, re-run step 9 local CI. **One
-     round only** — do not call the reviewer again after fixing (the second pair of eyes is
-     verify-runner). NIT may be left as is.
-   - **Fail-open**: if the completion notification has not arrived within **10 minutes**,
-     skip the review and move on — this step is not a gate. Its purpose is to reduce
-     verify-runner bounces (a full re-dispatch round trip).
-   - Record the outcome in the PR body's **`## Pre-review`** section (required): `CLEAN` /
-     one line per finding with its handling (fixed · NIT deferred) / `timeout` / `not run:
-     <reason>` if the spawn failed.
+     exactly `CLEAN` when there are none; `undecided: <reason>` when the embedded diff is
+     truncated or cannot be judged (never collapse that into CLEAN).
+   - **Wait blocking**: call `TaskOutput(task_id, block: true, timeout: 600000)` with the
+     task id the spawn returned — that is how the **10 minutes** are measured. If it has not
+     finished in time, `TaskStop` the reviewer (so it does not keep burning tokens behind
+     you), record `timeout`, and move on — **fail-open**, this step is not a gate. Its
+     purpose is to reduce verify-runner bounces (a full re-dispatch round trip).
+   - Handling: fix BLOCKER and WARN, re-commit, re-push, re-run step 9 local CI — **go to
+     step 10 only when that re-run passes**, otherwise fall back to the step 9 rule (fix and
+     re-run). **One round only** — do not call the reviewer again after fixing (the second
+     pair of eyes is verify-runner). NIT may be left as is.
+   - Record the outcome in the PR body's **`## Pre-review`** section (required) — the value
+     starts with one of five: `CLEAN` / one line per finding with its handling (if fixed:
+     the fixing commit SHA + whether re-CI passed; NIT deferred) / `timeout` / `not run:
+     <reason>` (no diff · spawn failed) / `undecided: <summary of reviewer output>` (output
+     not in the format above). Put the same value in the exit report (11c) as one line
+     `pre-review: <value>` — the dispatcher's Report copies it.
 10. Open the PR (**if this is a re-dispatch it already exists** — see below).
    **It must be a standalone command with no cd**:
    `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`
