@@ -47,7 +47,17 @@
 set -euo pipefail
 repo="${1:?usage: claim-issue.sh <owner/repo> <num>}"
 num="${2:?usage: claim-issue.sh <owner/repo> <num>}"
-me=$(gh api user -q .login)
+# REST /user 503 부분 장애 폴백 (reconcile.sh·eligible-issues.sh 와 동일) — gh 는 실패해도
+# 에러 본문을 stdout 으로 뱉으므로 로그인 형식을 반드시 검증한다.
+me=""
+for _try in 1 2 3; do
+  for _cand in "$(gh api user -q .login 2>/dev/null)" \
+               "$(gh api graphql -f query='{viewer{login}}' --jq .data.viewer.login 2>/dev/null)"; do
+    if printf '%s' "$_cand" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}$'; then me="$_cand"; break 2; fi
+  done
+  sleep 2
+done
+[ -n "$me" ] || { echo "claim 중단: GitHub 사용자 확인 실패" >&2; exit 1; }
 stale_wait=${CLAIM_STALE_WAIT:-15}
 poll_step=${CLAIM_POLL_STEP:-3}
 [ "$poll_step" -gt 0 ] 2>/dev/null || poll_step=3
@@ -70,13 +80,20 @@ fi
 # 잠금 ref 의 객체로 쓰고 이름 앵커는 `base`(신규). 이름이 같으면 sha 값이 달라도
 # 중재는 성립한다 — 중재는 ref **이름** 으로 이뤄진다.
 lock_key=base
+# 주의: `gh api -q` 는 404 등 실패 응답에서 **에러 JSON 본문을 stdout 으로 흘린다**
+# (2026-08-16 실측, gh 2.95.0). 그대로 받으면 브랜치가 없는데도 lock_sha 가 비어
+# 있지 않아 "재투입" 분기로 새고, 114자 문자열로 ref 를 만들려다 422 로 죽는다
+# (`Only 40 characters are allowed`). 그래서 40자 hex 인지 형태로 검증한다.
+sha40() { printf '%s' "$1" | grep -qE '^[0-9a-f]{40}$'; }
 lock_sha=$(gh api "repos/$repo/git/ref/heads/agent/issue-$num" -q '.object.sha' 2>/dev/null || true)
+sha40 "$lock_sha" || lock_sha=""
 if [ -n "$lock_sha" ]; then
   lock_key="$lock_sha"
 else
   default=$(gh api "repos/$repo" -q '.default_branch' 2>/dev/null || true)
   [ -n "$default" ] || { echo "claim 중단: $repo 기본 브랜치 조회 실패" >&2; exit 1; }
   lock_sha=$(gh api "repos/$repo/git/ref/heads/$default" -q '.object.sha' 2>/dev/null || true)
+  sha40 "$lock_sha" || lock_sha=""
 fi
 # 앵커 sha 를 못 구하면 잠금 없이 claim 하지 않는다(fail-closed — 안 집는 쪽이 안전).
 [ -n "$lock_sha" ] || { echo "claim 중단: $repo#$num 잠금 앵커 sha 조회 실패" >&2; exit 1; }

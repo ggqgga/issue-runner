@@ -15,13 +15,13 @@ maintenance must come before new work).
 
 ## Constants
 
-- `MAX_AGENTS = 3` — cap on concurrently in-flight issues (in-flight is defined
+- `MAX_AGENTS = 4` — cap on concurrently in-flight issues (in-flight is defined
   in ③-1 — PRs waiting for human review do not occupy a slot). **Lowered 5→3 in a
   2026-07 contention experiment**: workers are all background subagents in one
   process, so N concurrent ones share API/CPU and each is throttled to ~1/N
   (measured: 0 concurrent ~10 min vs 1–4 concurrent ~30 min). Throughput is roughly
   preserved while box load and orphan risk drop. Lower to 2 if it is still slow.
-- `MAX_OPEN_PRS = 10` — cap on total open PRs (backlog backpressure). When
+- `MAX_OPEN_PRS = 14` — cap on total open PRs (backlog backpressure). When
   reached, only new dispatches stop (maintenance continues) — prevents rebase
   conflicts from multiplying across PRs while human merges lag
 - `MAX_REPAIRS_PER_PR = 3` — cap on maintenance dispatches per PR

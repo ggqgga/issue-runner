@@ -186,8 +186,8 @@ flowchart TD
 
 | 상수 | 기본값 | 동작 |
 |---|---|---|
-| `MAX_AGENTS` | `3` | 동시 in-flight 이슈. in-flight = 작업 중 + 보수 중 + 빨간 PR. 사람 리뷰만 기다리는 초록불 PR 은 슬롯을 점유하지 않는다 |
-| `MAX_OPEN_PRS` | `10` | 열린 PR 배압. 도달 시 신규 디스패치만 멈추고(보수는 계속) Report 에 적체 warn |
+| `MAX_AGENTS` | `4` | 동시 in-flight 이슈. in-flight = 작업 중 + 보수 중 + 빨간 PR. 사람 리뷰만 기다리는 초록불 PR 은 슬롯을 점유하지 않는다 |
+| `MAX_OPEN_PRS` | `14` | 열린 PR 배압. 도달 시 신규 디스패치만 멈추고(보수는 계속) Report 에 적체 warn |
 | `MAX_REPAIRS_PER_PR` | `3` | PR 당 보수 상한. 초과하면 멈추고 이슈에 `needs-human` 라벨 (서킷 브레이커) |
 | `ISSUE_TIMEBOX_HOURS` | `1` | PR 없이 이만큼 지난 워커는 중단·worktree 폐기. push 된 커밋은 재디스패치용으로 보존. 판정은 15분 틱에 이뤄지므로 실제 상한은 최대 ~1시간 15분 |
 | `SOFT_TOKEN_BUDGET_PER_ISSUE` | `300k` | 관측치 전용 — 중단하지 않고 Report 에 승격 권고만 표시 |

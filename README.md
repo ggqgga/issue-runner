@@ -189,8 +189,8 @@ The loop is designed to run away safely — each limit bounds "the worst a human
 
 | Constant | Default | Behavior |
 |---|---|---|
-| `MAX_AGENTS` | `3` | Concurrent in-flight issues. In-flight = working + repairing + red PRs; a green PR waiting on human review does **not** hold a slot |
-| `MAX_OPEN_PRS` | `10` | Open-PR backpressure. On reaching it, new dispatch pauses (repairs continue) and Report raises a backlog warn |
+| `MAX_AGENTS` | `4` | Concurrent in-flight issues. In-flight = working + repairing + red PRs; a green PR waiting on human review does **not** hold a slot |
+| `MAX_OPEN_PRS` | `14` | Open-PR backpressure. On reaching it, new dispatch pauses (repairs continue) and Report raises a backlog warn |
 | `MAX_REPAIRS_PER_PR` | `3` | Repair cap per PR. Beyond it, the loop stops and labels the issue `needs-human` (circuit breaker) |
 | `ISSUE_TIMEBOX_HOURS` | `1` | A worker with no PR after this long is stopped and its worktree discarded; pushed commits survive for re-dispatch. The check runs on the 15-min tick, so the real ceiling is up to ~1h15m |
 | `SOFT_TOKEN_BUDGET_PER_ISSUE` | `300k` | Observation only — never interrupts, just flags a promotion recommendation in Report |
