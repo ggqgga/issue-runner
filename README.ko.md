@@ -237,6 +237,9 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 |---|---|---|
 | `local-ci.sh` | PostToolUse · `git push` | 그 HEAD 의 `bin/ci` 를 **박스 전역 FIFO**(`scripts/ci-queue.sh`)에 넣고, 결과 캐시·commit status 게시; 세션에는 백그라운드로 띄울 `wait` 명령을 알려 판정이 나면 깨어나게 한다 |
 | `ci-gate-before-pr-merge.sh` | PreToolUse · `gh pr merge` | 해당 HEAD 의 캐시된 CI 가 통과가 아니면 머지 차단 (fail-closed); 결과가 없으면 *실행 중 / 대기열 N번째 / 없음* 으로 구분해 안내 |
+| `codex-review-on-pr-create.sh` | PostToolUse · `gh pr create` | Claude 가 독립적인 `codex:codex-rescue` diff 리뷰를 백그라운드로 스폰하도록 지시 |
+| `warn-on-main-branch.sh` | PreToolUse · `Write`/`Edit` | `main`/`master` 에서 편집할 때 비차단 경고 — 먼저 브랜치 |
+| `require-issue-in-pr.sh` | PreToolUse · `gh pr create` | 본문에 전용 `Closes/Refs #N` 줄이 없는 PR 차단 (`(no-issue)` 로 우회) |
 
 **`bin/ci` 는 머신 전체에서 한 번에 하나.** push 훅·루프의 `run-local-ci.sh`·세션 직접 호출 — 모든 진입점이 `scripts/ci-queue.sh` 를 거친다. 데몬 없는 티켓 락: 티켓은 `~/.claude/.local-ci/.queue/` 에, 가장 오래된 살아 있는 티켓이 `mkdir .running` 에 성공하면 실행, 죽은 PID 는 지나가는 대기자가 치운다. 워크트리 둘(또는 세션 둘)이 잇달아 push 해도 같은 테스트 DB 를 물거나 박스를 포화시키지 않는다 — 두 번째는 자기 차례를 기다린다. 차례가 왔을 때 레포 HEAD 가 이미 움직였으면 폐기(exit 2) — 새 push 가 자기 티켓을 쥐고 있다.
 
@@ -245,9 +248,6 @@ scripts/ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo owner/repo]   # 등
 scripts/ci-queue.sh status [<SHA>]                                          # running / queued N / none
 scripts/ci-queue.sh wait <SHA> [--timeout <sec>]                            # 판정까지 블록 — run_in_background 로 띄우면 끝날 때 세션이 깨어난다
 ```
-| `codex-review-on-pr-create.sh` | PostToolUse · `gh pr create` | Claude 에게 독립 `codex:codex-rescue` diff 리뷰를 백그라운드 스폰하도록 지시 |
-| `warn-on-main-branch.sh` | PreToolUse · `Write`/`Edit` | `main`/`master` 에서 편집 시 비차단 경고 — 먼저 브랜치 |
-| `require-issue-in-pr.sh` | PreToolUse · `gh pr create` | 본문에 전용 `Closes/Refs #N` 라인 없는 PR 차단 (`(no-issue)` 로 우회) |
 
 ```bash
 mkdir -p ~/.claude/hooks

@@ -57,8 +57,11 @@ CI
 }
 slug_of() { printf '%s' "$(cd "$1" && pwd -P)" | sed 's#[/ ]#_#g; s#^_##'; }
 head_of() { git -C "$1" rev-parse HEAD; }
+fake_sha() { printf "$1%.0s" $(seq 1 40); }   # 존재하지 않는 40자 SHA
 # wait_file <path> [초] — 백그라운드 잡의 결과를 기다린다
 wait_file() { local i=0; while [ ! -f "$1" ] && [ $i -lt "${2:-30}" ]; do sleep 1; i=$((i + 1)); done; [ -f "$1" ]; }
+# wait_status <sha> <running|queued N> — 큐 상태 전이를 조건으로 기다린다(고정 sleep 대신, 0.2초 폴·최대 10초)
+wait_status() { local i=0; while [ "$("$SUT" status "$1")" != "$2" ] && [ $i -lt 50 ]; do sleep 0.2; i=$((i + 1)); done; }
 
 echo "[ci-queue] 1) 단독 실행 pass → result·status(pending→success)"
 R1=$(make_repo r1); S1=$(head_of "$R1"); SL1=$(slug_of "$R1")
@@ -90,9 +93,9 @@ echo "[ci-queue] 4) 두 잡 직렬 — 먼저 발급된 티켓이 먼저, 실행
 R3=$(make_repo r3); S3=$(head_of "$R3"); SL3=$(slug_of "$R3")
 R4=$(make_repo r4); S4=$(head_of "$R4"); SL4=$(slug_of "$R4")
 : > "$CI_LOG"
-CI_SLEEP=2 "$SUT" run "$R3" "$S3" >/dev/null 2>&1 &
+CI_SLEEP=1 "$SUT" run "$R3" "$S3" >/dev/null 2>&1 &
 p3=$!
-sleep 0.5
+wait_status "$S3" running
 CI_SLEEP=1 "$SUT" run "$R4" "$S4" >/dev/null 2>&1 &
 p4=$!
 wait $p3 $p4
@@ -118,9 +121,8 @@ assert_eq "ROOT 부재 exit" "$rc" 3
 echo "[ci-queue] 7) 죽은 티켓·죽은 .running 회수 — 앞에 유령이 있어도 실행된다"
 R6=$(make_repo r6); S6=$(head_of "$R6"); SL6=$(slug_of "$R6")
 mkdir -p "$QDIR/.running"
-printf '0000000001.99999999.deadbeef\n' > /dev/null
-ghost="$QDIR/0000000001.99999999.$(printf 'd%.0s' $(seq 1 40))"
-printf 'root=/nope\nslug=x\nrepo=\n' > "$ghost"
+ghost="$QDIR/0000000001.99999999.$(fake_sha d)"
+printf 'slug=x\n' > "$ghost"
 echo 99999999 > "$QDIR/.running/pid"
 rc=0; "$SUT" run "$R6" "$S6" >/dev/null 2>&1 || rc=$?
 assert_eq "유령 뒤 실행 exit" "$rc" 0
@@ -132,15 +134,15 @@ echo "[ci-queue] 8) status — 실행 중/대기열 위치, 같은 SHA 는 중�
 R7=$(make_repo r7); S7=$(head_of "$R7"); SL7=$(slug_of "$R7")
 R8=$(make_repo r8); S8=$(head_of "$R8")
 : > "$CI_LOG"
-CI_SLEEP=4 "$SUT" run "$R7" "$S7" >/dev/null 2>&1 &
+CI_SLEEP=3 "$SUT" run "$R7" "$S7" >/dev/null 2>&1 &
 p7=$!
-sleep 1.5                                   # r7 실행권 획득 대기
+wait_status "$S7" running
 "$SUT" run "$R8" "$S8" >/dev/null 2>&1 &
 p8=$!
-sleep 0.5
+wait_status "$S8" "queued 1"
 assert_eq "status running" "$("$SUT" status "$S7")" running
 assert_eq "status queued 1" "$("$SUT" status "$S8")" "queued 1"
-assert_eq "status none" "$("$SUT" status "$(printf 'a%.0s' $(seq 1 40))")" none
+assert_eq "status none" "$("$SUT" status "$(fake_sha a)")" none
 assert_eq "status 전체 줄 수" "$("$SUT" status | wc -l | tr -d ' ')" 2
 # 같은 SHA 를 다시 run — 티켓을 새로 내지 않고(bin/ci 1회) 기존 결과를 받아 exit 0
 rc=0; "$SUT" run "$R7" "$S7" >/dev/null 2>&1 || rc=$?
@@ -191,9 +193,9 @@ assert_eq "wait fail exit" "$rc" 1
 case "$out" in *"bin/ci 마지막 출력"*) ok ;; *) bad "wait fail 은 로그 꼬리를 보여야 한다: $out" ;; esac
 # 다른 세션이 큐에 넣은 잡을 이 세션이 wait — 진행 중엔 블록, 끝나면 0
 R10=$(make_repo r10); S10=$(head_of "$R10")
-CI_SLEEP=3 "$SUT" run "$R10" "$S10" >/dev/null 2>&1 &
+CI_SLEEP=2 "$SUT" run "$R10" "$S10" >/dev/null 2>&1 &
 p10=$!
-sleep 1
+wait_status "$S10" running
 t0=$(date +%s)
 rc=0; out=$("$SUT" wait "$S10" 2>&1) || rc=$?
 t1=$(date +%s)
@@ -202,14 +204,14 @@ assert_eq "wait 실행 중 → 완료 exit" "$rc" 0
 case "$out" in *"실행 중"*) ok ;; *) bad "wait 진행 출력에 '실행 중' 없음: $out" ;; esac
 wait $p10
 # 큐에 없고 결과도 없음 → grace(1초) 뒤 exit 2
-rc=0; out=$(CI_QUEUE_WAIT_GRACE=1 "$SUT" wait "$(printf 'b%.0s' $(seq 1 40))" 2>&1) || rc=$?
+rc=0; out=$(CI_QUEUE_WAIT_GRACE=1 "$SUT" wait "$(fake_sha b)" 2>&1) || rc=$?
 assert_eq "wait 큐 부재 exit" "$rc" 2
 case "$out" in *"재등록"*) ok ;; *) bad "wait 큐 부재 안내 없음: $out" ;; esac
 # 타임아웃 — 실행 중인데 --timeout 이 먼저 → 124
 R11=$(make_repo r11); S11=$(head_of "$R11")
-CI_SLEEP=4 "$SUT" run "$R11" "$S11" >/dev/null 2>&1 &
+CI_SLEEP=3 "$SUT" run "$R11" "$S11" >/dev/null 2>&1 &
 p11=$!
-sleep 1
+wait_status "$S11" running
 rc=0; "$SUT" wait "$S11" --timeout 1 >/dev/null 2>&1 || rc=$?
 assert_eq "wait 타임아웃 exit" "$rc" 124
 wait $p11
@@ -250,15 +252,15 @@ assert_eq "게이트 결과·큐 부재" "$rc" 2
 grep -q "큐에도 없습니다" "$TMP/gate.err" && ok || bad "게이트 부재 안내 없음: $(cat "$TMP/gate.err")"
 # (d) 실행 중 → '실행 중' + wait 안내 · (e) 대기열 → '대기열 1번째'
 G2=$(make_repo g2); G2SHA=$(head_of "$G2")
-CI_SLEEP=4 "$SUT" run "$G2" "$G2SHA" >/dev/null 2>&1 &
+CI_SLEEP=3 "$SUT" run "$G2" "$G2SHA" >/dev/null 2>&1 &
 pg2=$!
-sleep 1.5
+wait_status "$G2SHA" running
 rc=0; run_gate "$G2SHA" || rc=$?
 assert_eq "게이트 실행 중 차단" "$rc" 2
 grep -q "실행 중" "$TMP/gate.err" && grep -q "wait $G2SHA" "$TMP/gate.err" && ok || bad "게이트 실행 중 안내: $(cat "$TMP/gate.err")"
 "$SUT" run "$G" "$GSHA" >/dev/null 2>&1 &
 pg1=$!
-sleep 0.5
+wait_status "$GSHA" "queued 1"
 rc=0; run_gate "$GSHA" || rc=$?
 assert_eq "게이트 대기열 차단" "$rc" 2
 grep -q "대기열 1번째" "$TMP/gate.err" && ok || bad "게이트 대기열 안내: $(cat "$TMP/gate.err")"

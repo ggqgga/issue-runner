@@ -3,50 +3,54 @@
 #
 #   ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo <owner/repo>]
 #   ci-queue.sh status [<SHA>]
+#   ci-queue.sh result <SHA>
+#   ci-queue.sh wait <SHA> [--timeout <sec>]
 #
 # 세 진입점(push 훅 local-ci.sh · 루프 run-local-ci.sh · 세션 직접)이 전부 이걸 거쳐
 # `bin/ci` 를 **박스 전체에서 한 번에 하나만** 돌린다. 워크트리·레포 무관.
 #
 # 큐 = $HOME/.claude/.local-ci/.queue/ (local-ci 캐시 예외 안 — CLAUDE.md 규칙)
-#   티켓  = <epoch10>.<pid>.<sha>  파일(내용 root=/slug=/repo=). 이름 정렬 = FIFO.
-#   실행권 = .queue/.running/ 디렉터리(mkdir 원자 토큰) + 그 안의 pid.
+#   티켓  = <epoch10>.<pid>.<sha>  파일(내용 slug=). 이름 정렬 = FIFO.
+#   실행권 = .queue/.running/ 디렉터리(mkdir 원자 토큰) + 그 안의 pid·ticket.
 # 각 잡은 **자기 프로세스 안에서** 기다리다 실행한다 — 런너 데몬이 없으니 "런너가
 # 죽으면 큐가 멈춤"이 없다. 죽은 pid 의 티켓·.running 은 지나가는 대기자가 치운다.
 #
-# run 종료 코드: 0=pass · 1=fail · 2=폐기(실행 시점 HEAD ≠ SHA — 새 push 가 자기 티켓을
-# 냈으니 이 잡은 의미 없음) · 3=ROOT 부재. 결과 파일 형식(<slug>/<sha>.{log,result})은
-# 기존 그대로 — ci-gate·closeout-ci-pass 호환.
-# status 출력: `status` = 줄마다 "running <short> <slug>" / "queued <n> <short> <slug>",
+# 결과 = $HOME/.claude/.local-ci/<slug>/<sha>.{log,result} (기존 형식 그대로 — ci-gate·
+# closeout-ci-pass 호환). **조회 키는 SHA** — 어느 슬러그(워크트리·메인)에 떨어졌든
+# `result <SHA>` 가 찾는다. 실행 직전 HEAD==SHA 를 검사하므로 같은 SHA 의 결과는 같은 커밋의 결과다.
+#
+# 종료 코드 — run: 0=pass · 1=fail · 2=폐기(실행 시점 HEAD ≠ SHA — 새 push 가 자기 티켓을
+# 냈으니 이 잡은 의미 없음) · 3=ROOT 부재. wait: 0=pass · 1=fail · 2=큐에 없고 결과도 없음 ·
+# 124=타임아웃. result: 0=있음(`pass|fail <path>` 출력) · 1=없음(`none`).
+# status 출력: `status` = 줄마다 "running <sha> <slug>" / "queued <n> <sha> <slug>",
 #              `status <sha>` = "running" / "queued <n>" / "none".
-# macOS bash 3.2 대상.
+# macOS bash 3.2 대상 — 폴 루프 안은 서브프로세스 없이 파라미터 확장만 쓴다.
 set -u
 
-QDIR="$HOME/.claude/.local-ci/.queue"
+CACHE="$HOME/.claude/.local-ci"
+QDIR="$CACHE/.queue"
 RUNNING="$QDIR/.running"
 POLL="${CI_QUEUE_POLL:-10}"
 
 usage() {
-  printf 'usage: ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo <owner/repo>]\n       ci-queue.sh status [<SHA>]\n       ci-queue.sh wait <SHA> [--timeout <sec>]\n' >&2
+  printf 'usage: ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo <owner/repo>]\n       ci-queue.sh status [<SHA>]\n       ci-queue.sh result <SHA>\n       ci-queue.sh wait <SHA> [--timeout <sec>]\n' >&2
   exit 64
 }
 log() { printf 'ci-queue: %s\n' "$*" >&2; }
 slug_of() { printf '%s' "$1" | sed 's#[/ ]#_#g; s#^_##'; }
 alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
 
-# 티켓 파일 이름 → 필드
-ticket_pid() { printf '%s' "$1" | cut -d. -f2; }
-ticket_sha() { printf '%s' "$1" | cut -d. -f3; }
-ticket_field() {  # <ticket-path> <key>
-  sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1
-}
+# 티켓 이름 <epoch>.<pid>.<sha> → 필드 (프로세스 0)
+ticket_pid() { local p="${1#*.}"; printf '%s' "${p%%.*}"; }
+ticket_sha() { printf '%s' "${1##*.}"; }
+ticket_slug() { local v; v=$(sed -n 's/^slug=//p' "$QDIR/$1" 2>/dev/null); printf '%s' "$v"; }
 
 # 유령 회수 — pid 가 죽은 티켓, pid 가 죽은(또는 pid 없이 2분 넘은) .running
 reap() {
-  local t p
+  local t
   for t in "$QDIR"/*; do
     [ -f "$t" ] || continue
-    p=$(ticket_pid "$(basename "$t")")
-    alive "$p" || rm -f "$t"
+    alive "$(ticket_pid "${t##*/}")" || rm -f "$t"
   done
   if [ -d "$RUNNING" ]; then
     if [ -f "$RUNNING/pid" ]; then
@@ -57,19 +61,45 @@ reap() {
   fi
 }
 
-# 살아 있는 티켓을 FIFO 순으로
+# 티켓 이름을 FIFO 순으로 — 글롭이 이미 이름순이고 이름은 ASCII(숫자·점·hex)라 sort 불필요
 tickets() {
   local t
-  for t in "$QDIR"/*; do [ -f "$t" ] && basename "$t"; done | sort
+  for t in "$QDIR"/*; do [ -f "$t" ] && printf '%s\n' "${t##*/}"; done
+}
+head_ticket() { local t; for t in "$QDIR"/*; do [ -f "$t" ] && { printf '%s' "${t##*/}"; return; }; done; }
+running_ticket() { cat "$RUNNING/ticket" 2>/dev/null; }
+
+# 결과 조회(키=SHA, 슬러그 무관) — 게이트·wait·dedup·closeout-ci-pass 가 전부 이걸 쓴다
+cmd_result() {
+  [ $# -ge 1 ] || usage
+  local r
+  for r in "$CACHE"/*/"$1.result"; do
+    [ -f "$r" ] || continue
+    printf '%s %s\n' "$(cat "$r")" "$r"
+    return 0
+  done
+  echo none; return 1
 }
 
-# 정렬된 티켓 목록에서 <ticket> 의 순번(1부터)
-position_of() {
-  tickets | awk -v t="$1" '{ if ($0 == t) { print NR; exit } }'
-}
-
-running_ticket() {
-  [ -d "$RUNNING" ] && cat "$RUNNING/ticket" 2>/dev/null
+# status — 한 루프로 전체를 찍고, <sha> 지정 시 그 줄만 골라 running / queued n / none 으로
+cmd_status() {
+  local want="${1:-}" run_t n t sha line
+  mkdir -p "$QDIR" 2>/dev/null
+  reap
+  run_t=$(running_ticket)
+  n=0
+  for t in $(tickets); do
+    sha=$(ticket_sha "$t")
+    if [ "$t" = "$run_t" ]; then line="running $sha $(ticket_slug "$t")"
+    else n=$((n + 1)); line="queued $n $sha $(ticket_slug "$t")"; fi
+    if [ -z "$want" ]; then printf '%s\n' "$line"
+    elif [ "$sha" = "$want" ]; then
+      case "$line" in running*) echo running ;; *) echo "queued $n" ;; esac
+      return 0
+    fi
+  done
+  [ -n "$want" ] && echo none
+  return 0
 }
 
 # commit status 게시 — 실패는 무시(gh 미설치·미인증·원격 부재여도 큐 본연 동작 무손상).
@@ -84,154 +114,9 @@ post_status() {  # <state> <description>
   return 0
 }
 
-result_exit() {  # result 파일 내용 → 종료 코드
-  [ "$(cat "$RESULT" 2>/dev/null)" = pass ] && return 0
-  return 1
-}
-
-cmd_status() {
-  local want="${1:-}" run_t run_sha n t sha slug
-  mkdir -p "$QDIR" 2>/dev/null
-  reap
-  run_t=$(running_ticket)
-  run_sha=""; [ -n "$run_t" ] && run_sha=$(ticket_sha "$run_t")
-  if [ -n "$want" ]; then
-    [ "$run_sha" = "$want" ] && { echo running; return 0; }
-    n=0
-    for t in $(tickets); do
-      [ "$t" = "$run_t" ] && continue
-      n=$((n + 1))
-      [ "$(ticket_sha "$t")" = "$want" ] && { echo "queued $n"; return 0; }
-    done
-    echo none; return 0
-  fi
-  if [ -n "$run_t" ]; then
-    echo "running $(printf '%s' "$run_sha" | cut -c1-8) $(ticket_field "$QDIR/$run_t" slug)"
-  fi
-  n=0
-  for t in $(tickets); do
-    [ "$t" = "$run_t" ] && continue
-    n=$((n + 1))
-    sha=$(ticket_sha "$t"); slug=$(ticket_field "$QDIR/$t" slug)
-    echo "queued $n $(printf '%s' "$sha" | cut -c1-8) $slug"
-  done
-  return 0
-}
-
-cmd_run() {
-  [ $# -ge 2 ] || usage
-  ROOT="$1"; SHA="$2"; shift 2
-  SLUG=""; REPO=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --slug) SLUG="${2:-}"; shift 2 ;;
-      --repo) REPO="${2:-}"; shift 2 ;;
-      *) usage ;;
-    esac
-  done
-  [ -d "$ROOT" ] || { log "ROOT 없음: $ROOT"; return 3; }
-  ROOT=$(cd "$ROOT" && pwd -P)
-  [ -n "$SLUG" ] || SLUG=$(slug_of "$ROOT")
-  OUT="$HOME/.claude/.local-ci/$SLUG"
-  RESULT="$OUT/$SHA.result"
-  LOG="$OUT/$SHA.log"
-  SHORT=$(printf '%s' "$SHA" | cut -c1-8)
-  mkdir -p "$OUT" "$QDIR" 2>/dev/null
-
-  # mise toolchain — shim 을 PATH 앞에(시스템 ruby 로 Gemfile 파싱이 깨지는 것 방지). 부재 시 무해.
-  if [ -d "$HOME/.local/share/mise/shims" ]; then
-    PATH="$HOME/.local/share/mise/shims:$PATH"; export PATH
-  fi
-
-  # dedup ① — 이미 검사됨
-  if [ -f "$RESULT" ]; then
-    log "$SHORT 이미 검사됨($(cat "$RESULT"))"
-    result_exit; return $?
-  fi
-
-  reap
-  # dedup ② — 같은 SHA 의 살아 있는 티켓이 있으면 새로 내지 않고 그 결과를 기다린다
-  # (훅이 이미 큐에 넣은 SHA 를 루프가 다시 run 하는 경우 — bin/ci 는 1회만).
-  local other
-  for other in "$QDIR"/*."$SHA"; do
-    [ -f "$other" ] || continue
-    log "$SHORT 이미 대기열에 있음 — 그 결과를 기다림"
-    while [ -f "$other" ] && [ ! -f "$RESULT" ]; do
-      sleep "$POLL"
-      alive "$(ticket_pid "$(basename "$other")")" || break
-    done
-    if [ -f "$RESULT" ]; then result_exit; return $?; fi
-    break   # 티켓이 결과 없이 사라짐(폐기·사망) — 아래에서 내 티켓으로 진행
-  done
-
-  TICKET=$(printf '%010d.%d.%s' "$(date +%s)" "$$" "$SHA")
-  printf 'root=%s\nslug=%s\nrepo=%s\n' "$ROOT" "$SLUG" "$REPO" > "$QDIR/$TICKET"
-  OWNER=0
-  cleanup() {
-    rm -f "$QDIR/$TICKET"
-    if [ "$OWNER" = 1 ] && [ "$(cat "$RUNNING/pid" 2>/dev/null)" = "$$" ]; then rm -rf "$RUNNING"; fi
-  }
-  trap cleanup EXIT
-  trap 'cleanup; exit 130' INT TERM
-
-  local pos ahead
-  pos=$(position_of "$TICKET"); ahead=$((pos - 1))
-  post_status pending "로컬 CI 대기열 ${pos}번째"
-  log "$SHORT 대기열 ${pos}번째 (앞에 ${ahead}건)"
-
-  # 실행권 — 내 티켓이 가장 오래됐고 .running 을 내가 만들었을 때만
-  while :; do
-    reap
-    if [ "$(tickets | head -1)" = "$TICKET" ] && mkdir "$RUNNING" 2>/dev/null; then
-      echo "$$" > "$RUNNING/pid"
-      printf '%s' "$TICKET" > "$RUNNING/ticket"
-      OWNER=1
-      break
-    fi
-    sleep "$POLL"
-  done
-
-  # 실행 직전 검사 — 큐가 push↔실행 간격을 늘리므로 "워킹트리 ≠ SHA" 를 여기서 닫는다
-  if [ ! -d "$ROOT" ]; then log "$SHORT ROOT 사라짐: $ROOT"; return 3; fi
-  local head
-  head=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)
-  if [ "$head" != "$SHA" ]; then
-    log "$SHORT 폐기 — 실행 시점 HEAD 가 $(printf '%s' "$head" | cut -c1-8) (새 push 가 자기 티켓을 냄)"
-    post_status pending "로컬 CI 폐기 — HEAD 가 이동함(새 push 의 결과를 보라)"
-    return 2
-  fi
-
-  post_status pending "bin/ci 실행 중 (로컬)"
-  local start verdict dur
-  start=$SECONDS
-  if (cd "$ROOT" && bin/ci) >"$LOG" 2>&1; then verdict=pass; else verdict=fail; fi
-  dur=$(( SECONDS - start ))
-  printf '%s\n' "$verdict" > "$RESULT"
-  if [ "$verdict" = pass ]; then
-    post_status success "bin/ci 통과 (로컬, ${dur}s)"
-  else
-    post_status failure "bin/ci 실패 (로컬, ${dur}s) — 로그: ~/.claude/.local-ci/$SLUG"
-  fi
-  log "$SHORT $verdict (${dur}s) → $RESULT"
-  if command -v osascript >/dev/null 2>&1; then
-    local name; name=$(basename "$ROOT")
-    if [ "$verdict" = pass ]; then
-      osascript -e "display notification \"로컬 CI 통과 $SHORT\" with title \"✅ $name\"" >/dev/null 2>&1
-    else
-      osascript -e "display notification \"로컬 CI 실패 $SHORT — bin/ci 로그 확인\" with title \"❌ $name\"" >/dev/null 2>&1
-    fi
-  fi
-  [ "$verdict" = pass ]
-}
-
 # wait — 세션이 "멍하게" 폴링하지 않게 하는 통로. 세션은 이 명령을 **백그라운드 Bash**
 # (run_in_background) 로 띄운다 — 결과가 나오면 명령이 끝나고 Claude Code 가 세션을 깨운다.
-# 결과는 슬러그 무관하게 <sha>.result 를 찾는다(워크트리 슬러그·메인 슬러그 어느 쪽이든).
-# 종료 코드: 0=pass · 1=fail · 2=큐에 없고 결과도 없음(훅 미발화·폐기 — grace 초 관찰 후) ·
-# 124=타임아웃.
-find_result() {  # <sha> → 결과 파일 경로(첫 것) 또는 빈 문자열
-  ls "$HOME/.claude/.local-ci"/*/"$1.result" 2>/dev/null | head -1
-}
+# CI_QUEUE_WAIT_GRACE: 큐에도 결과도 없는 상태를 몇 초 보고 2 로 끝낼지(훅의 nohup 등록 지연 흡수).
 cmd_wait() {
   [ $# -ge 1 ] || usage
   local sha="$1"; shift
@@ -242,16 +127,13 @@ cmd_wait() {
       *) usage ;;
     esac
   done
-  local short r st last="" waited=0 none_for=0 verdict logf
-  short=$(printf '%s' "$sha" | cut -c1-8)
+  local short="${sha:0:8}" res st last="" waited=0 none_for=0 verdict path
   while :; do
-    r=$(find_result "$sha")
-    if [ -n "$r" ]; then
-      verdict=$(cat "$r" 2>/dev/null)
-      printf 'ci-queue: %s %s — %s\n' "$short" "$verdict" "$r"
-      if [ "$verdict" = pass ]; then return 0; fi
-      logf="${r%.result}.log"
-      printf -- '--- bin/ci 마지막 출력 ---\n%s\n----------------------------\n' "$(tail -25 "$logf" 2>/dev/null)"
+    if res=$(cmd_result "$sha"); then
+      verdict="${res%% *}"; path="${res#* }"
+      printf 'ci-queue: %s %s — %s\n' "$short" "$verdict" "$path"
+      [ "$verdict" = pass ] && return 0
+      printf -- '--- bin/ci 마지막 출력 ---\n%s\n----------------------------\n' "$(tail -25 "${path%.result}.log" 2>/dev/null)"
       return 1
     fi
     st=$(cmd_status "$sha")
@@ -279,10 +161,102 @@ cmd_wait() {
   done
 }
 
+cmd_run() {
+  [ $# -ge 2 ] || usage
+  ROOT="$1"; SHA="$2"; shift 2
+  SLUG=""; REPO=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --slug) SLUG="${2:-}"; shift 2 ;;
+      --repo) REPO="${2:-}"; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -d "$ROOT" ] || { log "ROOT 없음: $ROOT"; return 3; }
+  ROOT=$(cd "$ROOT" && pwd -P)
+  [ -n "$SLUG" ] || SLUG=$(slug_of "$ROOT")
+  local out="$CACHE/$SLUG" short="${SHA:0:8}" rc
+  RESULT="$out/$SHA.result"
+  mkdir -p "$out" "$QDIR" 2>/dev/null
+  find "$out" -type f -mtime +7 -delete 2>/dev/null   # 7일 지난 캐시 prune
+
+  # mise toolchain — shim 을 PATH 앞에(시스템 ruby 로 Gemfile 파싱이 깨지는 것 방지). 부재 시 무해.
+  if [ -d "$HOME/.local/share/mise/shims" ]; then
+    PATH="$HOME/.local/share/mise/shims:$PATH"; export PATH
+  fi
+
+  # dedup — 이미 검사됐거나(어느 슬러그든) 같은 SHA 가 큐에 있으면 그 결과를 기다린다(bin/ci 1회).
+  # wait 가 2(큐에도 결과도 없음)로 돌아올 때만 내 티켓으로 진행한다.
+  rc=0; CI_QUEUE_WAIT_GRACE="$POLL" cmd_wait "$SHA" >/dev/null || rc=$?
+  case "$rc" in
+    0|1) log "$short 이미 검사됨"; return "$rc" ;;
+    2) ;;
+    *) return "$rc" ;;
+  esac
+
+  TICKET=$(printf '%010d.%d.%s' "$(date +%s)" "$$" "$SHA")
+  printf 'slug=%s\n' "$SLUG" > "$QDIR/$TICKET"
+  cleanup() {
+    rm -f "$QDIR/$TICKET"
+    [ "$(cat "$RUNNING/pid" 2>/dev/null)" = "$$" ] && rm -rf "$RUNNING"
+  }
+  trap cleanup EXIT
+  trap 'cleanup; exit 130' INT TERM
+
+  local pos
+  pos=$(cmd_status "$SHA"); pos="${pos#queued }"
+  post_status pending "로컬 CI 대기열 ${pos}번째"
+  log "$short 대기열 ${pos}번째"
+
+  # 실행권 — 내 티켓이 가장 오래됐고 .running 을 내가 만들었을 때만
+  while :; do
+    reap
+    if [ "$(head_ticket)" = "$TICKET" ] && mkdir "$RUNNING" 2>/dev/null; then
+      echo "$$" > "$RUNNING/pid"
+      printf '%s' "$TICKET" > "$RUNNING/ticket"
+      break
+    fi
+    sleep "$POLL"
+  done
+
+  # 실행 직전 검사 — 큐가 push↔실행 간격을 늘리므로 "워킹트리 ≠ SHA" 를 여기서 닫는다
+  if [ ! -d "$ROOT" ]; then log "$short ROOT 사라짐: $ROOT"; return 3; fi
+  local head
+  head=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)
+  if [ "$head" != "$SHA" ]; then
+    log "$short 폐기 — 실행 시점 HEAD 가 ${head:0:8} (새 push 가 자기 티켓을 냄)"
+    post_status pending "로컬 CI 폐기 — HEAD 가 이동함(새 push 의 결과를 보라)"
+    return 2
+  fi
+
+  post_status pending "bin/ci 실행 중 (로컬)"
+  local start verdict dur
+  start=$SECONDS
+  if (cd "$ROOT" && bin/ci) >"$out/$SHA.log" 2>&1; then verdict=pass; else verdict=fail; fi
+  dur=$(( SECONDS - start ))
+  printf '%s\n' "$verdict" > "$RESULT"
+  if [ "$verdict" = pass ]; then
+    post_status success "bin/ci 통과 (로컬, ${dur}s)"
+  else
+    post_status failure "bin/ci 실패 (로컬, ${dur}s) — 로그: ~/.claude/.local-ci/$SLUG"
+  fi
+  log "$short $verdict (${dur}s) → $RESULT"
+  if command -v osascript >/dev/null 2>&1; then
+    local name="${ROOT##*/}"
+    if [ "$verdict" = pass ]; then
+      osascript -e "display notification \"로컬 CI 통과 $short\" with title \"✅ $name\"" >/dev/null 2>&1
+    else
+      osascript -e "display notification \"로컬 CI 실패 $short — bin/ci 로그 확인\" with title \"❌ $name\"" >/dev/null 2>&1
+    fi
+  fi
+  [ "$verdict" = pass ]
+}
+
 [ $# -ge 1 ] || usage
 case "$1" in
   run)    shift; cmd_run "$@" ;;
   status) shift; cmd_status "$@" ;;
+  result) shift; cmd_result "$@" ;;
   wait)   shift; cmd_wait "$@" ;;
   *)      usage ;;
 esac

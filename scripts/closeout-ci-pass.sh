@@ -23,17 +23,14 @@ if [ -n "$root" ] && [ -x "$root/bin/ci" ]; then
     | jq -r '.headRefOid // empty')
   [ -n "$sha" ] || exit 1
 
-  slug=$(printf '%s' "$root" | sed 's#[/ ]#_#g; s#^_##')
-  result="$HOME/.claude/.local-ci/$slug/$sha.result"
-  # 세 결과 구분 (#70): 결과파일 부재=exit 2(미실행, 재검증 필요)·내용 pass=exit 0·
+  # 결과 조회는 큐에 위임(#127) — 키는 SHA, 슬러그 무관(사람 게이트 ci-gate 와 같은 답).
+  # 세 결과 구분 (#70): 결과 부재=exit 2(미실행, 재검증 필요)·pass=exit 0·
   # 그 외(fail/빈값)=exit 1. exit 2 도 비0이라 `if ci-pass; then` 호출부엔 무손상.
-  if [ ! -f "$result" ]; then
-    exit 2
-  elif [ "$(cat "$result" 2>/dev/null)" = pass ]; then
-    exit 0
-  else
+  if res=$("$SCRIPT_DIR/ci-queue.sh" result "$sha" 2>/dev/null); then
+    [ "${res%% *}" = pass ] && exit 0
     exit 1
   fi
+  exit 2
 else
   # ── 그 외 레포 — GitHub statusCheckRollup 폴백 (SUCCESS-only allowlist) ──
   rollup=$(gh pr view "$pr" --repo "$repo" --json statusCheckRollup 2>/dev/null)
