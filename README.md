@@ -75,7 +75,7 @@ A single dispatcher skill (`/issue-runner`) is run on an interval by `/loop`. Ea
 | ③ **Dispatch** | For each free slot, claim a new issue → create a worktree → launch a background worker |
 | ④ **Report** | One-line summary — `cleaned N · repaired N · new N · waiting N · warn N` |
 
-Workers push on every commit, so a worktree is always safe to discard. The only thing the loop won't throw away is a dirty or unpushed worktree — it **preserves and warns** instead, so that's the one case a human looks at.
+Before opening its PR a worker nests one fresh-context **pre-reviewer** (`general-purpose`, non-gating, fail-open, one round — see `references/worker-template.md` step 9-b) so obvious spec/correctness misses are caught before the verify lane, which cuts verify-runner bounces. Workers push on every commit, so a worktree is always safe to discard. The only thing the loop won't throw away is a dirty or unpushed worktree — it **preserves and warns** instead, so that's the one case a human looks at.
 
 ## Quick start
 

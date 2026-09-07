@@ -240,6 +240,14 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       the index at this path.
       Fill `<VERIFIER>` from ## Constants with the fallback rule applied
       (`general-purpose` if codex is not installed).
+      Instead of a codex verifier, the worker **nests one self-review pre-reviewer
+      (`general-purpose`) before opening its PR** (template step 9-b — non-gating, fail-open,
+      one round; outcome recorded in the PR body's `## Pre-review` section). Nothing for the
+      dispatcher to do — the worker waits on the reviewer with a blocking `TaskOutput`, so the
+      stream count is +1 only for that window and `MAX_AGENTS` stays as is. Copy the worker exit
+      report's `pre-review: <value>` line into ④ Report (absence is a line too) — measure the
+      effect by verify-runner bounces (`재검증 실패:` comments) / the share of reviews that
+      actually ran (CLEAN or findings).
 
 ## ④ Report
 
@@ -247,7 +255,7 @@ One-line summary: `reconciled N · maintained N · new N · waiting(human review
 If there are warns, list the paths and reasons below it.
 **Token observation (soft budget)**: if any worker delivered a completion report, add
 one line per issue — `tokens: <repo>#<num> <this report's count> (cumulative <sum>)`.
-This count is subagent_tokens from the completion notification (absent → `?`, counted as 0);
+Also copy that worker report's `pre-review: <value>` as one line `pre-review: <repo>#<num> <value>` (no line → `none` — the signal that 9-b silently dropped out). This count is subagent_tokens from the completion notification (absent → `?`, counted as 0);
 cumulative = the same issue's `tokens:` figures from previous tick Reports visible in
 context + this count (none visible → just this count). If it exceeds `SOFT_TOKEN_BUDGET_PER_ISSUE`,
 state **"soft budget exceeded — recommend escalating to needs-human"** on that line (report only — never auto-label or stop workers).

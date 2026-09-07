@@ -1165,4 +1165,23 @@ for f in README.md README.ko.md SKILL.md SKILL.en.md; do
   grep -qF 'link-secrets' "$f" || { echo "  ✗ $f 에 link-secrets 문서 없음"; exit 1; }
 done
 
+echo "[#132] 워커 PR 전 사전 리뷰(9-b) 문서화 검사 — README 한/영 + SKILL 한/영 + 템플릿 한/영"
+for f in README.md README.ko.md SKILL.md SKILL.en.md references/worker-template.md references/worker-template.en.md; do
+  grep -qF '9-b' "$f" || { echo "  ✗ $f 에 9-b 사전 리뷰 언급 없음"; exit 1; }
+done
+for f in references/worker-template.md references/worker-template.en.md; do
+  grep -qE '^9-b\. ' "$f" || { echo "  ✗ $f 에 9-b 단계 없음"; exit 1; }
+  for tok in 'subagent_type: "general-purpose"' 'origin/<DEFAULT_BRANCH>...HEAD' 'BLOCKER/WARN/NIT' 'CLEAN' '`Explore`'; do
+    grep -qF "$tok" "$f" || { echo "  ✗ $f 9-b 계약 토큰 없음: $tok"; exit 1; }
+  done
+done
+[ "$(grep -c '## 사전 리뷰' references/worker-template.md)" -ge 2 ] || { echo "  ✗ KO 템플릿 '## 사전 리뷰' 절 계약 2회 미만(9-b 기록 + 10단계 본문)"; exit 1; }
+[ "$(grep -c '## Pre-review' references/worker-template.en.md)" -ge 2 ] || { echo "  ✗ EN 템플릿 '## Pre-review' 절 계약 2회 미만"; exit 1; }
+grep -qF '## 사전 리뷰' SKILL.md || { echo "  ✗ SKILL.md 에 '## 사전 리뷰' 절 이름 없음"; exit 1; }
+grep -qF '## Pre-review' SKILL.en.md || { echo "  ✗ SKILL.en.md 에 '## Pre-review' 절 이름 없음"; exit 1; }
+grep -qF '예외 3' references/worker-template.md || { echo "  ✗ KO 템플릿 금지 목록 예외 3 없음"; exit 1; }
+grep -qF 'Exception 3' references/worker-template.en.md || { echo "  ✗ EN 템플릿 Exception 3 없음"; exit 1; }
+grep -qE '\*\*10분\*\*' references/worker-template.md || { echo "  ✗ KO 템플릿 fail-open 10분 표기 없음"; exit 1; }
+grep -qE '\*\*10 minutes\*\*' references/worker-template.en.md || { echo "  ✗ EN 템플릿 fail-open 10 minutes 표기 없음"; exit 1; }
+
 echo "CI pass"
