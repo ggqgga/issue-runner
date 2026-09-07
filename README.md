@@ -244,6 +244,8 @@ Eligibility: `open + agent-ready + ¬agent:claimed + all blockers CLOSED`. Sort:
 | `warn-on-main-branch.sh` | PreToolUse · `Write`/`Edit` | non-blocking warning when you edit on `main`/`master` — branch first |
 | `require-issue-in-pr.sh` | PreToolUse · `gh pr create` | blocks a PR whose body has no dedicated `Closes/Refs #N` line (bypass with `(no-issue)`) |
 
+**Codex merge gate = the built-in reviewer.** `scripts/codex-review-gate.sh --base <ref> | --commit <sha> | --prompt "<text>"` wraps `codex exec review` (default `gpt-5.6-sol`, medium) and maps its findings to a verdict — `[P1]` → BLOCKER (exit 1), `[P2]` → WARN, none → CLEAN; no verdict (codex missing, model error, timeout) → exit 2 so callers fail closed. Keep `model` in `~/.codex/config.toml` set to a model your sign-in can use (`codex debug models`); 0.153+ defaults to Astra when unset.
+
 **One `bin/ci` at a time, machine-wide.** Every entry point — the push hook, the loop's `run-local-ci.sh`, and a session calling it directly — goes through `scripts/ci-queue.sh`, a ticket lock with no daemon: tickets live in `~/.claude/.local-ci/.queue/`, the oldest live ticket that manages `mkdir .running` runs, dead PIDs are reaped by whoever passes by. Two worktrees (or two sessions) pushing back-to-back no longer race the same test database or saturate the box; the second one simply waits its turn. A job whose repo HEAD has moved by the time it reaches the front is dropped (exit 2) — the newer push holds its own ticket.
 
 ```bash

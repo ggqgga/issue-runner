@@ -163,37 +163,29 @@ CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기�
 집은 PR 에 대해 아래 6단계를 순서대로 수행한다. 각 단계 끝에 마커 명령을 박아
 (① Reconcile 마커표) 다음 틱이 멱등 재개할 수 있게 한다.
 
-**1단계 — 계획 부합 검증.** 검증자가 sandbox 에서 gh·git 네트워크에 닿지 못해도
-판정하도록, **메인 세션이 먼저 원문을 받아 프롬프트에 동봉**한다. `<issue>` 는 PR
-본문의 `Closes #N` / `Refs #N` 줄에서 얻는다(`gh pr view <pr> --repo <repo> --json
-body` 로 파싱). 그런 다음 `gh pr diff <pr> --repo <repo>` 로 diff 를,
-`gh issue view <issue> --repo <repo>` 로 이슈 본문을 받아둔다(연결 이슈가 없으면
-`<ISSUE_BODY>` 는 빈 문자열). 이어 `references/verifier-prompt.md` 의 placeholder 를
-채워 `VERIFIER` 를 **`run_in_background: true` 로 스폰**한다: `<PR>`·`<REPO>`·`<BASE>`=default
-branch·`<PLAN_REF>`=이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<DIFF>`=위
-pr diff 출력·`<ISSUE_BODY>`=위 issue view 출력·`<LESSONS_OR_"없음">`=`$SCRIPTS/repo-dir.sh
-<repo>` 해석 경로 밑 **`.loop/lessons-verifier.md`**(검증 판정 사례집) 내용 — 검증자가 과거
-오판 패턴(인용 오판·base 맹점 등)을 반복하지 않게 하는 주입. 그 파일이 없으면
-`.loop/lessons.md` 로 폴백(아직 분리 안 한 레포), 둘 다 없거나 비면 `없음`. 두 파일은
-대상이 다르다 — `lessons.md` 는 **구현 워커**용이니 검증자 프롬프트에 섞지 마라
-(오판 방지 신호가 희석된다) (## 상수의 VERIFIER 계약·
-폴백을 따른다). 검증자 프롬프트는 diff·이슈 본문·lessons 를 본문으로 담고 있으므로
-검증자는 추가 네트워크 명령을 실행하지 않는다. 스폰 시각을 기록하고 TaskList/TaskOutput
-으로(예: 30초 간격) 폴링한다 — 스폰 시각 + `VERIFIER_TIMEOUT_MIN` 데드라인 안에 verdict
-가 나오면 그대로 쓴다. **데드라인을 넘기면 `TaskStop` 으로 그 태스크를 중단**하고
-verdict 미산출로 간주해 아래 BLOCKER 경로로 보류 종료한다(fail-closed — codex 스톨이
-틱을 무한정 묶지 못하게, #96). 폴백(## 상수 VERIFIER 의 general-purpose 재시도)도
-**동일한 배선**(새 스폰 시각 + 같은 `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시
-`TaskStop`)을 적용한다 — codex 스톨 후 폴백이 또 무한 스핀하지 못하게. 절대 머지로
-진행하지 않는다 — 타임아웃은 마감 보류(아래 BLOCKER 경로 = `needs-human`)로만 흐른다.
-- 동봉 실패 fail-closed: `gh pr diff` 가 실패하거나 diff 가 비면, 또는 diff 가
-  검증자 컨텍스트에 다 안 들어갈 만큼 크면(판단이 서면) 검증을 통과로 보지 말고
-  BLOCKER 경로로 보류 종료한다(머지 안 함) — 네트워크 비의존 경로가 조용히 깨진 채
-  머지로 새지 않게 한다.
+**1단계 — 계획 부합 검증 — 내장 리뷰어.** `<issue>` 는 PR 본문의 `Closes #N` / `Refs #N` 줄에서
+얻는다(`gh pr view <pr> --repo <repo> --json body` 로 파싱). 검증은 `$SCRIPTS/codex-review-gate.sh`(#134,
+Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에이전트 스폰·폴링·`TaskStop` 배선 없음:
+1. correctness: `codex-review-gate.sh --base origin/<default> --cd <worktree> --out <스크래치>/a` →
+   stdout 마지막 줄 `verdict=… p1= p2=`, 본문 `a/review.md`. `[P1]` = BLOCKER.
+2. 계획 부합: `codex-review-gate.sh --prompt "<지시>" --cd <worktree> --out <스크래치>/b` — 지시문은
+   `references/verifier-prompt.md` 의 placeholder 를 채운 것: `<PR>`·`<REPO>`·`<BASE>`=default branch·
+   `<PLAN_REF>`=이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<ISSUE_BODY>`=`gh issue view <issue>
+   --repo <repo>` 출력(연결 이슈 없으면 빈 문자열)·`<LESSONS_OR_"없음">`=`$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑
+   **`.loop/lessons-verifier.md`**(검증 판정 사례집 — 과거 오판 패턴 주입; 없으면 `.loop/lessons.md` 폴백, 둘 다
+   없거나 비면 `없음`. `lessons.md` 는 **구현 워커**용이라 섞지 않는다 — 오판 방지 신호 희석). `<DIFF>` 는 동봉하지
+   않는다 — 내장 리뷰어가 워크트리에서 직접 읽는다. 지시문은 "이 변경이 계획/이슈 AC 를 충족하는가만 판정,
+   미충족·범위 이탈은 `[P1]`, 경미한 편차는 `[P2]` 로" 를 명시한다.
+헬퍼는 자체 타임아웃(`CODEX_GATE_TIMEOUT` 기본 900s = `VERIFIER_TIMEOUT_MIN` 과 동조)을 가진다. 두 호출 중 하나라도
+**exit 2(`verdict=NONE`) = 미산출**(codex 부재·모델 오류·타임아웃)이면 그때만 ## 상수의 `VERIFIER` 폴백(general-purpose,
+diff·이슈 본문·lessons 를 프롬프트에 동봉, `run_in_background` + `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을
+쓴다. 폴백도 미산출이면 아래 BLOCKER 경로로 보류 종료한다(fail-closed — 절대 머지로 진행하지 않는다, #96).
+헬퍼 stderr 의 모델 오류 원문(404·not supported·requires a newer version)은 "스톨"이 아니다 — 코멘트에 그대로 남긴다.
+- 판정 합산: 두 호출 중 하나라도 BLOCKER → BLOCKER. 둘 다 CLEAN/WARN/NIT → 통과(WARN 수는 합산).
   머신 코멘트 마커(필수): 아래 `gh pr comment` 로 남기는 마감 검증 코멘트는 **마지막 줄에
   `<!-- bodat:worker -->`** 를 포함한다 — closeout-eligible 이 머신 코멘트를 사람 리뷰와
   구분하는 신호다(#72). 빠지면 그 PR 이 재평가 때 미해결 사람 코멘트로 오인돼 탈락한다.
-- BLOCKER(데드라인 초과 포함, 사유 예 `검증자 타임아웃(>VERIFIER_TIMEOUT_MIN분)`) →
+- BLOCKER(미산출 포함, 사유 예 `검증자 미산출 — 타임아웃(>VERIFIER_TIMEOUT_MIN분)` / 모델 오류 원문) →
   `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>
   <!-- bodat:worker -->"`
   + `gh issue edit <issue> --repo <repo> --add-label needs-human`

@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# codex-review-gate.sh — Codex **내장 리뷰어**(`codex exec review`)로 머지 게이트 판정을 낸다.
+# 설계: Plans/codex-native-review-gate.md (#134). rescue 서브에이전트의 프롬프트 리뷰를 대체한다
+# (2026-09-07 실측: 같은 커밋에서 프롬프트 리뷰 실 결함 0 vs 내장 리뷰어 1~3건).
+#
+#   codex-review-gate.sh (--base <ref> | --commit <sha> | --uncommitted | --prompt <text>)
+#                        [--model M] [--effort E] [--out <dir>] [--cd <repo-dir>]
+#
+# 실행: codex exec review <스코프> -m M -c model_reasoning_effort='"E"' --ephemeral --json -o <out>/review.md
+#       + 절감 오버라이드(web_search 끔·memories 생성 끔·reasoning 숨김). 리뷰는 작업 트리를 바꾸지 않는다.
+# 판정: 리뷰 본문의 `[P1]` → BLOCKER · `[P2]` → WARN · `[P3]`/기타 항목 → NIT · 항목 0 → CLEAN.
+# 출력: 진행은 stderr. stdout **마지막 줄** `verdict=<BLOCKER|WARN|NIT|CLEAN> p1=<n> p2=<n> p3=<n> model=<M> secs=<t>`
+#       (호출자가 파싱). 본문은 <out>/review.md (기본 out = mktemp -d, 경로를 stderr 에 찍는다).
+# 종료: 0 = 비차단(CLEAN/NIT/WARN) · 1 = BLOCKER · 2 = 리뷰 미산출(codex 부재·모델 오류·타임아웃·본문 없음 —
+#       fail-closed, 호출자는 general-purpose 폴백) · 64 = usage.
+# 타임아웃: CODEX_GATE_TIMEOUT 초(기본 900). 모델 오류(404·not supported·requires a newer version)는 원문을
+# stderr 에 남기고 `codex debug models` 안내. macOS bash 3.2 · 결정론 · 네트워크는 codex 호출뿐.
+set -u
+
+MODEL="${CODEX_GATE_MODEL:-gpt-5.6-sol}"
+EFFORT="${CODEX_GATE_EFFORT:-medium}"
+TIMEOUT="${CODEX_GATE_TIMEOUT:-900}"
+OUT=""; CD=""; SCOPE=(); PROMPT=""
+
+usage() {
+  printf 'usage: codex-review-gate.sh (--base <ref> | --commit <sha> | --uncommitted | --prompt <text>) [--model M] [--effort E] [--out <dir>] [--cd <dir>]\n' >&2
+  exit 64
+}
+log() { printf 'codex-gate: %s\n' "$*" >&2; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --base)        SCOPE=(--base "${2:?}"); shift 2 ;;
+    --commit)      SCOPE=(--commit "${2:?}"); shift 2 ;;
+    --uncommitted) SCOPE=(--uncommitted); shift ;;
+    --prompt)      PROMPT="${2:?}"; shift 2 ;;
+    --model)       MODEL="${2:?}"; shift 2 ;;
+    --effort)      EFFORT="${2:?}"; shift 2 ;;
+    --out)         OUT="${2:?}"; shift 2 ;;
+    --cd)          CD="${2:?}"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+[ ${#SCOPE[@]} -gt 0 ] || [ -n "$PROMPT" ] || usage
+[ ${#SCOPE[@]} -gt 0 ] && [ -n "$PROMPT" ] && usage   # codex 는 스코프와 커스텀 프롬프트를 동시에 안 받는다
+
+command -v codex >/dev/null 2>&1 || { log "codex CLI 없음 — 폴백(general-purpose)으로"; echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=0"; exit 2; }
+[ -n "$OUT" ] || OUT=$(mktemp -d)
+mkdir -p "$OUT" 2>/dev/null || { log "out 디렉터리 생성 실패: $OUT"; exit 2; }
+REVIEW="$OUT/review.md"; EVENTS="$OUT/events.jsonl"; ERR="$OUT/stderr.log"
+rm -f "$REVIEW"
+
+# 실행 — 별도 프로세스 그룹으로 띄워 타임아웃 시 손자(codex 가 띄운 셸)까지 함께 끊는다.
+start=$SECONDS
+set -m
+( if [ -n "$CD" ]; then cd "$CD" || exit 2; fi
+  if [ -n "$PROMPT" ]; then
+    exec codex exec review "$PROMPT" -m "$MODEL" -c model_reasoning_effort="\"$EFFORT\"" \
+      -c web_search='"disabled"' -c memories.generate_memories=false -c hide_agent_reasoning=true \
+      --ephemeral --json -o "$REVIEW"
+  else
+    exec codex exec review "${SCOPE[@]}" -m "$MODEL" -c model_reasoning_effort="\"$EFFORT\"" \
+      -c web_search='"disabled"' -c memories.generate_memories=false -c hide_agent_reasoning=true \
+      --ephemeral --json -o "$REVIEW"
+  fi
+) >"$EVENTS" 2>"$ERR" &
+child=$!
+set +m
+rc=0
+while :; do
+  if ! kill -0 "$child" 2>/dev/null; then wait "$child"; rc=$?; break; fi
+  if [ $((SECONDS - start)) -ge "$TIMEOUT" ]; then
+    kill -TERM -- "-$child" 2>/dev/null || kill -TERM "$child" 2>/dev/null
+    sleep 1; kill -KILL -- "-$child" 2>/dev/null
+    log "타임아웃(${TIMEOUT}s) — 리뷰 미산출(fail-closed). 로그: $ERR"
+    echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=$TIMEOUT"; exit 2
+  fi
+  sleep 2
+done
+secs=$((SECONDS - start))
+
+# 모델·인증 오류는 원문을 그대로 보여준다 — "스톨"로 오진하지 않게(메모리: 5.5 404 · 5.4 not supported · astra newer version)
+if grep -q -E 'does not exist or you do not have access|not supported when using Codex|requires a newer version of Codex|401 Unauthorized|token invalid' "$ERR" "$EVENTS" 2>/dev/null; then
+  log "모델/인증 오류 — $(grep -o -E '"message":"[^"]{0,140}|status [0-9]{3}[^,]{0,100}' "$ERR" "$EVENTS" | head -1)"
+  log "가용 모델 확인: codex debug models · config 의 model 은 유효 모델로(0.153 은 미설정 시 Astra 기본)"
+  echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=$secs"; exit 2
+fi
+if [ "$rc" != 0 ] || [ ! -s "$REVIEW" ]; then
+  log "리뷰 미산출(exit $rc, review.md $( [ -s "$REVIEW" ] && echo 있음 || echo 없음)) — fail-closed. 로그: $ERR"
+  echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=$secs"; exit 2
+fi
+
+# 판정 — 내장 리뷰어 항목 형식 `- [P1] 제목 — 파일:줄`. 본문에 항목이 하나도 없으면 CLEAN.
+p1=$(grep -c -E '^\s*-\s*\[P1\]' "$REVIEW"); p2=$(grep -c -E '^\s*-\s*\[P2\]' "$REVIEW")
+p3=$(grep -c -E '^\s*-\s*\[P[3-9]\]' "$REVIEW")
+if   [ "$p1" -gt 0 ]; then verdict=BLOCKER; code=1
+elif [ "$p2" -gt 0 ]; then verdict=WARN; code=0
+elif [ "$p3" -gt 0 ]; then verdict=NIT; code=0
+else verdict=CLEAN; code=0; fi
+log "$verdict (P1 $p1 · P2 $p2 · P3+ $p3) · $MODEL/$EFFORT · ${secs}s → $REVIEW"
+echo "verdict=$verdict p1=$p1 p2=$p2 p3=$p3 model=$MODEL secs=$secs"
+exit "$code"

@@ -162,34 +162,25 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
   직렬 레인이라 이 느린 재확인을 감당한다(예전 per-test 재시도 하네스가 게이트에서
   하던 일을 여기서 루프 수준으로, 부하 없이).
 
-**3. codex correctness 리뷰.** 검증자가 sandbox 에서 네트워크에 못 닿아도 판정하도록
-**메인 세션이 원문을 프롬프트에 동봉**한다. `gh pr diff <pr> --repo <repo>` 로 diff,
-`gh issue view <issue> --repo <repo>` 로 이슈 본문(연결 이슈 없으면 빈 문자열),
-`$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 **`.loop/lessons-verifier.md`**(검증 판정
-사례집 — 과거 false BLOCKER 를 뒤집은 기록)를 받아,
-`skills/verify-runner/references/verify-prompt.md` 의 placeholder(`<PR>`·`<REPO>`·
-`<BASE>`=default branch·`<DIFF>`·`<ISSUE_BODY>`·`<LESSONS_OR_"없음">`)를 채워 `VERIFIER`
-를 **`run_in_background: true` 로 스폰**한다(## 상수의 VERIFIER 계약·폴백 적용). 스폰
-시각을 기록하고 TaskList/TaskOutput 으로(예: 30초 간격) 폴링한다 — 스폰 시각 +
-`VERIFIER_TIMEOUT_MIN` 데드라인 안에 verdict 가 나오면 그대로 쓴다. **데드라인을
-넘기면 `TaskStop` 으로 그 태스크를 중단**하고 verdict 미산출로 간주해 BLOCKER 로
-취급한다(fail-closed — codex 스톨이 틱을 무한정 묶지 못하게, #96). 폴백(## 상수
-VERIFIER 의 general-purpose 재시도)도 **동일한 배선**(새 스폰 시각 + 같은
-`VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을 적용한다 — codex 스톨 후
-폴백이 또 무한 스핀하지 못하게.
-- **lessons 파일 해석**: `.loop/lessons-verifier.md` 가 있으면 그것을 쓴다. 없으면
-  `.loop/lessons.md` 로 폴백하고(아직 분리 안 한 레포), 둘 다 없거나 비면 `없음`.
-  두 파일은 대상이 다르다 — `lessons.md` 는 **구현 워커**용(issue-runner 가 주입),
-  `lessons-verifier.md` 는 **검증자**용이다. 검증자 프롬프트에 구현 교훈을 섞지 마라
-  (오판 방지 신호가 희석된다).
-- 동봉 실패 fail-closed: `gh pr diff` 가 실패하거나 diff 가 비면, 또는 diff 가 검증자
-  컨텍스트에 다 안 들어갈 만큼 크면(판단이 서면) 통과로 보지 말고 BLOCKER 로 취급한다.
+**3. codex correctness 리뷰 — 내장 리뷰어.** `$SCRIPTS/codex-review-gate.sh --base origin/<default>
+--cd <worktree> --out <스크래치>` 를 **동기 호출**한다(#134, Plans/codex-native-review-gate.md). 이 헬퍼가
+`codex exec review` 를 sol/medium 으로 돌려 stdout 마지막 줄에 `verdict=<BLOCKER|WARN|NIT|CLEAN|NONE> p1= p2= p3= model= secs=`
+를 내고 본문을 `<out>/review.md` 에 남긴다. 자체 타임아웃(`CODEX_GATE_TIMEOUT`, 기본 900s = `VERIFIER_TIMEOUT_MIN`
+과 동조)이 있어 스폰·폴링·`TaskStop` 배선이 필요 없다 — 서브에이전트 없이 명령 하나. `[P1]` 이 BLOCKER, `[P2]` 가 WARN.
+- **exit 2(`verdict=NONE`) = 리뷰 미산출**(codex 부재·모델 오류·타임아웃·본문 없음). 그때만 ## 상수의 `VERIFIER`
+  폴백(general-purpose, `references/verify-prompt.md` 에 `gh pr diff`·이슈 본문·`.loop/lessons-verifier.md` 동봉,
+  `run_in_background` + `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을 쓴다. 헬퍼의 stderr 가 모델 오류(404·
+  not supported·requires a newer version)를 원문으로 보여주니 "스톨"로 오진하지 말고 그대로 코멘트에 남긴다.
+- **lessons 파일**은 폴백 프롬프트에만 주입한다(`.loop/lessons-verifier.md` → 없으면 `.loop/lessons.md` → `없음`).
+  내장 리뷰어는 레포의 `AGENTS.md`·`.codex/` 를 읽으므로 반복 오판 패턴은 거기(`## Code Review Rules`)에 적는 게 맞다.
+- 동봉·diff 크기 fail-closed 는 헬퍼가 대신한다 — base 를 못 풀거나 diff 가 비면 `NONE`.
 - 검증자 BLOCKER(데드라인 초과 포함) → E2E 결과와 무관하게 **④ 재디스패치**
-  (`codex BLOCKER: <요약>` 또는 타임아웃이면 `codex BLOCKER: 검증자 타임아웃
-  (>VERIFIER_TIMEOUT_MIN분)`).
+  (`codex BLOCKER: <review.md 의 P1 제목들>` 또는 미산출이면 `codex BLOCKER: 검증자 미산출
+  (<헬퍼 stderr 사유 — 타임아웃 >VERIFIER_TIMEOUT_MIN분 / 모델 오류 원문>)`).
 - 검증자 CLEAN/WARN → 통과. 결과를 PR 코멘트로 남긴다(closeout 2단계가 이 코멘트의
   BLOCKER 0 을 머지 게이트로 읽는다 — 마커·접두 정확히):
-  `gh pr comment <pr> --repo <repo> --body "검증자 리뷰: <CLEAN 또는 'BLOCKER 0 / WARN n건'과 각 발견 요약>
+  `gh pr comment <pr> --repo <repo> --body "검증자 리뷰: <CLEAN 또는 'BLOCKER 0 / WARN n건'> · <model>/<secs>s
+<review.md 본문>
 <!-- bodat:worker -->"`
 
 **3-b. 보조 리뷰 (`AUX_REVIEWERS`, 비게이트).** ③-3 의 Codex 스폰과 **같은 시점**에, 같은 동봉
