@@ -75,7 +75,8 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
 1. 대상 worktree 에서 주석만 수정 → `git commit` → PR head 브랜치로 push.
 2. **재게이트**: 새 SHA 로 `$SCRIPTS/run-local-ci.sh <repo> <issue>` 를 돌려 캐시를
    채운다(커밋을 얹으면 로컬 CI 캐시가 SHA 기준이라 `ci=revalidate` 가 되고, 안 채우면
-   closeout 이 막힌다). 비0이면 그 커밋을 되돌리고 WARN 으로만 보고하라.
+   closeout 이 막힌다). 비0이면 그 커밋을 되돌리고 WARN 으로만 보고하라(exit 2 는 CI 실패가
+   아니라 폐기 — 실행 직전 worktree HEAD 가 움직인 것, 현재 HEAD 로 재호출).
 3. **공개**: `검증자 리뷰:` 코멘트에 `verify-runner 직접 수정: <파일> — <무엇을>` 을
    명시한다. 자기가 고친 것을 자기가 그린라이트하는 구조라, 그 사실이 closeout·사람에게
    보여야 한다.
@@ -108,7 +109,7 @@ verify-eligible 출력의 **첫 후보 1개만** 집는다(FIFO·직렬). `flow:
 - `revalidate` → rebase 등으로 현재 HEAD 의 로컬 CI 캐시가 비었다. worktree 를 PR
   head 로 동기화하고(아래 1단계 worktree 확보에 이어) `$SCRIPTS/run-local-ci.sh
   <repo> <issue>` 로 캐시를 채운다. 비0(통합 깨짐)이면 ④ 재디스패치(`결정적 CI 실패
-  — rebase 통합`). 0이면 E2E 로 진행.
+  — rebase 통합`); 단 exit 2 는 폐기(HEAD 이동)라 현재 HEAD 로 한 번 재호출. 0이면 E2E 로 진행.
 - `pass` → 바로 E2E 로.
 
 **`fail` 원인 분류 — 코드 회귀 vs 인프라 자가체크.** `fail` 을 본 즉시 캐시 로그

@@ -10,7 +10,7 @@
 # 가드는 전역 hook(local-ci.sh / ci-gate-before-pr-merge.sh)과 동일해야 한다 —
 # hook 은 `[ -x bin/ci ]` 단독 가드라 config/ci.rb 를 추가로 요구하면
 # 비-Rails 레포(예: Python)에서 여기만 skip 되어 캐시가 안 남고 머지 게이트에 걸린다.
-# 종료 코드: pass=0, fail=1 (워커가 실패를 인지하고 고치도록).
+# 종료 코드: 큐(ci-queue.sh run)의 것을 그대로 — 0=pass · 1=fail · 2=폐기(HEAD 이동) · 3=부재 · 124=대기 포기.
 set -uo pipefail
 repo="${1:?usage: run-local-ci.sh <owner/repo> <num>}"
 num="${2:?usage: run-local-ci.sh <owner/repo> <num>}"
@@ -28,22 +28,17 @@ short=$(printf '%s' "$sha" | cut -c1-8)
 # slug 는 물리 경로 기준 — repo-dir.sh 가 물리 경로로 정규화해 주므로 $dir 그대로 사용.
 # (사람이 실제 경로에서 머지할 때 게이트가 계산하는 slug 와 일치해야 한다.)
 slug=$(printf '%s' "$dir" | sed 's#[/ ]#_#g; s#^_##')
-out="$HOME/.claude/.local-ci/$slug"
-mkdir -p "$out"
 
-if (cd "$wt" && bin/ci >"$out/$sha.log" 2>&1); then verdict=pass; else verdict=fail; fi
-printf '%s\n' "$verdict" > "$out/$sha.result"
-echo "run-local-ci: $verdict ($short) → $out/$sha.result"
-
-# GitHub commit status 게시 — 웹 머지 UI에서도 local-ci 결과가 보이게 (#6).
-# 실패(네트워크, 미push SHA 등)는 경고만 — CI 판정/exit code 에 영향 없음.
-if [ "$verdict" = "pass" ]; then state=success; else state=failure; fi
-if gh api "repos/$repo/statuses/$sha" \
-     -f state="$state" -f context=local-ci \
-     -f description="bin/ci $verdict ($short)" >/dev/null 2>&1; then
-  echo "run-local-ci: commit status 게시됨 — local-ci=$state ($short)"
-else
-  echo "run-local-ci: 경고 — commit status 게시 실패 ($repo@$short), CI 판정에는 영향 없음" >&2
-fi
-
-[ "$verdict" = "pass" ]
+# 박스 전역 큐 경유(#127) — 다른 세션·워크트리의 bin/ci 와 직렬화된다. 동기: 큐에서 기다렸다
+# 실행하고 돌아온다(기존 계약 그대로 — 호출자는 끝날 때까지 블록). 결과 위치는 위 슬러그로
+# 지정하고(디렉터리도 큐가 만든다), commit status(pending 대기열→실행 중→success/failure) 도 큐가 게시한다(#6).
+# 종료 코드: 0=pass · 1=fail · 2=폐기(실행 시점 HEAD ≠ sha — 그 사이 워크트리가 움직임) · 3=워크트리 부재.
+here_ci="$(cd "$(dirname "$0")" && pwd)/ci-queue.sh"
+rc=0
+"$here_ci" run "$wt" "$sha" --slug "$slug" --repo "$repo" || rc=$?
+case "$rc" in
+  0|1) echo "run-local-ci: $("$here_ci" result "$sha") ($short)" ;;   # dedup 이면 다른 슬러그일 수 있어 실경로를 큐에 묻는다
+  2) echo "run-local-ci: 폐기 ($short) — 실행 시점 HEAD 가 달라 결과 없음. 현재 HEAD 로 다시 호출하라" >&2 ;;
+  *) echo "run-local-ci: 큐 실행 실패 (exit $rc, $short)" >&2 ;;
+esac
+exit "$rc"   # 큐의 계약을 그대로 전달(0 pass · 1 fail · 2 폐기 · 3 부재 · 124) — 2 를 1 로 뭉개면 호출자가 재시도 정책을 오판한다
