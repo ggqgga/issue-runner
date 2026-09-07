@@ -11,7 +11,7 @@ SUT="$DIR/ci-queue.sh"
 HOOK="$DIR/../hooks/local-ci.sh"
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+trap 'rm -rf "$TMP"; [ -n "${longlived:-}" ] && kill "$longlived" 2>/dev/null' EXIT
 export HOME="$TMP/home"
 mkdir -p "$HOME" "$TMP/stub"
 # gh 스텁 — 호출 인자를 기록만 한다(commit status 게시 경로 검증용).
@@ -216,6 +216,12 @@ rc=0; "$SUT" wait "$S11" --timeout 1 >/dev/null 2>&1 || rc=$?
 assert_eq "wait 타임아웃 exit" "$rc" 124
 wait $p11
 
+echo "[ci-queue] 11a) wait 경계 — 비정수 --timeout 은 usage(64) · 큐 부재 + timeout<grace 는 2(124 아님)"
+rc=0; "$SUT" wait "$S1" --timeout abc >/dev/null 2>&1 || rc=$?
+assert_eq "비정수 timeout" "$rc" 64
+rc=0; CI_QUEUE_WAIT_GRACE=100 "$SUT" wait "$(fake_sha c)" --timeout 1 >/dev/null 2>&1 || rc=$?
+assert_eq "큐 부재 timeout<grace → 2" "$rc" 2
+
 echo "[ci-queue] 11b) forget — 결과 캐시를 지우면 같은 SHA 가 다시 돈다 · queue.log 에 흔적"
 : > "$CI_LOG"
 rc=0; "$SUT" forget "$S1" >/dev/null 2>&1 || rc=$?
@@ -234,15 +240,36 @@ assert_eq "나이 백스톱 뒤 실행" "$rc" 0
 assert_nofile "늙은 티켓 회수" "$old"
 kill $longlived 2>/dev/null; wait $longlived 2>/dev/null
 
+echo "[ci-queue] 11c2) 나이 백스톱은 자기·실행 중 티켓엔 안 걸린다(MAX_AGE=0 이어도 A 실행·B 대기 완주)"
+R14=$(make_repo r14); S14=$(head_of "$R14"); R15=$(make_repo r15); S15=$(head_of "$R15")
+: > "$CI_LOG"
+CI_QUEUE_TICKET_MAX_AGE=0 CI_SLEEP=2 "$SUT" run "$R14" "$S14" >/dev/null 2>&1 & p14=$!
+wait_status "$S14" running
+CI_QUEUE_TICKET_MAX_AGE=0 "$SUT" run "$R15" "$S15" >/dev/null 2>&1 & p15=$!
+wait $p14; rc14=$?; wait $p15; rc15=$?
+assert_eq "MAX_AGE=0 A 완주" "$rc14" 0
+assert_eq "MAX_AGE=0 B 완주" "$rc15" 0
+assert_eq "MAX_AGE=0 실행 순서" "$(awk '{print $1, $2}' "$CI_LOG" | tr '\n' ' ' | sed 's/ $//')" "start r14 end r14 start r15 end r15"
+
+echo "[ci-queue] 11c3) 같은 SHA 동시 run 두 개 → bin/ci 는 1회, 둘 다 pass"
+R16=$(make_repo r16); S16=$(head_of "$R16")
+: > "$CI_LOG"
+CI_SLEEP=1 "$SUT" run "$R16" "$S16" >/dev/null 2>&1 & p16a=$!
+CI_SLEEP=1 "$SUT" run "$R16" "$S16" --slug other_slug >/dev/null 2>&1 & p16b=$!
+wait $p16a; rca=$?; wait $p16b; rcb=$?
+assert_eq "동시 run a" "$rca" 0
+assert_eq "동시 run b" "$rcb" 0
+assert_eq "동시 run bin/ci 1회" "$(grep -c 'start r16' "$CI_LOG")" 1
+
 echo "[ci-queue] 11d) TERM — 실행 중 잡을 죽이면 bin/ci 자식도 죽고 실행권·티켓이 풀린다"
 R13=$(make_repo r13); S13=$(head_of "$R13")
-CI_SLEEP=20 "$SUT" run "$R13" "$S13" >/dev/null 2>&1 &
+CI_SLEEP=20.31 "$SUT" run "$R13" "$S13" >/dev/null 2>&1 &
 p13=$!
 wait_status "$S13" running
 kill -TERM $p13; wait $p13 2>/dev/null
 sleep 0.5
 assert_eq "TERM 뒤 큐 비움" "$(ls -A "$QDIR" 2>/dev/null | wc -l | tr -d ' ')" 0
-[ -z "$(pgrep -f "sleep 20" 2>/dev/null)" ] && ok || bad "TERM 뒤 bin/ci 자식(sleep 20)이 살아 있다"
+[ -z "$(pgrep -f "sleep 20.31" 2>/dev/null)" ] && ok || bad "TERM 뒤 bin/ci 자식(sleep 20.31)이 살아 있다"
 assert_nofile "TERM 뒤 result 없음" "$HOME/.claude/.local-ci/$(slug_of "$R13")/$S13.result"
 
 echo "[ci-queue] 11e) ROOT 가 git 이 아니면(HEAD 못 읽음) exit 3, 폐기(2)와 구분"
@@ -256,6 +283,32 @@ hook_out=$(printf '{"cwd":"%s","tool_input":{"command":"cd $WT && git push"}}' "
 ctx=$(printf '%s' "$hook_out" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null)
 case "$ctx" in *"해석하지 못해"*) ok ;; *) bad "훅 cd 미해석 경고 없음: $ctx" ;; esac
 sleep 1   # 위 훅이 H1 HEAD(이미 result 있음)를 dedup 으로 끝내길 기다림
+
+echo "[local-ci.sh] 11g) 훅 — 멀티라인 명령의 마지막 줄 git push 도 잡고, --dry-run 은 no-op"
+H4=$(make_repo h4); HS4=$(head_of "$H4"); HSL4=$(slug_of "$H4")
+printf '{"cwd":"%s","tool_input":{"command":"git commit --allow-empty -qm y\\ngit push"}}' "$H4" | bash "$HOOK" >/dev/null 2>&1
+wait_file "$HOME/.claude/.local-ci/$HSL4/$HS4.result" 20 && ok || bad "훅 멀티라인 — result 없음"
+H5=$(make_repo h5); HS5=$(head_of "$H5"); HSL5=$(slug_of "$H5")
+printf '{"cwd":"%s","tool_input":{"command":"git push --dry-run origin x"}}' "$H5" | bash "$HOOK" >/dev/null 2>&1
+sleep 1
+assert_nofile "훅 --dry-run no-op" "$HOME/.claude/.local-ci/$HSL5/$HS5.result"
+
+echo "[run-local-ci.sh] 11h) 루프 헬퍼 — 큐 경유 pass=0 · 메인 슬러그에 결과 · HEAD 이동=2"
+RL="$DIR/run-local-ci.sh"
+mkdir -p "$TMP/proj"; M=$(make_repo proj/r); WT="$M/.claude/worktrees/issue-5"; mkdir -p "$M/.claude/worktrees"
+git -C "$M" worktree add -q "$WT" -b agent/issue-5 >/dev/null 2>&1
+mkdir -p "$WT/bin" && cp "$M/bin/ci" "$WT/bin/ci"        # 가짜 bin/ci 는 미추적이라 워크트리에 따로 둔다
+export ISSUE_RUNNER_REPOS_CONF="$TMP/no-such-repos.conf"  # 머신의 repos.conf 에 안 걸리게
+git -C "$WT" -c user.name=t -c user.email=t@t commit -q --allow-empty -m wt
+WSHA=$(head_of "$WT"); MSLUG=$(slug_of "$M")
+rc=0; ISSUE_RUNNER_PROJECTS_ROOT="$TMP/proj" bash "$RL" o/r 5 >/dev/null 2>&1 || rc=$?
+assert_eq "run-local-ci pass" "$rc" 0
+assert_file "run-local-ci 메인 슬러그 result" "$HOME/.claude/.local-ci/$MSLUG/$WSHA.result"
+git -C "$WT" -c user.name=t -c user.email=t@t commit -q --allow-empty -m moved
+NEW=$(head_of "$WT")
+git -C "$WT" -c user.name=t -c user.email=t@t commit -q --allow-empty -m moved2   # NEW 는 이제 옛 HEAD
+rc=0; "$SUT" run "$WT" "$NEW" --slug "$MSLUG" >/dev/null 2>&1 || rc=$?
+assert_eq "워크트리 HEAD 이동 → 폐기 2" "$rc" 2
 
 echo "[ci-gate] 12) 게이트 — 다른 슬러그의 result 도 SHA 로 찾고, 결과 없음은 실행 중/대기열/없음으로 안내"
 GATE="$DIR/../hooks/ci-gate-before-pr-merge.sh"

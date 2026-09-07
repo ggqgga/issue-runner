@@ -21,7 +21,8 @@
 # `result <SHA>` 가 찾는다. 실행 직전 HEAD==SHA 를 검사하므로 같은 SHA 의 결과는 같은 커밋의 결과다.
 #
 # 종료 코드 — run: 0=pass · 1=fail · 2=폐기(실행 시점 HEAD ≠ SHA — 새 push 가 자기 티켓을
-# 냈으니 이 잡은 의미 없음) · 3=ROOT 부재. wait: 0=pass · 1=fail · 2=큐에 없고 결과도 없음 ·
+# 냈으니 이 잡은 의미 없음) · 3=ROOT 부재/HEAD 못 읽음/큐 쓰기 불가 · 124=같은 SHA 의 다른 잡을
+# CI_QUEUE_WAIT_TIMEOUT(기본 7200s) 동안 기다리다 포기. wait: 0=pass · 1=fail · 2=큐에 없고 결과도 없음 ·
 # 124=타임아웃. result: 0=있음(`pass|fail <path>` 출력) · 1=없음(`none`).
 # status 출력: `status` = 줄마다 "running <sha> <slug>" / "queued <n> <sha> <slug>",
 #              `status <sha>` = "running" / "queued <n>" / "none".
@@ -56,19 +57,26 @@ ticket_slug() { local v; v=$(sed -n 's/^slug=//p' "$QDIR/$1" 2>/dev/null); print
 # kill -0 만으로는 영원히 "살아 있는" 티켓이 큐 머리를 막는다 — 정상 대기는 N×수분이라 6h 면 유령.
 MAX_AGE="${CI_QUEUE_TICKET_MAX_AGE:-21600}"
 reap() {
-  local t name now
+  local t name now run_t
   now=$(date +%s)
+  run_t=$(running_ticket)
   for t in "$QDIR"/*; do
     [ -f "$t" ] || continue
     name="${t##*/}"
-    if ! alive "$(ticket_pid "$name")" || [ $((now - ${name%%.*})) -gt "$MAX_AGE" ]; then
-      rm -f "$t"
-      [ "$name" = "${TICKET:-}" ] || log "유령 티켓 회수 $name"
+    if ! alive "$(ticket_pid "$name")"; then
+      rm -f "$t"; log "유령 티켓 회수(pid 사망) $name"
+    elif [ "$name" != "${TICKET:-}" ] && [ "$name" != "$run_t" ] && [ $((now - ${name%%.*})) -gt "$MAX_AGE" ]; then
+      # 나이 규칙은 남의 대기 티켓에만 — 자기 티켓·실행 중 티켓을 지우면 그 잡이 영원히 스핀한다
+      rm -f "$t"; log "유령 티켓 회수(나이 ${MAX_AGE}s 초과) $name"
     fi
   done
   if [ -d "$RUNNING" ]; then
     if [ -f "$RUNNING/pid" ]; then
-      alive "$(cat "$RUNNING/pid" 2>/dev/null)" || rm -rf "$RUNNING"
+      # pid 사망, 또는 pid 재사용 대비 같은 나이 백스톱(실행 티켓의 epoch 기준)
+      if ! alive "$(cat "$RUNNING/pid" 2>/dev/null)"; then rm -rf "$RUNNING"
+      elif [ -n "$run_t" ] && [ "$run_t" != "${TICKET:-}" ] && [ $((now - ${run_t%%.*})) -gt "$MAX_AGE" ]; then
+        rm -rf "$RUNNING"; log "유령 실행권 회수(나이 ${MAX_AGE}s 초과) $run_t"
+      fi
     elif [ -n "$(find "$RUNNING" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
       rm -rf "$RUNNING"
     fi
@@ -152,13 +160,14 @@ cmd_wait() {
       *) usage ;;
     esac
   done
+  case "$timeout" in ''|*[!0-9]*) log "--timeout 은 정수(초)여야 합니다: '$timeout'"; usage ;; esac
   local short="${sha:0:8}" res st last="" waited=0 none_for=0 verdict path
   while :; do
     if res=$(cmd_result "$sha"); then
       verdict="${res%% *}"; path="${res#* }"
       printf 'ci-queue: %s %s — %s\n' "$short" "$verdict" "$path"
       [ "$verdict" = pass ] && return 0
-      printf -- '--- bin/ci 마지막 출력 ---\n%s\n----------------------------\n' "$(tail -25 "${path%.result}.log" 2>/dev/null)"
+      printf -- '--- bin/ci 마지막 출력 ---\n%s\n----------------------------\n플레이크·인프라 실패였다면: ci-queue.sh forget %s 뒤 다시 push/run.\n' "$(tail -25 "${path%.result}.log" 2>/dev/null)" "$sha"
       return 1
     fi
     st=$(cmd_status "$sha")
@@ -179,6 +188,11 @@ cmd_wait() {
       none_for=0
     fi
     if [ "$waited" -ge "$timeout" ]; then
+      # 타임아웃 시점에 큐에도 없으면 "큐 부재"(2)가 맞다 — 124 는 실행/대기 중인데 시간이 다한 경우만
+      if [ "$st" = none ]; then
+        printf 'ci-queue: %s 큐에 없고 결과도 없음(타임아웃 %s초) — push 훅이 안 떴거나 HEAD 이동으로 폐기됨.\n재등록: ci-queue.sh run <ROOT> %s\n' "$short" "$timeout" "$sha"
+        return 2
+      fi
       printf 'ci-queue: %s 타임아웃(%s초) — 큐 상태: %s\n' "$short" "$timeout" "$st"
       return 124
     fi
@@ -200,7 +214,7 @@ cmd_run() {
   [ -d "$ROOT" ] || { log "ROOT 없음: $ROOT"; return 3; }
   ROOT=$(cd "$ROOT" && pwd -P)
   [ -n "$SLUG" ] || SLUG=$(slug_of "$ROOT")
-  local out="$CACHE/$SLUG" short="${SHA:0:8}" rc
+  local out="$CACHE/$SLUG" short="${SHA:0:8}" rc res
   RESULT="$out/$SHA.result"
   mkdir -p "$out" "$QDIR" 2>/dev/null
   find "$out" -type f -mtime +7 -delete 2>/dev/null   # 7일 지난 캐시 prune
@@ -220,12 +234,14 @@ cmd_run() {
   esac
 
   TICKET=$(printf '%010d.%d.%s' "$(date +%s)" "$$" "$SHA")
-  printf 'slug=%s\n' "$SLUG" > "$QDIR/$TICKET"
+  if ! printf 'slug=%s\n' "$SLUG" > "$QDIR/$TICKET" 2>/dev/null; then
+    log "$short 티켓을 쓸 수 없음($QDIR — 권한/디스크?)"; return 3
+  fi
   CHILD=""
   cleanup() {
     # INT/TERM: bin/ci 자식(서브셸과 그 손자)을 먼저 죽인다 — 부모만 죽고 실행권이 풀리면 다음 잡이
     # 고아 bin/ci 와 겹쳐 돈다(큐가 막으려던 바로 그 동시 실행).
-    if [ -n "$CHILD" ] && alive "$CHILD"; then pkill -P "$CHILD" 2>/dev/null; kill "$CHILD" 2>/dev/null; fi
+    if [ -n "$CHILD" ] && alive "$CHILD"; then kill -TERM -- "-$CHILD" 2>/dev/null || kill -TERM "$CHILD" 2>/dev/null; fi
     rm -f "$QDIR/$TICKET"
     [ "$(cat "$RUNNING/pid" 2>/dev/null)" = "$$" ] && rm -rf "$RUNNING"
   }
@@ -240,6 +256,10 @@ cmd_run() {
   # 실행권 — 내 티켓이 가장 오래됐고 .running 을 내가 만들었을 때만
   while :; do
     reap
+    if [ ! -f "$QDIR/$TICKET" ]; then
+      log "$short 내 티켓이 사라짐(외부 삭제?) — 포기"; post_status error "로컬 CI 대기 중단 — 큐 티켓 소실"
+      return 3
+    fi
     if [ "$(head_ticket)" = "$TICKET" ] && mkdir "$RUNNING" 2>/dev/null; then
       # pid 는 임시 파일 → mv 로 원자 기록(O_TRUNC 직후 빈 파일을 남의 reap 이 "죽음"으로 읽는 창 제거)
       echo "$$" > "$RUNNING/pid.$$" && mv "$RUNNING/pid.$$" "$RUNNING/pid"
@@ -249,6 +269,12 @@ cmd_run() {
     sleep "$POLL"
   done
 
+  # 실행권을 쥔 뒤 결과 재확인 — 같은 SHA 를 서브초 간격으로 두 프로세스가 run 하면 dedup 을 둘 다
+  # 통과해 티켓이 둘 생긴다. 앞 잡이 끝났으면 그 결과를 쓰고 bin/ci 를 다시 돌리지 않는다.
+  if res=$(cmd_result "$SHA"); then
+    log "$short 실행권 획득 시점에 결과가 이미 있음(${res%% *}) — 재실행 생략"
+    [ "${res%% *}" = pass ]; return $?
+  fi
   # 실행 직전 검사 — 큐가 push↔실행 간격을 늘리므로 "워킹트리 ≠ SHA" 를 여기서 닫는다
   if [ ! -d "$ROOT" ]; then log "$short ROOT 사라짐: $ROOT"; return 3; fi
   local head
@@ -268,8 +294,11 @@ cmd_run() {
   post_status pending "bin/ci 실행 중 (로컬)"
   local start verdict dur
   start=$SECONDS
+  # 자식은 자기 프로세스 그룹(set -m)으로 — TERM 시 bin/ci 아래 ruby/rails 손자까지 한 번에 죽인다
+  set -m
   (cd "$ROOT" && exec bin/ci) >"$out/$SHA.log" 2>&1 &
   CHILD=$!
+  set +m
   if wait "$CHILD"; then verdict=pass; else verdict=fail; fi
   CHILD=""
   dur=$(( SECONDS - start ))

@@ -113,8 +113,8 @@ if [ -n "$ROOT" ] && [ -x "$ROOT/bin/ci" ]; then
   if res=$("$q" result "$sha" 2>/dev/null); then
     verdict="${res%% *}"; log="${res#* }"; log="${log%.result}.log"
     [ "$verdict" = pass ] && exit 0
-    printf 'PR #%s 로컬 CI 실패(%s).\n--- bin/ci 마지막 출력 ---\n%s\n----------------------------\n실패를 고치고 다시 push 하세요.\n' \
-      "$pr_num" "$short" "$(tail -25 "$log" 2>/dev/null)" >&2
+    printf 'PR #%s 로컬 CI 실패(%s).\n--- bin/ci 마지막 출력 ---\n%s\n----------------------------\n실패를 고치고 다시 push 하세요(플레이크·인프라 실패였다면 `%s forget %s` 뒤 재push/run).\n' \
+      "$pr_num" "$short" "$(tail -25 "$log" 2>/dev/null)" "$q" "$sha" >&2
     exit 2
   fi
 

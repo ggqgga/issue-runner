@@ -20,9 +20,9 @@
 set -u
 
 input=$(cat)
-cmd=""; base=""
-{ IFS= read -r cmd; IFS= read -r base; } \
-  < <(printf '%s' "$input" | jq -r '[.tool_input.command // "", .cwd // ""] | .[]' 2>/dev/null)
+# 명령은 멀티라인일 수 있어 줄 단위로 나누지 않고 각각 뽑는다(jq 2회 — 훅 반환 경로에서 무시할 비용)
+cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
+base=$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null)
 [ -z "$cmd" ] && cmd=$(printf '%s' "$input" \
   | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' | head -1)
 
@@ -30,6 +30,8 @@ cmd=""; base=""
 printf '%s' "$cmd" \
   | grep -qE '(^|[[:space:];|&])git[[:space:]]+push([[:space:]]|$)' \
   || exit 0
+# --dry-run 은 원격에 아무것도 안 올린다 — bin/ci 를 헛돌리지 않는다
+printf '%s' "$cmd" | grep -qE 'git[[:space:]]+push[^;|&]*--dry-run' && exit 0
 
 [ -n "$base" ] && [ -d "$base" ] || base=$PWD
 note=""   # 세션에 덧붙일 경고(선두 cd 해석 실패 등)
