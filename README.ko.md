@@ -243,6 +243,8 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 
 **Codex 머지 게이트 = 내장 리뷰어.** `scripts/codex-review-gate.sh --base <ref> | --commit <sha> | --prompt "<text>"` 가 `codex exec review`(기본 `gpt-5.6-sol`, medium)를 감싸 발견을 판정으로 매핑한다 — `[P1]` → BLOCKER(exit 1), `[P2]` → WARN, 없음 → CLEAN; 미산출(codex 부재·모델 오류·타임아웃) → exit 2 로 호출자가 fail-closed. `~/.codex/config.toml` 의 `model` 은 로그인 계정이 쓸 수 있는 모델로 유지할 것(`codex debug models`); 0.153+ 는 미설정 시 Astra 가 기본이다.
 
+> **Homebrew cask 의 Codex 0.153+:** cask 는 `codex-code-mode-host` 를 동봉하지만 `/opt/homebrew/bin` 엔 `codex` 만 링크한다. 호스트가 `PATH` 에 없으면 `codex exec review` 의 도구 호출마다 "code-mode host" 협상 타임아웃 ~45초가 붙는다(100줄 리뷰가 7분). 한 번만 링크: `ln -sf /opt/homebrew/Caskroom/codex/<ver>/bin/codex-code-mode-host /opt/homebrew/bin/`. `features.code_mode_host` 는 끄지 말 것 — 리뷰 모드에 실행 도구가 없어져 눈감은 CLEAN 을 낸다(게이트는 그 문구를 잡아 fail-closed).
+
 **`bin/ci` 는 머신 전체에서 한 번에 하나.** push 훅·루프의 `run-local-ci.sh`·세션 직접 호출 — 모든 진입점이 `scripts/ci-queue.sh` 를 거친다. 데몬 없는 티켓 락: 티켓은 `~/.claude/.local-ci/.queue/` 에, 가장 오래된 살아 있는 티켓이 `mkdir .running` 에 성공하면 실행, 죽은 PID 는 지나가는 대기자가 치운다. 워크트리 둘(또는 세션 둘)이 잇달아 push 해도 같은 테스트 DB 를 물거나 박스를 포화시키지 않는다 — 두 번째는 자기 차례를 기다린다. 차례가 왔을 때 레포 HEAD 가 이미 움직였으면 폐기(exit 2) — 새 push 가 자기 티켓을 쥐고 있다.
 
 ```bash

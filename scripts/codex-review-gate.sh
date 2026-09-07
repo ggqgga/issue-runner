@@ -77,8 +77,9 @@ if [ ${#RANGE_CHECK[@]} -gt 0 ]; then
   esac
 fi
 
-# 실행 — 별도 프로세스 그룹으로 띄운다. code_mode_host 는 끈다: 0.153 cask 에 호스트 바이너리가 없어 도구 호출마다
-# 협상 타임아웃(~45s)을 먹는다(실측: 11회 호출에 7회 타임아웃 → 7분). 끄면 shell 도구가 바로 뜬다.
+# 실행 — 별도 프로세스 그룹으로 띄운다. `features.code_mode_host` 는 **끄지 않는다**: 리뷰 모드의 도구 실행은 code-mode
+# 호스트를 거치므로 끄면 리뷰어가 눈을 감은 채 CLEAN 을 낸다(0.153.4 실측: 0 명령·"execution tool was unavailable").
+# 호스트 바이너리(`codex-code-mode-host`)가 없으면 도구 호출마다 협상 타임아웃 ~45s 가 붙는다 — 설치가 답이다(README).
 # 실행 — 별도 프로세스 그룹으로 띄워 타임아웃 시 손자(codex 가 띄운 셸)까지 함께 끊는다.
 start=$SECONDS
 set -m
@@ -86,11 +87,11 @@ set -m
   if [ -n "$PROMPT" ]; then
     exec codex exec review "$PROMPT" -m "$MODEL" -c model_reasoning_effort="\"$EFFORT\"" \
       -c web_search='"disabled"' -c memories.generate_memories=false -c hide_agent_reasoning=true \
-      -c features.code_mode_host=false --ephemeral --json -o "$REVIEW"
+      --ephemeral --json -o "$REVIEW"
   else
     exec codex exec review "${SCOPE[@]}" -m "$MODEL" -c model_reasoning_effort="\"$EFFORT\"" \
       -c web_search='"disabled"' -c memories.generate_memories=false -c hide_agent_reasoning=true \
-      -c features.code_mode_host=false --ephemeral --json -o "$REVIEW"
+      --ephemeral --json -o "$REVIEW"
   fi
 ) >"$EVENTS" 2>"$ERR" &
 child=$!
@@ -114,7 +115,7 @@ if grep -q -E 'does not exist or you do not have access|not supported when using
   log "가용 모델 확인: codex debug models · config 의 model 은 유효 모델로(0.153 은 미설정 시 Astra 기본)"
   echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=$secs"; exit 2
 fi
-if grep -q -i -E 'unable to inspect|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review' "$REVIEW" 2>/dev/null; then
+if grep -q -i -E 'unable to inspect|could not be inspected|execution tool was unavailable|tool (was|is) unavailable|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review|not a substantive' "$REVIEW" 2>/dev/null; then
   log "리뷰어가 대상을 못 봤다고 답함 — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
   none "$secs"
 fi
