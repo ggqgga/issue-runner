@@ -166,7 +166,7 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
 --cd <worktree> --out <스크래치>` 를 **동기 호출**한다(#134, Plans/codex-native-review-gate.md). 이 헬퍼가
 `codex exec review` 를 sol/medium 으로 돌려 stdout 마지막 줄에 `verdict=<BLOCKER|WARN|NIT|CLEAN|NONE> p1= p2= p3= model= secs=`
 를 내고 본문을 `<out>/review.md` 에 남긴다. 자체 타임아웃(`CODEX_GATE_TIMEOUT`, 기본 900s = `VERIFIER_TIMEOUT_MIN`
-과 동조)이 있어 스폰·폴링·`TaskStop` 배선이 필요 없다 — 서브에이전트 없이 명령 하나. `[P1]` 이 BLOCKER, `[P2]` 가 WARN.
+과 동조)이 있어 스폰·폴링·`TaskStop` 배선이 필요 없다 — 서브에이전트 없이 명령 하나. `[P0]`·`[P1]` 이 BLOCKER, `[P2]` 가 WARN, `[P3+]` 가 NIT(비차단).
 - **exit 2(`verdict=NONE`) = 리뷰 미산출**(codex 부재·모델 오류·타임아웃·본문 없음). 그때만 ## 상수의 `VERIFIER`
   폴백(general-purpose, `references/verify-prompt.md` 에 `gh pr diff`·이슈 본문·`.loop/lessons-verifier.md` 동봉,
   `run_in_background` + `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을 쓴다. 헬퍼의 stderr 가 모델 오류(404·
