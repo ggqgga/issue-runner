@@ -42,6 +42,10 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    grep/glob 스캔보다 우선 사용하라. 단 인덱스는 메인 체크아웃 기준이므로
    네 브랜치가 아니라 main 시점의 코드 지도다 — 수정 대상의 최종 확인은
    <WT_PATH> 의 실제 파일로 하라. 도구가 없으면 기존 방식대로 진행하라(필수 아님).
+   **탐색 위임(선택)**: 영향 파일·기존 idiom·테스트 위치처럼 넓게 훑는 조사는 Agent 툴로
+   `Explore` 서브에이전트를 중첩 호출해 결론만 받아도 된다(읽기 전용 — 네 컨텍스트를 아낀다).
+   중첩 Agent 호출은 항상 백그라운드로 접수되고 **완료 통지**로 결과가 돌아온다 — 통지를 받은
+   뒤 이어가라(위 "백그라운드 금지"는 Bash 장기 명령 얘기다). 단일 파일·심볼 조회는 직접 보라.
 2. 아래 '과거 교훈'을 읽고 같은 실수를 피하라.
 3. `gh issue view <NUM> --repo <REPO> --json state,body` 로 이슈를 읽어라.
    **state 가 CLOSED 면 즉시 no-op 종료** — 이미 마감된 이슈다(다른 워커가 PR 을 냈거나
@@ -84,11 +88,26 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    non-zero 로 끝나 캐시에 fail 이 박히면 그건 네가 고칠 수 있는 상태가 아니다 —
    이슈 코멘트에 `BLOCKED:` 로 사유를 남기고 멈춰라(사람이 link-secrets 를 켜거나
    테스트 범위를 조정한다). 캐시를 우회하거나 초록으로 위장하지 마라.
+9-b. **PR 전 사전 리뷰 — 1회, 비게이트.** 로컬 CI 가 pass 인 뒤 PR 을 열기 전에, 새 컨텍스트의
+   리뷰어를 Agent 툴로 중첩 스폰하라 — `subagent_type: "general-purpose"`(**codex 계열 타입 금지** —
+   검증 게이트는 verify-runner 소유이고 codex CLI 스톨을 워커에 들이지 않는다).
+   - 프롬프트에 **동봉**: `cd <WT_PATH> && git diff origin/<DEFAULT_BRANCH>...HEAD` 출력 전체 +
+     3단계에서 읽은 이슈 본문. 리뷰어는 동봉 텍스트만 근거로 판정하고 gh/git 을 실행하지 않는다
+     (read-only · 코드 변경 금지).
+   - 요구 계약: 이슈 수용 기준 대비 스펙 부합 + correctness(엣지·삼킨 예외·근거 없는 폴백·
+     테스트가 실제 동작을 검증하는지). 발견마다 `BLOCKER/WARN/NIT` + `파일:줄 — 무엇` 한 줄,
+     발견 없으면 정확히 `CLEAN`, 한국어.
+   - 결과 처리: BLOCKER·WARN 은 고치고 재커밋·재push·9단계 로컬 CI 재실행. **라운드는 1회** —
+     고친 뒤 리뷰어를 다시 부르지 마라(두 번째 눈은 verify-runner 다). NIT 는 안 고쳐도 된다.
+   - **fail-open**: 완료 통지가 **10분** 안에 안 오면 리뷰를 생략하고 진행하라 — 이 단계는
+     게이트가 아니다. 목적은 verify-runner 반송(재디스패치 한 바퀴)을 줄이는 것이다.
+   - 결과는 10단계 PR 본문의 **`## 사전 리뷰`** 절에 남긴다(필수): `CLEAN` / 발견 한 줄씩과
+     처리(고침·NIT 보류) / `타임아웃` / 스폰이 실패했으면 `미실행: <사유>`.
 10. PR 을 열어라(**재디스패치면 이미 열려 있다** — 아래 참고). **반드시 cd 없는 단독 명령으로**:
    `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`
    (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사가 누락된다.)
    본문에 반드시 전용 라인 `Closes #<NUM>` 과 `## Test plan` 섹션(수용 기준 기반
-   체크박스)을 포함하라. PR 생성 직후
+   체크박스), 그리고 `## 사전 리뷰` 절(9-b 결과)을 포함하라. PR 생성 직후
    `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: 🔄 진행 중 — 검증(E2E·codex) 전, 머지 보류
 <!-- bodat:worker -->"`
    코멘트를 남겨라 (사람이 PR 화면만 보고 상태를 판단할 수 있어야 한다).
@@ -129,7 +148,9 @@ needs-human·harvesting·우선순위·area 등) 변경, 다른 이슈 작업, <
 **codex 검증자 스폰·`머지 판정: ✅`/`⚠` 최종판정**(verify-runner 소유 — 하지 마라).
 (예외 1: 11a 의 참조 이슈 본문 체크박스 마크 동기화 — 라벨 변경도, 다른 이슈 작업도
 아니다. 예외 2: **이 PR 의 단계 표시 라벨 `flow:verify`(및 재-CI 시 `flow:ci`)** 부착·
-교체 — 10·11단계에서 지시한 대로만. 이 둘 외의 라벨은 여전히 손대지 마라.)
+교체 — 10·11단계에서 지시한 대로만. 이 둘 외의 라벨은 여전히 손대지 마라.
+예외 3: 1단계의 `Explore` 탐색 중첩과 9-b 의 `general-purpose` 사전 리뷰어 — 게이트가 아닌
+자기 검토라 "codex 검증자 스폰" 금지에 걸리지 않는다. codex 계열 타입은 여전히 금지.)
 
 과거 교훈:
 <LESSONS_OR_"없음">

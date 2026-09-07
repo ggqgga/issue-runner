@@ -34,6 +34,12 @@ Procedure:
    the main checkout — it is a code map of main, not of your branch — so do the
    final verification of anything you modify against the actual files in
    <WT_PATH>. If the tools are absent, proceed the usual way (not required).
+   **Exploration delegation (optional)**: for broad surveys (affected files, existing
+   idioms, where the tests live) you may nest an `Explore` subagent via the Agent tool
+   and take back only its conclusion (read-only — it saves your own context). A nested
+   Agent call is always accepted in the background and its result comes back as a
+   **completion notification** — continue after you receive it (the "no background"
+   rule above is about long-running Bash commands). Look up single files/symbols yourself.
 2. Read the 'Past lessons' below and avoid repeating the same mistakes.
 3. Read the issue with `gh issue view <NUM> --repo <REPO> --json state,body`.
    **If state is CLOSED, terminate immediately as a no-op** — the issue is already
@@ -86,12 +92,33 @@ Procedure:
    exit non-zero so a fail lands in the cache, that is not a state you can fix — leave
    a `BLOCKED:` comment on the issue with the reason and stop (a human enables
    link-secrets or narrows the test scope). Never bypass the cache or fake a green.
+9-b. **Pre-PR review — once, non-gating.** After local CI passes and before opening the
+   PR, nest a fresh-context reviewer via the Agent tool — `subagent_type: "general-purpose"`
+   (**no codex-family types** — the verification gate is owned by verify-runner and a codex
+   CLI stall must not enter the worker).
+   - **Embed** in the prompt: the full output of `cd <WT_PATH> && git diff
+     origin/<DEFAULT_BRANCH>...HEAD` plus the issue body you read in step 3. The reviewer
+     judges from the embedded text only and runs no gh/git (read-only, no code changes).
+   - Required contract: spec conformance against the issue's acceptance criteria +
+     correctness (edge cases, swallowed exceptions, unjustified fallbacks, whether tests
+     verify real behavior). One line per finding: `BLOCKER/WARN/NIT` + `file:line — what`;
+     exactly `CLEAN` when there are none.
+   - Handling: fix BLOCKER and WARN, re-commit, re-push, re-run step 9 local CI. **One
+     round only** — do not call the reviewer again after fixing (the second pair of eyes is
+     verify-runner). NIT may be left as is.
+   - **Fail-open**: if the completion notification has not arrived within **10 minutes**,
+     skip the review and move on — this step is not a gate. Its purpose is to reduce
+     verify-runner bounces (a full re-dispatch round trip).
+   - Record the outcome in the PR body's **`## Pre-review`** section (required): `CLEAN` /
+     one line per finding with its handling (fixed · NIT deferred) / `timeout` / `not run:
+     <reason>` if the spawn failed.
 10. Open the PR (**if this is a re-dispatch it already exists** — see below).
    **It must be a standalone command with no cd**:
    `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`
    (Prefixing cd breaks the PR hooks' if-matching, so the issue-reference check gets
-   skipped.) The body must include a dedicated line `Closes #<NUM>` and a
-   `## Test plan` section (checkboxes based on the acceptance criteria). Immediately
+   skipped.) The body must include a dedicated line `Closes #<NUM>`, a
+   `## Test plan` section (checkboxes based on the acceptance criteria), and a
+   `## Pre-review` section (the step 9-b outcome). Immediately
    after creating the PR, leave the comment
    `gh pr comment <PR_NUMBER> --repo <REPO> --body "Merge verdict: 🔄 in progress — before verification (E2E·codex), hold off merging
 <!-- bodat:worker -->"`
@@ -135,7 +162,9 @@ posting the `Merge verdict: ✅`/`⚠` final verdict** (owned by verify-runner �
 (Exception 1: syncing the checkbox marks in the referenced issue body per step 11a —
 neither a label change nor working on another issue. Exception 2: **this PR's stage
 label `flow:verify` (and `flow:ci` on re-CI)** attach/swap — only as directed in steps
-10·11. No other labels.)
+10·11. No other labels. Exception 3: the nested `Explore` in step 1 and the
+`general-purpose` pre-reviewer in step 9-b — self-review, not a gate, so they do not fall
+under "spawning a codex verifier". codex-family types remain forbidden.)
 
 Past lessons:
 <LESSONS_OR_"none">

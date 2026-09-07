@@ -246,6 +246,10 @@ N 도 디스패치당 1만 올린다.
       채운다 — 워커의 codegraph 탐색(`-p`)이 이 경로의 인덱스를 읽는다.
       (워커는 더 이상 codex 검증자를 스폰하지 않는다 — 검증은 verify-runner 소유라
       `<VERIFIER>` placeholder 가 필요 없다. VERIFIER 상수는 ① Reconcile 의 교훈 추출에만 쓰인다.)
+      워커는 대신 PR 을 열기 전에 **자기 검토용 사전 리뷰어(general-purpose) 1회를 중첩 스폰**한다
+      (템플릿 9-b — 비게이트·fail-open·1라운드, 결과는 PR 본문 `## 사전 리뷰`). 디스패처가 할 일은
+      없다 — 워커가 리뷰어를 기다리며 멈추므로 동시 API 스트림 수는 안 늘고 `MAX_AGENTS` 도 그대로다.
+      효과는 verify-runner 반송(`재검증 실패:`) 건수로 잰다.
 
 ## ④ Report
 
