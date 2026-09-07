@@ -250,6 +250,7 @@ Eligibility: `open + agent-ready + ¬agent:claimed + all blockers CLOSED`. Sort:
 scripts/ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo owner/repo]   # enqueue + run (blocks; 0 pass · 1 fail · 2 dropped · 3 no ROOT)
 scripts/ci-queue.sh status [<SHA>]                                          # running / queued N / none
 scripts/ci-queue.sh wait <SHA> [--timeout <sec>]                            # block until the verdict — run it with run_in_background so the session is woken
+scripts/ci-queue.sh forget <SHA>                                            # drop a cached verdict (flake / infra failure) so the next run re-executes
 ```
 
 ```bash

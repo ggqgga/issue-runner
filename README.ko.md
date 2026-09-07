@@ -247,6 +247,7 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 scripts/ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo owner/repo]   # 등록 + 실행(블록; 0 pass · 1 fail · 2 폐기 · 3 ROOT 없음)
 scripts/ci-queue.sh status [<SHA>]                                          # running / queued N / none
 scripts/ci-queue.sh wait <SHA> [--timeout <sec>]                            # 판정까지 블록 — run_in_background 로 띄우면 끝날 때 세션이 깨어난다
+scripts/ci-queue.sh forget <SHA>                                            # 캐시된 판정 삭제(플레이크·인프라 실패) — 다음 run 이 다시 돈다
 ```
 
 ```bash

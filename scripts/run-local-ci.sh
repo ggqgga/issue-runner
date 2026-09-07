@@ -33,11 +33,11 @@ slug=$(printf '%s' "$dir" | sed 's#[/ ]#_#g; s#^_##')
 # 실행하고 돌아온다(기존 계약 그대로 — 호출자는 끝날 때까지 블록). 결과 위치는 위 슬러그로
 # 지정하고(디렉터리도 큐가 만든다), commit status(pending 대기열→실행 중→success/failure) 도 큐가 게시한다(#6).
 # 종료 코드: 0=pass · 1=fail · 2=폐기(실행 시점 HEAD ≠ sha — 그 사이 워크트리가 움직임) · 3=워크트리 부재.
+here_ci="$(cd "$(dirname "$0")" && pwd)/ci-queue.sh"
 rc=0
-"$(cd "$(dirname "$0")" && pwd)/ci-queue.sh" run "$wt" "$sha" --slug "$slug" --repo "$repo" || rc=$?
+"$here_ci" run "$wt" "$sha" --slug "$slug" --repo "$repo" || rc=$?
 case "$rc" in
-  0) echo "run-local-ci: pass ($short) → ~/.claude/.local-ci/$slug/$sha.result" ;;
-  1) echo "run-local-ci: fail ($short) → ~/.claude/.local-ci/$slug/$sha.result" ;;
+  0|1) echo "run-local-ci: $("$here_ci" result "$sha") ($short)" ;;   # dedup 이면 다른 슬러그일 수 있어 실경로를 큐에 묻는다
   2) echo "run-local-ci: 폐기 ($short) — 실행 시점 HEAD 가 달라 결과 없음. 현재 HEAD 로 다시 호출하라" >&2 ;;
   *) echo "run-local-ci: 큐 실행 실패 (exit $rc, $short)" >&2 ;;
 esac

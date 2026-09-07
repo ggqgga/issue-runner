@@ -5,6 +5,7 @@
 #   ci-queue.sh status [<SHA>]
 #   ci-queue.sh result <SHA>
 #   ci-queue.sh wait <SHA> [--timeout <sec>]
+#   ci-queue.sh forget <SHA>          — 결과 캐시 삭제(플레이크·인프라 실패 뒤 정당한 재실행 통로)
 #
 # 세 진입점(push 훅 local-ci.sh · 루프 run-local-ci.sh · 세션 직접)이 전부 이걸 거쳐
 # `bin/ci` 를 **박스 전체에서 한 번에 하나만** 돌린다. 워크트리·레포 무관.
@@ -33,10 +34,15 @@ RUNNING="$QDIR/.running"
 POLL="${CI_QUEUE_POLL:-10}"
 
 usage() {
-  printf 'usage: ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo <owner/repo>]\n       ci-queue.sh status [<SHA>]\n       ci-queue.sh result <SHA>\n       ci-queue.sh wait <SHA> [--timeout <sec>]\n' >&2
+  printf 'usage: ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo <owner/repo>]\n       ci-queue.sh status [<SHA>]\n       ci-queue.sh result <SHA>\n       ci-queue.sh wait <SHA> [--timeout <sec>]\n       ci-queue.sh forget <SHA>\n' >&2
   exit 64
 }
-log() { printf 'ci-queue: %s\n' "$*" >&2; }
+# 로그 — stderr 와 함께 $CACHE/queue.log 에 append(훅이 nohup 으로 띄운 잡의 stderr 는 버려지므로,
+# bin/ci 에 도달하기 전에 끝나는 경로(폐기·ROOT 부재·dedup 대기 실패)도 여기엔 남는다).
+log() {
+  printf 'ci-queue: %s\n' "$*" >&2
+  printf '%s pid=%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$$" "$*" >> "$CACHE/queue.log" 2>/dev/null
+}
 slug_of() { printf '%s' "$1" | sed 's#[/ ]#_#g; s#^_##'; }
 alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
 
@@ -45,12 +51,20 @@ ticket_pid() { local p="${1#*.}"; printf '%s' "${p%%.*}"; }
 ticket_sha() { printf '%s' "${1##*.}"; }
 ticket_slug() { local v; v=$(sed -n 's/^slug=//p' "$QDIR/$1" 2>/dev/null); printf '%s' "$v"; }
 
-# 유령 회수 — pid 가 죽은 티켓, pid 가 죽은(또는 pid 없이 2분 넘은) .running
+# 유령 회수 — pid 가 죽은 티켓, pid 가 죽은(또는 pid 없이 2분 넘은) .running.
+# 나이 백스톱(CI_QUEUE_TICKET_MAX_AGE, 기본 6h): 비정상 종료 뒤 pid 가 장수 프로세스에 재사용되면
+# kill -0 만으로는 영원히 "살아 있는" 티켓이 큐 머리를 막는다 — 정상 대기는 N×수분이라 6h 면 유령.
+MAX_AGE="${CI_QUEUE_TICKET_MAX_AGE:-21600}"
 reap() {
-  local t
+  local t name now
+  now=$(date +%s)
   for t in "$QDIR"/*; do
     [ -f "$t" ] || continue
-    alive "$(ticket_pid "${t##*/}")" || rm -f "$t"
+    name="${t##*/}"
+    if ! alive "$(ticket_pid "$name")" || [ $((now - ${name%%.*})) -gt "$MAX_AGE" ]; then
+      rm -f "$t"
+      [ "$name" = "${TICKET:-}" ] || log "유령 티켓 회수 $name"
+    fi
   done
   if [ -d "$RUNNING" ]; then
     if [ -f "$RUNNING/pid" ]; then
@@ -79,6 +93,17 @@ cmd_result() {
     return 0
   done
   echo none; return 1
+}
+
+# forget — 결과 캐시 삭제. 규약상 결과 파일을 손으로 지우지 않으므로 이게 재실행 통로다.
+cmd_forget() {
+  [ $# -ge 1 ] || usage
+  local r n=0
+  for r in "$CACHE"/*/"$1.result" "$CACHE"/*/"$1.log"; do
+    [ -f "$r" ] && { rm -f "$r"; n=$((n + 1)); }
+  done
+  log "${1:0:8} forget — 파일 ${n}개 삭제(다음 run/push 가 다시 돈다)"
+  return 0
 }
 
 # status — 한 루프로 전체를 찍고, <sha> 지정 시 그 줄만 골라 running / queued n / none 으로
@@ -191,17 +216,21 @@ cmd_run() {
   case "$rc" in
     0|1) log "$short 이미 검사됨"; return "$rc" ;;
     2) ;;
-    *) return "$rc" ;;
+    *) log "$short 같은 SHA 의 다른 잡을 기다리다 실패(exit $rc)"; return "$rc" ;;
   esac
 
   TICKET=$(printf '%010d.%d.%s' "$(date +%s)" "$$" "$SHA")
   printf 'slug=%s\n' "$SLUG" > "$QDIR/$TICKET"
+  CHILD=""
   cleanup() {
+    # INT/TERM: bin/ci 자식(서브셸과 그 손자)을 먼저 죽인다 — 부모만 죽고 실행권이 풀리면 다음 잡이
+    # 고아 bin/ci 와 겹쳐 돈다(큐가 막으려던 바로 그 동시 실행).
+    if [ -n "$CHILD" ] && alive "$CHILD"; then pkill -P "$CHILD" 2>/dev/null; kill "$CHILD" 2>/dev/null; fi
     rm -f "$QDIR/$TICKET"
     [ "$(cat "$RUNNING/pid" 2>/dev/null)" = "$$" ] && rm -rf "$RUNNING"
   }
   trap cleanup EXIT
-  trap 'cleanup; exit 130' INT TERM
+  trap 'log "$short 중단(INT/TERM)"; cleanup; exit 130' INT TERM
 
   local pos
   pos=$(cmd_status "$SHA"); pos="${pos#queued }"
@@ -212,7 +241,8 @@ cmd_run() {
   while :; do
     reap
     if [ "$(head_ticket)" = "$TICKET" ] && mkdir "$RUNNING" 2>/dev/null; then
-      echo "$$" > "$RUNNING/pid"
+      # pid 는 임시 파일 → mv 로 원자 기록(O_TRUNC 직후 빈 파일을 남의 reap 이 "죽음"으로 읽는 창 제거)
+      echo "$$" > "$RUNNING/pid.$$" && mv "$RUNNING/pid.$$" "$RUNNING/pid"
       printf '%s' "$TICKET" > "$RUNNING/ticket"
       break
     fi
@@ -222,17 +252,26 @@ cmd_run() {
   # 실행 직전 검사 — 큐가 push↔실행 간격을 늘리므로 "워킹트리 ≠ SHA" 를 여기서 닫는다
   if [ ! -d "$ROOT" ]; then log "$short ROOT 사라짐: $ROOT"; return 3; fi
   local head
-  head=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)
+  if ! head=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null) || [ -z "$head" ]; then
+    log "$short ROOT 에서 HEAD 를 읽지 못함(git 손상·잠금?): $ROOT"
+    post_status error "로컬 CI 실행 불가 — ROOT 에서 HEAD 를 읽지 못함"
+    return 3
+  fi
   if [ "$head" != "$SHA" ]; then
-    log "$short 폐기 — 실행 시점 HEAD 가 ${head:0:8} (새 push 가 자기 티켓을 냄)"
-    post_status pending "로컬 CI 폐기 — HEAD 가 이동함(새 push 의 결과를 보라)"
+    # 새 push 가 자기 티켓을 냈거나, push 뒤 로컬에서만 커밋/amend 한 경우(그땐 PR head 가 여전히 이
+    # SHA 인데 결과가 안 생긴다 — 다시 push 하거나 그 커밋을 체크아웃하고 run). 어느 쪽인지 여기선 모른다.
+    log "$short 폐기 — 실행 시점 HEAD 가 ${head:0:8} ≠ $short (새 push 가 있었거나 로컬 HEAD 만 움직임)"
+    post_status error "로컬 CI 폐기 — 실행 시점 HEAD ≠ $short (다시 push 하거나 ci-queue.sh run)"
     return 2
   fi
 
   post_status pending "bin/ci 실행 중 (로컬)"
   local start verdict dur
   start=$SECONDS
-  if (cd "$ROOT" && bin/ci) >"$out/$SHA.log" 2>&1; then verdict=pass; else verdict=fail; fi
+  (cd "$ROOT" && exec bin/ci) >"$out/$SHA.log" 2>&1 &
+  CHILD=$!
+  if wait "$CHILD"; then verdict=pass; else verdict=fail; fi
+  CHILD=""
   dur=$(( SECONDS - start ))
   printf '%s\n' "$verdict" > "$RESULT"
   if [ "$verdict" = pass ]; then
@@ -258,5 +297,6 @@ case "$1" in
   status) shift; cmd_status "$@" ;;
   result) shift; cmd_result "$@" ;;
   wait)   shift; cmd_wait "$@" ;;
+  forget) shift; cmd_forget "$@" ;;
   *)      usage ;;
 esac

@@ -216,6 +216,47 @@ rc=0; "$SUT" wait "$S11" --timeout 1 >/dev/null 2>&1 || rc=$?
 assert_eq "wait 타임아웃 exit" "$rc" 124
 wait $p11
 
+echo "[ci-queue] 11b) forget — 결과 캐시를 지우면 같은 SHA 가 다시 돈다 · queue.log 에 흔적"
+: > "$CI_LOG"
+rc=0; "$SUT" forget "$S1" >/dev/null 2>&1 || rc=$?
+assert_eq "forget exit" "$rc" 0
+assert_nofile "forget result 삭제" "$HOME/.claude/.local-ci/$SL1/$S1.result"
+rc=0; "$SUT" run "$R1" "$S1" >/dev/null 2>&1 || rc=$?
+assert_eq "forget 뒤 재실행" "$(grep -c 'start r1' "$CI_LOG")" 1
+grep -q "forget" "$HOME/.claude/.local-ci/queue.log" && ok || bad "queue.log 에 forget 기록 없음"
+
+echo "[ci-queue] 11c) 나이 백스톱 — pid 가 살아 있어도 MAX_AGE 넘은 티켓은 유령으로 회수"
+R12=$(make_repo r12); S12=$(head_of "$R12")
+sleep 300 & longlived=$!
+old="$QDIR/0000000001.$longlived.$(fake_sha e)"; printf 'slug=x\n' > "$old"
+rc=0; CI_QUEUE_TICKET_MAX_AGE=60 "$SUT" run "$R12" "$S12" >/dev/null 2>&1 || rc=$?
+assert_eq "나이 백스톱 뒤 실행" "$rc" 0
+assert_nofile "늙은 티켓 회수" "$old"
+kill $longlived 2>/dev/null; wait $longlived 2>/dev/null
+
+echo "[ci-queue] 11d) TERM — 실행 중 잡을 죽이면 bin/ci 자식도 죽고 실행권·티켓이 풀린다"
+R13=$(make_repo r13); S13=$(head_of "$R13")
+CI_SLEEP=20 "$SUT" run "$R13" "$S13" >/dev/null 2>&1 &
+p13=$!
+wait_status "$S13" running
+kill -TERM $p13; wait $p13 2>/dev/null
+sleep 0.5
+assert_eq "TERM 뒤 큐 비움" "$(ls -A "$QDIR" 2>/dev/null | wc -l | tr -d ' ')" 0
+[ -z "$(pgrep -f "sleep 20" 2>/dev/null)" ] && ok || bad "TERM 뒤 bin/ci 자식(sleep 20)이 살아 있다"
+assert_nofile "TERM 뒤 result 없음" "$HOME/.claude/.local-ci/$(slug_of "$R13")/$S13.result"
+
+echo "[ci-queue] 11e) ROOT 가 git 이 아니면(HEAD 못 읽음) exit 3, 폐기(2)와 구분"
+mkdir -p "$TMP/notgit/bin"; printf '#!/bin/sh\nexit 0\n' > "$TMP/notgit/bin/ci"; chmod +x "$TMP/notgit/bin/ci"
+rc=0; "$SUT" run "$TMP/notgit" "$(fake_sha f)" >/dev/null 2>&1 || rc=$?
+assert_eq "HEAD 못 읽음 exit" "$rc" 3
+assert_eq "status error 게시(폐기 아님)" "$(grep -c "statuses/$(fake_sha f) .*state=error" "$GH_LOG")" 1
+
+echo "[local-ci.sh] 11f) 훅 — 선두 cd 경로가 디렉터리가 아니면 세션에 경고를 덧붙인다"
+hook_out=$(printf '{"cwd":"%s","tool_input":{"command":"cd $WT && git push"}}' "$H1" | bash "$HOOK" 2>/dev/null)
+ctx=$(printf '%s' "$hook_out" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null)
+case "$ctx" in *"해석하지 못해"*) ok ;; *) bad "훅 cd 미해석 경고 없음: $ctx" ;; esac
+sleep 1   # 위 훅이 H1 HEAD(이미 result 있음)를 dedup 으로 끝내길 기다림
+
 echo "[ci-gate] 12) 게이트 — 다른 슬러그의 result 도 SHA 로 찾고, 결과 없음은 실행 중/대기열/없음으로 안내"
 GATE="$DIR/../hooks/ci-gate-before-pr-merge.sh"
 G=$(make_repo g1); GSHA=$(head_of "$G")

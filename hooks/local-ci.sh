@@ -32,6 +32,8 @@ printf '%s' "$cmd" \
   || exit 0
 
 [ -n "$base" ] && [ -d "$base" ] || base=$PWD
+note=""   # 세션에 덧붙일 경고(선두 cd 해석 실패 등)
+ctx() { printf '%s' "$1" | jq -Rs '{ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: . } }'; }
 
 # 선두 `cd <경로> &&|;` — 그 경로로 옮긴다(따옴표 벗김·~ 전개·상대경로는 base 기준)
 lead=$(printf '%s' "$cmd" \
@@ -42,7 +44,8 @@ if [ -n "$lead" ]; then
     /*) ;;
     *) lead="$base/$lead" ;;
   esac
-  [ -d "$lead" ] && base=$lead
+  if [ -d "$lead" ]; then base=$lead
+  else note="⚠️ 선두 cd 경로($lead)를 디렉터리로 해석하지 못해 세션 cwd($base) 기준으로 잡았습니다 — 워크트리 push 였다면 그 워크트리에서 \`ci-queue.sh run <ROOT> <SHA>\` 로 직접 넣으세요. "; fi
 fi
 
 # repo 루트 — git repo 아니면 no-op · opt-in 가드 — 실행 가능한 bin/ci 를 가진 레포만
@@ -62,7 +65,8 @@ for cand in "${ISSUE_RUNNER_SCRIPTS:-}" "$(cd "$(dirname "$src")/.." && pwd)/scr
   [ -n "$cand" ] && [ -x "$cand/ci-queue.sh" ] && { Q="$cand/ci-queue.sh"; break; }
 done
 if [ -z "$Q" ]; then
-  printf '로컬 CI: ci-queue.sh 를 찾지 못해 %s 를 큐에 넣지 못했습니다 (issue-runner 설치 확인)\n' "${SHA:0:8}" >&2
+  # exit 0 의 stderr 는 세션에 안 보인다 — 실패도 additionalContext 로 알린다(머지 게이트에서야 아는 일 방지)
+  ctx "❌ 로컬 CI: scripts/ci-queue.sh 를 찾지 못해 ${SHA:0:8} 를 큐에 넣지 못했습니다(issue-runner 설치·심링크 확인, ISSUE_RUNNER_SCRIPTS 로 지정 가능). 이 커밋은 CI 결과가 없어 머지 게이트에 막힙니다."
   exit 0
 fi
 
@@ -72,7 +76,5 @@ disown 2>/dev/null
 
 # 세션에 직접 알린다(additionalContext) — 결과를 기다리는 표준 통로는 `wait` 를 백그라운드
 # Bash 로 띄우는 것. 끝나면 명령이 종료되고 Claude Code 가 세션을 깨운다 — sleep 폴링 금지.
-printf '로컬 CI 큐 등록: %s (현재 큐: %s — 박스 전체 직렬, 다른 세션·워크트리 포함). 결과 대기는 지금 이 명령을 Bash run_in_background=true 로 실행하세요: %s wait %s  — pass/fail/폐기가 정해지면 명령이 끝나고 세션이 자동으로 깨어납니다(종료 코드 0=pass·1=fail·2=큐에 없음·124=타임아웃). sleep 폴링·bin/ci 직접 실행 금지. 머지는 게이트가 판정.' \
-  "${SHA:0:8}" "$("$Q" status | tr '\n' ';')" "$Q" "$SHA" \
-  | jq -Rs '{ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: . } }'
+ctx "${note}로컬 CI 큐 등록: ${SHA:0:8} (ROOT $ROOT — 박스 전체 직렬, 다른 세션·워크트리 포함). 결과 대기는 지금 이 명령을 Bash run_in_background=true 로 실행하세요: $Q wait $SHA  — pass/fail/폐기가 정해지면 명령이 끝나고 세션이 자동으로 깨어납니다(종료 코드 0=pass·1=fail·2=큐에 없음·124=타임아웃). sleep 폴링·bin/ci 직접 실행 금지. 머지는 게이트가 판정."
 exit 0
