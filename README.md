@@ -147,6 +147,8 @@ Verification (headless-Chrome E2E + an external codex CLI) is *slow*. It used to
 
 </details>
 
+So the three loops never move a label out of step, every label move goes through one place — `scripts/transition.sh`. `transition.sh <transition> <owner/repo> <issue|-> <pr|->` moves the PR and its linked issue in a single call (the transition table at the top of that file is the SSOT), then re-reads the labels and surfaces a mismatch as exit 1 (or exit 2 when gh itself fails). And "what is stuck right now" is printed by `scripts/loop-status.sh` — a pure-read snapshot (zero writes) over labels and PR state that lists, per repo, the deploy-waiting / human-waiting / closing / close-waiting / verify-waiting / implementing / waiting buckets plus in-window failures, spinoffs, and promotion backlog, along with invariant warns (unowned PR · duplicate stage labels · mirror mismatch · stranded). The three loops paste its output at the end of their ④ Report, and you can run it by hand — with no arguments from a loop session cwd (the one holding `.loop/repos`), or `scripts/loop-status.sh --repo owner/repo` otherwise.
+
 ## Shipping — main, release & the deploy gate
 
 The loops are autonomous up to `main`, and **stop there**. Merging to `main` is *not* shipping. Production tracks a separate pointer branch (conventionally `release`), and only a human advances it — so `main` moving forward never means "live."
@@ -231,6 +233,8 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 | `agent:claimed` | The dispatcher owns it. **Do not add/remove by hand** — the loop manages the lifecycle |
 | `P0` / `P1` / `P2` | Priority (highest → low). Missing = lowest |
 | `blocked-by:<N>` / `Blocked by #N` | Dependency. Either the label or a dedicated body line; a blocker that is still OPEN keeps the issue out of dispatch. `<N>` is an **issue** number, and the gate auto-clears when the blocker closes |
+| `spinoff` | Provenance mark for an issue filed by closeout step 6. `loop-status.sh`'s spinoff tally counts by this label alone |
+| `deploy-wait` | A deploy-pending issue created by closeout step 4. The bucket label `loop-status.sh` uses to separate deploy-waiting from human-waiting (attached alongside `needs-human`) |
 
 Eligibility: `open + agent-ready + ¬agent:claimed + all blockers CLOSED`. Sort: `P0 > P1 > P2 > none`, ties oldest-first.
 
