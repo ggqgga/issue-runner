@@ -819,6 +819,9 @@ bash scripts/tests/codex-review-gate.test.sh
 echo "[test] reconcile.sh 재claim 필터 fail-closed·스윕 차단·gh-login 순차 폴백 (#131)"
 bash scripts/tests/reconcile.test.sh
 
+echo "[test] transition.sh 전이 집합·readback 검증·라벨 보강 (#144)"
+bash scripts/tests/transition.test.sh
+
 echo "[#88] 완결 유실 재파생 배선 검사 — 한/영 SKILL 동기"
 # STALE_FINISH_MIN 상수 + finish-classify.sh 분기 + 4b 인라인 대리 판정 배선이
 # 한/영 SKILL 양쪽에 있어야 한다(완결 유실 갭 자가 재파생 — 규칙4 분리).
