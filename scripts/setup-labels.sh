@@ -42,6 +42,23 @@ gh label create "spinoff" --repo "$repo" --color BFDADC \
 gh label create "deploy-wait" --repo "$repo" --color 1D76DB \
   --description "closeout 4단계 배포 대기 이슈 (needs-human 과 병행 — 사람대기와 구분용)" --force
 
+# 사람 대기 사유 (#147) — `needs-human` 은 사유 없는 쓰레기통이었다. 전이(verify-held·
+# closeout-blocked)가 `needs-human` 과 함께 `hold:<사유>` 를 붙여 목록 조회 한 번에
+# 분류가 보이게 한다(코멘트 마커가 아니라 라벨 — 상태 = 라벨의 존재).
+# `hold:dup`·`hold:hardware` 는 일부러 만들지 않는다 — dup 은 closeout-dup 이 닫고
+# hardware 는 사다리를 오른다(#147). 라벨 부재로 금지를 강제한다.
+gh label create "hold:conflict" --repo "$repo" --color E4A11B \
+  --description "사람 대기 사유 — rebase/semantic conflict, 사람 판단" --force
+gh label create "hold:policy" --repo "$repo" --color 8B5CF6 \
+  --description "사람 대기 사유 — 스펙·정책 결정 필요" --force
+gh label create "hold:ladder" --repo "$repo" --color 60A5FA \
+  --description "사람 대기 사유 — 검증 사다리 ①~③ 전부 실패(출력 인용 필수), 재개 스윕 대상" --force
+
+# closeout-dup(#147) — 이슈가 요구한 수정이 이미 main 에 있어 머지 없이 닫은 PR.
+# loop-status 의 `실패` 줄이 이 라벨로 "중복 종료" 를 가른다(코멘트 마커 대신 라벨).
+gh label create "dup" --repo "$repo" --color CFD3D7 \
+  --description "closeout-dup 으로 머지 없이 닫힌 PR(중복/이미 반영)" --force
+
 # 머지된 head 브랜치 자동 삭제 — reconcile 이 로컬만 정리하므로 원격은 GitHub 가 맡는다
 gh repo edit "$repo" --delete-branch-on-merge
 
