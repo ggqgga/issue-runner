@@ -164,8 +164,13 @@ passes — `hold:conflict` and `hold:policy` are human decisions and are left al
   recorded vs. the cap — read as `2/2`). The script already applied the label, so with
   **no further action** list it under `escalated` in ④ Report for a human to see.
 - `warn` — a `needs-human` with no reason label (`hold:*` — a human may have attached it by
-  hand, so it is not an auto-resume target), a race against human edits, or an edit/readback
-  failure. **Do not touch it** — copy it verbatim into ④ Report's warns.
+  hand, so it is not an auto-resume target), a race against human edits, or a failure
+  **before** any edit. The script did **not** touch it — **do not touch it either**; copy it
+  verbatim into ④ Report's warns.
+- `warn_after_edit` — a side failure **after** the labels were already applied (comment
+  failure · escalate/resume readback lookup failure or mismatch · label-release failure). The
+  resume/escalation itself may have happened, so do not revert; copy it into ④ Report's warns
+  tagged `(edit applied)` — next tick's loop-status shows the actual label state.
 - `waiting` — still inside the window. Pass over it quietly (no reporting needed).
 - exit 2 — the `needs-human` listing failed for some repos (the rest were processed
   normally). Leave one warn line `resume-sweep 부분 실패(레포 조회)` in ④ Report.
