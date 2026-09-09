@@ -207,11 +207,13 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 2. 최종 그린라이트:
    `gh pr comment <pr> --repo <repo> --body "머지 판정: ✅ 머지 가능 — 결정적 CI pass · E2E <pass 또는 '해당 없음'> · 검증자 <CLEAN 또는 'BLOCKER 0 / WARN n'> · 미해결 없음
 <!-- bodat:worker -->"`
-3. 라벨 인계: `gh issue edit <pr> --repo <repo> --add-label flow:ready --remove-label flow:verify`
-   → closeout `closeout-eligible.sh` 가 `머지 판정: ✅` 로 이 PR 을 집어 마감한다
-   (**closeout 계약 무변경** — 기존 ✅ 마커 재사용).
-   **원 이슈 미러**(연결 이슈 있으면): `gh issue edit <issue> --repo <repo> --add-label flow:ready --remove-label flow:verify`
-   — 이슈 리스트만 봐도 단계(검증→마감)가 보이게. **success 종료.**
+3. 라벨 인계: `$SCRIPTS/transition.sh verify-pass <repo> <issue|-> <pr>` — PR 과 원 이슈를
+   한 호출로 옮긴다(전이 표 SSOT = `transition.sh` 상단 주석). **closeout 계약 무변경**
+   (기존 `머지 판정: ✅` 마커 재사용 — `closeout-eligible.sh` 가 그걸로 집는다) + 이슈
+   리스트만 봐도 단계(검증→마감)가 보인다. **success 종료.**
+   - **exit 1(readback 불일치)·2(gh 실패)면 이 PR 의 종료 상태를 바꾸지 마라** — ④ Report 에
+     `BLOCKED: 전이 실패 verify-pass PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
+     라벨이 반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적이다(조용히 넘어가지 않는다).
 
 **redispatched** — E2E 진짜 실패 / codex BLOCKER(검증자 데드라인 초과 포함) / 결정적 CI 실패:
 1. `<!-- verify-attempt: N -->` 를 PR 본문에서 읽어(없으면 0) N+1 이 `VERIFY_ATTEMPTS_LIMIT`
@@ -222,9 +224,10 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    **이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지 않는다**
    (/loop 스팸 방지). PR 본문 주석을 `<!-- verify-attempt: N+1 -->` 로 갱신
    (`gh pr edit <pr> --repo <repo> --body ...` — 나머지 본문 보존).
-3. 라벨·반송: `gh issue edit <pr> --repo <repo> --remove-label flow:verify` +
-   연결 이슈에 `gh issue edit <issue> --repo <repo> --add-label agent-ready --remove-label flow:verify --remove-label agent:claimed`
-   (원 이슈 미러도 함께 원복 — 워커가 이슈에 단 `flow:verify` 를 떼고 `agent-ready` 로 되돌린다).
+3. 라벨·반송: `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr>` — PR 의
+   `flow:verify` 를 떼고 원 이슈를 `agent-ready`(+`flow:verify`·`agent:claimed` 제거)로 되돌린다.
+   **exit 1·2 면 종료 상태를 바꾸지 말고** ④ Report 에
+   `BLOCKED: 전이 실패 verify-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>`.
    → issue-runner Dispatch 가 기존 `agent/issue-<issue>` worktree/브랜치를 재사용해
    같은 PR 브랜치에서 워커를 다시 붙인다(새 PR 안 생김). 워커는 위 `재검증 실패:`
    코멘트를 읽고 고친 뒤 다시 `flow:verify` 로 넘긴다(worker-template 절차). **redispatched 종료.**
@@ -232,8 +235,10 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 
 **held** — 재디스패치 상한 초과(VERIFY_ATTEMPTS_LIMIT) 또는 연결 이슈 부재:
 `gh pr comment <pr> --repo <repo> --body "검증 보류: <사유> — 사람 확인 필요
-<!-- bodat:worker -->"` + `gh issue edit <pr> --repo <repo> --remove-label flow:verify` +
-(연결 이슈 있으면) `gh issue edit <issue> --repo <repo> --add-label needs-human --remove-label flow:verify`. **held 종료.**
+<!-- bodat:worker -->"` + `$SCRIPTS/transition.sh verify-held <repo> <issue|-> <pr>`
+(PR 의 `flow:verify` 제거 + 연결 이슈가 있으면 `needs-human` 부착). **held 종료.**
+**exit 1·2 면 종료 상태를 바꾸지 말고** ④ Report 에
+`BLOCKED: 전이 실패 verify-held PR #<pr>(<repo_short>) — <stderr 한 줄>`.
 
 **flake_retry** — 검증을 아예 못 돌린 일시 장애(worktree fetch 실패·make-worktree 오류
 등, 판정 아님): `flow:verify` 를 **그대로 두고** ④ Report 에 warn 으로 올린다 → 다음
@@ -257,8 +262,23 @@ flow:verify 소멸). 같은 PR 이 두 번 집히면(flake_retry 반복 등) 그
 ## ④ Report
 
 드레인이 끝나면 이 틱 처리분을 합산해 한 줄: `검증통과 N · 재디스패치 N · 보류 N · 재시도 N · warn N`.
-warn(flake_retry·동봉 실패 등)이 있으면 경로·사유를 아래 나열. 모든 카운트 0이면
+
+그 아래 **항목마다 번호를 적는다** — 숫자만으론 어느 PR 이 어디로 갔는지 다음 틱이 못 읽는다:
+`검증통과: PR #4790(bodat)←#4780 · 재디스패치: PR #4792(bodat)←#4783 (사유 8자 이내)`.
+`←` 뒤는 연결 이슈(없으면 생략). 레포 짧은 이름 규칙은 `loop-status.sh` 와 같다
+(`owner/repo` 의 repo 를 소문자로 — bodat·bodac, `issue-runner` 만 `runner` 특례).
+warn(flake_retry·동봉 실패·전이 실패 등)이 있으면 경로·사유를 아래 나열. 모든 카운트 0이면
 "조용함" 한 줄. 조용해도 ①② 는 다음 틱에도 그대로 수행한다(새 flow:verify PR 을 놓치지 않게).
+
+**파이프라인 스냅샷 (매 틱 필수).** 위 줄들 뒤에 `$SCRIPTS/loop-status.sh` 를 실행해
+출력을 **그대로** 붙인다 — 카운터는 "이 틱에 한 일"만 말하고 무엇이 쌓여 있는지는
+이 블록만 본다. `cd` 없이 부른다(스코프는 루프 세션 cwd 의 `.loop/repos` 를 자동 적용).
+**카운트가 전부 0인 조용한 틱에도 붙인다** — 스냅샷은 "놀고 있는 것"을 보는 유일한 창이다.
+- exit 1(부분 실패 — 일부 레포 조회 실패)이면 그 출력을 그대로 붙이고 warn 에
+  `loop-status 부분 실패` 한 줄을 더한다.
+- exit 64(스코프 없음 — 계정 전체 세션이라 `.loop/repos` 가 없음)면 이 틱에 만진
+  레포들을 `--repo <owner/repo>` 로 명시해 한 번 더 부르고, 그래도 없으면 warn 에
+  `loop-status: 스코프 없음(.loop/repos 부재)` 한 줄.
 
 ## 참고 자료
 
@@ -275,5 +295,5 @@ warn(flake_retry·동봉 실패 등)이 있으면 경로·사유를 아래 나�
 - 운용: issue-runner·closeout 와 별도의 `/loop` 세션(예 `/loop 10m /verify-runner`).
 - 의존: 결정적 헬퍼는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)의
   `verify-eligible.sh`·`closeout-ci-pass.sh`·`run-local-ci.sh`·`make-worktree.sh`·
-  `repo-dir.sh`, 검증자 프롬프트는 `skills/verify-runner/references/verify-prompt.md`.
+  `repo-dir.sh`·`transition.sh`(라벨 이동)·`loop-status.sh`(④ Report 스냅샷), 검증자 프롬프트는 `skills/verify-runner/references/verify-prompt.md`.
   보조 리뷰어는 `pr-review-toolkit@claude-plugins-official` 플러그인(미설치면 3-b 는 자동 skip).

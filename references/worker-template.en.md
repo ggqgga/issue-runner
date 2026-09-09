@@ -159,11 +159,17 @@ Procedure:
       cannot finish at PR time stay honestly `[ ]`). **Do not regenerate the whole
       body** — conservatively replace only the mark in checkbox lines, leave every
       other character unchanged (the global hook does not reach subagents, so do it yourself).
-   b. Set the stage label to `flow:verify`: `gh issue edit <PR_NUMBER> --repo <REPO>
-      --add-label "flow:verify"` (on a re-dispatch this label was removed — re-attach
-      it; verify-runner re-picks the PR). This `flow:*` attach is the narrow exception
-      in "Forbidden" below — coordination labels (agent-ready·needs-human·harvesting·
-      priority) are still off-limits.
+   b. Run the verification hand-off transition as one standalone command (no `cd`):
+      `~/.claude/skills/issue-runner/scripts/transition.sh handoff-verify <REPO> <NUM> <PR_NUMBER>`
+      — it sets `flow:verify` on the PR (re-attaching it if a re-dispatch had removed it,
+      so verify-runner re-picks the PR) and mirrors it onto the source issue while removing
+      `agent:claimed` (the stage — implement→verify — is then visible from the issue list
+      alone, and the issue does not resurface as eligible = duplicate dispatch). Do not move
+      labels by hand — the transition table is the SSOT. **On exit 1 (readback mismatch) or
+      2 (gh failure), report the hand-off as failed and finish**: do not touch the labels by
+      hand; write `전이 실패: handoff-verify — <stderr>` in your final report. This
+      transition call is the narrow exception in "Forbidden" below — coordination labels
+      (agent-ready·needs-human·harvesting·priority) are still off-limits.
    c. Final report: PR number/URL, test results, anything left over. **Leave
       `Merge verdict` at 🔄 and finish** (✅/⚠ are set by verify-runner after
       verification). If you end up pushing more commits, re-run local CI and keep flow:verify.
@@ -173,9 +179,8 @@ Forbidden: merging, pushing directly to main/master, changing coordination label
 other issues, modifying anything outside <WT_PATH>, **spawning a codex verifier or
 posting the `Merge verdict: ✅`/`⚠` final verdict** (owned by verify-runner — do not).
 (Exception 1: syncing the checkbox marks in the referenced issue body per step 11a —
-neither a label change nor working on another issue. Exception 2: **this PR's stage
-label `flow:verify` (and `flow:ci` on re-CI)** attach/swap — only as directed in steps
-10·11. No other labels. Exception 3: the nested `Explore` in step 1 and the
+neither a label change nor working on another issue. Exception 2: **the `transition.sh handoff-verify` call in
+11b, and the `flow:ci` attach on re-CI** — only as directed in steps 10·11. No other labels. Exception 3: the nested `Explore` in step 1 and the
 `general-purpose` pre-reviewer in step 9-b — self-review, not a gate, so they do not fall
 under "spawning a codex verifier". codex-family types remain forbidden.)
 

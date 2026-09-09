@@ -145,13 +145,16 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
       항목은 정직하게 `[ ]`). **본문 전체 재생성 금지** — 체크박스 마크만 보수적으로
       치환하고 나머지 텍스트는 한 글자도 바꾸지 마라(글로벌 훅이 서브에이전트엔 안 닿아
       직접 한다).
-   b. 단계 라벨을 `flow:verify` 로 세워라: `gh issue edit <PR번호> --repo <REPO>
-      --add-label "flow:verify"` (재디스패치로 이 라벨이 떼여 있었으면 재부착 —
-      verify-runner 가 이 PR 을 다시 집는다). **원 이슈에도 미러링**: `gh issue edit <NUM>
-      --repo <REPO> --add-label "flow:verify" --remove-label "agent:claimed"` — 이슈 리스트만
-      봐도 단계(구현→검증)가 보이고 eligible 재출현(중복 디스패치)을 막는다. 이 `flow:*`
-      부착은 아래 "금지"의 좁은 예외다 — 그 외 코디네이션 라벨(agent-ready·needs-human·
-      harvesting·우선순위)은 여전히 건드리지 마라.
+   b. 검증 인계 전이를 한 줄로 걸어라 (cd 없이 단독 명령):
+      `~/.claude/skills/issue-runner/scripts/transition.sh handoff-verify <REPO> <NUM> <PR번호>`
+      — PR 에 `flow:verify` 를 세우고(재디스패치로 떼여 있었으면 재부착 — verify-runner 가
+      이 PR 을 다시 집는다) 원 이슈에도 미러링하며 `agent:claimed` 를 뗀다(이슈 리스트만
+      봐도 단계(구현→검증)가 보이고 eligible 재출현=중복 디스패치를 막는다). 라벨을 손으로
+      만들지 마라 — 전이 표가 SSOT 다. **exit 1(readback 불일치)·2(gh 실패)면 인계를 실패로
+      보고하고 종료**한다: 라벨을 손으로 다시 만지지 말고 종료 보고에
+      `전이 실패: handoff-verify — <stderr>` 를 적어라. 이 전이 호출은 아래 "금지"의 좁은
+      예외다 — 그 외 코디네이션 라벨(agent-ready·needs-human·harvesting·우선순위)은
+      여전히 건드리지 마라.
    c. 종료 보고: PR 번호/URL, 테스트 결과, `사전 리뷰: <값>`(9-b), 남은 사항. **`머지 판정`은 🔄 그대로 두고
       종료**한다(✅/⚠ 는 verify-runner 가 검증 후 찍는다). 이후 추가 커밋을 push 하게
       되면 로컬 CI 를 재실행하고 flow:verify 를 유지하라.
@@ -160,8 +163,8 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 needs-human·harvesting·우선순위·area 등) 변경, 다른 이슈 작업, <WT_PATH> 밖 수정,
 **codex 검증자 스폰·`머지 판정: ✅`/`⚠` 최종판정**(verify-runner 소유 — 하지 마라).
 (예외 1: 11a 의 참조 이슈 본문 체크박스 마크 동기화 — 라벨 변경도, 다른 이슈 작업도
-아니다. 예외 2: **이 PR 의 단계 표시 라벨 `flow:verify`(및 재-CI 시 `flow:ci`)** 부착·
-교체 — 10·11단계에서 지시한 대로만. 이 둘 외의 라벨은 여전히 손대지 마라.
+아니다. 예외 2: **11b 의 `transition.sh handoff-verify` 호출과 재-CI 시의 `flow:ci`
+부착** — 10·11단계에서 지시한 대로만. 이 둘 외의 라벨은 여전히 손대지 마라.
 예외 3: 1단계의 `Explore` 탐색 중첩과 9-b 의 `general-purpose` 사전 리뷰어 — 게이트가 아닌
 자기 검토라 "codex 검증자 스폰" 금지에 걸리지 않는다. codex 계열 타입은 여전히 금지.)
 
