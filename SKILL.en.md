@@ -252,6 +252,11 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
 ## ④ Report
 
 One-line summary: `reconciled N · maintained N · new N · waiting(human review) N · warn N`.
+Below it, **name the numbers item by item** — counts alone do not tell the next tick where
+each issue/PR went:
+`reconciled: #4801(bodat, PR #4810 merged) · maintained: PR #4812(bodat, rebase) · new: #4818(bodat) · warn: #4799(bodat) dirty worktree`.
+The repo short-name rule is the same as `loop-status.sh`'s (the repo part of `owner/repo`
+lowercased — bodat·bodac; `issue-runner` alone maps to `runner`).
 If there are warns, list the paths and reasons below it.
 **Token observation (soft budget)**: if any worker delivered a completion report, add
 one line per issue — `tokens: <repo>#<num> <this report's count> (cumulative <sum>)`.
@@ -260,6 +265,17 @@ cumulative = the same issue's `tokens:` figures from previous tick Reports visib
 context + this count (none visible → just this count). If it exceeds `SOFT_TOKEN_BUDGET_PER_ISSUE`,
 state **"soft budget exceeded — recommend escalating to needs-human"** on that line (report only — never auto-label or stop workers).
 If every count is 0, output the single line "quiet".
+
+**Pipeline snapshot (required every tick).** After the lines above, run
+`$SCRIPTS/loop-status.sh` and paste its output **verbatim** — the counters only say "what
+this tick did"; what is piled up is visible only in this block. Call it with no `cd` (the
+scope auto-applies from the loop session cwd's `.loop/repos`). **Paste it even on a quiet
+tick where every count is 0** — the snapshot is the only window onto what is idling.
+- On exit 1 (partial failure — some repos failed to query), paste the output as-is and add
+  one warn line `loop-status 부분 실패`.
+- On exit 64 (no scope — an account-wide session with no `.loop/repos`), call it once more
+  naming the repos touched this tick with `--repo <owner/repo>`; if there are none, leave one
+  warn line `loop-status: 스코프 없음(.loop/repos 부재)`.
 Even on a quiet tick, **run the eligible scan of ③ Dispatch (eligible-issues.sh)
 every tick** — new agent-ready issues create no reconcile events, so skipping the
 eligible scan makes quiet mode permanently blind to new candidates (on an empty

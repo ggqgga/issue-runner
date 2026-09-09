@@ -819,6 +819,12 @@ bash scripts/tests/codex-review-gate.test.sh
 echo "[test] reconcile.sh 재claim 필터 fail-closed·스윕 차단·gh-login 순차 폴백 (#131)"
 bash scripts/tests/reconcile.test.sh
 
+echo "[test] transition.sh 전이 집합·readback 검증·라벨 보강 (#144)"
+bash scripts/tests/transition.test.sh
+
+echo "[test] loop-status.sh 파이프라인 스냅샷 버킷·창 필터·warn·부분 실패 (#144)"
+bash scripts/tests/loop-status.test.sh
+
 echo "[#88] 완결 유실 재파생 배선 검사 — 한/영 SKILL 동기"
 # STALE_FINISH_MIN 상수 + finish-classify.sh 분기 + 4b 인라인 대리 판정 배선이
 # 한/영 SKILL 양쪽에 있어야 한다(완결 유실 갭 자가 재파생 — 규칙4 분리).
@@ -1193,5 +1199,51 @@ grep -qF '예외 3' references/worker-template.md || { echo "  ✗ KO 템플릿 
 grep -qF 'Exception 3' references/worker-template.en.md || { echo "  ✗ EN 템플릿 Exception 3 없음"; exit 1; }
 grep -qE '\*\*10분\*\*' references/worker-template.md || { echo "  ✗ KO 템플릿 fail-open 10분 표기 없음"; exit 1; }
 grep -qE '\*\*10 minutes\*\*' references/worker-template.en.md || { echo "  ✗ EN 템플릿 fail-open 10 minutes 표기 없음"; exit 1; }
+
+echo "[#144] 전이·스냅샷 스크립트 배선 문서화 검사 — 세 루프 SKILL + 워커 템플릿"
+# 루프 문서가 산문 `gh issue edit` 대신 scripts/transition.sh(전이 표 SSOT)를 부르고,
+# ④ Report 가 scripts/loop-status.sh 스냅샷을 붙이는지. 배선이 빠지면 라벨이 한쪽만
+# 옮겨져 PR·이슈가 갈리고(다음 틱이 어긋난 쪽을 진실로 읽는다), 재고가 아무 보고에도
+# 안 나온다.
+for tok in 'transition.sh verify-pass' 'transition.sh verify-redispatch' \
+           'transition.sh verify-held' 'loop-status.sh'; do
+  grep -qF -- "$tok" skills/verify-runner/SKILL.md \
+    || { echo "  ✗ skills/verify-runner/SKILL.md 에 '$tok' 배선 없음"; exit 1; }
+done
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  for tok in 'transition.sh closeout-pick' 'transition.sh closeout-blocked' \
+             'loop-status.sh' '--label spinoff' '--label deploy-wait'; do
+    grep -qF -- "$tok" "$f" || { echo "  ✗ $f 에 '$tok' 배선 없음"; exit 1; }
+  done
+done
+for f in SKILL.md SKILL.en.md; do
+  grep -qF -- 'loop-status.sh' "$f" || { echo "  ✗ $f 에 loop-status.sh 스냅샷 배선 없음"; exit 1; }
+done
+for f in references/worker-template.md references/worker-template.en.md; do
+  grep -qF -- 'transition.sh handoff-verify' "$f" \
+    || { echo "  ✗ $f 에 transition.sh handoff-verify 배선 없음"; exit 1; }
+done
+# 전이 실패(exit 1 readback 불일치 · 2 gh 실패)를 조용히 넘기지 않는다는 보고 규약이
+# 호출부 문서마다 살아 있는지. 이게 빠지면 라벨이 반쯤 이동한 채 루프가 다음으로 넘어간다.
+# (문구는 파일마다 다르다 — 워커 템플릿은 종료 보고에 적는 `전이 실패: handoff-verify`,
+#  루프 SKILL 은 ④ Report 에 올리는 `BLOCKED: …`, 영문 closeout 은 그 영어판.)
+check_phrase() {
+  grep -qF -- "$2" "$1" || { echo "  ✗ $1 에 전이 실패 보고 규약('$2') 없음"; exit 1; }
+}
+check_phrase skills/verify-runner/SKILL.md   'BLOCKED: 전이 실패'
+check_phrase skills/closeout/SKILL.md        'BLOCKED: 전이 실패'
+check_phrase skills/closeout/SKILL.en.md     'BLOCKED: transition failed'
+check_phrase references/worker-template.md    '전이 실패: handoff-verify'
+check_phrase references/worker-template.en.md '전이 실패: handoff-verify'
+# 산문 회귀 가드 — 위 파일들에서 손수 라벨을 옮기는 형태가 되살아나면 실패.
+# (`--add-label` 형태만 본다 — setup-labels.sh 설명·라벨 표의 라벨명 나열은 안 걸린다.)
+for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md \
+         skills/closeout/SKILL.md skills/closeout/SKILL.en.md \
+         references/worker-template.md references/worker-template.en.md; do
+  if grep -nE -- '--add-label "?(flow:ready|flow:verify|harvesting)"?' "$f"; then
+    echo "  ✗ $f: 산문 라벨 이동이 되살아남 — transition.sh 전이를 써라"
+    exit 1
+  fi
+done
 
 echo "CI pass"

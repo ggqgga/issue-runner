@@ -255,6 +255,10 @@ N 도 디스패치당 1만 올린다.
 ## ④ Report
 
 한 줄 요약: `정리 N · 보수 N · 신규 N · 대기(사람 리뷰) N · warn N`.
+그 아래 **항목마다 번호를 적는다** — 숫자만으론 어느 이슈·PR 이 어디로 갔는지 다음 틱이 못 읽는다:
+`정리: #4801(bodat, PR #4810 머지) · 보수: PR #4812(bodat, rebase) · 신규: #4818(bodat) · warn: #4799(bodat) dirty worktree`.
+레포 짧은 이름 규칙은 `loop-status.sh` 와 같다(`owner/repo` 의 repo 를 소문자로 — bodat·bodac,
+`issue-runner` 만 `runner` 특례).
 warn 이 있으면 경로와 사유를 그 아래 나열.
 **토큰 관측 (소프트 예산)**: 완료 보고를 낸 워커가 있으면 이슈별 한 줄
 `토큰: <repo>#<num> <이번 보고치> (누적 <합>)` 을 추가하라. 같은 워커 보고의 `사전 리뷰: <값>` 도
@@ -264,6 +268,16 @@ warn 이 있으면 경로와 사유를 그 아래 나열.
 누적이 `SOFT_TOKEN_BUDGET_PER_ISSUE` 초과면 그 줄에 **"소프트 예산 초과 —
 needs-human 승격 권고"** 를 명시하라 (보고만 — 라벨 부착·워커 중단 등 자동 조치 금지).
 모든 카운트가 0이면 "조용함" 한 줄만.
+
+**파이프라인 스냅샷 (매 틱 필수).** 위 줄들 뒤에 `$SCRIPTS/loop-status.sh` 를 실행해
+출력을 **그대로** 붙인다 — 카운터는 "이 틱에 한 일"만 말하고 무엇이 쌓여 있는지는
+이 블록만 본다. `cd` 없이 부른다(스코프는 루프 세션 cwd 의 `.loop/repos` 를 자동 적용).
+**카운트가 전부 0인 조용한 틱에도 붙인다** — 스냅샷은 "놀고 있는 것"을 보는 유일한 창이다.
+- exit 1(부분 실패 — 일부 레포 조회 실패)이면 그 출력을 그대로 붙이고 warn 에
+  `loop-status 부분 실패` 한 줄을 더한다.
+- exit 64(스코프 없음 — 계정 전체 세션이라 `.loop/repos` 가 없음)면 이 틱에 만진 레포들을
+  `--repo <owner/repo>` 로 명시해 한 번 더 부르고, 그래도 없으면 warn 에
+  `loop-status: 스코프 없음(.loop/repos 부재)` 한 줄.
 조용한 틱이라도 **③ Dispatch 의 eligible 스캔(eligible-issues.sh)은 매 틱 실행하라** —
 새 agent-ready 이슈는 reconcile 이벤트를 만들지 않으므로 eligible 스캔을 거르면 절전
 모드가 신규 후보에 영구히 맹목이 된다(빈 큐에서는 search/issues 1콜이라 비용 무시 가능).

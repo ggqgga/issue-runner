@@ -108,8 +108,8 @@ CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기�
 |---|---|---|
 | `done_verdict` | 최신 `머지 판정: ✅` | eligible.sh 정상 경로가 처리 — 스윕은 skip |
 | `stale_inline` | 🔄 + 검증자 CLEAN + 버퍼 초과 (검증까지 도달·최종판정만 유실, #970형) | **입양(머지)** — ② Pick 후보로. ③ 1단계가 **독립 재검증** 후 마감. **새 이슈 안 만듦**(완료된 일 재수행 금지). |
-| `stale_reverify` | 🔄 + 검증자 부재/미해결 BLOCKER + 버퍼 초과 (검증 전 사망·구현 미완 가능, #971형) | **재디스패치** — 미완 코드를 codex 재검증 하나로 자동 머지하지 않는다(사용자 결정). 연결 이슈에 `agent-ready` 재부착 + `agent:claimed` 제거 → 새 워커가 같은 브랜치서 검증자 재실행→체크박스→최종판정으로 완결. 멱등 마커(아래). — head 커밋이 신선하면(#110, 스테일 클록에 커밋 시각 합류) 코멘트가 낡았어도 `active` 로 떨어져 살아있는 attempt N+1 워커를 오분류하지 않는다. |
-| `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **needs-human** — 연결 이슈에 `needs-human` 부착, closeout 무접촉(자동 진행 안 함). |
+| `stale_reverify` | 🔄 + 검증자 부재/미해결 BLOCKER + 버퍼 초과 (검증 전 사망·구현 미완 가능, #971형) | **재디스패치** — 미완 코드를 codex 재검증 하나로 자동 머지하지 않는다(사용자 결정). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (연결 이슈를 `agent-ready` 로 되돌리고 `agent:claimed`·단계 라벨을 뗀다) → 새 워커가 같은 브랜치서 검증자 재실행→체크박스→최종판정으로 완결. 멱등 마커(아래). — head 커밋이 신선하면(#110, 스테일 클록에 커밋 시각 합류) 코멘트가 낡았어도 `active` 로 떨어져 살아있는 attempt N+1 워커를 오분류하지 않는다. |
+| `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>` (PR 과 연결 이슈 **양쪽**에 `needs-human` 부착 + 단계 라벨 정리 — 연결 이슈가 없어도 PR 에 사람 신호가 남는다), closeout 무접촉(자동 진행 안 함). |
 | `active` | 진행 중·버퍼 미도달·우리 형상 아님 | **무접촉**(다음 틱). |
 
 **flow:\* 보조 신호**: finish-classify 가 코멘트로 판정하지만, `flow:ready` 없이
@@ -121,8 +121,12 @@ CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기�
 `gh pr comment <pr> --repo <repo> --body "재디스패치: #<이슈> — 완결 유실(검증 전 사망) <!-- bodat:worker -->"`
 를 남기고, **이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지
 않는다**(/loop 스팸 방지, 6단계 파생 마커 동형). 재디스패치 자격은 `open + agent-ready +
-¬agent:claimed`(eligible-issues.sh)이므로 `agent-ready` 재부착과 함께 `agent:claimed`
-를 제거한다 — issue-runner Dispatch 가 make-worktree 로 기존 `agent/issue-N` worktree
+¬agent:claimed`(eligible-issues.sh)이라 `closeout-redispatch` 전이가 그 둘을 한 번에
+맞춘다(손으로 `gh issue edit` 하지 마라). 위 두 전이 모두 **exit 1(readback 불일치)·
+2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
+`BLOCKED: 전이 실패 <전이> PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다(라벨이
+반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적 — 조용히 넘어가지 않는다).
+재디스패치가 성사되면 issue-runner Dispatch 가 make-worktree 로 기존 `agent/issue-N` worktree
 를 재사용해 **같은 PR 브랜치에서 이어 완결**하므로 새 PR 이 생기지 않는다(중복 아닌 보수).
 
 입양 후보(rebase·`stale_inline`)는 ② Pick 이 소비하고, 재디스패치·needs-human 건수는
@@ -134,29 +138,31 @@ CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기�
 후보**(`stale_inline`·CONFLICTING)를 합쳐 FIFO **첫 후보 1개만** 집는다. 한 번에 1개라
 모듈 겹침 판단은 불필요하다 (직렬 마감 — 이 PR 을 끝까지 마감한 뒤에야 ⑤ Drain 이
 다음 후보를 집는다). 집으면 즉시
-`gh issue edit <pr> --repo <repo> --add-label harvesting --remove-label "flow:ready" --remove-label "flow:codex" --remove-label "flow:ci" --remove-label "flow:verify"`
-으로 점유를 선언하라 — `harvesting` 이 있어야 issue-runner ② Maintain·verify-runner 가
-이 PR 을 건드리지 않고(verify-eligible 도 harvesting 을 제외한다), 워커·verify-runner
-단계 라벨(`flow:*`)은 이제 마감 단계로 넘어갔으니 함께 뗀다
-(PR 리스트에서 `harvesting` 하나만 남아 "마감 중"이 명확해진다. `--remove-label` 은
-없는 라벨엔 무해). 후보가 0이면 ③ 파이프라인을 건너뛰고 ④ Report 에 clean no-op 으로
-보고한다.
+`$SCRIPTS/transition.sh closeout-pick <repo> - <pr>` 로 점유를 선언하라(이슈 번호는 ③-1
+에서야 파싱되므로 여기선 `-`). 전이가 `harvesting` 을 붙이고 워커·verify-runner 단계
+라벨(`flow:ready`·`flow:codex`·`flow:ci`·`flow:verify`)을 함께 뗀다 — `harvesting` 이 있어야
+issue-runner ② Maintain·verify-runner 가 이 PR 을 건드리지 않고(verify-eligible 도
+harvesting 을 제외한다), PR 리스트에서 `harvesting` 하나만 남아 "마감 중"이 명확해진다.
+후보가 0이면 ③ 파이프라인을 건너뛰고 ④ Report 에 clean no-op 으로 보고한다.
 
-**라벨 부재 자동 보강.** 옵트인 레포여도 `setup-labels.sh` 재실행 전에는
-`harvesting` 라벨이 없을 수 있다(기존 레포 공통). `--add-label harvesting` 이
-`'harvesting' not found` 류로 실패하면 **`$SCRIPTS/setup-labels.sh <repo>` 를 1회
-호출**(멱등 — 이미 있는 라벨은 갱신만)한 뒤 `--add-label harvesting` 을 1회만
-재시도한다. 재시도도 실패하면 **더 반복하지 말고**(무한루프 금지) 이 PR 을 skip 하고
-④ Report 에 `BLOCKED: harvesting 라벨 보강 실패 — <repo>` 로 보고한다.
+**라벨 부재 자동 보강은 전이가 한다.** 옵트인 레포여도 `setup-labels.sh` 재실행 전에는
+`harvesting` 라벨이 없을 수 있는데(기존 레포 공통), `transition.sh` 가 `not found` 류
+실패를 보면 `setup-labels.sh` 를 **프로세스당 1회** 돌리고 같은 편집을 **1회만** 재시도한다
+(무한루프 금지). 그래도 실패하면 exit 2 로 떨어지니 이 PR 을 skip 하고 ④ Report 에
+`BLOCKED: 전이 실패 closeout-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 보고한다.
 
 **원 이슈 미러(진행 가시화).** ③-1 에서 `<issue>`(PR 본문 `Closes #N`/`Refs #N`)를 파싱한
-직후, 연결 이슈가 있으면 `gh issue edit <issue> --repo <repo> --add-label harvesting --remove-label flow:ready --remove-label flow:verify`
-로 "마감 중"을 이슈 리스트에도 남긴다 — 이슈 리스트만 봐도 단계(검증→마감)가 보이게
-(머지 성공 시 `Closes #N` 으로 이슈가 닫히므로 잠깐만 보인다). 그리고 ③ 이후 **fail-closed
-로 연결 이슈에 `agent-ready`/`needs-human` 을 되붙이는 모든 지점**(위임 fail·conflict
-사람판단·문서 reconcile 미완 등)에서는 그 `gh issue edit <issue>` 에
-`--remove-label harvesting --remove-label flow:ready --remove-label flow:verify` 를 함께 넣어
-이슈 라벨 사다리를 대기/사람대기 상태로 되돌린다(스테일 단계 라벨 잔재 방지).
+직후, 연결 이슈가 있으면 `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` 를
+**다시** 부른다(멱등 — PR 쪽은 이미 맞아 no-op, 이슈 쪽만 `harvesting` 으로 옮겨진다).
+**이 미러 호출이 exit 1(readback 불일치)·2(gh 실패)면 머지로 진행하지 마라** — 이 PR 을
+skip 하고 ④ Report 에
+`BLOCKED: 전이 실패 closeout-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다
+(PR 만 `harvesting` 이고 이슈는 아닌 반쯤 이동한 상태를 다음 틱이 잡게 한다).
+이슈 리스트만 봐도 단계(검증→마감)가 보이게 하는 것이다(머지 성공 시 `Closes #N` 으로
+이슈가 닫히므로 잠깐만 보인다). 그리고 ③ 이후 **fail-closed 로 손을 떼는 모든 지점**
+(위임 fail·conflict 사람판단·문서 reconcile 미완 등)은 반드시 `closeout-blocked`(사람에게)
+또는 `closeout-redispatch`(워커로 반송) **전이를 쓴다 — 손으로 `gh issue edit` 하지 않는다**.
+PR·이슈 양쪽의 `harvesting`·`flow:*` 정리를 전이 표가 보장한다(스테일 단계 라벨 잔재 방지).
 
 ## ③ 파이프라인 — 1~6단계
 
@@ -189,9 +195,12 @@ diff·이슈 본문·lessons 를 프롬프트에 동봉, `run_in_background` + `
 - BLOCKER(미산출 포함, 사유 예 `검증자 미산출 — 타임아웃(>VERIFIER_TIMEOUT_MIN분)` / 모델 오류 원문) →
   `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>
   <!-- bodat:worker -->"`
-  + `gh issue edit <issue> --repo <repo> --add-label needs-human`
-  + `gh issue edit <pr> --repo <repo> --remove-label harvesting` →
+  + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>`
+  (PR 의 `harvesting` 제거 + 연결 이슈에 `needs-human` 부착·단계 라벨 정리) →
   **blocked 종료** (머지하지 않는다).
+  **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
+  `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다
+  (라벨이 반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적 — 조용히 넘어가지 않는다).
 - CLEAN/WARN → `gh pr comment <pr> --repo <repo> --body "마감 검증: ✅ <CLEAN 또는 WARN n>
   <!-- bodat:worker -->"`
   (이 코멘트가 1단계 완료 마커다).
@@ -227,7 +236,10 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   로 조회하는 바로 그 SHA — 안 맞추면 run-local-ci 가 옛 SHA 를 캐시해 영구 exit 2 로
   남는다) → `$SCRIPTS/run-local-ci.sh <repo> <N>` 로 **현재 HEAD** 캐시를 채운다. `run-local-ci.sh`
   가 비0(새 base 와의 통합이 깨짐)이면 머지하지 말고 fail-closed 로 보류 종료한다
-  (`harvesting` 제거 + `blocked` 종료, 새 종료 상태 안 만듦). 0이면 캐시가 pass 로
+  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>` + `blocked` 종료,
+  새 종료 상태 안 만듦 — 이 전이가 exit 1·2 면 ④ Report 에
+  `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다).
+  0이면 캐시가 pass 로
   채워졌으니 아래 exit 0 게이트로 합류한다. 이 경로는 **3단계 doc 커밋 유무와
   무관**하게 발동한다 — 3단계 캐시 보강은 doc push 후에만 돌아 rebase·doc무변경
   케이스(워커 `머지 판정 ✅` 이 새 SHA 에 안 따라온 채)를 못 메우기 때문이다.
@@ -242,7 +254,7 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 (예: 2~3초 간격 × 최대 5회, 무한 대기 금지)으로 재확인하고 — 3단계의
 `run-local-ci.sh` 가 캐시를 동기로 채우므로 보통 즉시 pass — 한도 내 pass 미도달이면
 머지하지 말고 fail-closed 로 보류 종료한다(아래 3단계의 캐시 비0/미도달 처리와 동일
-경로 — `harvesting` 제거 + `blocked` 종료, 새 종료 상태를 만들지 않는다).
+경로 — `closeout-blocked` 전이 + `blocked` 종료, 새 종료 상태를 만들지 않는다).
 **`gh pr merge` 성공 직후** `$SCRIPTS/cleanup-worktree.sh <repo> <N> --merged` 를
 호출해 이 PR 의 worktree(`agent/issue-<N>`)를 직접 정리한다 (`<N>`=PR head
 `agent/issue-N` 파싱, 3단계와 동일). 머지를 독점하는 closeout 이 머지 시점에 스스로
@@ -261,11 +273,13 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   conflict 를 원안 의도대로 해소, `git push --force-with-lease`, **merge 커밋 금지**" 로
   교체하고 push 규율·금지는 유지) → 에이전트 종료 후 `$SCRIPTS/run-local-ci.sh <repo>
   <N>` 로 rebased HEAD 캐시를 재생성한다. 비0(새 base 통합 깨짐)이면 머지하지 말고
-  **위임 fail-closed**: `harvesting` 제거 + 연결 이슈에 `agent-ready` 재부착(또는
-  spinoff)해 넘기고 blocked 종료. 0이면 위 exit 0 머지 게이트로 합류해 정상 squash
-  머지한다. 에이전트가 conflict 를 **못 풀면**(rebase abort·반복 실패) semantic
-  conflict 는 사람 판단이므로 `harvesting` 제거 + 연결 이슈에 `needs-human` 을 달고
-  blocked 종료한다(무인 강제 해소 금지).
+  **위임 fail-closed**: `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`
+  로 연결 이슈를 `agent-ready` 로 되돌려(또는 spinoff) 넘기고 blocked 종료.
+  0이면 위 exit 0 머지 게이트로 합류해 정상 squash 머지한다. 에이전트가 conflict 를 **못 풀면**(rebase abort·반복 실패) semantic
+  conflict 는 사람 판단이므로 `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>`
+  로 넘기고 blocked 종료한다(무인 강제 해소 금지). 두 전이 모두 **exit 1(readback
+  불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
+  `BLOCKED: 전이 실패 <전이> PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
 
 **3단계 — 문서 reconcile (머지 전, PR 브랜치 커밋).** 1단계가 구현을 확인한
 계획문서 절의 `- [ ]` 를 `- [x]` 로 바꾼다. PR 브랜치 worktree
@@ -299,8 +313,10 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   `$SCRIPTS/closeout-ci-pass.sh <repo> <pr>` 가 이미 pass(exit 0)면(이전 틱이 같은
   HEAD 를 이미 캐시함) `run-local-ci.sh` 를 재실행하지 않는다(헬퍼도 큐 dedup 으로
   같은 SHA 는 재실행하지 않지만, 호출 자체를 아끼려 호출측도 가드한다). `run-local-ci.sh` 가 비0(=bin/ci 실패)이면 캐시가 pass 로
-  안 채워진 것이므로 머지하지 말고 fail-closed 로 보류 종료한다(`harvesting` 제거 +
-  `blocked` 종료, 기존 BLOCKER 경로 준용 — 새 종료 상태를 만들지 않는다).
+  안 채워진 것이므로 머지하지 말고 fail-closed 로 보류 종료한다
+  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>` + `blocked` 종료,
+  기존 BLOCKER 경로 준용 — 새 종료 상태를 만들지 않는다. 이 전이가 exit 1·2 면 ④ Report 에
+  `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다).
 - **단일 이슈 degrade**: `Plans/*.md`·`## Plan` 이 없으면 문서 편집을 skip 한다.
   epic 이 없으면 롤업을 skip 한다. 이슈 자체 체크박스만 reconcile 한다. 둘 다
   없으면 이 단계는 no-op — **새 doc 커밋·push 가 없으므로 위 캐시 보강도 건너뛴다**
@@ -328,9 +344,20 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 
 **머지된 PR 은 예외 없이 배포 대기 이슈를 하나 발행한다.** 판정하지 마라 — 테스트
 전용이든 주석 한 줄이든, 머지됐다는 것은 승격 범위에 들어갔다는 뜻이고 그 사실이
-사람에게 보여야 한다. `gh issue create --repo <repo> --label needs-human` 으로
-발행하고 `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"` 마커를
+사람에게 보여야 한다. `gh issue create --repo <repo> --label needs-human --label deploy-wait`
+으로 발행하고 — `needs-human` 은 deploy-bodat 등 기존 수집(사람 게이트 쿼리)과의 호환
+때문에 유지하고, `deploy-wait` 는 `loop-status.sh` 가 배포대기와 사람대기를 갈라 세는
+버킷 라벨이다 — `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"` 마커를
 남긴 뒤 → **approval-required 로 종료**한다.
+
+**라벨 부재 fail-closed — 티켓을 잃지 않는다 (6단계 파생과 동형).** `gh issue create` 는
+`--label` 에 레포에 없는 라벨이 있으면 **이슈 자체를 안 만들고 실패**한다. `setup-labels.sh`
+재실행 전의 기존 옵트인 레포엔 `deploy-wait` 가 없으므로, 이 규칙이 없으면 업그레이드 뒤
+첫 마감이 PR 은 머지된 채 티켓·마커 없이 끝난다. `'deploy-wait' not found` 류로 실패하면
+`$SCRIPTS/setup-labels.sh <repo>` 를 **1회** 호출한 뒤 같은 명령을 **1회만** 재시도한다.
+재시도도 실패하면 더 반복하지 말고 **`--label needs-human` 만으로 발행**하고(티켓 유실 방지 —
+`loop-status.sh` 는 제목 `배포 대기:` 폴백으로 여전히 배포대기로 센다) ④ Report 에
+`BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로 올린다.
 
 이 규칙이 뒤집힌 이유: 직전 규칙은 `<LIVE_CHECKS>` 가 `없음` 이면 이슈를 안 만들고
 "미승격 현황은 ④ Report 의 `승격 대기 N커밋` 이 갖는다" 로 정당화했다. 그런데 그
@@ -381,7 +408,7 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
   통과했으므로 closeout 이 종결 — 미결 결정의 권장안).
 - **fail (한 건이라도 실패)** → 직접 고치지 않고 기존 발행 경로: 자동수정 가능하면
   `references/spinoff-issue.md` 로 agent-ready 이슈(**6단계의 "발행 명령" 형태를 그대로
-  쓴다** — `--label agent-ready --label <P1|P2>`. 여기도 산문으로 대신하지 마라),
+  쓴다** — `--label agent-ready --label spinoff --label <P1|P2>`. 여기도 산문으로 대신하지 마라),
   라이브 검증이 필요하면 `--label needs-human` 이슈. 같은 실패가 `REPAIR_RECUR_LIMIT`
   회 반복되면 `needs-human` 으로 승격한다 (**exhausted 종료**). 배포 이슈는 닫지 않는다.
   라벨명은 `needs-human`(하이픈)이다 — `needs:human` 은 존재하지 않는 라벨이라
@@ -412,7 +439,7 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
 
   ```
   gh issue create --repo <repo> --title "<제목>" --body-file <본문파일> \
-    --label agent-ready --label <P1|P2> [--label <레포 규약 라벨>...]
+    --label agent-ready --label spinoff --label <P1|P2> [--label <레포 규약 라벨>...]
   ```
 
   **`--label agent-ready` 는 생략 불가**다 — `eligible-issues.sh` 의 디스패치 자격이
@@ -424,15 +451,17 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
   밀린다(`P0 > P1 > P2 > 없음`). 그 밖의 축(BoDAT 의 `difficulty:*`·`frontend`/`backend`·
   `area:*`·`needs:hardware`)은 **레포 규약을 따라 추가**하되, 규약 라벨을 다느라
   `agent-ready` 를 대체하지 마라 — 위 실측의 실패 형태가 정확히 그것이다.
-- **라벨 부재 fail-closed (② Pick 의 harvesting 보강과 동형).** `gh issue create` 는
+  `--label spinoff` 는 출처 표식이다 — `loop-status.sh` 의 `파생` 줄이 이 라벨로만 창 안의
+  파생 이슈를 센다(제목 휴리스틱을 쓰지 않는다). 빠지면 그 이슈는 재고에서 안 보인다.
+- **라벨 부재 fail-closed (② Pick 의 라벨 보강과 동형).** `gh issue create` 는
   `--label` 이 없는 라벨이면 **이슈 자체를 안 만들고 실패**한다(무해한 `--remove-label`
-  과 다르다). `'agent-ready' not found` 류로 실패하면 `$SCRIPTS/setup-labels.sh <repo>`
+  과 다르다). `'agent-ready' not found`·`'spinoff' not found` 류로 실패하면 `$SCRIPTS/setup-labels.sh <repo>`
   를 **1회** 호출한 뒤 같은 명령을 **1회만** 재시도한다. 재시도도 실패하면 더 반복하지
   말고 **라벨 없이 이슈만 만들고**(발행 유실 방지) ④ Report 에
   `BLOCKED: 파생 이슈 라벨 부착 실패 — #<번호>` 로 올린다.
 - **발행 직후 확인.** `gh issue view <번호> --repo <repo> --json labels` 로
-  `agent-ready` 가 실제로 붙었는지 확인하고, 안 붙었으면
-  `gh issue edit <번호> --repo <repo> --add-label agent-ready` 로 보강한다.
+  `agent-ready` 와 `spinoff` 가 **둘 다** 붙었는지 확인하고, 빠진 게 있으면
+  `gh issue edit <번호> --repo <repo> --add-label agent-ready --add-label spinoff` 로 보강한다.
 - **3단계가 이미 흡수한 표면 교정은 여기서 발행하지 않는다.** 3단계 "표면 교정 흡수"
   기준(통과/실패가 바뀌는 테스트가 하나도 없는가)을 통과해 그 커밋에 실린 건은 남은
   작업이 아니다. 한 발견에 표면과 코드가 섞여 있으면(예: "용어가 갈렸다 + 셈값 가드가
@@ -468,6 +497,11 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
 ①-b 스윕이 입양해 마감·rebase 한 건은 `회수 N`(마감까지 갔으면 `마감` 에도 반영),
 `stale_reverify` 재디스패치·`held` needs-human 건은 `재디스패치 N` 으로 집계한다.
 
+그 아래 **항목마다 번호를 적는다** — 숫자만으론 어느 PR·이슈가 어디로 갔는지 다음 틱이 못 읽는다:
+`마감: PR #4795(bodat)←#4788 · 파생: #4823(bodat)←PR #4788 · 재디스패치: #4770(bodat, stale_reverify)`.
+레포 짧은 이름 규칙은 `loop-status.sh` 와 같다(`owner/repo` 의 repo 를 소문자로 — bodat·bodac,
+`issue-runner` 만 `runner` 특례).
+
 **`승격 대기 N커밋` 을 매 틱 반드시 함께 보고한다 (누락 금지).** 이 틱에 마감이 0건이어도
 빼지 마라 — 사람이 "승격할 게 쌓여 있는지" 를 보는 유일한 숫자다. 승격 포인터 브랜치가
 있으면(`release` 등) `git fetch origin <포인터> <기본브랜치>` 후
@@ -476,6 +510,18 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
 그대로 적는다(생략하지 마라 — 생략과 0은 다르다).
 실증 2026-08-16: 이 줄을 3틱 연속 빠뜨렸더니, 배포 이슈도 없던 시기와 겹쳐 마감분이
 증발한 것처럼 보였다. 그 사고가 4단계를 "머지하면 무조건 티켓" 으로 되돌린 계기다.
+(아래 `loop-status.sh` 블록도 승격 대기를 찍지만 이 줄은 **그대로 유지한다** — 중복은
+누락 사고 이력에 대한 의도된 이중화다.)
+
+**파이프라인 스냅샷 (매 틱 필수).** 위 줄들 뒤에 `$SCRIPTS/loop-status.sh` 를 실행해
+출력을 **그대로** 붙인다 — 카운터는 "이 틱에 한 일"만 말하고 무엇이 쌓여 있는지는
+이 블록만 본다. `cd` 없이 부른다(스코프는 루프 세션 cwd 의 `.loop/repos` 를 자동 적용).
+**카운트가 전부 0인 조용한 틱에도 붙인다** — 스냅샷은 "놀고 있는 것"을 보는 유일한 창이다.
+- exit 1(부분 실패 — 일부 레포 조회 실패)이면 그 출력을 그대로 붙이고 `loop-status 부분 실패`
+  한 줄을 warn 으로 더한다.
+- exit 64(스코프 없음 — 계정 전체 세션이라 `.loop/repos` 가 없음)면 이 틱에 만진 레포들을
+  `--repo <owner/repo>` 로 명시해 한 번 더 부르고, 그래도 없으면
+  `loop-status: 스코프 없음(.loop/repos 부재)` 한 줄을 warn 으로 남긴다.
 
 종료 상태 6종 — 처리한 PR **각각**에 대해 명시한다(드레인으로 여러 개면 PR 별로):
 - **success** — 1~6단계를 다 돌아 PR 을 머지하고 후속까지 발행함(입양·rebase 회수분 포함).
@@ -500,6 +546,6 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
 - 운용: closeout 은 issue-runner 와 별도의 `/loop` 세션으로 돌린다
   (예 `/loop 20m /closeout`) — 서로의 점유를 라벨로만 조율한다.
 - 의존: 결정적 헬퍼(`closeout-reconcile.sh`·`closeout-eligible.sh`·
-  `closeout-ci-pass.sh`)는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)에
+  `closeout-ci-pass.sh`·`transition.sh`(라벨 이동)·`loop-status.sh`(④ Report 스냅샷))는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)에
   있고, references 3종(`verifier-prompt.md`·`deploy-check-issue.md`·
   `spinoff-issue.md`)은 `skills/closeout/references/` 에 있다.
