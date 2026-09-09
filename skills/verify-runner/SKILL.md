@@ -241,7 +241,7 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 **held** — 재디스패치 상한 초과(VERIFY_ATTEMPTS_LIMIT) · 연결 이슈 부재 · 또는 E2E 가
 실장비를 요구해 못 돈 경우:
 `gh pr comment <pr> --repo <repo> --body "검증 보류: <사유> — 사람 확인 필요
-<!-- bodat:worker -->"` + `$SCRIPTS/transition.sh verify-held <repo> <issue|-> <pr> --reason <conflict|policy|ladder>`
+<!-- bodat:worker -->"` + `$SCRIPTS/transition.sh verify-held <repo> <issue|-> <pr> --reason <conflict|policy|ladder> [--note "<질문 한 줄>" — policy·conflict 필수]`
 (PR 의 `flow:verify` 제거 + PR 과 — 있으면 — 연결 이슈 **양쪽**에 `needs-human` +
 `hold:<reason>` 부착. 연결 이슈가 없어도 PR 에 사람 신호가 남는다). **held 종료.**
 **`--reason` 은 필수다** — 빠지면 전이가 usage exit 64 로 거절한다(사유 없는

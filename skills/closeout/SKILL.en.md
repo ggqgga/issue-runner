@@ -129,7 +129,7 @@ separate freshness gate needed:
 | `done_verdict` | latest `머지 판정: ✅` | eligible.sh's normal path handles it — sweep skips |
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). |
 | `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
-| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy` (attaches `needs-human` + `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the human signal survives even with no linked issue), closeout leaves it (no auto-progress). |
+| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `needs-human` + `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the human signal survives even with no linked issue), closeout leaves it (no auto-progress). |
 | `active` | in progress · buffer not reached · not our shape | **Leave it** (next tick). |
 
 **`flow:*` supplementary signal**: finish-classify judges by comments, but a stale PR with
@@ -193,7 +193,7 @@ conflict needing human judgment·incomplete doc reconcile·etc.) **must use the
 `closeout-blocked` (to a human) or `closeout-redispatch` (back to a worker) transition —
 never a hand-run `gh issue edit`**. The transition table guarantees the `harvesting`·`flow:*`
 cleanup on both the PR and the issue (prevents stale stage-label residue).
-`closeout-blocked` **requires `--reason <conflict|policy|ladder>`** (without it the
+`closeout-blocked` **requires `--reason <conflict|policy|ladder> [--note "<질문 한 줄>" — policy·conflict 필수]`** (without it the
 transition refuses with usage exit 64 — no reasonless `needs-human` can be created). A
 rebase/semantic conflict is `conflict`; anything else the loop cannot decide (spec·policy·
 no verdict) is `policy`; `ladder` only when the rungs of
@@ -249,7 +249,7 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
 - BLOCKER (including no-verdict, e.g. reason `검증자 미산출 — 타임아웃
   (>VERIFIER_TIMEOUT_MIN분)`) → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
   <!-- bodat:worker -->"`
-  + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy`
+  + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`
   (removes `harvesting` from the PR, attaches `needs-human` + `hold:policy` to the linked
   issue and clears the stage labels) → **blocked exit** (do not merge). A verifier BLOCKER
   or no-verdict needs a spec/policy call, so the reason is `policy` (neither `conflict`
@@ -299,7 +299,7 @@ hook queried the cwd repo). Gate conditions: `$SCRIPTS/closeout-ci-pass.sh <repo
   permanently exit 2) → fill the **current HEAD** cache with
   `$SCRIPTS/run-local-ci.sh <repo> <N>`. If `run-local-ci.sh` exits nonzero (integration
   with the new base is broken), do not merge: exit on hold fail-closed
-  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy` +
+  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` +
   `blocked` exit, do not
   invent a new exit state — if that transition exits 1·2, report
   `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
@@ -347,7 +347,7 @@ dirty guard stays — if dirty, warn and hold; best-effort).
   to `agent-ready` (or spinoff), blocked exit. If 0,
   join the exit-0 merge gate above and squash-merge normally. If the agent **cannot resolve**
   the conflict (rebase abort / repeated failure), a semantic conflict is a human call:
-  `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason conflict`,
+  `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason conflict --note "<질문 한 줄>"`,
   blocked exit (no unattended forced resolution — this path alone uses `conflict`). For both transitions: **on exit 1 (readback mismatch) or
   2 (gh failure), do NOT change that PR's terminal state** — report
   `BLOCKED: transition failed <transition> PR #<pr>(<repo_short>) — <one stderr line>` in
@@ -394,7 +394,7 @@ comment.
   (the helper has no dedup of its own, so the caller guards). If `run-local-ci.sh`
   exits nonzero (=bin/ci failed) the cache is not filled with pass, so do not merge:
   exit on hold fail-closed
-  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy`
+  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`
   + `blocked` exit, follow the existing BLOCKER path — do not invent a new exit state; if
   that transition exits 1·2, report
   `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`

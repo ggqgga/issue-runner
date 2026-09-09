@@ -68,7 +68,8 @@ usage() {
   echo "        closeout-pick closeout-blocked closeout-redispatch closeout-dup runner-held" >&2
   echo "  --reason <conflict|policy|ladder>: verify-held·closeout-blocked·runner-held 에 **필수**(다른 전이엔 금지)" >&2
   echo "        dup 은 closeout-dup 이 닫고, hardware 는 검증 사다리를 오른다 — 사유가 될 수 없다" >&2
-  echo "  --note \"<근거>\": closeout-dup 에 **필수**(다른 전이엔 금지)" >&2
+  echo "  --note \"<근거>\": closeout-dup 에 **필수** · --reason policy|conflict 에 **필수**(사람이 답해야 할" >&2
+  echo "        질문 한 줄 — 코멘트로 남는다) · ladder 는 선택 · 그 밖의 전이엔 금지" >&2
   exit 64
 }
 
@@ -109,6 +110,10 @@ case "$name" in
 esac
 case "$name" in
   closeout-dup) [ -n "$note" ] || usage ;;
+  verify-held|closeout-blocked|runner-held)
+    # policy·conflict = 사람이 결정해야 하는 것 → "사람이 답해야 할 질문 한 줄" 이 없으면
+    # 사람 몫이 아니다(질문을 못 쓰면 루프가 스스로 답할 수 있는 일이다). ladder 는 선택.
+    case "$reason" in policy|conflict) [ -n "$note" ] || usage ;; esac ;;
   *) [ "$has_note" -eq 1 ] && usage ;;
 esac
 # closeout-dup 은 닫을 PR 이 있어야 성립한다(`pr=-` 면 ①②가 통째로 사라진다).
@@ -319,4 +324,20 @@ if [ "$issue" != "-" ]; then
   verify_side issue "$issue" "$iss_add" "$iss_rm" || exit $?
 fi
 
+# 사람 대기 사유의 질문 한 줄을 코멘트로 남긴다(라벨 readback 뒤 — 라벨이 진실, 코멘트는 근거).
+# 마커 `<!-- hold-note: <reason> -->` 는 loop-status/재심(resume-sweep policy_review_due)이 읽는다.
+if [ "$has_note" -eq 1 ] && [ -n "$note" ]; then
+  case "$name" in
+    verify-held|closeout-blocked|runner-held)
+      body=$(printf '사람 확인(%s): %s\n<!-- hold-note: %s --><!-- bodat:worker -->' "$reason" "$note" "$reason")
+      for side in issue pr; do
+        if [ "$side" = issue ]; then n=$issue; else n=$pr; fi
+        [ "$n" != "-" ] || continue
+        if ! out=$(gh "$side" comment "$n" --repo "$repo" --body "$body" 2>&1); then
+          echo "transition $name: $side #$n 사유 코멘트 실패(라벨은 반영됨) — $out" >&2
+          exit 2
+        fi
+      done ;;
+  esac
+fi
 echo "transition $name $repo issue=$issue pr=$pr  ok"

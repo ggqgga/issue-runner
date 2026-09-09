@@ -121,7 +121,7 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   needed (ambiguous spec / plan-reality mismatch / same failure repeating):
   instead of returning the issue to a re-dispatchable state, attach the
   `needs-human` + `hold:policy` labels with
-  `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy` (this also releases
+  `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy --note "<the one-line question a human must answer>"` (this also releases
   the claim — a reason-less `needs-human` is never produced, #151), remove the
   worktree, and surface the BLOCKED reason as a warn in
   ④ Report (once a human resolves the cause and removes needs-human, the issue
@@ -182,6 +182,16 @@ closeout-pick) never remove it. Per event:
   release failure**, whose message names `PR #<number>`). The
   resume/escalation itself may have happened, so do not revert; copy it into ④ Report's warns
   tagged `(edit applied)` — next tick's loop-status shows the actual label state.
+- `policy_review_due` — an issue parked with `hold:policy` for longer than `RESUME_AFTER_MIN` that
+  has not been re-reviewed yet (#155). **The dispatcher judges it once**: re-read the one-line
+  question in the issue's `<!-- hold-note: policy -->` comment; if the answer can be found in the
+  plan (`Plans/*.md`), the issue body, or the verification ladder, **the loop answers** — leave the
+  answer as a comment (`재심: <answer> <!-- policy-review: resumed --><!-- bodat:worker -->`) and
+  resume with `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr|->` (clears
+  needs-human/hold:*, keeps agent-ready → a ③ candidate this tick). If it truly is a human
+  decision, leave only `재심: 사람 몫 유지 — <one-line reason> <!-- policy-review: kept --><!-- bodat:worker -->`.
+  Either way a marker remains, so **the same issue is never asked twice** (until a human removes
+  the label). Report it in ④ as `re-reviewed N (resumed n · kept m)`.
 - `waiting` — still inside the window. Pass over it quietly (no reporting needed).
 - exit 2 — a listing failed for some repos (the rest were processed normally), or the
   account-wide search failed. Leave one warn line `resume-sweep 부분 실패(레포 조회)` in
@@ -198,7 +208,7 @@ read the `<!-- repair-count: N -->` HTML comment from the PR body
 (`gh pr view <pr> --repo <repo> --json body`; if the comment is absent, N = 0).
 If N ≥ `MAX_REPAIRS_PER_PR`, **do not dispatch a repair** — attach the
 `needs-human` + `hold:policy` labels to the PR and the issue with
-`$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy` and surface it as a
+`$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy --note "<one-line question>"` and surface it as a
 warn in ④ Report (a reason-less `needs-human` is never produced, #151). If N is below the cap, dispatch the maintenance agent and at
 the same time update the comment in the PR body to `<!-- repair-count: N+1 -->`
 (`gh pr edit <pr> --repo <repo> --body ...` — if the comment was absent, append

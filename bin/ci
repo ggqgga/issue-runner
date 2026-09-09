@@ -1217,6 +1217,9 @@ done
 for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   if grep -nE 'transition\.sh (verify-held|closeout-blocked|runner-held) [^\n]*' "$f" | grep -v -- '--reason' | grep -q .; then
     echo "  ✗ $f: --reason 없는 verify-held/closeout-blocked/runner-held 호출"; exit 1; fi
+  # policy·conflict 사유엔 질문 한 줄(--note)이 없으면 사람 몫이 아니다(#155).
+  if grep -nE 'transition\.sh [a-z-]+ <repo>[^\n]*--reason (policy|conflict)' "$f" | grep -v -- '--note' | grep -q .; then
+    echo "  ✗ : --note 없는 --reason policy|conflict 호출 — 사람이 답해야 할 질문 한 줄을 적으라"; exit 1; fi
   # 맨 needs-human 산문 작성 금지(#151) — 사유 없는 사람 대기는 loop-status 가 warn 하고 재개 스윕이 거부한다.
   if grep -nE -- '--add-label "?needs-human"?' "$f" | grep -q .; then
     echo "  ✗ $f: 산문 --add-label needs-human — runner-held/verify-held/closeout-blocked --reason 을 쓰라"; exit 1; fi

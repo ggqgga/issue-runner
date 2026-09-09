@@ -78,6 +78,7 @@ case "${1:-} ${2:-}" in
       *hold:ladder*)
         [ -z "${STUB_LADDER_FAIL:-}" ] || { echo "gh: ladder list boom" >&2; exit 1; }
         cat "$STUB_LADDER" ;;
+      *hold:policy*) if [ -s "${STUB_POLICY:-/dev/null}" ]; then cat "$STUB_POLICY"; else echo '[]'; fi ;;
       *)
         [ -z "${STUB_HUMAN_FAIL:-}" ] || { echo "gh: human list boom" >&2; exit 1; }
         cat "$STUB_HUMAN" ;;
@@ -153,6 +154,10 @@ setup() {
     *,hold:ladder,*) cp "$tmp/human.json" "$tmp/ladder.json" ;;
     *) echo '[]' > "$tmp/ladder.json" ;;
   esac
+  case ",$labels," in
+    *,hold:policy,*) cp "$tmp/human.json" "$tmp/policy.json" ;;
+    *) echo '[]' > "$tmp/policy.json" ;;
+  esac
   echo '[]' > "$tmp/comments.json"
   i=0
   while [ "$i" -lt "$markers" ]; do
@@ -187,7 +192,7 @@ run() {
   out=$(cat "$tmp/out")
 }
 export STUB_LOG="$tmp/gh.log" STUB_LABELS="$tmp/labels" STUB_UPDATED="$tmp/updated"
-export STUB_LADDER="$tmp/ladder.json" STUB_HUMAN="$tmp/human.json"
+export STUB_LADDER="$tmp/ladder.json" STUB_HUMAN="$tmp/human.json" STUB_POLICY="$tmp/policy.json"
 export STUB_COMMENTS="$tmp/comments.json" STUB_SEARCH="$tmp/search"
 export STUB_PR_NUM="$tmp/pr.num" STUB_PR_LABELS="$tmp/pr.labels"
 export STUB_LADDER_FAIL="" STUB_HUMAN_FAIL="" STUB_LABEL_EDIT_FAIL="" STUB_COMMENT_FAIL=""
@@ -250,7 +255,7 @@ check "마커 2: hold:policy 부착"         "$(hasl hold:policy)"
 check "마커 2: hold:ladder 해제"         "$(lacksl hold:ladder)"
 check "마커 2: needs-human 유지"         "$(hasl needs-human)"
 check "마커 2: 승격 코멘트엔 마커 없음"   "$([ "$(markers)" = 2 ] && echo ok || echo no)"
-check "마커 2: 상한 코멘트"              "$(grep -q 'issue comment .*재개 상한 초과(2)' "$tmp/gh.log" && echo ok || echo no)"
+check "마커 2: 상한 코멘트"              "$(grep -q 'issue comment .*사다리 재개 상한(2) 초과' "$tmp/gh.log" && echo ok || echo no)"
 
 # ── ⑤ [P1] PR 미러 해제 — 재개 ────────────────────────────────────────────
 setup "needs-human,hold:ladder,agent-ready" 200 0
@@ -451,6 +456,36 @@ check "탐색 상한 미만: warn 없음"        "$(no_ev warn)"
 setup "needs-human,hold:ladder,agent-ready" 200 0
 run
 check "정상 경로: exit 0"                "$([ "$RC" = 0 ] && echo ok || echo no)"
+
+# ── policy 재심 due(#155) — 창 넘긴 hold:policy 에 재심 마커가 없으면 1회 이벤트, 무편집
+note() { jq --arg b "$1" '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/c.tmp" && mv "$tmp/c.tmp" "$tmp/comments.json"; }
+setup "needs-human,hold:policy,agent-ready" 200 0
+run
+check "policy 재심 질문 없음: warn(no-note)" "$(printf '%s' "$out" | grep -q 'hold-note' && echo ok || echo no)"
+check "policy 재심 질문 없음: due 안 냄" "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "policy 재심: exit 0" "$([ "$RC" = 0 ] && echo ok || echo no)"
+check "policy 재심: policy_review_due 이벤트" "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .number == 42' >/dev/null 2>&1 && echo ok || echo no)"
+check "policy 재심: 무편집" "$(grep -q 'issue edit' "$tmp/gh.log" && echo no || echo ok)"
+setup "needs-human,hold:policy,agent-ready" 30 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "policy 재심 창 안: 이벤트 없음" "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+note "재심: 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->"
+run
+check "policy 재심 마커 있음: 다시 안 냄" "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+# 옛 홀드의 재심 마커 뒤에 새 질문(hold-note)이 오면 새 에피소드 → 다시 due
+note "사람 확인(policy): 이번엔 C인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "policy 재홀드: 새 질문 뒤엔 다시 due" "$(printf '%s' "$out" | grep -q policy_review_due && echo ok || echo no)"
+# 승격(escalated) 코멘트가 hold-note 를 품는다 — 승격 건도 재심 대상이 된다
+setup "needs-human,hold:ladder,agent-ready" 200 2
+run
+check "승격 코멘트에 hold-note:policy" "$(grep -q 'hold-note: policy' "$tmp/gh.log" && echo ok || echo no)"
 
 echo "resume-sweep: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
