@@ -24,10 +24,14 @@
 #   단계라 이슈 미러가 없다(=미러 불일치 판정에 참여하지 않는다).
 #
 #   이슈는 OPEN 기준. **한 이슈는 한 버킷** — 위에서 아래로 첫 매칭:
-#     1. 배포대기 — `deploy-wait` 라벨 또는 제목이 `배포 대기`/`배포 검증` 으로 시작
-#                  (라벨 도입 전 폴백. 실측 BoDAT 은 두 형식이 섞여 있고 콜론 앞 공백도
-#                   들쭉날쭉이라 `^배포 (대기|검증)` 로 본다 — `배포 검증:` 을 놓치면 그
-#                   이슈가 needs-human 을 달고 있어 사람대기로 오분류된다)
+#     1. 배포대기 — `deploy-wait` 라벨, 또는 **사다리 라벨이 0개일 때만** 제목이
+#                  `배포 대기`/`배포 검증` 으로 시작(라벨 도입 전 폴백).
+#                  실측 BoDAT 은 두 형식이 섞여 있고 콜론 앞 공백도 들쭉날쭉이라
+#                  `^배포 (대기|검증)` 로 본다 — 콜론을 앵커로 걸지 않는다
+#                  (`배포 대기 (승격만) — …` 형태가 실존). `배포 검증:` 을 놓치면 그
+#                  이슈가 needs-human 을 달고 있어 사람대기로 오분류된다.
+#                  사다리 게이트가 필요한 이유: 제목만 보면 아직 구현·검증이 도는
+#                  이슈(`flow:verify` 등)가 배포대기로 새어 "배포만 기다린다"로 읽힌다.
 #     2. 사람대기 — `needs-human` (괄호에 사다리 위치 + 열린 연결 PR)
 #     3. 마감중   — `harvesting`
 #     4. 마감대기 — `flow:ready`
@@ -57,6 +61,8 @@
 #   · 미러 불일치    — 이슈와 **열린** 연결 PR 의 {flow:verify, flow:ready, harvesting}
 #                      집합이 다름. 연결 PR 이 없으면 대조할 상대가 없으니 warn 아님.
 #   · 좌초형(#117)   — 이슈에 사다리 라벨은 있는데 `agent-ready` 가 없음(디스패치 자격 상실).
+#   · 목록 절단      — 이슈·열린 PR·닫힌 PR 중 어느 목록이 `--limit 200` 상한에 닿음.
+#                      창 안의 실패·파생이 조용히 잘렸을 수 있다는 신호(수를 믿지 말 것).
 #   · 연결 이슈 종료 — 열린 PR 인데 연결 이슈가 CLOSED. `Refs` 부분착지면 정상 — 사실만 한 줄.
 #                      (연결 이슈의 OPEN 여부는 이미 받은 열린 이슈 목록의 멤버십으로 본다 —
 #                       이슈마다 `gh issue view` 를 치지 않는다. 목록 상한 200 밖의 열린
@@ -66,6 +72,11 @@
 #   `파이프라인 <short> — 조회 실패: <사유>` 한 줄만 찍고 다음 레포로 계속하며, 최종 exit 는
 #   1(부분 실패). release/compare 조회 실패는 레포를 실패로 만들지 않고 `승격 대기 —` 로
 #   degrade 한다(release 미존재와 같은 표기 — 둘 다 "셀 수 없음").
+#
+# ★환경 실패 처리★ 레포와 무관한 실패(창 시각 계산 불가·jq 부재·집계/렌더/직렬화 jq 실패)는
+#   **stdout 에도** `파이프라인 — 스냅샷 실패: <사유>` 한 줄을 남기고 exit 1 한다. 세 루프는
+#   이 출력을 ④ Report 에 그대로 붙이므로, stderr 로만 말하면 사유가 사라지고 exit 1 이
+#   "레포 하나 조회 실패"(부분 실패)와 구분되지 않는다.
 #
 # gh 호출 예산: 레포당 이슈 목록 1 + PR 목록(open/closed) 2 + release 확인 1 + 기본 브랜치 1
 # + compare 1 = 최대 6. 이슈·PR **개별** `gh view` 는 금지(N+1). `gh search` / `gh issue list
@@ -86,6 +97,14 @@ usage() {
   } >&2
   exit 64
 }
+
+# 환경 실패(레포 무관)는 stdout 에도 남긴다 — 루프가 붙이는 건 stdout 이라, stderr 로만
+# 말하면 exit 1 이 "부분 실패"와 구분되지 않고 사유가 통째로 사라진다.
+snapshot_fail_line() {
+  echo "파이프라인 — 스냅샷 실패: $1"
+  echo "$SELF: $1" >&2
+}
+snapshot_abort() { snapshot_fail_line "$1"; exit 1; }
 
 repos=()
 repos_file=""
@@ -122,7 +141,8 @@ case "$since" in
   *d) since_n=${since%d}; ;;
   *) usage ;;
 esac
-case "$since_n" in ""|*[!0-9]*) usage ;; esac
+# 0h·0d 는 창이 없다 — 실패·파생이 항상 0 이 되는 거짓 "깨끗함" 이라 형식 오류로 본다.
+case "$since_n" in ""|0|*[!0-9]*) usage ;; esac
 case "$since" in
   *h) since_hours=$since_n ;;
   *d) since_hours=$((since_n * 24)) ;;
@@ -133,24 +153,37 @@ if [ -z "$cutoff" ]; then
   cutoff=$(date -u -d "$since_hours hours ago" +%s 2>/dev/null)
 fi
 if [ -z "$cutoff" ]; then
-  echo "$SELF: 창 시작 시각 계산 실패 (date -v / date -d 둘 다 불가)" >&2
-  exit 1
+  snapshot_abort "창 시작 시각 계산 실패 (date -v / date -d 둘 다 불가)"
 fi
 
 # ── 스코프 확정 ────────────────────────────────────────────────────────────
 if [ "${#repos[@]}" -eq 0 ]; then
-  [ "$repos_file_given" = 1 ] || repos_file="$PWD/.loop/repos"
-  [ -f "$repos_file" ] || usage
+  if [ "$repos_file_given" = 1 ]; then
+    # 사람이 경로를 콕 집었는데 없으면 usage 로 뭉개지 말고 그 사실만 말한다
+    # (오타·잘못된 cwd 를 "인자를 몰라서" 로 오해하게 만들지 않는다).
+    if [ ! -f "$repos_file" ]; then
+      echo "$SELF: repos 파일 없음: $repos_file" >&2
+      exit 64
+    fi
+  else
+    repos_file="$PWD/.loop/repos"
+    [ -f "$repos_file" ] || usage
+  fi
   while IFS= read -r line; do
     line=$(printf '%s' "$line" | tr -d ' \t')
     case "$line" in ""|"#"*) continue ;; esac
-    case "$line" in */*) ;; *) continue ;; esac
+    # owner/repo 형식이 아닌 줄은 조용히 버리지 않는다 — 오타 한 글자가 레포 하나를
+    # 스코프에서 통째로 지우고도 아무 흔적이 없으면 "그 레포엔 아무것도 없다" 로 읽힌다.
+    case "$line" in
+      */*) ;;
+      *) echo "$SELF: $repos_file 무시된 줄: $line" >&2; continue ;;
+    esac
     repos+=("$line")
   done < "$repos_file"
 fi
 [ "${#repos[@]}" -gt 0 ] || usage
 
-command -v jq >/dev/null 2>&1 || { echo "$SELF: jq 필요" >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || snapshot_abort "jq 없음 — 집계 불가"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
@@ -212,7 +245,8 @@ def epoch($t): if $t == null then null else ($t | fromdateiso8601) end;
   | map(. + {ladder: ladder_of(.ln)})
   | map(. + {stage: (if (.ladder | length) == 0 then "none" else key_of(.ladder[-1]) end)})
   | map(. + {bucket:
-      (if has(.ln; "deploy-wait") or (.title | test("^배포 (대기|검증)")) then "deploy_wait"
+      (if has(.ln; "deploy-wait")
+          or ((.ladder | length) == 0 and (.title | test("^배포 (대기|검증)"))) then "deploy_wait"
        elif has(.ln; "needs-human") then "human_wait"
        elif .stage == "harvesting" then "harvesting"
        elif .stage == "ready" then "ready"
@@ -288,6 +322,13 @@ def epoch($t): if $t == null then null else ($t | fromdateiso8601) end;
       + ($iss | map(select((.ladder | length) > 0 and (has(.ln; "agent-ready") | not)))
         | map({kind: "stranded", repo_short: $rs, issue: .number,
                text: "좌초형 #\(.number)(\($rs)) — 사다리 라벨(\(.ladder | join(" "))) 인데 agent-ready 없음"}))
+      # 목록 상한 도달 — 창 안의 실패·파생이 잘렸을 수 있다
+      + ([{n: ($issues | length), what: "이슈"},
+          {n: ($prs_open | length), what: "열린 PR"},
+          {n: ($prs_closed | length), what: "닫힌 PR"}]
+         | map(select(.n >= 200))
+         | map({kind: "list_truncated", repo_short: $rs, list: .what,
+                text: "목록 상한 200 도달 — 창 절단 가능(\(.what))"}))
       # 열린 PR 인데 연결 이슈가 CLOSED
       + ($po | map(select(. as $p | $p.issue != null and (($onums | index($p.issue)) == null)))
         | map({kind: "closed_issue_open_pr", repo_short: $rs, pr: .number, issue: .issue,
@@ -395,19 +436,28 @@ for repo in "${repos[@]}"; do
       '{repo:$repo, repo_short:$rs, ok:false, error:$err}' >> "$tmpdir/repos.jsonl"
     continue
   fi
-  jq -c . "$tmpdir/repo.json" >> "$tmpdir/repos.jsonl"
+  if ! jq -c . "$tmpdir/repo.json" >> "$tmpdir/repos.jsonl"; then
+    exit_code=1
+    snapshot_fail_line "$short 스냅샷 직렬화 실패(jq)"
+  fi
 done
 
 if [ "$json_mode" = 1 ]; then
-  jq -s --arg since "$since" --arg scope "$scope_shorts" \
-    '{since:$since, scope:($scope | split("·")), repos:.}' "$tmpdir/repos.jsonl"
+  if ! jq -s --arg since "$since" --arg scope "$scope_shorts" \
+      '{since:$since, scope:($scope | split("·")), repos:.}' "$tmpdir/repos.jsonl"; then
+    exit_code=1
+    snapshot_fail_line "JSON 조립 실패(jq)"
+  fi
 else
   first=1
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     [ "$first" = 1 ] || echo
     first=0
-    printf '%s\n' "$line" | jq -r --arg scope "$scope_shorts" "$RENDER_JQ"
+    if ! printf '%s\n' "$line" | jq -r --arg scope "$scope_shorts" "$RENDER_JQ"; then
+      exit_code=1
+      snapshot_fail_line "블록 렌더 실패(jq)"
+    fi
   done < "$tmpdir/repos.jsonl"
 fi
 

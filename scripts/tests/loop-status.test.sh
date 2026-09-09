@@ -9,7 +9,9 @@
 #   ④ 레포 짧은 이름 — issue-runner → runner 특례.
 #   ⑤ 레포 하나 조회 실패 → 그 블록만 실패 줄, 나머지 정상, exit 1.
 #   ⑥ `--json` 의 모든 항목·warn 에 `repo_short`.
-#   ⑦ `.loop/repos` 의 `#` 주석·빈 줄 무시.
+#   ⑦ `.loop/repos` 의 `#` 주석·빈 줄 무시 + 형식 아닌 줄은 stderr 로 알린다.
+#   ⑧ 조용한 실패 6종(보조 리뷰) — 깨진 JSON 집계 실패 · compare 실패 degrade ·
+#      목록 상한 warn · 제목 폴백의 사다리 게이트 · `--since 0h` · repos 파일 부재 메시지.
 #
 # 기대 줄은 **손으로 적는다** — SUT 의 jq 를 베껴 기대값을 만들면 공허하게 통과한다
 # (transition.test.sh 의 관행).
@@ -117,6 +119,7 @@ sed "s/@NOW@/$NOW/g; s/@OLD@/$OLD/g" > "$tmp/fx/ggqgga_BodaT.issues.json" <<'FX'
  {"number":4803,"title":"구현중건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
  {"number":4701,"title":"좌초건","createdAt":"@NOW@","labels":[{"name":"agent:claimed"}]},
  {"number":4810,"title":"검증중건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":4500,"title":"배포 대기 (승격만) — 사다리가 이긴다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
  {"number":4811,"title":"마감대기건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:ready"}]},
  {"number":4818,"title":"마감중건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"harvesting"}]},
  {"number":4700,"title":"중복단계건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"harvesting"}]},
@@ -175,6 +178,27 @@ echo '7' > "$tmp/fx/ggqgga_issue-runner.ahead"
 # ── 픽스처: ggqgga/BoDAC (bodac) — 조회 실패 ───────────────────────────────
 : > "$tmp/fx/ggqgga_BoDAC.fail"
 
+# ── 픽스처: ggqgga/Broken (broken) — gh 는 exit 0 인데 JSON 이 깨졌다 ────────
+# gh 가 성공했다고 조용히 빈 스냅샷을 찍으면 "그 레포엔 아무것도 없다" 로 읽힌다.
+printf '%s' '{이건 JSON 이 아니다' > "$tmp/fx/ggqgga_Broken.issues.json"
+echo '[]' > "$tmp/fx/ggqgga_Broken.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_Broken.pr_closed.json"
+
+# ── 픽스처: ggqgga/NoCompare (nocompare) — release 는 있는데 compare 가 실패 ──
+echo '[]' > "$tmp/fx/ggqgga_NoCompare.issues.json"
+echo '[]' > "$tmp/fx/ggqgga_NoCompare.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_NoCompare.pr_closed.json"
+: > "$tmp/fx/ggqgga_NoCompare.release"   # .ahead 없음 → 스텁의 compare 가 실패
+
+# ── 픽스처: ggqgga/Big (big) — 목록이 --limit 200 상한에 닿았다 ─────────────
+jq -n --arg t "$NOW" '[range(1;201) | {number: ., title:"채움", createdAt:$t, labels:[]}]' \
+  > "$tmp/fx/ggqgga_Big.issues.json"
+echo '[]' > "$tmp/fx/ggqgga_Big.pr_open.json"
+jq -n --arg t "$NOW" \
+  '[range(1;201) | {number: ., headRefName:"fix/채움", state:"CLOSED", mergedAt:$t,
+                    closedAt:$t, createdAt:$t, closingIssuesReferences:[], labels:[]}]' \
+  > "$tmp/fx/ggqgga_Big.pr_closed.json"
+
 run() {  # run <인자...> — 출력은 $tmp/out, exit 는 RC
   STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" "$SUT" "$@" >"$tmp/out" 2>"$tmp/err"
   RC=$?
@@ -185,13 +209,13 @@ run --repo ggqgga/BodaT --repo ggqgga/issue-runner --since 24h
 ck "정상 스코프: exit 0" "$RC" 0
 
 has_line "헤더: 열림=버킷합(13) · 스코프 · 창" "$tmp/out" \
-  "파이프라인 bodat — 열림 15 · 스코프 bodat·runner · 창 24h"
+  "파이프라인 bodat — 열림 16 · 스코프 bodat·runner · 창 24h"
 has_line "대기 3(창 밖 파생건도 대기에는 남는다)" "$tmp/out" \
   "  대기      4  #4901 #4832 #4831 #4600"
 has_line "구현중 2(좌초건 포함)" "$tmp/out" \
   "  구현중    2  #4803 #4701"
-has_line "검증대기 1 + 연결 PR" "$tmp/out" \
-  "  검증대기  1  #4810 ← PR #4840"
+has_line "검증대기 2 — 제목이 배포 대기… 여도 사다리 라벨이 이긴다" "$tmp/out" \
+  "  검증대기  2  #4810 ← PR #4840 #4500"
 has_line "마감대기 1 + 연결 PR" "$tmp/out" \
   "  마감대기  1  #4811 ← PR #4841"
 has_line "마감중 2(중복단계건은 가장 뒤 단계로)" "$tmp/out" \
@@ -248,7 +272,7 @@ has_line "창 7d: 실패 2(창 밖이던 #4794 포함)" "$tmp/out" \
 run --repo ggqgga/BodaT --repo ggqgga/BoDAC --repo ggqgga/issue-runner --since 24h
 ck "부분 실패: exit 1" "$RC" 1
 has_sub "부분 실패: bodac 만 실패 줄" "$tmp/out" "파이프라인 bodac — 조회 실패: 이슈 목록 — "
-has_sub "부분 실패: bodat 블록은 정상" "$tmp/out" "파이프라인 bodat — 열림 15"
+has_sub "부분 실패: bodat 블록은 정상" "$tmp/out" "파이프라인 bodat — 열림 16"
 has_sub "부분 실패: runner 블록은 정상" "$tmp/out" "파이프라인 runner — 열림 1"
 
 # ── ⑥ --json: 모든 항목·warn 에 repo_short ──────────────────────────────────
@@ -263,8 +287,8 @@ ck "--json: repo_short 없는 warn 0" \
   "$(jq '[.repos[] | select(.ok) | .warns[] | select(has("repo_short") | not)] | length' < "$tmp/out")" 0
 ck "--json: 여러 레포의 repo_short 가 섞여 구분된다" \
   "$(jq -c '[.repos[].repo_short] | sort' < "$tmp/out")" '["bodat","runner"]'
-ck "--json: bodat 열림 15" \
-  "$(jq '.repos[] | select(.repo_short=="bodat") | .open_total' < "$tmp/out")" 15
+ck "--json: bodat 열림 16" \
+  "$(jq '.repos[] | select(.repo_short=="bodat") | .open_total' < "$tmp/out")" 16
 ck "--json: runner 승격 대기 7" \
   "$(jq '.repos[] | select(.repo_short=="runner") | .promotion_ahead' < "$tmp/out")" 7
 ck "--json: bodat 승격 대기 null(release 없음)" \
@@ -283,16 +307,56 @@ ck "repos-file: exit 0(주석의 실패 레포는 안 읽힘)" "$RC" 0
 has_sub "repos-file: 스코프에 두 레포만" "$tmp/out" "· 스코프 bodat·runner ·"
 no_sub "repos-file: 주석 레포 미포함" "$tmp/out" "bodac"
 
+# ── ⑧-a gh 가 exit 0 인데 JSON 이 깨졌다 → 집계 실패 + exit 1 ──────────────
+run --repo ggqgga/Broken --repo ggqgga/issue-runner --since 24h
+ck "깨진 JSON: exit 1" "$RC" 1
+has_line "깨진 JSON: 조용한 빈 스냅샷이 아니라 실패 줄" "$tmp/out" \
+  "파이프라인 broken — 조회 실패: 집계 실패(jq)"
+has_sub "깨진 JSON: 나머지 레포는 정상" "$tmp/out" "파이프라인 runner — 열림 1"
+
+# ── ⑧-b release 는 있는데 compare 실패 → 승격 대기 — 로 degrade, exit 0 ────
+run --repo ggqgga/NoCompare --since 24h
+ck "compare 실패: 레포를 실패시키지 않는다(exit 0)" "$RC" 0
+has_sub "compare 실패: 블록은 정상 렌더" "$tmp/out" "파이프라인 nocompare — 열림 0"
+has_line "compare 실패: 승격 대기 —" "$tmp/out" "  승격 대기 —"
+
+# ── ⑧-c 목록 상한 200 도달 → 절단 warn ────────────────────────────────────
+run --repo ggqgga/Big --since 24h
+ck "목록 절단: exit 0" "$RC" 0
+has_line "목록 절단: warn 2건" "$tmp/out" "  warn      2"
+has_sub "목록 절단: 이슈 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(이슈)"
+has_sub "목록 절단: 닫힌 PR 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(닫힌 PR)"
+no_sub "목록 절단: 상한 안 닿은 열린 PR 은 조용하다" "$tmp/out" "창 절단 가능(열린 PR)"
+
+# ── ⑦ repos 파일 — 형식 아닌 줄은 stderr 로 알린다(조용히 버리지 않는다) ────
+cat > "$tmp/repos-bad" <<'FX'
+ggqgga/BodaT
+오타로슬래시가없는줄
+FX
+run --repos-file "$tmp/repos-bad" --since 24h
+ck "무시된 줄: exit 0" "$RC" 0
+has_sub "무시된 줄: stderr 로 알린다" "$tmp/err" "무시된 줄: 오타로슬래시가없는줄"
+has_sub "무시된 줄: 나머지 레포는 정상" "$tmp/out" "파이프라인 bodat — 열림 16"
+
 # ── usage — 스코프 없음 / --since 형식 오류 ────────────────────────────────
 STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" \
   "$SUT" --repos-file "$tmp/없는파일" >"$tmp/out" 2>"$tmp/err"; RC=$?
-ck "스코프 없음: exit 64" "$RC" 64
+ck "repos 파일 부재: exit 64" "$RC" 64
+has_sub "repos 파일 부재: usage 로 뭉개지 말고 그 사실을 말한다" "$tmp/err" \
+  "repos 파일 없음: $tmp/없는파일"
 STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" \
   "$SUT" --repo ggqgga/BodaT --since 24 >"$tmp/out" 2>"$tmp/err"; RC=$?
 ck "--since 형식 오류: exit 64(조용한 창 0 금지)" "$RC" 64
 STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" \
   "$SUT" --repo ggqgga/BodaT --since xh >"$tmp/out" 2>"$tmp/err"; RC=$?
 ck "--since 숫자 아님: exit 64" "$RC" 64
+# ⑧-e 창 0 은 실패·파생을 늘 0 으로 만드는 거짓 "깨끗함" — 형식 오류로 막는다
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" \
+  "$SUT" --repo ggqgga/BodaT --since 0h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "--since 0h: exit 64" "$RC" 64
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" \
+  "$SUT" --repo ggqgga/BodaT --since 0d >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "--since 0d: exit 64" "$RC" 64
 
 echo "loop-status: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
