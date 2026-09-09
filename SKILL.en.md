@@ -153,27 +153,40 @@ session cwd's `.loop/repos` scope on its own). Of the stops recorded by `needs-h
 a reason label, only **`hold:ladder`** (stopped because ladder rungs ①–③ of live
 verification all failed) is reverted automatically once the window (`RESUME_AFTER_MIN`)
 passes — `hold:conflict` and `hold:policy` are human decisions and are left alone. Run it
-**before** ③ Dispatch so this same tick can pick the issue up. Per event:
+**before** ③ Dispatch so this same tick can pick the issue up.
+The resume count is the number of issue **comments** carrying the marker
+`<!-- ladder-resume: N -->` — the body is neither read nor written (append-only, so it can
+never overwrite someone's edit). Stop labels are mirrored onto the issue **and its open
+linked PR**, so a resume/escalation reverts the PR's labels too — otherwise the PR stays
+permanently human-blocked and the downstream transitions (handoff-verify, verify-pass,
+closeout-pick) never remove it. Per event:
 
 - `resumed` — `needs-human` and `hold:ladder` are off and `agent-ready` is untouched (the
   eligibility label is never touched). **Nothing for the dispatcher to do** — the issue
   reappears naturally as an `eligible-issues.sh` candidate in ③ this tick. Record the
   number and `attempt` under `resumed` in ④ Report.
 - `escalated` — the resume cap (`LADDER_RESUME_LIMIT`) was exceeded, so the issue was
-  escalated to `hold:policy` (`attempt`/`limit` are the resumes the body marker actually
+  escalated to `hold:policy` (`attempt`/`limit` are the resumes the marker comments actually
   recorded vs. the cap — read as `2/2`). The script already applied the label, so with
   **no further action** list it under `escalated` in ④ Report for a human to see.
 - `warn` — a `needs-human` with no reason label (`hold:*` — a human may have attached it by
-  hand, so it is not an auto-resume target), a race against human edits, or a failure
-  **before** any edit. The script did **not** touch it — **do not touch it either**; copy it
-  verbatim into ④ Report's warns.
-- `warn_after_edit` — a side failure **after** the labels were already applied (comment
-  failure · escalate/resume readback lookup failure or mismatch · label-release failure). The
+  hand, so it is not an auto-resume target), a human-owned `hold:*` coexisting with
+  `hold:ladder`, a race against human edits, a failure **before** any write, or a
+  **listing/search cap hit** (the `--limit 200` window filled, so truncated issues are
+  invisible this tick — repeated hits mean it is time to narrow scope with `.loop/repos`;
+  a `repo` of `*` means the account-wide search). The script did **not** touch it —
+  **do not touch it either**; copy it verbatim into ④ Report's warns.
+- `warn_after_edit` — a side failure **after** a write was already applied (label-release
+  failure · escalate/resume readback lookup failure or mismatch · **linked-PR mirror label
+  release failure**, whose message names `PR #<number>`). The
   resume/escalation itself may have happened, so do not revert; copy it into ④ Report's warns
   tagged `(edit applied)` — next tick's loop-status shows the actual label state.
 - `waiting` — still inside the window. Pass over it quietly (no reporting needed).
-- exit 2 — the `needs-human` listing failed for some repos (the rest were processed
-  normally). Leave one warn line `resume-sweep 부분 실패(레포 조회)` in ④ Report.
+- exit 2 — a listing failed for some repos (the rest were processed normally), or the
+  account-wide search failed. Leave one warn line `resume-sweep 부분 실패(레포 조회)` in
+  ④ Report.
+- exit 64 — `RESUME_AFTER_MIN` / `LADDER_RESUME_LIMIT` is not an integer (it stops before any
+  write). The sweep does not run at all until the constant is fixed, so raise it as a warn.
 
 ## ② Maintain — finish what you started first
 
@@ -283,9 +296,11 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       report's `pre-review: <value>` line into ④ Report (absence is a line too) — measure the
       effect by verify-runner bounces (`재검증 실패:` comments) / the share of reviews that
       actually ran (CLEAN or findings).
-      **If the issue was resumed, inline two more things in the prompt.** An issue body
-      carrying a `<!-- ladder-resume: N -->` marker with `N ≥ 1` was revived by ①'s resume
-      sweep. After the filled template, append ⓐ the ladder document's path
+      **If the issue was resumed, inline two more things in the prompt.** If any **comment**
+      carries the marker `<!-- ladder-resume: N -->`, the issue was revived by ①'s resume
+      sweep, and the number of such comments is which resume this is (the body has no marker —
+      the sweep never touches it):
+      `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select(.body|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'` After the filled template, append ⓐ the ladder document's path
       `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (where the
       worker reads which rung is climbed with which command) and ⓑ **the previous attempt's
       failure output** — the body of the issue's last ladder-related comment:
