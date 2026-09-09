@@ -53,6 +53,13 @@
 #   멱등: 이미 CLOSED 인 쪽의 close 만 건너뛴다. readback 은 순서가 아니라 **최종 상태**
 #   (PR 라벨 dup 부착·harvesting 부재 · PR/이슈 CLOSED)를 본다.
 #
+# ★사람 대기 세 전이의 순서★ (#157) — `--note` 가 붙는 verify-held·closeout-blocked·
+#   runner-held 는 **질문 코멘트 → 라벨 편집 → readback** 순이다. 코멘트가 뒤였을 땐 코멘트
+#   API 의 일시 실패가 "라벨은 붙었는데 질문이 없는 홀드" 를 남겼고(재시도 주체 없음),
+#   앞으로 옮기면 그 실패가 라벨 편집 전에 exit 2 로 끝나 상태가 전이 이전 그대로 남는다 —
+#   호출부가 다음 틱에 같은 전이를 다시 걸면 그게 곧 재시도다. `--note` 가 없는 전이는
+#   이 단계를 아예 거치지 않으므로 종전 경로 그대로다.
+#
 # 멱등: 같은 전이를 두 번 걸어도 무해하다(`--remove-label` 은 없는 라벨에 무해).
 # 검증: edit 뒤 라벨을 **다시 읽어** add ⊆ 현재 · remove ∩ 현재 = ∅ 인지 확인한다.
 #   불일치 → stderr 한 줄 + exit 1 / gh 호출 자체 실패(네트워크·권한) → stderr + exit 2.
@@ -310,6 +317,30 @@ if [ "$name" = "closeout-dup" ]; then
   exit 0
 fi
 
+# ★질문 코멘트가 라벨보다 먼저★ (#157) — 코멘트가 라벨 **뒤**였을 때, 코멘트 API 의 일시
+# 실패(502 등)는 exit 2 로 끝나면서도 라벨(`needs-human`+`hold:*`)은 이미 붙여 놓았다.
+# 남는 건 "질문 없는 홀드" — 사람은 무엇을 답해야 할지 모르고, 재심(resume-sweep)은
+# `hold:policy` 를 `no-note` warn 으로만 흘리며(hold:conflict 는 그마저 없다) 아무도
+# 재시도하지 않는다. 순서를 뒤집으면 실패가 라벨 편집 **전에** 나므로 상태는 전이 이전
+# 그대로고, 호출부(BLOCKED)가 다음 틱에 같은 전이를 통째로 다시 걸어 자연히 재시도된다.
+# 반대 방향의 부분 실패(코멘트만 남고 라벨이 실패)는 무해하다 — 다음 시도가 코멘트를
+# 한 번 더 남길 뿐이고(중복 감수), 마커를 읽는 쪽은 마지막 것을 기준으로 본다.
+# 마커 `<!-- hold-note: <reason> -->` 는 loop-status/재심(resume-sweep policy_review_due)이 읽는다.
+if [ "$has_note" -eq 1 ] && [ -n "$note" ]; then
+  case "$name" in
+    verify-held|closeout-blocked|runner-held)
+      body=$(printf '사람 확인(%s): %s\n<!-- hold-note: %s --><!-- bodat:worker -->' "$reason" "$note" "$reason")
+      for side in issue pr; do
+        if [ "$side" = issue ]; then n=$issue; else n=$pr; fi
+        [ "$n" != "-" ] || continue
+        if ! out=$(gh "$side" comment "$n" --repo "$repo" --body "$body" 2>&1); then
+          echo "transition $name: $side #$n 사유 코멘트 실패(라벨 미편집 — 다음 틱 재시도) — $out" >&2
+          exit 2
+        fi
+      done ;;
+  esac
+fi
+
 # 편집 먼저 양쪽, 그다음 재조회 양쪽 — 한쪽 실패는 즉시 종료(fail-loud).
 if [ "$pr" != "-" ]; then
   run_edit pr "$pr" "$pr_add" "$pr_rm" || exit 2
@@ -322,22 +353,5 @@ if [ "$pr" != "-" ]; then
 fi
 if [ "$issue" != "-" ]; then
   verify_side issue "$issue" "$iss_add" "$iss_rm" || exit $?
-fi
-
-# 사람 대기 사유의 질문 한 줄을 코멘트로 남긴다(라벨 readback 뒤 — 라벨이 진실, 코멘트는 근거).
-# 마커 `<!-- hold-note: <reason> -->` 는 loop-status/재심(resume-sweep policy_review_due)이 읽는다.
-if [ "$has_note" -eq 1 ] && [ -n "$note" ]; then
-  case "$name" in
-    verify-held|closeout-blocked|runner-held)
-      body=$(printf '사람 확인(%s): %s\n<!-- hold-note: %s --><!-- bodat:worker -->' "$reason" "$note" "$reason")
-      for side in issue pr; do
-        if [ "$side" = issue ]; then n=$issue; else n=$pr; fi
-        [ "$n" != "-" ] || continue
-        if ! out=$(gh "$side" comment "$n" --repo "$repo" --body "$body" 2>&1); then
-          echo "transition $name: $side #$n 사유 코멘트 실패(라벨은 반영됨) — $out" >&2
-          exit 2
-        fi
-      done ;;
-  esac
 fi
 echo "transition $name $repo issue=$issue pr=$pr  ok"
