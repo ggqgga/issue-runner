@@ -415,6 +415,12 @@ for out-of-merge-scope verification the step-1 verifier excluded from the merge 
 - Otherwise a **`- [ ]` checkbox list**. One line = one action a human performs.
   Background·rationale·caveats go in `## 변경 요약`; leave only the actions here.
 
+Why the shape is enforced: the branch below reads this section to decide whether an issue
+is filed at all, and free prose leaves that decision to per-tick interpretation, which
+drifts (measured 2026-08-12~13: of 186 deploy-check issues, **zero** used checkboxes —
+all prose). A sentence like "없음. 주석 13줄이 전부다 — 관찰 가능한 변화가 없다" is clear
+to a human but is not `없음` to a machine branch.
+
 **Before carrying an item over, closeout climbs the ladder once (an untried `[ ]` is not
 carried over as-is).** Unfinished items the worker left as a bare `[ ]` **with no rung
 attempt and no citation** (no attempted rung, no failure output in the PR test plan) must
@@ -432,12 +438,6 @@ attempt results).
 - If the attempt is impossible in this environment (no such entrypoint in the repo, etc.),
   say so in one line in `## 변경 요약`. Never skip the attempt on the strength of the words
   "real hardware needed".
-
-Why the shape is enforced: the branch below reads this section to decide whether an issue
-is filed at all, and free prose leaves that decision to per-tick interpretation, which
-drifts (measured 2026-08-12~13: of 186 deploy-check issues, **zero** used checkboxes —
-all prose). A sentence like "없음. 주석 13줄이 전부다 — 관찰 가능한 변화가 없다" is clear
-to a human but is not `없음` to a machine branch.
 
 **Branch — once it is merged, always create a promotion ticket (user decision, 2026-08-16).**
 
