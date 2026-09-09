@@ -34,6 +34,14 @@ gh label create "flow:codex" --repo "$repo" --color C5DEF5 \
 gh label create "flow:ready" --repo "$repo" --color 0E8A16 \
   --description "그린라이트(머지 판정 ✅) — closeout 마감 대기" --force
 
+# closeout 파생·배포 대기 표식 (#144) — 지금까지 산문으로만 구분하던 두 종류의 이슈를
+# 목록에서 바로 가른다. `deploy-wait` 는 needs-human 과 **병행**한다(사람 손이 필요한
+# 이슈는 needs-human 뿐이라 배포 대기가 사람대기에 묻히던 문제).
+gh label create "spinoff" --repo "$repo" --color BFDADC \
+  --description "closeout 6단계 파생 이슈 (부모 PR/이슈에서 갈라짐)" --force
+gh label create "deploy-wait" --repo "$repo" --color 1D76DB \
+  --description "closeout 4단계 배포 대기 이슈 (needs-human 과 병행 — 사람대기와 구분용)" --force
+
 # 머지된 head 브랜치 자동 삭제 — reconcile 이 로컬만 정리하므로 원격은 GitHub 가 맡는다
 gh repo edit "$repo" --delete-branch-on-merge
 
