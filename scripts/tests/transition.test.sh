@@ -111,6 +111,8 @@ if [ "$sub" = "issue comment" ] || [ "$sub" = "pr comment" ]; then
     *)            printf 'issue-comment %s\n' "$num" >> "$STUB_MUT_LOG"; cf="$STUB_STATE_DIR/$num.comment" ;;
   esac
   [ "$mode" = "fail" ] && { echo "gh: connection refused" >&2; exit 1; }
+  # 코멘트 API 만 일시 실패(#157) — 라벨 편집은 멀쩡한데 코멘트만 안 되는 실측 상황.
+  [ "${STUB_COMMENT_FAIL:-0}" = "1" ] && { echo "gh: HTTP 502 Bad Gateway" >&2; exit 1; }
   while [ $# -gt 0 ]; do
     case "$1" in --body) shift; printf '%s\n' "${1:-}" >> "$cf" ;; esac
     shift
@@ -182,7 +184,7 @@ run() {
   STUB_MODE="$mode" STUB_STATE_DIR="$tmp/state" STUB_SETUP_FAIL="${STUB_SETUP_FAIL:-0}" \
   STUB_EDIT_LOG="$tmp/edit.log" STUB_SETUP_LOG="$tmp/setup.log" STUB_MUT_LOG="$tmp/mut.log" \
   STUB_PRCLOSE_FAIL="${STUB_PRCLOSE_FAIL:-0}" STUB_NOCLOSE="${STUB_NOCLOSE:-0}" \
-  STUB_REL_FAIL="${STUB_REL_FAIL:-0}" \
+  STUB_REL_FAIL="${STUB_REL_FAIL:-0}" STUB_COMMENT_FAIL="${STUB_COMMENT_FAIL:-0}" \
   PATH="$tmp/bin:$PATH" "$SUT" "$tname" owner/repo "$iss" "$prn" "$@" >"$tmp/out" 2>"$tmp/err"
   RC=$?
 }
@@ -464,6 +466,54 @@ run ok runner-held 9 - --reason conflict --note "충돌 해소 방향?"
 ck "runner-held conflict --note(issue만): exit 0" "$RC" 0
 case "$(mut_order)" in *"issue-comment 9"*) c=ok ;; *) c="$(mut_order)" ;; esac
 ck "runner-held conflict --note: 이슈 코멘트" "$c" ok
+
+# ── ⑦-b 질문 코멘트가 라벨보다 **먼저** (#157) ───────────────────────────────
+# 코멘트가 라벨 뒤였을 때: 코멘트 API 가 일시 실패해도 라벨(needs-human+hold:*)은 이미
+# 붙어 있어 "질문 없는 홀드" 가 남았다(재시도 주체 없음). 순서를 뒤집으면 코멘트 실패가
+# 라벨 편집 **전에** exit 2 로 끝나 호출부가 다음 틱에 통째로 다시 건다.
+for t in verify-held closeout-blocked runner-held; do
+  reset; seed 7 flow:verify harvesting; seed 9 flow:verify harvesting agent:claimed
+  STUB_COMMENT_FAIL=1 run ok "$t" 9 7 --reason policy --note "A인가 B인가"
+  ck "$t 코멘트 실패: exit 2" "$RC" 2
+  ck "$t 코멘트 실패: 라벨 편집 0회" "$(edits)" 0
+  ck "$t 코멘트 실패: PR 라벨 무편집" "$(labels_of 7)" "$(sorted "flow:verify harvesting")"
+  ck "$t 코멘트 실패: 이슈 라벨 무편집" "$(labels_of 9)" "$(sorted "flow:verify harvesting agent:claimed")"
+  check "$t 코멘트 실패: stderr 에 코멘트 실패 한 줄" \
+    "$(grep -q '코멘트 실패' "$tmp/err" && echo ok || echo no)"
+  # 옛 문구("라벨은 반영됨")가 남아 있으면 사람이 라벨을 손으로 떼러 간다 — 사실과 반대다.
+  check "$t 코멘트 실패: '라벨은 반영됨' 을 말하지 않는다" \
+    "$(grep -q '라벨은 반영됨' "$tmp/err" && echo no || echo ok)"
+done
+unset STUB_COMMENT_FAIL
+
+# 이슈 쪽 코멘트가 실패하면 PR 코멘트가 이미 갔더라도 라벨은 여전히 0회여야 한다 —
+# "코멘트 둘 다 성공해야 라벨" 이 계약(부분 성공으로 라벨을 붙이지 않는다).
+reset; seed 7 flow:verify; seed 9 flow:verify
+STUB_COMMENT_FAIL=1 run ok verify-held 9 7 --reason conflict --note q
+ck "코멘트 실패(양쪽 대상): 라벨 편집 0회" "$(edits)" 0
+unset STUB_COMMENT_FAIL
+
+# 과차단 회귀 가드 — 코멘트가 되는 정상 경로에선 라벨이 종전대로 붙고, 쓰기 순서가
+# 코멘트 → 라벨 이다(순서를 실측으로 못 박는다).
+reset; seed 7 flow:verify; seed 9 flow:verify agent:claimed
+run ok verify-held 9 7 --reason policy --note "A인가 B인가"
+ck "순서: exit 0" "$RC" 0
+ck "순서: 코멘트가 라벨 편집보다 앞" "$(mut_order)" \
+  "issue-comment 9|pr-comment 7|edit 7|edit 9"
+ck "순서: PR 라벨 종전대로" "$(labels_of 7)" "$(sorted "needs-human hold:policy")"
+ck "순서: 이슈 라벨 종전대로" "$(labels_of 9)" "$(sorted "needs-human hold:policy")"
+
+# --note 가 없는 전이(ladder 선택 · 그 밖의 전이)는 코멘트 단계를 아예 거치지 않는다 —
+# 코멘트 API 가 죽어 있어도 라벨은 종전대로 움직인다(과차단 회귀 가드).
+reset; seed 7 flow:verify; seed 9 flow:verify agent:claimed
+STUB_COMMENT_FAIL=1 run ok verify-held 9 7 --reason ladder
+ck "note 없는 ladder 홀드: 코멘트 API 죽어도 exit 0" "$RC" 0
+ck "note 없는 ladder 홀드: PR 라벨" "$(labels_of 7)" "$(sorted "needs-human hold:ladder")"
+reset; seed 7 flow:verify; seed 9 flow:verify agent:claimed
+STUB_COMMENT_FAIL=1 run ok verify-pass 9 7
+ck "verify-pass: 코멘트 API 죽어도 exit 0" "$RC" 0
+ck "verify-pass: 라벨 종전대로" "$(labels_of 9)" "$(sorted "flow:ready agent:claimed")"
+unset STUB_COMMENT_FAIL
 
 # ── ⑧ 세 사유가 각각 붙고, 나머지 두 hold 는 떨어진다(사유 교체 멱등) ────────
 for r in conflict policy ladder; do
