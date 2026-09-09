@@ -46,6 +46,7 @@ echo tester
 STUB
 chmod +x "$sut_dir"/*.sh
 echo 'owner/repo' > "$tmp/work/.loop/repos"
+mkdir -p "$tmp/noscope"   # .loop/repos 가 없는 세션 = 계정 전체 탐색 경로
 
 # ── gh 스텁 — 라벨/본문 상태를 파일로 들고 edit 를 실제로 반영한다 ──────────
 # (반영하지 않으면 readback 단언이 스텁의 고정 응답을 확인하는 공회전이 된다.)
@@ -59,14 +60,21 @@ case "$sub" in
     cat "$STUB_ISSUES"; exit 0 ;;
   "issue view")
     # 호출 순번별 오버라이드(STUB_VIEW_1·STUB_VIEW_2 …)로 편집 전/후 응답을 가른다.
+    # SUT 가 `-q` 없이 `--json` 으로 받으므로 스텁도 JSON 을 낸다(라벨은 콤마목록에서 조립).
     n=$(cat "$STUB_VIEW_N" 2>/dev/null || echo 0); n=$((n + 1)); printf '%s' "$n" > "$STUB_VIEW_N"
     var="STUB_VIEW_$n"; v="${!var:-}"
     if [ -n "$v" ]; then
       [ "$v" = "__FAIL__" ] && exit 1
-      [ "$v" = "__EMPTY__" ] && { printf '\n'; exit 0; }
-      printf '%s\n' "$v"; exit 0
+      if [ "$v" = "__EMPTY__" ]; then csv=""; else csv="$v"; fi
+    else
+      csv=$(cat "$STUB_LABELS")
     fi
-    cat "$STUB_LABELS"; exit 0 ;;
+    jq -n --arg l "$csv" --rawfile b "$STUB_BODY" --arg u "$(cat "$STUB_UPDATED")" \
+      '{labels: ($l|split(",")|map(select(length>0)|{name:.})), body: $b, updatedAt: $u}'
+    exit 0 ;;
+  "search issues")
+    [ -z "${STUB_SEARCH_FAIL:-}" ] || { echo "gh: search boom" >&2; exit 1; }
+    cat "$STUB_SEARCH"; exit 0 ;;
   "issue edit")
     body_mode=0
     for a in "$@"; do [ "$a" = "--body-file" ] && body_mode=1; done
@@ -92,24 +100,30 @@ STUB
 chmod +x "$tmp/bin/gh"
 
 # ── 픽스처 · 실행 헬퍼 ─────────────────────────────────────────────────────
-# setup <라벨csv> <분전> <본문>
+# setup <라벨csv> <분전> <본문> [라이브본문]
+#   3번째 = 목록 조회 스냅샷의 본문, 4번째(생략 시 3번째와 동일) = 지금 GitHub 에 있는 본문.
+#   둘을 가를 수 있어야 "스냅샷 본문으로 덮어쓰기" 회귀를 잡는다.
 setup() {
   printf '%s' "$1" > "$tmp/labels"
-  printf '%s' "$3" > "$tmp/body"
+  printf '%s' "${4-$3}" > "$tmp/body"
+  printf '%s' "$(ts "$2")" > "$tmp/updated"
   jq -n --argjson n 42 --arg l "$1" --arg u "$(ts "$2")" --arg b "$3" \
     '[{number:$n, labels: ($l|split(",")|map(select(length>0)|{name:.})), updatedAt:$u, body:$b}]' \
     > "$tmp/issues.json"
+  printf 'owner/repo\n' > "$tmp/search"
   : > "$tmp/gh.log"
   printf '0' > "$tmp/view.n"
   # unset 하면 export 속성이 날아가 이후 대입이 스텁에 안 전달된다 — 빈 값으로 되돌린다.
   STUB_LIST_FAIL=""; STUB_BODY_EDIT_FAIL=""; STUB_LABEL_EDIT_FAIL=""; STUB_COMMENT_FAIL=""
+  STUB_SEARCH_FAIL=""
   STUB_VIEW_1=""; STUB_VIEW_2=""; STUB_VIEW_3=""
+  WORKDIR="$tmp/work"; RA=120; RL=2
 }
 
 # run — 이벤트는 $out, 종료코드는 $RC 로. **명령치환으로 부르지 않는다**
 # (서브셸이면 RC 가 밖으로 못 나와 exit 2 단언이 공회전한다).
 run() {
-  (cd "$tmp/work" && PATH="$tmp/bin:$PATH" \
+  (cd "$WORKDIR" && PATH="$tmp/bin:$PATH" \
     RESUME_AFTER_MIN="${RA:-120}" LADDER_RESUME_LIMIT="${RL:-2}" \
     bash "$sut_dir/resume-sweep.sh") >"$tmp/out" 2>"$tmp/err"
   RC=$?
@@ -117,6 +131,8 @@ run() {
 }
 export STUB_LOG="$tmp/gh.log" STUB_ISSUES="$tmp/issues.json" STUB_LABELS="$tmp/labels"
 export STUB_BODY="$tmp/body" STUB_VIEW_N="$tmp/view.n"
+export STUB_UPDATED="$tmp/updated" STUB_SEARCH="$tmp/search" STUB_SEARCH_FAIL=""
+WORKDIR="$tmp/work"
 export STUB_LIST_FAIL="" STUB_BODY_EDIT_FAIL="" STUB_LABEL_EDIT_FAIL="" STUB_COMMENT_FAIL=""
 export STUB_VIEW_1="" STUB_VIEW_2="" STUB_VIEW_3=""
 RC=0
@@ -212,7 +228,8 @@ check "경합: 본문 불변"                "$(body_is "$BODY_PLAIN")"
 setup "needs-human,hold:ladder,agent-ready" 200 "$BODY_PLAIN"
 STUB_VIEW_2='needs-human,hold:ladder,agent-ready'   # 편집 후에도 그대로 보인다
 run
-check "readback 불일치: warn"          "$(has_ev warn)"
+check "readback 불일치: warn_after_edit" "$(has_ev warn_after_edit)"
+check "readback 불일치: 순수 warn 아님" "$(no_ev warn)"
 check "readback 불일치: resumed 없음"  "$(no_ev resumed)"
 check "readback 불일치: 문구"          "$(saysl 'readback 불일치')"
 
@@ -233,6 +250,93 @@ check "본문 실패: warn"                "$(has_ev warn)"
 check "본문 실패: resumed 없음"        "$(no_ev resumed)"
 check "본문 실패: needs-human 유지"    "$(hasl needs-human)"
 check "본문 실패: hold:ladder 유지"    "$(hasl hold:ladder)"
+
+# ── ⑫ [P1] 본문은 **재조회한 것**으로 갱신한다(스냅샷 옛 본문 덮어쓰기 금지) ───
+# 목록을 뜬 뒤 사람이 본문에 문단을 덧붙인 상황. 스냅샷 본문으로 --body-file 을 올리면
+# 그 문단이 통째로 사라진다.
+BODY_LIVE="$BODY_M1
+사람이 나중에 덧붙인 문단"
+BODY_LIVE_M2="$BODY_PLAIN
+
+<!-- ladder-resume: 2 -->
+사람이 나중에 덧붙인 문단"
+setup "needs-human,hold:ladder,agent-ready" 200 "$BODY_M1" "$BODY_LIVE"
+run
+check "본문 재조회: resumed"           "$(has_ev resumed)"
+check "본문 재조회: 사람 문단 보존"     "$(grep -qF '사람이 나중에 덧붙인 문단' "$tmp/body" && echo ok || echo no)"
+check "본문 재조회: 마커만 2 로"        "$(body_is "$BODY_LIVE_M2")"
+
+# ── ⑬ [P1-2] 재조회 실패는 rc 로 — 손대지 않는다 ─────────────────────────
+setup "needs-human,hold:ladder,agent-ready" 200 "$BODY_PLAIN"
+STUB_VIEW_1='__FAIL__'
+run
+check "재조회 실패: warn"              "$(has_ev warn)"
+check "재조회 실패: 문구"              "$(saysl '재조회 실패')"
+check "재조회 실패: resumed 없음"      "$(no_ev resumed)"
+check "재조회 실패: 편집 0회"          "$(no_edit)"
+
+# ── ⑭ [P1-2] readback 라벨 0개는 성공이다(빈 문자열 ≠ 조회 실패) ──────────
+setup "needs-human,hold:ladder,agent-ready" 200 "$BODY_PLAIN"
+STUB_VIEW_2='__EMPTY__'   # 재개 후 라벨이 하나도 안 남은 이슈
+run
+check "라벨 0개 readback: resumed"     "$(has_ev resumed)"
+check "라벨 0개 readback: warn 없음"   "$(no_ev warn)"
+check "라벨 0개 readback: after-edit warn 없음" "$(no_ev warn_after_edit)"
+
+# ── ⑮ 사람 몫 hold 동존 → 자동 재개 안 함 ────────────────────────────────
+setup "needs-human,hold:ladder,hold:policy,agent-ready" 200 "$BODY_PLAIN"
+run
+check "hold 동존: warn"                "$(has_ev warn)"
+check "hold 동존: 문구"                "$(saysl '사람 몫 hold:\* 동존')"
+check "hold 동존: resumed 없음"        "$(no_ev resumed)"
+check "hold 동존: 편집 0회"            "$(no_edit)"
+
+# ── ⑯ [P2] 상수 값 검증 — GitHub 쓰기 전에 exit 64 ───────────────────────
+setup "needs-human,hold:ladder,agent-ready" 200 "$BODY_PLAIN"
+RA='120m'
+run
+check "잘못된 RESUME_AFTER_MIN: exit 64" "$([ "$RC" = 64 ] && echo ok || echo no)"
+check "잘못된 RESUME_AFTER_MIN: stderr"  "$(grep -q 'RESUME_AFTER_MIN' "$tmp/err" && echo ok || echo no)"
+check "잘못된 RESUME_AFTER_MIN: gh 호출 0" "$([ ! -s "$tmp/gh.log" ] && echo ok || echo no)"
+setup "needs-human,hold:ladder,agent-ready" 200 "$BODY_PLAIN"
+RL='-1'
+run
+check "잘못된 LADDER_RESUME_LIMIT: exit 64" "$([ "$RC" = 64 ] && echo ok || echo no)"
+check "잘못된 LADDER_RESUME_LIMIT: gh 호출 0" "$([ ! -s "$tmp/gh.log" ] && echo ok || echo no)"
+
+# ── ⑰ [P2] .loop/repos 부재 = 계정 전체 탐색 ──────────────────────────────
+# (a) 탐색 실패는 "멈춘 건 없음" 으로 위장되지 않는다 — exit 2.
+setup "needs-human,hold:ladder,agent-ready" 200 "$BODY_PLAIN"
+WORKDIR="$tmp/noscope"; STUB_SEARCH_FAIL=1
+run
+check "탐색 실패: exit 2"              "$([ "$RC" = 2 ] && echo ok || echo no)"
+check "탐색 실패: stderr 사유"         "$(grep -q '탐색 실패' "$tmp/err" && echo ok || echo no)"
+check "탐색 실패: 편집 0회"            "$(no_edit)"
+# (b) 상한(200)에 닿으면 잘렸을 수 있다고 알린다.
+setup "needs-human,hold:ladder,agent-ready" 200 "$BODY_PLAIN"
+WORKDIR="$tmp/noscope"
+echo '[]' > "$tmp/issues.json"                       # 스윕 대상은 없고 탐색 결과만 본다
+awk 'BEGIN{for(i=1;i<=200;i++) print "owner/r" i}' > "$tmp/search"
+run
+check "탐색 상한: warn"                "$(has_ev warn)"
+check "탐색 상한: 문구"                "$(saysl '탐색 상한 도달')"
+check "탐색 상한: exit 0"              "$([ "$RC" = 0 ] && echo ok || echo no)"
+# (c) 상한 미만이면 warn 없음(그 warn 이 상시 켜져 있지 않다는 실증)
+setup "needs-human,hold:ladder,agent-ready" 200 "$BODY_PLAIN"
+WORKDIR="$tmp/noscope"
+echo '[]' > "$tmp/issues.json"
+awk 'BEGIN{for(i=1;i<=3;i++) print "owner/r" i}' > "$tmp/search"
+run
+check "탐색 상한 미만: warn 없음"      "$(no_ev warn)"
+
+# ── ⑱ 코멘트 실패는 warn 이 아니라 warn_after_edit (라벨은 이미 반영됨) ───
+setup "needs-human,hold:ladder,agent-ready" 200 "$BODY_PLAIN"
+STUB_COMMENT_FAIL=1
+run
+check "코멘트 실패: warn_after_edit"   "$(has_ev warn_after_edit)"
+check "코멘트 실패: 순수 warn 아님"    "$(no_ev warn)"
+check "코멘트 실패: resumed 는 그대로" "$(has_ev resumed)"
+check "코멘트 실패: 라벨은 반영됨"     "$(lacksl needs-human)"
 
 # ── ⑪ 정상 경로 exit 0 ────────────────────────────────────────────────────
 setup "needs-human,hold:ladder,agent-ready" 200 "$BODY_PLAIN"
