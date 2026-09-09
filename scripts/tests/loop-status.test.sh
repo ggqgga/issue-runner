@@ -124,6 +124,7 @@ sed "s/@NOW@/$NOW/g; s/@OLD@/$OLD/g" > "$tmp/fx/ggqgga_BodaT.issues.json" <<'FX'
  {"number":4770,"title":"사람대기 구현중자리","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"agent:claimed"}]},
  {"number":4838,"title":"라벨로 배포대기","createdAt":"@NOW@","labels":[{"name":"deploy-wait"}]},
  {"number":4796,"title":"배포 대기: PR #4700 — 제목 폴백","createdAt":"@NOW@","labels":[]},
+ {"number":4848,"title":"배포 검증: 화력 작전 — 제목 폴백 2형식","createdAt":"@NOW@","labels":[{"name":"needs-human"}]},
  {"number":4900,"title":"루프 밖 이슈","createdAt":"@NOW@","labels":[{"name":"enhancement"}]}
 ]
 FX
@@ -184,7 +185,7 @@ run --repo ggqgga/BodaT --repo ggqgga/issue-runner --since 24h
 ck "정상 스코프: exit 0" "$RC" 0
 
 has_line "헤더: 열림=버킷합(13) · 스코프 · 창" "$tmp/out" \
-  "파이프라인 bodat — 열림 14 · 스코프 bodat·runner · 창 24h"
+  "파이프라인 bodat — 열림 15 · 스코프 bodat·runner · 창 24h"
 has_line "대기 3(창 밖 파생건도 대기에는 남는다)" "$tmp/out" \
   "  대기      4  #4901 #4832 #4831 #4600"
 has_line "구현중 2(좌초건 포함)" "$tmp/out" \
@@ -197,8 +198,10 @@ has_line "마감중 2(중복단계건은 가장 뒤 단계로)" "$tmp/out" \
   "  마감중    2  #4818 ← PR #4837 #4700"
 has_line "사람대기 2 — 사다리 위치 + 열린 연결 PR" "$tmp/out" \
   "  사람대기  2  #4825(대기, PR #4835) #4770(구현중)"
-has_line "배포대기 2 — 라벨 + 제목 폴백" "$tmp/out" \
-  "  배포대기  2  #4838 #4796"
+has_line "배포대기 3 — 라벨 + 제목 폴백 2형식(배포 대기 / 배포 검증)" "$tmp/out" \
+  "  배포대기  3  #4848 #4838 #4796"
+# 배포대기가 사람대기보다 앞선다 — needs-human 을 단 `배포 검증:` 이슈가 사람대기로 새면 안 된다
+no_sub "제목 폴백건은 사람대기에 안 샌다" "$tmp/out" "#4848("
 # ② 창 필터: 머지된 PR·창 밖 PR·사람 브랜치는 실패 아님
 has_line "실패 1 — 창 안 미머지 agent PR 만" "$tmp/out" \
   "  실패      1  PR #4792(#4753, 머지 없이 닫힘)"
@@ -245,7 +248,7 @@ has_line "창 7d: 실패 2(창 밖이던 #4794 포함)" "$tmp/out" \
 run --repo ggqgga/BodaT --repo ggqgga/BoDAC --repo ggqgga/issue-runner --since 24h
 ck "부분 실패: exit 1" "$RC" 1
 has_sub "부분 실패: bodac 만 실패 줄" "$tmp/out" "파이프라인 bodac — 조회 실패: 이슈 목록 — "
-has_sub "부분 실패: bodat 블록은 정상" "$tmp/out" "파이프라인 bodat — 열림 14"
+has_sub "부분 실패: bodat 블록은 정상" "$tmp/out" "파이프라인 bodat — 열림 15"
 has_sub "부분 실패: runner 블록은 정상" "$tmp/out" "파이프라인 runner — 열림 1"
 
 # ── ⑥ --json: 모든 항목·warn 에 repo_short ──────────────────────────────────
@@ -260,8 +263,8 @@ ck "--json: repo_short 없는 warn 0" \
   "$(jq '[.repos[] | select(.ok) | .warns[] | select(has("repo_short") | not)] | length' < "$tmp/out")" 0
 ck "--json: 여러 레포의 repo_short 가 섞여 구분된다" \
   "$(jq -c '[.repos[].repo_short] | sort' < "$tmp/out")" '["bodat","runner"]'
-ck "--json: bodat 열림 14" \
-  "$(jq '.repos[] | select(.repo_short=="bodat") | .open_total' < "$tmp/out")" 14
+ck "--json: bodat 열림 15" \
+  "$(jq '.repos[] | select(.repo_short=="bodat") | .open_total' < "$tmp/out")" 15
 ck "--json: runner 승격 대기 7" \
   "$(jq '.repos[] | select(.repo_short=="runner") | .promotion_ahead' < "$tmp/out")" 7
 ck "--json: bodat 승격 대기 null(release 없음)" \

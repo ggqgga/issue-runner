@@ -24,7 +24,10 @@
 #   단계라 이슈 미러가 없다(=미러 불일치 판정에 참여하지 않는다).
 #
 #   이슈는 OPEN 기준. **한 이슈는 한 버킷** — 위에서 아래로 첫 매칭:
-#     1. 배포대기 — `deploy-wait` 라벨 또는 제목이 `배포 대기:` 로 시작(라벨 도입 전 폴백)
+#     1. 배포대기 — `deploy-wait` 라벨 또는 제목이 `배포 대기`/`배포 검증` 으로 시작
+#                  (라벨 도입 전 폴백. 실측 BoDAT 은 두 형식이 섞여 있고 콜론 앞 공백도
+#                   들쭉날쭉이라 `^배포 (대기|검증)` 로 본다 — `배포 검증:` 을 놓치면 그
+#                   이슈가 needs-human 을 달고 있어 사람대기로 오분류된다)
 #     2. 사람대기 — `needs-human` (괄호에 사다리 위치 + 열린 연결 PR)
 #     3. 마감중   — `harvesting`
 #     4. 마감대기 — `flow:ready`
@@ -209,7 +212,7 @@ def epoch($t): if $t == null then null else ($t | fromdateiso8601) end;
   | map(. + {ladder: ladder_of(.ln)})
   | map(. + {stage: (if (.ladder | length) == 0 then "none" else key_of(.ladder[-1]) end)})
   | map(. + {bucket:
-      (if has(.ln; "deploy-wait") or (.title | startswith("배포 대기:")) then "deploy_wait"
+      (if has(.ln; "deploy-wait") or (.title | test("^배포 (대기|검증)")) then "deploy_wait"
        elif has(.ln; "needs-human") then "human_wait"
        elif .stage == "harvesting" then "harvesting"
        elif .stage == "ready" then "ready"
