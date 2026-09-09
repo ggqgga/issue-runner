@@ -11,8 +11,8 @@
 #   working  — PR 없고 worktree 있음 → 워커 진행 중으로 간주
 #   stale    — PR 없고 worktree 도 없음 → 죽은 claim 해제
 #   warn     — dirty/unpushed worktree → 제거 보류, 사람 확인 필요.
-#              또는 머지 시각 == claim 시각(같은 초)이라 이전/현재 attempt 를 못 가르는데
-#              worktree 가 살아 있는 경우 → 정리 보류, 사람 확인 필요 (#131).
+#              또는 머지 시각 == claim 시각(같은 초)이라 이전/현재 attempt 를 못 가르는
+#              경우 → 정리 보류, 사람 확인 필요 (#131). worktree 유무와 무관하다 (#141).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -166,22 +166,46 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
             [ -n "$_old" ] || continue
             printf '%s\n' "$repo#$_old" >> "$skip_file"
           done
-      continue
+      # 막아야 할 것은 **머지 후보의 정리**이지 머지 아닌 PR 의 분류가 아니다 (#141).
+      # 이 분기의 진입 조건은 "브랜치에 MERGED PR 이 하나라도 있다" 라서, 브랜치 재사용
+      # 상황에선 옛 머지 PR 과 **현재 OPEN PR** 이 함께 잡힌다. 종전의 `continue` 는 이슈를
+      # 통째로 버려 안전한 pr_open·harvesting 이벤트까지 없앴고, 조회 실패가 지속되면
+      # (권한·rate limit) 현재 PR 이 Maintain 에 못 들어가 무기한 정체했다.
+      # 머지 후보를 폐기(위에서 보류 목록에 넣었다)하고 **OPEN 만** 남겨 계속 분류한다.
+      # CLOSED 도 함께 뺀다: CLOSED 분기는 pr_open/harvesting 과 달리 worktree 제거 +
+      # agent-ready 해제라는 **정리**를 한다. 브랜치 재사용이면 그 CLOSED 도 옛 attempt 의
+      # 것일 수 있는데 claim 시각을 모르는 상태라 가를 수 없다 — #139 가 막으려던 파괴적
+      # 오정리의 CLOSED 판이다. 여기서 복원하려는 건 정체를 푸는 **안전한 분류**뿐이다.
+      prs=$(printf '%s' "$prs" | jq -c '[.[] | select(.state == "OPEN")]')
+      # 단, 분류할 OPEN PR 이 하나도 없으면 할 일이 없다 — 예전처럼 이슈를 건너뛴다.
+      # 그냥 흘려보내면 pr 이 비어 아래에서 stale 로 agent:claimed 를 떼는데, 방금 보류한
+      # 머지는 이번 실행 스윕이 막혀 있다 = "라벨 제거 + 스윕 차단" 이라는 유실 조합이다.
+      printf '%s' "$prs" | jq -e 'length > 0' >/dev/null 2>&1 || continue
     fi
   fi
 
   pr=$(printf '%s' "$prs" | jq -c '.[0] // empty')
 
   if [ -z "$pr" ]; then
-    if [ -d "$wt" ]; then
-      # 동률(같은 초) 머지를 걸러낸 결과 후보가 비었는데 worktree 는 살아 있다 —
-      # 매 실행 같은 판정이 반복돼 주 루프도 스윕도 영영 정리하지 못하는 상태다
-      # (#131 리뷰). 해소 불가능한 모호성이므로 조용한 working 대신 사람에게 띄운다.
-      if [ "${tie_count:-0}" != 0 ]; then
-        printf '{"event":"warn","repo":"%s","number":%s,"msg":"머지 시각과 claim 시각이 같은 초라 이전/현재 attempt 를 가를 수 없다 — 정리 보류. 사람이 worktree(%s)와 PR 을 확인해 처리하라"}\n' \
-          "$repo" "$num" "$wt"
-        continue
+    # 동률(같은 초) 머지를 걸러낸 결과 후보가 비었다 — 매 실행 같은 판정이 반복돼 주 루프도
+    # 스윕도 영영 정리하지 못하는 상태다(#131 리뷰). 해소 불가능한 모호성이므로 조용한
+    # working/stale 대신 사람에게 띄우고 agent:claimed 는 **유지**한다.
+    # 이 판정은 worktree 유무보다 **앞**에 있어야 한다 (#141): worktree 가 이미 없다고
+    # 아래 else 로 흘려 stale 로 라벨을 떼면, 그 동률 머지는 이번 실행 보류 목록이 스윕을
+    # 막고 있어 다음 실행엔 라벨도 없이 주 루프에서 사라지고, cutoff(30분) 를 넘기면 스윕이
+    # 씨딩만 하고 지나간다 → merged 이벤트와 release-labels 처리가 영구 유실된다.
+    # (동률을 "현재 attempt" 로 재분류하지는 않는다 — 동률 = 이전 attempt 는 #131 AC.)
+    if [ "${tie_count:-0}" != 0 ]; then
+      if [ -d "$wt" ]; then
+        tie_hint="사람이 worktree($wt)와 PR 을 확인해 처리하라"
+      else
+        tie_hint="worktree 는 이미 없다 — 사람이 그 머지가 이번 claim 의 것인지 확인해 처리하라"
       fi
+      printf '{"event":"warn","repo":"%s","number":%s,"msg":"머지 시각과 claim 시각이 같은 초라 이전/현재 attempt 를 가를 수 없다 — 정리 보류. %s"}\n' \
+        "$repo" "$num" "$tie_hint"
+      continue
+    fi
+    if [ -d "$wt" ]; then
       printf '{"event":"working","repo":"%s","number":%s}\n' "$repo" "$num"
     else
       gh issue edit "$num" --repo "$repo" --remove-label "agent:claimed" >/dev/null 2>&1 || true
