@@ -822,7 +822,7 @@ bash scripts/tests/reconcile.test.sh
 echo "[test] transition.sh 전이 집합·readback 검증·라벨 보강 (#144 · #147 --reason·closeout-dup)"
 bash scripts/tests/transition.test.sh
 
-echo "[test] resume-sweep.sh 재개 스윕 — 창·상한·경합 가드·본문 마커 (#147)"
+echo "[test] resume-sweep.sh 재개 스윕 — 창·상한·경합 가드·마커 코멘트·PR 미러 (#147)"
 bash scripts/tests/resume-sweep.test.sh
 
 echo "[test] loop-status.sh 파이프라인 스냅샷 버킷·창 필터·warn·부분 실패 (#144)"
