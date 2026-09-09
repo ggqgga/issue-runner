@@ -144,6 +144,8 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_BodaT.pr_open.json" <<'FX'
   "closingIssuesReferences":[{"number":4825}],"labels":[]},
  {"number":4850,"headRefName":"agent/issue-4832","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
   "closingIssuesReferences":[{"number":4832}],"labels":[]},
+ {"number":4852,"headRefName":"agent/issue-4832","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":4832}],"labels":[{"name":"needs-human"}]},
  {"number":4851,"headRefName":"agent/issue-4899","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
   "closingIssuesReferences":[{"number":4899}],"labels":[{"name":"flow:verify"}]},
  {"number":4860,"headRefName":"agent/issue-4600","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
@@ -255,6 +257,8 @@ has_sub "warn 연결 이슈 종료" "$tmp/out" \
   "    - 연결 이슈 종료 PR #4851(bodat) — 연결 이슈 #4899 가 CLOSED"
 # needs-human 이슈에 걸린 라벨 없는 PR(#4835)은 무소속이 아니다
 no_sub "무소속: needs-human 연결 PR #4835 은 warn 아님" "$tmp/out" "무소속 PR #4835"
+# PR 자체에 needs-human 이 붙은 held PR(#4852 — verify-held/closeout-blocked 가 issue=- 로 남긴 형태)도 무소속이 아니다
+no_sub "무소속: PR 자체 needs-human(#4852) 은 warn 아님" "$tmp/out" "무소속 PR #4852"
 
 # ③ 깨끗한 픽스처 + ④ 짧은 이름 특례
 has_line "runner 블록 헤더(issue-runner → runner)" "$tmp/out" \

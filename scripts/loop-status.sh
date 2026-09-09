@@ -185,7 +185,7 @@ fi
 
 command -v jq >/dev/null 2>&1 || snapshot_abort "jq 없음 — 집계 불가"
 
-tmpdir=$(mktemp -d)
+tmpdir=$(mktemp -d) && [ -n "$tmpdir" ] && [ -d "$tmpdir" ] || snapshot_abort "임시 디렉터리 생성 실패(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
 # short_name <owner/repo> — repo 부분을 소문자로. issue-runner 만 `runner` 특례.
@@ -295,6 +295,7 @@ def epoch($t): if $t == null then null else ($t | fromdateiso8601) end;
       ($po | map(select(
           ((.headRefName | test("^agent/issue-")) or (.issue != null))
           and ((.ln | map(select(. as $x | pr_stage_labels | index($x) != null)) | length) == 0)
+          and (has(.ln; "needs-human") | not)
           and ((.issue as $n | $iss | map(select(.number == $n and has(.ln; "needs-human"))) | length) == 0)))
         | map({kind: "orphan_pr", repo_short: $rs, pr: .number, issue: .issue,
                text: ("무소속 PR #\(.number)(\($rs)) — 열린 agent PR 인데 단계 라벨 0 · "
