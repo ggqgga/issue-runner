@@ -194,7 +194,8 @@ cleanup on both the PR and the issue (prevents stale stage-label residue).
 transition refuses with usage exit 64 — no reasonless `needs-human` can be created). A
 rebase/semantic conflict is `conflict`; anything else the loop cannot decide (spec·policy·
 no verdict) is `policy`; `ladder` only when the rungs of
-`references/live-verification-ladder.md` were actually climbed and the failure output cited.
+`~/.claude/skills/issue-runner/references/live-verification-ladder.md`
+were actually climbed and the failure output cited.
 
 ## ③ Pipeline — steps 1–6
 
@@ -426,7 +427,8 @@ carried over as-is).** Unfinished items the worker left as a bare `[ ]` **with n
 attempt and no citation** (no attempted rung, no failure output in the PR test plan) must
 not be copied into this section as-is — doing so promotes work nobody attempted into a
 human's lap. closeout attempts **rung ① (dev server — `bin/rails runner`·localhost) and
-rung ② (`bin/dry-run`·the AdsPower relay)** of `references/live-verification-ladder.md`
+rung ② (`bin/dry-run`·the AdsPower relay)** of
+`~/.claude/skills/issue-runner/references/live-verification-ladder.md`
 **once each** first (rung ③, real hardware, is not closeout's job — record it with the
 attempt results).
 - If rung ①② **yields a verdict**, **drop** the item from `<LIVE_CHECKS>` (it is not a human
@@ -687,6 +689,6 @@ Non-operational notes — they do not affect tick execution.
   (`verifier-prompt.md`·`deploy-check-issue.md`·`spinoff-issue.md`) live in
   `skills/closeout/references/`.
 - The attempt order, transports and citation rules for anything needing live measurement
-  are in `references/live-verification-ladder.md` (rung ①dev → ②worker runtime → ③TEST
-  worker → ④human; the basis for the step-4 `<LIVE_CHECKS>` rung-①② attempt and the
+  are in `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
+  (rung ①dev → ②worker runtime → ③TEST worker → ④human; the basis for the step-4 `<LIVE_CHECKS>` rung-①② attempt and the
   precondition for `--reason ladder`).

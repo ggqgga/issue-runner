@@ -156,8 +156,10 @@ Procedure:
       acceptance-criteria/Test-plan line corresponding to an item you marked `[x]` in
       the PR `## Test plan` to `[x]`, and **leave** unfinished items `[ ]`, then write
       it back with `gh issue edit <NUM> --repo <REPO> --body`. **For live checks, first
-      climb the rungs in `references/live-verification-ladder.md` and try them; leave an
-      item `[ ]` only after citing the rung you attempted and its failure output (the
+      climb the rungs in
+      `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
+      and try them; leave an item `[ ]` only after citing the rung you attempted and
+      its failure output (the
       command plus its last 20 lines) in the PR `## Test plan`** — "real hardware is
       needed" as prose is not enough to leave it `[ ]` (rungs ① and ② can be attempted
       from the worktree as-is; the "Forbidden" list below still stands).

@@ -142,8 +142,9 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
       --json body` 로 본문을 읽어, PR `## Test plan` 에서 `[x]` 로 표시한 항목에 대응하는
       이슈 수용기준·Test plan 줄을 `[x]` 로, 미완은 `[ ]` 로 **유지**한 뒤 `gh issue edit
       <NUM> --repo <REPO> --body` 로 되쓴다. **라이브 항목은 먼저
-      `references/live-verification-ladder.md` 의 칸을 올라 시도하고, 시도한 칸·실패
-      출력(명령 한 줄 + 마지막 20줄)을 PR `## Test plan` 에 인용한 뒤에만 `[ ]` 로
+      `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
+      의 칸을 올라 시도하고, 시도한 칸·실패 출력(명령 한 줄 + 마지막 20줄)을
+      PR `## Test plan` 에 인용한 뒤에만 `[ ]` 로
       남긴다** — "실장비가 필요하다" 는 서술만으로는 `[ ]` 로 둘 수 없다(칸 ①②는
       워크트리에서 그대로 시도할 수 있다. 아래 "금지" 는 그대로 지킨다).
       **본문 전체 재생성 금지** — 체크박스 마크만 보수적으로

@@ -167,8 +167,8 @@ PR·이슈 양쪽의 `harvesting`·`flow:*` 정리를 전이 표가 보장한다
 `closeout-blocked` 는 **`--reason <conflict|policy|ladder>` 가 필수**다(없으면 usage
 exit 64 — 사유 없는 `needs-human` 을 만들 수 없다). rebase/semantic conflict 는
 `conflict`, 그 외 루프가 못 정하는 스펙·정책·검증 미산출은 `policy`, 사다리
-(`references/live-verification-ladder.md`)의 칸을 실제로 올라가 실패 출력을 인용한
-경우만 `ladder` 다.
+(`~/.claude/skills/issue-runner/references/live-verification-ladder.md`)
+의 칸을 실제로 올라가 실패 출력을 인용한 경우만 `ladder` 다.
 
 ## ③ 파이프라인 — 1~6단계
 
@@ -364,7 +364,8 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 **옮기기 전에 closeout 이 사다리를 한 번 올라간다 (시도 없는 `[ ]` 는 그대로 옮기지 않는다).**
 워커가 남긴 미완 항목 중 **사다리 시도·인용 없이 `[ ]` 로만 남은 것**(PR test plan 에
 시도한 칸도 실패 출력도 없는 항목)은 그대로 이 절에 옮기지 마라 — 그렇게 옮기면 아무도
-시도하지 않은 일이 사람 몫으로 승격된다. closeout 이 `references/live-verification-ladder.md`
+시도하지 않은 일이 사람 몫으로 승격된다. closeout 이
+`~/.claude/skills/issue-runner/references/live-verification-ladder.md`
 의 **칸 ①(dev 서버 — `bin/rails runner`·localhost)와 칸 ②(`bin/dry-run`·AdsPower 릴레이)**
 를 **한 번씩** 시도한 뒤에 옮긴다(칸 ③ 실장비는 closeout 의 몫이 아니다 — 시도 결과와
 함께 남긴다).
@@ -588,6 +589,7 @@ approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스�
   `closeout-ci-pass.sh`·`transition.sh`(라벨 이동)·`loop-status.sh`(④ Report 스냅샷))는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)에
   있고, references 3종(`verifier-prompt.md`·`deploy-check-issue.md`·
   `spinoff-issue.md`)은 `skills/closeout/references/` 에 있다.
-- 실측이 필요한 항목의 시도 순서·통로·인용 규칙은 `references/live-verification-ladder.md`
+- 실측이 필요한 항목의 시도 순서·통로·인용 규칙은
+  `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
   (칸 ①dev → ②워커 런타임 → ③TEST 워커 → ④사람. 4단계 `<LIVE_CHECKS>` 이관 전 ①② 시도의
   근거이자 `--reason ladder` 의 전제).

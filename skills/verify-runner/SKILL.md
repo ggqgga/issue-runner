@@ -152,8 +152,9 @@ tailwind 아니면 이 줄 생략.) 시스템 테스트 디렉토리가 없으�
 E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
 - **`해당 없음` 은 "스위트가 없다" 일 때만이다.** PR 이 실장비·라이브 동작을 건드려
   스위트로 덮이지 않는 항목이 있으면 `해당 없음` 으로 뭉개지 말고
-  `references/live-verification-ladder.md` 의 칸 ②③ 을 시도한 뒤 그 결과(시도한 칸·
-  명령·실패 출력 마지막 20줄)를 코멘트에 인용한다.
+  `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
+  의 칸 ②③ 을 시도한 뒤 그 결과(시도한 칸·명령·실패 출력 마지막 20줄)를 코멘트에
+  인용한다.
 - **실패 시 플레이크 판별 (자기포화 방어, #981).** `test:system` 스위트는 10코어에
   크롬 10개 병렬이라 한적한 박스에서도 스위트 자기포화로 저장-계열 어서션이 런당
   ~1개 깜빡인다(단독 실행은 통과). 그래서 스위트 실패 시 **곧바로 진짜 실패로
@@ -249,7 +250,8 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
   사람이 다시 정해야 한다.
 - **연결 이슈 부재** → `policy`. 어느 이슈에 붙일지가 사람 결정이다.
 - **E2E 가 실장비를 요구해 못 돈 경우** → 곧바로 held 로 가지 마라. 먼저
-  `references/live-verification-ladder.md` 의 **칸 ②(`bin/dry-run`·AdsPower 릴레이)와
+  `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
+  의 **칸 ②(`bin/dry-run`·AdsPower 릴레이)와
   칸 ③(미니 `ssh test '<cmd>'` 직결 · `test_claim`/`bin/dry-run` · 프로필 #18)** 을
   시도한다. 어느 칸에서든 판정이 서면 그 결과로 ④ Classify 를 진행하고(held 아님),
   **전부 실패했을 때만** `--reason ladder` 로 held 한다. 이때 위 `검증 보류:` 코멘트에
@@ -315,5 +317,6 @@ warn(flake_retry·동봉 실패·전이 실패 등)이 있으면 경로·사유�
   `verify-eligible.sh`·`closeout-ci-pass.sh`·`run-local-ci.sh`·`make-worktree.sh`·
   `repo-dir.sh`·`transition.sh`(라벨 이동)·`loop-status.sh`(④ Report 스냅샷), 검증자 프롬프트는 `skills/verify-runner/references/verify-prompt.md`.
   보조 리뷰어는 `pr-review-toolkit@claude-plugins-official` 플러그인(미설치면 3-b 는 자동 skip).
-- 실측이 필요한 항목의 시도 순서·통로·인용 규칙은 `references/live-verification-ladder.md`
+- 실측이 필요한 항목의 시도 순서·통로·인용 규칙은
+  `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
   (칸 ①dev → ②워커 런타임 → ③TEST 워커 → ④사람. `--reason ladder` 의 전제).
