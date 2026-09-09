@@ -88,8 +88,10 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 
 **대상**: `me=$(gh api user -q .login)` 후 `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc`(FIFO)로 열린 PR 을 모으고,
-head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify` 미부착**인 PR
-마다 판정한다. **`flow:verify` PR 은 verify-runner 가 검증 중(소유)이라 여기서 절대 집지
+head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify` 미부착**이고 **`needs-human`
+미부착**인 PR 마다 판정한다. `needs-human` PR 은 사람 대기(`hold:*` 사유 — verify-held·closeout-blocked·
+디스패처 runner-held 보수 상한)라 스윕이 입양·재디스패치하면 방금 건 사람 대기를 되돌린다(#151) —
+사람이 라벨을 떼기 전엔 절대 집지 않는다. **`flow:verify` PR 은 verify-runner 가 검증 중(소유)이라 여기서 절대 집지
 않는다** — 이걸 빠뜨리면 finish-classify 가 `🔄`(verify-runner 가 아직 ✅ 안 찍음)를
 `stale_reverify` 로 오분류해 재디스패치하고, verify-runner 의 검증과 충돌한다(양쪽이
 같은 PR 을 물어뜯음). 검증 단계의 완결 유실 회수는 verify-runner 의 매 틱 재집(flow:verify

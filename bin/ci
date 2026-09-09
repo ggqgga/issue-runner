@@ -1214,9 +1214,12 @@ done
 for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md references/worker-template.md references/worker-template.en.md references/live-verification-ladder.md; do
   if grep -n "이월" "$f"; then echo "  ✗ $f: '이월' 등장 — 사다리를 올라 시도하고 출력을 인용하라"; exit 1; fi
 done
-for f in skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
-  if grep -nE 'transition\.sh (verify-held|closeout-blocked) [^\n]*' "$f" | grep -v -- '--reason' | grep -q .; then
-    echo "  ✗ $f: --reason 없는 verify-held/closeout-blocked 호출"; exit 1; fi
+for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  if grep -nE 'transition\.sh (verify-held|closeout-blocked|runner-held) [^\n]*' "$f" | grep -v -- '--reason' | grep -q .; then
+    echo "  ✗ $f: --reason 없는 verify-held/closeout-blocked/runner-held 호출"; exit 1; fi
+  # 맨 needs-human 산문 작성 금지(#151) — 사유 없는 사람 대기는 loop-status 가 warn 하고 재개 스윕이 거부한다.
+  if grep -nE -- '--add-label "?needs-human"?' "$f" | grep -q .; then
+    echo "  ✗ $f: 산문 --add-label needs-human — runner-held/verify-held/closeout-blocked --reason 을 쓰라"; exit 1; fi
 done
 for f in SKILL.md SKILL.en.md; do grep -qF "resume-sweep.sh" "$f" || { echo "  ✗ $f: 재개 스윕 배선 없음"; exit 1; }; done
 
