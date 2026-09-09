@@ -13,10 +13,11 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 ## 상수
 
 - `MAX_CLOSEOUT = 1` — **동시성 1**(한 번에 1 PR 만 끝까지 직렬 마감). 틱당 상한이
-  아니다 — 한 PR 이 종료 상태(success·approval-required·blocked·exhausted)에 닿으면
+  아니다 — 한 PR 이 종료 상태(success·approval-required·blocked·dup·exhausted)에 닿으면
   **다음 틱을 기다리지 말고** ①①-b② 로 되돌아 다음 후보를 집어 이어간다(아래 ⑤ Drain).
   큐가 빌 때(② Pick 후보 0)만 틱을 끝내고 `/loop` 주기로 쉰다. 드레인은 유한하다 —
   처리된 PR 은 eligible 에서 빠진다(머지→OPEN 목록서 소멸 · blocked→`needs-human` ·
+  dup→PR 이 머지 없이 **닫혀** OPEN 목록서 소멸(머지와 같은 효과) ·
   approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스패치:` 마커+fresh updatedAt).
   `/loop` 주기는 **빈 큐일 때의 재스캔 간격**만 조절한다(적체 소진 속도가 아니라). 한
   틱이 하나씩만 처리해 적체가 쌓이던 문제를 이 드레인이 해소한다.
@@ -109,7 +110,7 @@ CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기�
 | `done_verdict` | 최신 `머지 판정: ✅` | eligible.sh 정상 경로가 처리 — 스윕은 skip |
 | `stale_inline` | 🔄 + 검증자 CLEAN + 버퍼 초과 (검증까지 도달·최종판정만 유실, #970형) | **입양(머지)** — ② Pick 후보로. ③ 1단계가 **독립 재검증** 후 마감. **새 이슈 안 만듦**(완료된 일 재수행 금지). |
 | `stale_reverify` | 🔄 + 검증자 부재/미해결 BLOCKER + 버퍼 초과 (검증 전 사망·구현 미완 가능, #971형) | **재디스패치** — 미완 코드를 codex 재검증 하나로 자동 머지하지 않는다(사용자 결정). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (연결 이슈를 `agent-ready` 로 되돌리고 `agent:claimed`·단계 라벨을 뗀다) → 새 워커가 같은 브랜치서 검증자 재실행→체크박스→최종판정으로 완결. 멱등 마커(아래). — head 커밋이 신선하면(#110, 스테일 클록에 커밋 시각 합류) 코멘트가 낡았어도 `active` 로 떨어져 살아있는 attempt N+1 워커를 오분류하지 않는다. |
-| `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>` (PR 과 연결 이슈 **양쪽**에 `needs-human` 부착 + 단계 라벨 정리 — 연결 이슈가 없어도 PR 에 사람 신호가 남는다), closeout 무접촉(자동 진행 안 함). |
+| `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy` (PR 과 연결 이슈 **양쪽**에 `needs-human` + `hold:policy` 부착 + 단계 라벨 정리 — 연결 이슈가 없어도 PR 에 사람 신호가 남는다), closeout 무접촉(자동 진행 안 함). |
 | `active` | 진행 중·버퍼 미도달·우리 형상 아님 | **무접촉**(다음 틱). |
 
 **flow:\* 보조 신호**: finish-classify 가 코멘트로 판정하지만, `flow:ready` 없이
@@ -163,6 +164,11 @@ skip 하고 ④ Report 에
 (위임 fail·conflict 사람판단·문서 reconcile 미완 등)은 반드시 `closeout-blocked`(사람에게)
 또는 `closeout-redispatch`(워커로 반송) **전이를 쓴다 — 손으로 `gh issue edit` 하지 않는다**.
 PR·이슈 양쪽의 `harvesting`·`flow:*` 정리를 전이 표가 보장한다(스테일 단계 라벨 잔재 방지).
+`closeout-blocked` 는 **`--reason <conflict|policy|ladder>` 가 필수**다(없으면 usage
+exit 64 — 사유 없는 `needs-human` 을 만들 수 없다). rebase/semantic conflict 는
+`conflict`, 그 외 루프가 못 정하는 스펙·정책·검증 미산출은 `policy`, 사다리
+(`references/live-verification-ladder.md`)의 칸을 실제로 올라가 실패 출력을 인용한
+경우만 `ladder` 다.
 
 ## ③ 파이프라인 — 1~6단계
 
@@ -192,12 +198,26 @@ diff·이슈 본문·lessons 를 프롬프트에 동봉, `run_in_background` + `
   머신 코멘트 마커(필수): 아래 `gh pr comment` 로 남기는 마감 검증 코멘트는 **마지막 줄에
   `<!-- bodat:worker -->`** 를 포함한다 — closeout-eligible 이 머신 코멘트를 사람 리뷰와
   구분하는 신호다(#72). 빠지면 그 PR 이 재평가 때 미해결 사람 코멘트로 오인돼 탈락한다.
+- **중복 — 루프가 직접 닫는다 (사람에게 넘기지 않는다).** 검증자가 "이슈가 요구한 수정이
+  **이미 `origin/main` 에 있다**" 또는 "이 PR 은 다른 PR 과 중복" 으로 판정하면 —
+  BLOCKER 로도 CLEAN 으로도 취급하지 마라. 근거 커밋을 확인한 뒤(`git log origin/<default>`
+  에서 그 수정을 담은 SHA) 한 줄로 닫는다:
+  `$SCRIPTS/transition.sh closeout-dup <repo> <issue> <pr> --note "<근거 커밋·사유>"`
+  — PR 을 머지 없이 닫고, 이슈에 근거를 남기고 닫으며, 단계 라벨을 정리하고 PR 에 `dup`
+  라벨을 남긴다. **`needs-human` 을 붙이지 마라** — 중복은 루프가 결정할 수 있는 것이고,
+  사람에게 던지면 사유 없는 `needs-human` 이 쌓인다(#4803 형: closeout 이 중복이라
+  판정해 놓고도 닫지 않고 사람에게 넘겼다). → **dup 종료** (머지하지 않는다).
+  **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
+  `BLOCKED: 전이 실패 closeout-dup PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
+  판정이 "중복인 것 같다" 수준이면 dup 가 아니다 — 근거 커밋을 못 짚으면 아래 BLOCKER
+  경로(`--reason policy`)로 간다.
 - BLOCKER(미산출 포함, 사유 예 `검증자 미산출 — 타임아웃(>VERIFIER_TIMEOUT_MIN분)` / 모델 오류 원문) →
   `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>
   <!-- bodat:worker -->"`
-  + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>`
-  (PR 의 `harvesting` 제거 + 연결 이슈에 `needs-human` 부착·단계 라벨 정리) →
-  **blocked 종료** (머지하지 않는다).
+  + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy`
+  (PR 의 `harvesting` 제거 + 연결 이슈에 `needs-human` + `hold:policy` 부착·단계 라벨
+  정리) → **blocked 종료** (머지하지 않는다). 검증자 BLOCKER·미산출은 스펙/정책 판단이
+  필요한 것이므로 사유는 `policy` 다(`conflict` 도 `ladder` 도 아니다).
   **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
   `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다
   (라벨이 반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적 — 조용히 넘어가지 않는다).
@@ -236,8 +256,8 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   로 조회하는 바로 그 SHA — 안 맞추면 run-local-ci 가 옛 SHA 를 캐시해 영구 exit 2 로
   남는다) → `$SCRIPTS/run-local-ci.sh <repo> <N>` 로 **현재 HEAD** 캐시를 채운다. `run-local-ci.sh`
   가 비0(새 base 와의 통합이 깨짐)이면 머지하지 말고 fail-closed 로 보류 종료한다
-  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>` + `blocked` 종료,
-  새 종료 상태 안 만듦 — 이 전이가 exit 1·2 면 ④ Report 에
+  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy` +
+  `blocked` 종료, 새 종료 상태 안 만듦 — 이 전이가 exit 1·2 면 ④ Report 에
   `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다).
   0이면 캐시가 pass 로
   채워졌으니 아래 exit 0 게이트로 합류한다. 이 경로는 **3단계 doc 커밋 유무와
@@ -254,7 +274,8 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 (예: 2~3초 간격 × 최대 5회, 무한 대기 금지)으로 재확인하고 — 3단계의
 `run-local-ci.sh` 가 캐시를 동기로 채우므로 보통 즉시 pass — 한도 내 pass 미도달이면
 머지하지 말고 fail-closed 로 보류 종료한다(아래 3단계의 캐시 비0/미도달 처리와 동일
-경로 — `closeout-blocked` 전이 + `blocked` 종료, 새 종료 상태를 만들지 않는다).
+경로 — `closeout-blocked … --reason policy` 전이 + `blocked` 종료, 새 종료 상태를
+만들지 않는다).
 **`gh pr merge` 성공 직후** `$SCRIPTS/cleanup-worktree.sh <repo> <N> --merged` 를
 호출해 이 PR 의 worktree(`agent/issue-<N>`)를 직접 정리한다 (`<N>`=PR head
 `agent/issue-N` 파싱, 3단계와 동일). 머지를 독점하는 closeout 이 머지 시점에 스스로
@@ -276,8 +297,8 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   **위임 fail-closed**: `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`
   로 연결 이슈를 `agent-ready` 로 되돌려(또는 spinoff) 넘기고 blocked 종료.
   0이면 위 exit 0 머지 게이트로 합류해 정상 squash 머지한다. 에이전트가 conflict 를 **못 풀면**(rebase abort·반복 실패) semantic
-  conflict 는 사람 판단이므로 `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>`
-  로 넘기고 blocked 종료한다(무인 강제 해소 금지). 두 전이 모두 **exit 1(readback
+  conflict 는 사람 판단이므로 `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason conflict`
+  로 넘기고 blocked 종료한다(무인 강제 해소 금지 — 이 경로만 사유가 `conflict` 다). 두 전이 모두 **exit 1(readback
   불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
   `BLOCKED: 전이 실패 <전이> PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
 
@@ -314,8 +335,8 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   HEAD 를 이미 캐시함) `run-local-ci.sh` 를 재실행하지 않는다(헬퍼도 큐 dedup 으로
   같은 SHA 는 재실행하지 않지만, 호출 자체를 아끼려 호출측도 가드한다). `run-local-ci.sh` 가 비0(=bin/ci 실패)이면 캐시가 pass 로
   안 채워진 것이므로 머지하지 말고 fail-closed 로 보류 종료한다
-  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>` + `blocked` 종료,
-  기존 BLOCKER 경로 준용 — 새 종료 상태를 만들지 않는다. 이 전이가 exit 1·2 면 ④ Report 에
+  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy` +
+  `blocked` 종료, 기존 BLOCKER 경로 준용 — 새 종료 상태를 만들지 않는다. 이 전이가 exit 1·2 면 ④ Report 에
   `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다).
 - **단일 이슈 degrade**: `Plans/*.md`·`## Plan` 이 없으면 문서 편집을 skip 한다.
   epic 이 없으면 롤업을 skip 한다. 이슈 자체 체크박스만 reconcile 한다. 둘 다
@@ -334,6 +355,21 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 - 사람이 배포 후 밟을 게 **하나도 없으면** 정확히 `없음` 한 단어. 뒤에 설명을 붙이지 마라.
 - 있으면 **`- [ ]` 체크박스 목록**. 한 줄 = 사람이 한 번 밟는 동작. 배경·근거·주의는
   `## 변경 요약` 에 쓰고 여기엔 밟을 것만 남긴다.
+
+**옮기기 전에 closeout 이 사다리를 한 번 올라간다 (시도 없는 `[ ]` 는 그대로 옮기지 않는다).**
+워커가 남긴 미완 항목 중 **사다리 시도·인용 없이 `[ ]` 로만 남은 것**(PR test plan 에
+시도한 칸도 실패 출력도 없는 항목)은 그대로 이 절에 옮기지 마라 — 그렇게 옮기면 아무도
+시도하지 않은 일이 사람 몫으로 승격된다. closeout 이 `references/live-verification-ladder.md`
+의 **칸 ①(dev 서버 — `bin/rails runner`·localhost)와 칸 ②(`bin/dry-run`·AdsPower 릴레이)**
+를 **한 번씩** 시도한 뒤에 옮긴다(칸 ③ 실장비는 closeout 의 몫이 아니다 — 시도 결과와
+함께 남긴다).
+- 칸 ①② 에서 **판정이 서면** 그 항목은 `<LIVE_CHECKS>` 에서 **뺀다**(사람이 밟을 게
+  아니다). 판정 근거는 PR 코멘트에 남긴다.
+- **실패하면** 항목을 `- [ ]` 로 옮기되, **시도한 칸과 실패 출력(명령 한 줄 + 마지막
+  20줄)을 인용**한다. 인용은 `## 변경 요약` 절에 적는다 — `<LIVE_CHECKS>` 는 위 형태
+  규율대로 **밟을 동작만** 남는 자리라 산문·출력이 들어가면 안 된다.
+- 시도가 불가능한 환경이면(레포에 해당 진입점 없음 등) 그 사실을 `## 변경 요약` 에 한 줄로
+  적는다. "실장비 필요" 라는 서술만으로 시도를 건너뛰지 마라.
 
 형태를 강제하는 이유: 아래 분기가 이 절을 읽어 이슈 발행 여부를 가르는데, 자유 산문이면
 그 판정이 매 틱 해석에 맡겨져 흔들린다(실측 2026-08-12~13: 배포검증 이슈 186건 중
@@ -472,7 +508,7 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
 
 ## ⑤ Drain — 다음 후보로 즉시 이어가기
 
-③ 파이프라인이 집은 PR 을 종료 상태(success·approval-required·blocked·exhausted)에
+③ 파이프라인이 집은 PR 을 종료 상태(success·approval-required·blocked·dup·exhausted)에
 닿게 한 **직후**, 그 PR 의 결과를 ④ Report 용으로 누적해 두고 **다음 틱을 기다리지
 말고 ①①-b② 로 되돌아간다** — 한 번에 하나씩만 처리해 적체가 쌓이던 문제를 이 드레인이
 한 틱 안에서 소진한다:
@@ -484,7 +520,8 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
   처리한 **모든 PR 을 한 번에 집계**해 보고한 뒤, `/loop` 주기로 다음 틱을 예약한다.
 
 무한루프 방지: 각 반복은 eligible/입양후보를 최소 1개 줄인다(머지→OPEN 소멸 · blocked→
-`needs-human` · approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스패치:` 마커로
+`needs-human` · dup→머지 없이 PR 이 닫혀 OPEN 소멸 ·
+approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스패치:` 마커로
 재선정 배제(마커 후 새 활동 없으면 스윕이 재발행 안 함)). 같은 PR 이 두 번 집히면(마커
 누락 등 예상 밖) 그 PR 을 skip 하고 ④ Report 에 `BLOCKED: 재선정 루프 — #<pr>` 로 보고해
 드레인을 끊는다. 별도 상한이 필요하면 한 틱 드레인은 최대 eligible 스냅샷 길이만큼만
@@ -493,7 +530,7 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
 ## ④ Report
 
 드레인이 끝나면(② Pick 후보 0) 이 틱에서 처리한 **모든 PR 을 합산**해 한 줄 요약(N 은
-이 틱 누적치): `마감 N · 검증보류 N · 배포대기 N · 파생 N · 회수 N · 재디스패치 N · stale N`.
+이 틱 누적치): `마감 N · 검증보류 N · 중복종료 N · 배포대기 N · 파생 N · 회수 N · 재디스패치 N · stale N`.
 ①-b 스윕이 입양해 마감·rebase 한 건은 `회수 N`(마감까지 갔으면 `마감` 에도 반영),
 `stale_reverify` 재디스패치·`held` needs-human 건은 `재디스패치 N` 으로 집계한다.
 
@@ -523,10 +560,12 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
   `--repo <owner/repo>` 로 명시해 한 번 더 부르고, 그래도 없으면
   `loop-status: 스코프 없음(.loop/repos 부재)` 한 줄을 warn 으로 남긴다.
 
-종료 상태 6종 — 처리한 PR **각각**에 대해 명시한다(드레인으로 여러 개면 PR 별로):
+종료 상태 7종 — 처리한 PR **각각**에 대해 명시한다(드레인으로 여러 개면 PR 별로):
 - **success** — 1~6단계를 다 돌아 PR 을 머지하고 후속까지 발행함(입양·rebase 회수분 포함).
 - **clean no-op** — ② Pick 후보가 0이라 마감할 PR 이 없음(①-b 재디스패치만 있었어도 no-op 아님 — `재디스패치 N` 보고).
 - **blocked** — 1단계 검증이 BLOCKER 이거나 2단계 rebase 통합 실패라 보류(머지 안 함).
+- **dup** — 1단계 검증이 "이미 `origin/main` 에 있다·중복" 으로 판정해 `closeout-dup` 으로
+  PR·이슈를 머지 없이 닫음(`needs-human` 없음 — 루프가 끝낸 것이다). `중복종료 N` 으로 집계.
 - **approval-required** — 4단계에서 배포 이슈를 발행하고 사람 게이트 대기.
 - **exhausted** — 5단계 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복돼 needs-human 승격.
 - **stagnated** — `QUIET_TICKS` 연속 조용함(①-b 스윕은 stagnated 여도 매 틱 돈다).
@@ -549,3 +588,6 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
   `closeout-ci-pass.sh`·`transition.sh`(라벨 이동)·`loop-status.sh`(④ Report 스냅샷))는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)에
   있고, references 3종(`verifier-prompt.md`·`deploy-check-issue.md`·
   `spinoff-issue.md`)은 `skills/closeout/references/` 에 있다.
+- 실측이 필요한 항목의 시도 순서·통로·인용 규칙은 `references/live-verification-ladder.md`
+  (칸 ①dev → ②워커 런타임 → ③TEST 워커 → ④사람. 4단계 `<LIVE_CHECKS>` 이관 전 ①② 시도의
+  근거이자 `--reason ladder` 의 전제).

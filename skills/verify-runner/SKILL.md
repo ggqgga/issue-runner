@@ -150,6 +150,10 @@ verify-eligible 출력의 **첫 후보 1개만** 집는다(FIFO·직렬). `flow:
 (에셋 미빌드면 레이아웃 렌더가 깨져 전건 error — tailwind 선빌드 필수. 레포가
 tailwind 아니면 이 줄 생략.) 시스템 테스트 디렉토리가 없으면 이 단계는 **skip**하고
 E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
+- **`해당 없음` 은 "스위트가 없다" 일 때만이다.** PR 이 실장비·라이브 동작을 건드려
+  스위트로 덮이지 않는 항목이 있으면 `해당 없음` 으로 뭉개지 말고
+  `references/live-verification-ladder.md` 의 칸 ②③ 을 시도한 뒤 그 결과(시도한 칸·
+  명령·실패 출력 마지막 20줄)를 코멘트에 인용한다.
 - **실패 시 플레이크 판별 (자기포화 방어, #981).** `test:system` 스위트는 10코어에
   크롬 10개 병렬이라 한적한 박스에서도 스위트 자기포화로 저장-계열 어서션이 런당
   ~1개 깜빡인다(단독 실행은 통과). 그래서 스위트 실패 시 **곧바로 진짜 실패로
@@ -233,11 +237,24 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    코멘트를 읽고 고친 뒤 다시 `flow:verify` 로 넘긴다(worker-template 절차). **redispatched 종료.**
    (연결 이슈가 없으면 재디스패치 불가 → held 로 폴백.)
 
-**held** — 재디스패치 상한 초과(VERIFY_ATTEMPTS_LIMIT) 또는 연결 이슈 부재:
+**held** — 재디스패치 상한 초과(VERIFY_ATTEMPTS_LIMIT) · 연결 이슈 부재 · 또는 E2E 가
+실장비를 요구해 못 돈 경우:
 `gh pr comment <pr> --repo <repo> --body "검증 보류: <사유> — 사람 확인 필요
-<!-- bodat:worker -->"` + `$SCRIPTS/transition.sh verify-held <repo> <issue|-> <pr>`
-(PR 의 `flow:verify` 제거 + PR 과 — 있으면 — 연결 이슈 **양쪽**에 `needs-human` 부착.
-연결 이슈가 없어도 PR 에 사람 신호가 남는다). **held 종료.**
+<!-- bodat:worker -->"` + `$SCRIPTS/transition.sh verify-held <repo> <issue|-> <pr> --reason <conflict|policy|ladder>`
+(PR 의 `flow:verify` 제거 + PR 과 — 있으면 — 연결 이슈 **양쪽**에 `needs-human` +
+`hold:<reason>` 부착. 연결 이슈가 없어도 PR 에 사람 신호가 남는다). **held 종료.**
+**`--reason` 은 필수다** — 빠지면 전이가 usage exit 64 로 거절한다(사유 없는
+`needs-human` 을 만들 수 없게 하는 게이트). 이 문단의 사유 배정:
+- **재디스패치 상한 초과** → `policy`. 루프가 정한 한도에 걸린 것이라 한도·범위를
+  사람이 다시 정해야 한다.
+- **연결 이슈 부재** → `policy`. 어느 이슈에 붙일지가 사람 결정이다.
+- **E2E 가 실장비를 요구해 못 돈 경우** → 곧바로 held 로 가지 마라. 먼저
+  `references/live-verification-ladder.md` 의 **칸 ②(`bin/dry-run`·AdsPower 릴레이)와
+  칸 ③(미니 `ssh test '<cmd>'` 직결 · `test_claim`/`bin/dry-run` · 프로필 #18)** 을
+  시도한다. 어느 칸에서든 판정이 서면 그 결과로 ④ Classify 를 진행하고(held 아님),
+  **전부 실패했을 때만** `--reason ladder` 로 held 한다. 이때 위 `검증 보류:` 코멘트에
+  **시도한 칸과 실패 출력(명령 한 줄 + 마지막 20줄)을 인용**한다 — 인용이 없으면
+  `ladder` 가 아니라 `policy` 다.
 **exit 1·2 면 종료 상태를 바꾸지 말고** ④ Report 에
 `BLOCKED: 전이 실패 verify-held PR #<pr>(<repo_short>) — <stderr 한 줄>`.
 
@@ -298,3 +315,5 @@ warn(flake_retry·동봉 실패·전이 실패 등)이 있으면 경로·사유�
   `verify-eligible.sh`·`closeout-ci-pass.sh`·`run-local-ci.sh`·`make-worktree.sh`·
   `repo-dir.sh`·`transition.sh`(라벨 이동)·`loop-status.sh`(④ Report 스냅샷), 검증자 프롬프트는 `skills/verify-runner/references/verify-prompt.md`.
   보조 리뷰어는 `pr-review-toolkit@claude-plugins-official` 플러그인(미설치면 3-b 는 자동 skip).
+- 실측이 필요한 항목의 시도 순서·통로·인용 규칙은 `references/live-verification-ladder.md`
+  (칸 ①dev → ②워커 런타임 → ③TEST 워커 → ④사람. `--reason ladder` 의 전제).
