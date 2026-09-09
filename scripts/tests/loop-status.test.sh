@@ -25,6 +25,9 @@
 #      사유 없는 건엔 gh 를 안 부른다). **모르는 것은 모른다고 말한다** — 조회 실패·
 #      코멘트 100건 상한·`HOLD_NOTE_MAX` 초과는 `질문 없음` 이 아니라 warn `질문 유무
 #      미확인` 이고, `--json` 의 `note_missing` 도 `false` 가 아니라 `null` 이다.
+#   ⑫-d (#160) 마커 판정은 **지금 붙은 사유**를 가린다 — 홀드가 풀려도 코멘트는 남으므로,
+#      `hold:conflict` 인데 마커가 옛 `hold-note: policy` 뿐이면 `질문 없음` 이다(그 반대도).
+#      같은 사유의 마커는 종전대로 조용하고, 두 사유가 함께 붙은 홀드는 어느 쪽 마커든 질문이다.
 #
 # 기대 줄은 **손으로 적는다** — SUT 의 jq 를 베껴 기대값을 만들면 공허하게 통과한다
 # (transition.test.sh 의 관행).
@@ -234,6 +237,37 @@ jq -n '{comments: [range(0;100) | {body: "잡담 \(.)"}]}' > "$tmp/fx/ggqgga_Cap
 jq -n '{comments: ([range(0;99) | {body: "잡담 \(.)"}]
                    + [{body: "사람 확인(conflict): 어느 쪽? <!-- hold-note: conflict --><!-- bodat:worker -->"}])}' \
   > "$tmp/fx/ggqgga_Capped.comments.11.json"
+
+# ── 픽스처: ggqgga/Stale (stale) — 낡은 사유의 마커 (#160) ──────────────────
+# 마커는 코멘트라 홀드가 풀려도 남는다. 사유를 안 가리면 예전 홀드가 남긴
+# `hold-note: policy` 가 지금의 `hold:conflict` 홀드를 "질문 있음" 으로 위장한다 —
+# 이 기능이 잡으라고 만들어진 바로 그 상태(질문 없는 conflict 홀드)가 숨는다.
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Stale.issues.json" <<'FX'
+[
+ {"number":24,"title":"conflict 홀드인데 마커는 낡은 policy","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:conflict"}]},
+ {"number":23,"title":"conflict 홀드 + conflict 마커","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:conflict"}]},
+ {"number":22,"title":"policy 홀드 + policy 마커","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":21,"title":"두 사유 동시 홀드 + conflict 마커","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:conflict"},{"name":"hold:policy"}]},
+ {"number":20,"title":"policy 홀드인데 마커는 낡은 conflict","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:policy"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_Stale.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_Stale.pr_closed.json"
+cat > "$tmp/fx/ggqgga_Stale.comments.24.json" <<'FX'
+{"comments":[{"body":"사람 확인(policy): 옛 홀드의 질문\n<!-- hold-note: policy --><!-- bodat:worker -->"}]}
+FX
+cat > "$tmp/fx/ggqgga_Stale.comments.23.json" <<'FX'
+{"comments":[{"body":"사람 확인(conflict): 어느 쪽으로 풀까\n<!-- hold-note: conflict --><!-- bodat:worker -->"}]}
+FX
+cat > "$tmp/fx/ggqgga_Stale.comments.22.json" <<'FX'
+{"comments":[{"body":"사람 확인(policy): A인가 B인가\n<!-- hold-note: policy --><!-- bodat:worker -->"}]}
+FX
+cat > "$tmp/fx/ggqgga_Stale.comments.21.json" <<'FX'
+{"comments":[{"body":"사람 확인(conflict): 어느 쪽으로 풀까\n<!-- hold-note: conflict --><!-- bodat:worker -->"}]}
+FX
+cat > "$tmp/fx/ggqgga_Stale.comments.20.json" <<'FX'
+{"comments":[{"body":"사람 확인(conflict): 옛 홀드의 질문\n<!-- hold-note: conflict --><!-- bodat:worker -->"}]}
+FX
 
 # ── 픽스처: ggqgga/issue-runner (runner) — 깨끗함 + release 있음 ─────────────
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_issue-runner.issues.json" <<'FX'
@@ -539,6 +573,27 @@ STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" HOLD_NOTE_MAX=50건 \
   "$SUT" --repo ggqgga/Capped --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
 ck "HOLD_NOTE_MAX 형식 오류: exit 1" "$RC" 1
 has_sub "HOLD_NOTE_MAX 형식 오류: stdout 에도 사유" "$tmp/out" "HOLD_NOTE_MAX 형식 오류"
+
+# ⑫-d (#160) 마커 판정은 **지금 붙은 사유**를 가린다 — 낡은 사유의 마커는 질문이 아니다
+# 홀드가 풀려도 코멘트는 남으므로(라벨만 떨어진다) 사유를 안 가리면 예전 `policy` 질문이
+# 지금의 `conflict` 홀드를 가려, 질문 없는 홀드가 조용히 방치된다.
+run --repo ggqgga/Stale --since 24h
+ck "stale marker: exit 0" "$RC" 0
+has_line "낡은 사유의 마커는 질문으로 세지 않는다(양방향) · 같은 사유는 종전대로" "$tmp/out" \
+  "  사람대기  5  #24(대기, conflict, 질문 없음) #23(대기, conflict) #22(대기, policy) #21(대기, conflict, policy) #20(대기, policy, 질문 없음)"
+# 사유가 갈리는 자리를 부분 문자열로도 못 박는다 — 줄 전체 비교가 다른 이유로 깨져도
+# 무엇이 틀렸는지 보이게.
+has_sub "conflict 홀드 + 낡은 policy 마커 → 질문 없음" "$tmp/out" "#24(대기, conflict, 질문 없음)"
+has_sub "policy 홀드 + 낡은 conflict 마커 → 질문 없음" "$tmp/out" "#20(대기, policy, 질문 없음)"
+no_sub "회귀: conflict 홀드 + conflict 마커는 종전대로 조용" "$tmp/out" "#23(대기, conflict, 질문 없음)"
+no_sub "회귀: policy 홀드 + policy 마커는 종전대로 조용" "$tmp/out" "#22(대기, policy, 질문 없음)"
+no_sub "두 사유 홀드는 어느 쪽 마커든 질문 있음" "$tmp/out" "#21(대기, conflict, policy, 질문 없음)"
+ck "stale marker: 후보 5건에 각 1회씩만 묻는다" "$(grep -c '^comments ' "$STUB_CALL_LOG")" 5
+ck "stale marker: --json note_missing 도 사유를 가린다" \
+  "$(STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" "$SUT" --repo ggqgga/Stale --since 24h --json \
+     | jq -c '[.repos[0].buckets.human_wait[] | {n:.number, h:.holds, m:.note_missing}]')" \
+  '[{"n":24,"h":["conflict"],"m":true},{"n":23,"h":["conflict"],"m":false},{"n":22,"h":["policy"],"m":false},{"n":21,"h":["conflict","policy"],"m":false},{"n":20,"h":["policy"],"m":true}]'
+ck "stale marker: warn 0(사유 있는 홀드뿐)" "$(grep -c '질문 유무 미확인' "$tmp/out")" 0
 
 echo "loop-status: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -36,9 +36,12 @@
 #                  사유는 `hold:*` 라벨의 접미(`conflict`·`policy`·`ladder`; 플랜 §2). 여러
 #                  개면 정렬해 `, ` 로 잇는다. `hold:*` 가 하나도 없으면 `사유 없음` 을 적고
 #                  warn `needs-human 사유 없음` 을 올린다.
-#                  `질문 없음`(#157) — 사유가 `policy`·`conflict` 인데 `<!-- hold-note: … -->`
-#                  마커가 붙은 코멘트가 하나도 없는 건. 그 둘은 `--note`(사람이 답해야 할
-#                  질문 한 줄)가 필수라 질문이 없으면 사람은 무엇을 답할지 모른다. 옛 전이가
+#                  `질문 없음`(#157) — 사유가 `policy`·`conflict` 인데 `<!-- hold-note:
+#                  <그 사유> -->` 마커가 붙은 코멘트가 하나도 없는 건. 마커는 **지금 붙어
+#                  있는 사유**로 가린다(#160) — 코멘트는 홀드가 풀려도 남으므로, 사유를 안
+#                  가리면 옛 `policy` 질문이 지금의 `conflict` 홀드를 가린다. 그 둘은
+#                  `--note`(사람이 답해야 할 질문 한 줄)가 필수라 질문이 없으면 사람은
+#                  무엇을 답할지 모른다. 옛 전이가
 #                  라벨만 붙이고 코멘트에 실패해 남긴 잔여물이거나(#157 이전), 사람이 손으로
 #                  붙인 홀드다. `ladder` 는 `--note` 가 선택이라 대상이 아니다.)
 #     3. 마감중   — `harvesting`
@@ -602,9 +605,16 @@ for repo in "${repos[@]}"; do
   mark_unknown() {
     nu_body="${nu_body}${nu_sep}{\"n\":$1,\"why\":\"$2\"}"; nu_sep=","
   }
+  # 후보 줄은 `<번호> <사유[|사유]>` — 사유를 함께 실어야 마커를 사유별로 가릴 수 있다
+  # (#160). 사유 값은 jq **자기 리터럴 배열**에서만 나온다 — 라벨 문자열을 그대로 흘리면
+  # 아래에서 정규식에 끼우는 순간 라벨이 패턴이 된다. `hold:policy`·`hold:conflict` 둘 다
+  # 붙은 홀드는 어느 쪽 질문이든 질문이므로 `policy|conflict` 로 잇는다.
   cand_err=$(jq -r '.buckets.human_wait[]
-                    | select(.holds | index("policy") != null or index("conflict") != null)
-                    | .number' "$tmpdir/repo.pre.json" 2>&1 > "$tmpdir/cands")
+                    | . as $i
+                    | (["policy", "conflict"]
+                       | map(. as $r | select($i.holds | index($r) != null))) as $rs
+                    | select(($rs | length) > 0)
+                    | "\($i.number) \($rs | join("|"))"' "$tmpdir/repo.pre.json" 2>&1 > "$tmpdir/cands")
   # shellcheck disable=SC2181  # 위 대입의 종료코드를 봐야 한다(cand_err 은 stderr 만 담는다)
   if [ $? -ne 0 ]; then
     echo "$SELF: $short 사람대기 질문 대상 추출 실패(jq) — 질문 없음 표시를 건너뛴다: $(printf '%s' "$cand_err" | tr '\n' ' ' | cut -c1-200)" >&2
@@ -613,8 +623,16 @@ for repo in "${repos[@]}"; do
   if [ -s "$tmpdir/cands" ]; then
     seen=0
     # fd 3 으로 읽는다 — 루프 안에서 gh 를 부르므로 stdin 을 목록에 묶으면 안 된다.
-    while IFS= read -r cand <&3; do
+    while IFS=' ' read -r cand creasons <&3; do
       [ -n "$cand" ] || continue
+      # 정규식에 값을 끼우기 전 화이트리스트로 못 박는다 — 사유는 이 셋뿐이고(위 jq 가
+      # 리터럴로만 만든다) 자유 문자열이 패턴으로 새는 경로를 코드로 막는다. 어긋나면
+      # 조회를 걸지 않고 "모른다" 로 남긴다(거짓 `질문 없음` 을 만들지 않는다).
+      case "$creasons" in
+        policy|conflict|"policy|conflict") ;;
+        *) echo "$SELF: $short #$cand 질문 사유 파싱 실패: [$creasons]" >&2
+           mark_unknown "$cand" "사유 파싱 실패"; continue ;;
+      esac
       seen=$((seen + 1))
       # 호출 상한 — 목록 조회에 `--limit 200` 이 있는데 여기만 무제한이면, 사람대기가
       # 쌓일수록(그게 이 기능이 있는 이유다) 매 틱 gh 호출이 선형으로 는다.
@@ -631,9 +649,15 @@ for repo in "${repos[@]}"; do
       # 없이 첫 100건만 준다 — 오래 걸린 홀드일수록 코멘트가 길어 마커가 상한 밖으로 밀리면
       # 거짓 `질문 없음` 이 된다. 상한에 닿았는데 못 찾았으면 "없다" 가 아니라 "모른다" 다.
       # 파싱 실패의 빈 출력이 `none` 으로 읽히지 않게 종료코드도 함께 본다.
-      nstate=$(printf '%s' "$GH_OUT" | jq -r '
+      # 마커는 **지금 붙은 사유와 같은 사유**만 센다 (#160) — 코멘트는 홀드가 풀려도 남고
+      # (재디스패치·홀드 해제 어느 쪽도 지우지 않는다) 라벨만 떨어진다. 사유를 안 가리면
+      # 옛 `hold-note: policy` 가 지금의 `conflict` 홀드를 "질문 있음" 으로 위장해, 이
+      # 기능이 잡으라고 만들어진 상태(질문 없는 홀드)가 정확히 숨는다. `\s*` 는 생산자
+      # (transition.sh)가 `hold-note: <사유>` 로 공백을 넣어 쓰기 때문에 필요하다.
+      nstate=$(printf '%s' "$GH_OUT" | jq -r --arg reasons "$creasons" '
         [.comments[]? | .body // ""] as $b
-        | if ([$b[] | select(test("<!--\\s*hold-note:"))] | length) > 0 then "has"
+        | ("<!--\\s*hold-note:\\s*(" + $reasons + ")") as $re
+        | if ([$b[] | select(test($re))] | length) > 0 then "has"
           elif ($b | length) >= 100 then "capped"
           else "none" end' 2>/dev/null) || nstate=""
       case "$nstate" in
