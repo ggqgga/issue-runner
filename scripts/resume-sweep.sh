@@ -392,6 +392,30 @@ while IFS= read -r repo; do
     echo "resume-sweep: $repo needs-human 목록 조회 실패 — 사유 점검을 건너뛴다" >&2
     rc=2
   fi
+  # ③ policy 재심 — `hold:policy` 가 창(RESUME_AFTER_MIN)을 넘겼는데 재심 마커 코멘트
+  #    `<!-- policy-review: … -->` 가 없으면 **1회** 재심 대상(#155). 스크립트는 판정하지 않고
+  #    이벤트만 낸다(판정은 디스패처 ① — 질문 한 줄이 루프가 답할 수 있는 것인지). 무편집.
+  if fetch_issues "$repo" "$tmp/issues.policy" "needs-human+hold:policy" \
+       --label needs-human --label hold:policy; then
+    while IFS= read -r row <&3; do
+      [ -n "$row" ] || continue
+      pnum=$(printf '%s' "$row" | jq -r '.number')
+      pupd=$(printf '%s' "$row" | jq -r '.updatedAt // ""')
+      pep=$(jq -n --arg u "$pupd" '($u | try fromdateiso8601 catch -1)' 2>/dev/null || echo -1)
+      [ "${pep:--1}" -ge 0 ] || { emit_warn "$repo" "$pnum" "updatedAt 해석 불가($pupd) — 재심 창 판정 못 함"; continue; }
+      pmin=$(( ( $(date -u +%s) - pep ) / 60 ))
+      [ "$pmin" -ge "$RESUME_AFTER_MIN" ] || continue
+      pout=$(gh issue view "$pnum" --repo "$repo" --json comments 2>/dev/null) \
+        || { emit_warn "$repo" "$pnum" "재심 마커 조회 실패 — 이번 틱은 건너뛴다"; continue; }
+      if printf '%s' "$pout" | jq -e '[.comments[]? | select(.body | test("<!--\\s*policy-review:"))] | length > 0' >/dev/null 2>&1; then
+        continue   # 이미 1회 재심됨 — 사람이 라벨을 뗄 때까지 다시 안 묻는다
+      fi
+      printf '{"event":"policy_review_due","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$pnum" "$pmin"
+    done 3< "$tmp/issues.policy"
+  else
+    echo "resume-sweep: $repo needs-human+hold:policy 목록 조회 실패 — 재심 점검을 건너뛴다" >&2
+    rc=2
+  fi
 done < "$repos_file"
 
 exit "$rc"

@@ -254,7 +254,7 @@ expect closeout-pick \
 expect closeout-blocked \
   "agent-ready agent:claimed flow:ci flow:codex flow:verify flow:ready needs-human hold:conflict" \
   "agent-ready agent:claimed flow:ci flow:codex needs-human hold:conflict" \
-  --reason conflict
+  --reason conflict --note q
 expect closeout-redispatch \
   "agent-ready agent:claimed flow:ci flow:codex" \
   "agent-ready flow:ci flow:codex"
@@ -291,12 +291,12 @@ ck "이슈 만: PR 무변" "$(labels_of 7)" "flow:verify"
 # ②-b 연결 이슈 없는 PR(issue=-)에도 사람 신호가 남는가 — 이슈에만 붙이면 needs-human
 # 이 아무 데도 안 붙고 exit 0 `ok` 로 끝나 사람 대기가 조용히 사라진다.
 reset; seed 7 flow:verify
-run ok verify-held - 7 --reason conflict
+run ok verify-held - 7 --reason conflict --note q
 ck "verify-held issue=-: exit 0" "$RC" 0
 ck "verify-held issue=-: PR 에 needs-human+사유" "$(labels_of 7)" "$(sorted "needs-human hold:conflict")"
 
 reset; seed 7 harvesting
-run ok closeout-blocked - 7 --reason policy
+run ok closeout-blocked - 7 --reason policy --note q
 ck "closeout-blocked issue=-: exit 0" "$RC" 0
 ck "closeout-blocked issue=-: PR 에 needs-human+사유" "$(labels_of 7)" "$(sorted "needs-human hold:policy")"
 
@@ -365,12 +365,12 @@ ck "따옴표 not found: edit 3회(PR 원본+재시도, 이슈 1회)" "$(grep -c
 # runner-held(#151) — 디스패처 자체의 사람 대기: 이슈 agent:claimed 해제 + 양쪽 needs-human·hold:<r>,
 # 단계 라벨(flow:*·harvesting)은 손대지 않는다. PR 없음(`-`) 허용, --reason 필수.
 reset; seed 7 flow:ci; seed 9 agent-ready agent:claimed hold:ladder
-run ok runner-held 9 7 --reason policy
+run ok runner-held 9 7 --reason policy --note q
 ck "runner-held: exit 0" "$RC" 0
 ck "runner-held: 이슈 라벨" "$(labels_of 9)" "agent-ready hold:policy needs-human"
 ck "runner-held: PR 라벨(flow:ci 유지)" "$(labels_of 7)" "flow:ci hold:policy needs-human"
 reset; seed 9 agent-ready agent:claimed
-run ok runner-held 9 - --reason policy
+run ok runner-held 9 - --reason policy --note q
 ck "runner-held issue만: exit 0" "$RC" 0
 ck "runner-held issue만: 이슈 라벨" "$(labels_of 9)" "agent-ready hold:policy needs-human"
 reset; seed 9 agent-ready agent:claimed
@@ -442,15 +442,35 @@ done
 reset; run ok closeout-dup 9 7 --note n --reason ladder
 ck "closeout-dup 에 --reason: exit 64" "$RC" 64
 # --note 도 대칭으로 막는다(스펙 확장 — "무시하지 않는다" 원칙을 --note 에도 적용)
-reset; run ok verify-held 9 7 --reason ladder --note n
-ck "verify-held 에 --note: exit 64" "$RC" 64
+reset; seed 7 flow:verify; seed 9 flow:verify
+run ok verify-held 9 7 --reason ladder --note n
+ck "verify-held ladder 에 --note(선택): exit 0" "$RC" 0
+reset; seed 7 flow:verify; seed 9 flow:verify
+run ok verify-pass 9 7 --note n
+ck "verify-pass 에 --note: exit 64" "$RC" 64
+# policy·conflict 는 질문 한 줄(--note)이 없으면 사람 몫이 아니다 → 64, 있으면 양쪽에 코멘트
+reset; seed 7 flow:verify; seed 9 flow:verify
+run ok verify-held 9 7 --reason policy
+ck "verify-held policy --note 없음: exit 64" "$RC" 64
+ck "verify-held policy --note 없음: 쓰기 0회" "$(mut_order)" ""
+reset; seed 7 flow:verify; seed 9 flow:verify
+run ok verify-held 9 7 --reason policy --note "이 스펙 갈림길은 A인가 B인가"
+ck "verify-held policy --note: exit 0" "$RC" 0
+ck "verify-held policy --note: 이슈 라벨" "$(labels_of 9)" "hold:policy needs-human"
+case "$(mut_order)" in *"issue-comment 9"*"pr-comment 7"*|*"pr-comment 7"*"issue-comment 9"*) c=ok ;; *) c="$(mut_order)" ;; esac
+ck "verify-held policy --note: 양쪽 코멘트" "$c" ok
+reset; seed 9 agent-ready agent:claimed
+run ok runner-held 9 - --reason conflict --note "충돌 해소 방향?"
+ck "runner-held conflict --note(issue만): exit 0" "$RC" 0
+case "$(mut_order)" in *"issue-comment 9"*) c=ok ;; *) c="$(mut_order)" ;; esac
+ck "runner-held conflict --note: 이슈 코멘트" "$c" ok
 
 # ── ⑧ 세 사유가 각각 붙고, 나머지 두 hold 는 떨어진다(사유 교체 멱등) ────────
 for r in conflict policy ladder; do
   reset
   seed 7 flow:verify hold:conflict hold:policy hold:ladder
   seed 9 flow:verify agent:claimed hold:conflict hold:policy hold:ladder
-  run ok verify-held 9 7 --reason "$r"
+  run ok verify-held 9 7 --reason "$r" --note q
   ck "verify-held/$r: exit 0" "$RC" 0
   ck "verify-held/$r: PR" "$(labels_of 7)" "$(sorted "needs-human hold:$r")"
   ck "verify-held/$r: 이슈" "$(labels_of 9)" "$(sorted "needs-human hold:$r")"
@@ -458,7 +478,7 @@ for r in conflict policy ladder; do
   reset
   seed 7 harvesting hold:conflict hold:policy hold:ladder
   seed 9 harvesting flow:ready flow:verify hold:conflict hold:policy hold:ladder
-  run ok closeout-blocked 9 7 --reason "$r"
+  run ok closeout-blocked 9 7 --reason "$r" --note q
   ck "closeout-blocked/$r: exit 0" "$RC" 0
   ck "closeout-blocked/$r: PR" "$(labels_of 7)" "$(sorted "needs-human hold:$r")"
   ck "closeout-blocked/$r: 이슈" "$(labels_of 9)" "$(sorted "needs-human hold:$r")"
@@ -466,7 +486,7 @@ done
 
 # 사유 교체: conflict 로 잡아 둔 건을 ladder 로 바꾸면 옛 사유가 남지 않는다
 reset; seed 7 flow:verify; seed 9 flow:verify agent:claimed
-run ok verify-held 9 7 --reason conflict
+run ok verify-held 9 7 --reason conflict --note q
 ck "교체 전: PR hold:conflict" "$(labels_of 7)" "$(sorted "needs-human hold:conflict")"
 run ok verify-held 9 7 --reason ladder
 ck "교체 후: exit 0" "$RC" 0

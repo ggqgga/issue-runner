@@ -126,7 +126,7 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   `gh issue view <num> --repo <repo> --json comments --jq '.comments | last.body'`
   가 `BLOCKED:` 로 시작하면 워커가 사람 개입이 필요해서 멈춘 것이다 (모호 스펙 /
   계획-현실 불일치 / 동일 실패 반복): 재디스패치 복귀 대신
-  `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy` 로 `needs-human`
+  `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy --note "<사람이 답해야 할 질문 한 줄>"` 로 `needs-human`
   + `hold:policy` 를 부착하고(claim 해제 포함 — 사유 없는 `needs-human` 은 만들지 않는다, #151),
   worktree 제거 후 warn 으로 ④ Report 에 BLOCKED 사유를
   올려라 (사람이 원인을 해소하고 needs-human 을 떼면 다시 흐른다 — README
@@ -172,6 +172,14 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
 - `warn_after_edit` — 쓰기가 **이미 반영된 뒤**의 부수 실패(라벨 해제 실패 · 승격/재개 readback
   조회 실패·불일치 · **연결 PR 미러 라벨 해제 실패**(문구에 `PR #<번호>`)). 재개/승격 자체는 일어났을 수 있으니 되돌리지 말고, ④ Report 의
   warn 에 `(편집 반영됨)` 표기로 옮겨라 — 다음 틱의 loop-status 가 실제 라벨 상태를 보여 준다.
+- `policy_review_due` — `hold:policy` 로 멈춘 지 `RESUME_AFTER_MIN` 이 지났는데 아직 재심을 안 한
+  건(#155). **디스패처가 1회 판정한다**: 이슈의 `<!-- hold-note: policy -->` 코멘트에 적힌 "사람이 답해야
+  할 질문 한 줄" 을 다시 읽고, 그 답이 플랜(`Plans/*.md`)·이슈 본문·검증 사다리에서 나오면 **루프가
+  답한다** — 답을 코멘트로 남기고(`재심: <답> <!-- policy-review: resumed --><!-- bodat:worker -->`)
+  `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr|->` 로 재개(needs-human·hold:* 해제,
+  agent-ready 유지 → 이번 틱 ③ 후보). 답이 정말 사람 결정이면 `재심: 사람 몫 유지 — <이유 한 줄>
+  <!-- policy-review: kept --><!-- bodat:worker -->` 코멘트만 남긴다. 어느 쪽이든 마커가 남으므로
+  **같은 건은 두 번 묻지 않는다**(사람이 라벨을 뗄 때까지). ④ Report 에 `재심 N(재개 n·유지 m)`.
 - `waiting` — 아직 창 안이다. 조용히 넘긴다(보고 불필요).
 - exit 2 — 일부 레포의 목록 조회 실패(나머지 레포는 정상 처리됐다) 또는 계정 전체 탐색 실패.
   ④ Report warn 에 `resume-sweep 부분 실패(레포 조회)` 한 줄을 남긴다.
@@ -198,7 +206,7 @@ PR 이 아직 없어 이슈 `agent:claimed` 로만 보인다(`flow:ci` 는 재-C
 PR 본문에서 `<!-- repair-count: N -->` HTML 주석을 읽어라
 (`gh pr view <pr> --repo <repo> --json body`; 주석이 없으면 N = 0).
 N ≥ `MAX_REPAIRS_PER_PR` 이면 **보수를 디스패치하지 않는다** — 이슈에
-`$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy` 로 `needs-human` + `hold:policy`
+`$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy --note "<질문 한 줄>"` 로 `needs-human` + `hold:policy`
 를 PR·이슈 양쪽에 부착하고 warn 으로 ④ Report 에 올려라(사유 없는 `needs-human` 은 만들지 않는다, #151). N 이 상한 미만이면 보수 에이전트를
 디스패치하면서 PR 본문의 주석을 `<!-- repair-count: N+1 -->` 로 갱신하라
 (`gh pr edit <pr> --repo <repo> --body ...` — 주석이 없었으면 본문 끝에 새로 추가,
