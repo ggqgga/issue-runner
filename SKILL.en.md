@@ -159,9 +159,10 @@ passes — `hold:conflict` and `hold:policy` are human decisions and are left al
   eligibility label is never touched). **Nothing for the dispatcher to do** — the issue
   reappears naturally as an `eligible-issues.sh` candidate in ③ this tick. Record the
   number and `attempt` under `resumed` in ④ Report.
-- `escalated` — the resume cap (`LADDER_RESUME_LIMIT`) was exceeded, so it was escalated to
-  `hold:policy`. The script already applied the label, so with **no further action** list it
-  under `escalated` in ④ Report for a human to see.
+- `escalated` — the resume cap (`LADDER_RESUME_LIMIT`) was exceeded, so the issue was
+  escalated to `hold:policy` (`attempt`/`limit` are the resumes the body marker actually
+  recorded vs. the cap — read as `2/2`). The script already applied the label, so with
+  **no further action** list it under `escalated` in ④ Report for a human to see.
 - `warn` — a `needs-human` with no reason label (`hold:*` — a human may have attached it by
   hand, so it is not an auto-resume target), a race against human edits, or an edit/readback
   failure. **Do not touch it** — copy it verbatim into ④ Report's warns.

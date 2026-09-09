@@ -106,6 +106,9 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
   elapsed=$(( (now_epoch - then_epoch) / 60 ))
   [ "$elapsed" -lt 0 ] && elapsed=0
   if [ "$elapsed" -lt "$RESUME_AFTER_MIN" ]; then
+    # SKILL 은 이 이벤트를 보고하지 않지만(조용히 넘긴다) **내보내는 것 자체가 계약**이다 —
+    # "창 안이라 안 건드렸다" 와 "대상이 아예 없었다" 를 구분하는 유일한 신호라, 사람이
+    # 스윕을 손으로 돌려 디버깅할 때·앞으로 loop-status 가 세게 될 때 이 줄이 근거다.
     printf '{"event":"waiting","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$num" "$elapsed"
     return 0
   fi
@@ -148,8 +151,12 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
       emit_warn "$repo" "$num" "승격 readback 불일치(hold:policy·needs-human 유지·hold:ladder 해제 기대) — 사람 확인 필요"
       return 0
     fi
+    # attempt 는 **본문 마커가 실제로 기록한 값**(소진한 재개 횟수)이다 — 거절된 next 가
+    # 아니다. 승격에선 마커를 올리지 않으므로 next 를 실으면 GitHub 어디에도 대응하는
+    # 숫자가 없는 값이 이벤트에만 떠돈다(합산하는 소비자는 승격마다 1씩 과다 계수한다).
+    # "attempt/limit = 2/2" 로 읽혀 "상한을 다 썼다" 가 그대로 드러난다.
     printf '{"event":"escalated","repo":"%s","number":%s,"attempt":%s,"limit":%s}\n' \
-      "$repo" "$num" "$next" "$LADDER_RESUME_LIMIT"
+      "$repo" "$num" "$attempts" "$LADDER_RESUME_LIMIT"
     return 0
   fi
 

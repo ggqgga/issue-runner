@@ -176,6 +176,7 @@ check "N=1: 마커만 2 로 · 나머지 불변" "$(body_is "$BODY_M2")"
 setup "needs-human,hold:ladder,agent-ready" 200 "$BODY_M2"
 run
 check "N=2: escalated"                 "$(has_ev escalated)"
+check "N=2: attempt=2(마커 값) · limit=2" "$(printf '%s' "$out" | jq -e 'select(.event=="escalated") | .attempt == 2 and .limit == 2' >/dev/null 2>&1 && echo ok || echo no)"
 check "N=2: resumed 아님"              "$(no_ev resumed)"
 check "N=2: hold:policy 부착"          "$(hasl hold:policy)"
 check "N=2: hold:ladder 해제"          "$(lacksl hold:ladder)"

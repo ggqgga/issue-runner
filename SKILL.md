@@ -155,7 +155,8 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 - `resumed` — `needs-human`·`hold:ladder` 가 떨어졌고 `agent-ready` 는 그대로다(자격은
   건드리지 않는다). **디스패처가 따로 할 일은 없다** — 이번 틱 ③ 의 `eligible-issues.sh`
   후보로 자연히 다시 나타난다. ④ Report 의 `재개` 에 번호와 `attempt` 를 적는다.
-- `escalated` — 재개 상한(`LADDER_RESUME_LIMIT`) 초과라 `hold:policy` 로 승격됐다. 라벨은
+- `escalated` — 재개 상한(`LADDER_RESUME_LIMIT`) 초과라 `hold:policy` 로 승격됐다
+  (`attempt`/`limit` 은 본문 마커가 기록한 소진 횟수 대 상한 — `2/2` 로 읽는다). 라벨은
   스크립트가 이미 붙였으니 **추가 조치 없이** ④ Report 의 `승격` 에 올려 사람이 보게 하라.
 - `warn` — 사유 라벨(`hold:*`) 없는 `needs-human`(사람이 손으로 붙였을 수 있어 자동 재개
   대상이 아니다) · 사람 조작과의 경합 · 편집/readback 실패. **건드리지 말고** ④ Report 의
