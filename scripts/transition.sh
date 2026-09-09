@@ -49,6 +49,8 @@
 # 검증: edit 뒤 라벨을 **다시 읽어** add ⊆ 현재 · remove ∩ 현재 = ∅ 인지 확인한다.
 #   불일치 → stderr 한 줄 + exit 1 / gh 호출 자체 실패(네트워크·권한) → stderr + exit 2.
 #   라벨 부재(`not found`)면 setup-labels.sh 를 **프로세스당 1회** 돌리고 같은 edit 를
+#   (실측 2026-09-09: 레포에 **없는** 라벨은 `--remove-label` 도 편집 전체를 실패시킨다 —
+#   gh 메시지는 `'hold:conflict' not found` 형식이라 "label" 단어가 없다. 따옴표 형식도 잡는다.)
 #   **1회만** 재시도한다(무한루프 금지).
 set -uo pipefail
 
@@ -168,7 +170,7 @@ run_edit() {
   # 패턴은 **라벨 문맥으로 좁힌다** — 맨숭한 `not found` 까지 받으면 오타 이슈 번호의 404
   # 에도 setup-labels.sh(라벨 전량 --force + `gh repo edit`)라는 쓰기를 돌리게 된다.
   case "$out" in
-    *"could not add label"*|*"could not remove label"*|*[Ll]abel*"not found"*)
+    *"could not add label"*|*"could not remove label"*|*[Ll]abel*"not found"*|*"' not found"*)
       if [ "$labels_fixed" -eq 0 ]; then
         labels_fixed=1
         # 보강 실패(스크립트 부재·권한·부분 적용)를 삼키지 않는다 — 이어지는 재시도가

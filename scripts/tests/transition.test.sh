@@ -125,6 +125,14 @@ if [ "$sub" = "issue edit" ]; then
   if [ "$mode" = "notfound-always" ]; then
     echo "could not add label: 'x' not found" >&2; exit 1
   fi
+  if [ "$mode" = "notfound-quoted-once" ]; then   # 실측 형식: remove 대상이 레포에 없을 때
+    if [ ! -f "$STUB_STATE_DIR/.tripped" ]; then
+      : > "$STUB_STATE_DIR/.tripped"
+      echo "failed to update https://github.com/owner/repo/issues/$num: 'hold:conflict' not found" >&2
+      echo "failed to update 1 issue" >&2
+      exit 1
+    fi
+  fi
   if [ "$mode" = "notfound-once" ]; then
     if [ ! -f "$STUB_STATE_DIR/.tripped" ]; then
       : > "$STUB_STATE_DIR/.tripped"
@@ -339,6 +347,14 @@ run notfound-always verify-pass 9 7
 ck "부재 지속: exit 2" "$RC" 2
 ck "부재 지속: setup-labels 1회만" "$(grep -c . "$tmp/setup.log")" 1
 ck "부재 지속: edit 은 2회(원본+재시도 1회)" "$(grep -c '^edit ' "$tmp/edit.log")" 2
+
+# 실측 형식(2026-09-09): 레포에 없는 라벨은 --remove-label 도 편집을 통째로 실패시키고
+# 메시지는 `'hold:conflict' not found` 라 "label" 단어가 없다 → 그래도 보강 1회 + 재시도 성공.
+reset; seed 7 flow:verify; seed 9 flow:verify
+run notfound-quoted-once verify-held 9 7 --reason ladder
+ck "따옴표 not found: exit 0" "$RC" 0
+ck "따옴표 not found: setup-labels 1회" "$(grep -c . "$tmp/setup.log")" 1
+X
 
 # 라벨 문맥이 아닌 404(오타 이슈 번호 등)는 setup-labels 를 **돌리지 않는다** —
 # setup-labels 는 라벨 14개 --force + `gh repo edit` 이라는 쓰기다.
