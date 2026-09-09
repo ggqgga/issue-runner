@@ -819,7 +819,7 @@ bash scripts/tests/codex-review-gate.test.sh
 echo "[test] reconcile.sh 재claim 필터 fail-closed·스윕 차단·gh-login 순차 폴백 (#131)"
 bash scripts/tests/reconcile.test.sh
 
-echo "[test] transition.sh 전이 집합·readback 검증·라벨 보강 (#144)"
+echo "[test] transition.sh 전이 집합·readback 검증·라벨 보강 (#144 · #147 --reason·closeout-dup)"
 bash scripts/tests/transition.test.sh
 
 echo "[test] loop-status.sh 파이프라인 스냅샷 버킷·창 필터·warn·부분 실패 (#144)"
