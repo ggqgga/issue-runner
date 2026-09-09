@@ -65,8 +65,12 @@
 #   · 무소속 PR      — 열린 PR + (head `agent/issue-*` 또는 연결 이슈 있음) + PR 라벨에
 #                      flow:ci·flow:codex·flow:verify·flow:ready·harvesting 이 하나도 없고
 #                      연결 이슈가 needs-human 이 아님 → 어느 루프도 안 문다.
-#                      **인계 전 창(플랜 §5)**: 그 후보 중 연결 이슈가 `agent:claimed` 이고
-#                      PR `createdAt` 이 지금으로부터 `HANDOFF_GRACE_MIN`(기본 90) 분 미만인
+#                      **인계 전 창(플랜 §5)**: 그 후보 중 연결 이슈가 **구현중 버킷**이고
+#                      (=`agent:claimed` 이 이긴 이슈. 라벨이 아니라 버킷으로 본다 — 라벨로
+#                      걸면 `agent:claimed` 을 단 채 배포대기·flow:*·harvesting 으로 간
+#                      이슈의 PR 이 warn 에서만 빠지고 구현중 줄엔 안 그려져 아무 표시도
+#                      없이 사라진다) PR `createdAt` 이 지금으로부터
+#                      `HANDOFF_GRACE_MIN`(기본 90) 분 미만인
 #                      것은 warn 이 아니라 **구현중 줄**에 `← PR #n(인계 전)` 으로 붙는다 —
 #                      디스패치 직후 워커가 PR 을 열고 아직 단계 라벨을 못 찍은 정상 구간이
 #                      매 틱 warn 으로 울리는 걸 막는다. 창을 넘기면 같은 후보가 무소속 warn
@@ -304,22 +308,27 @@ def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | so
 | ($iss | map(.number)) as $onums
 | ($prs_open | map({number, headRefName, createdAt, ln: [.labels[].name], issue: linked(.)})) as $po
 | ($prs_closed | map({number, headRefName, mergedAt, closedAt, ln: [.labels[].name], issue: linked(.)})) as $pc
+# 인계 전 창의 판정축은 `agent:claimed` **라벨**이 아니라 **구현중 버킷**이다.
+# 라벨로 걸면 `agent:claimed` 이 붙은 채 더 뒤 버킷으로 간 이슈(deploy-wait·flow:*·
+# harvesting)의 라벨 없는 PR 이 무소속 warn 에서는 빠지는데, 렌더는 구현중 줄에서만
+# 하므로 어디에도 안 그려진다 — 아무 표시도 없는 거짓 깨끗함. 버킷으로 걸면 표시와
+# warn 이 같은 축을 쓰므로 진짜 배타가 된다.
+| def in_claimed_bucket($n): (($iss | map(select(.number == $n and .bucket == "claimed")) | length) > 0);
 # 무소속 PR **후보** — 여기서 한 번만 정하고 아래에서 둘로 쪼갠다(인계 전 / warn).
 # 표시와 warn 을 각각 별도 조건으로 쓰면 언젠가 둘 다에 나오거나 둘 다에서 사라진다.
-| ($po | map(select(
+  ($po | map(select(
       ((.headRefName | test("^agent/issue-")) or (.issue != null))
       and ((stage_labels_of(.ln) | length) == 0)
       and (has(.ln; "needs-human") | not)
       and ((.issue as $n | $iss | map(select(.number == $n and has(.ln; "needs-human"))) | length) == 0)))) as $ocand
 | ($ocand | map(. as $p | select(
       $p.issue != null
-      and (($iss | map(select(.number == $p.issue and has(.ln; "agent:claimed"))) | length) > 0)
+      and in_claimed_bucket($p.issue)
       and ($p.createdAt != null)
       and (($now - epoch($p.createdAt)) < ($grace * 60))))) as $handoff
 | ($handoff | map(.number)) as $hnums
 | def pr_of($n): ($po | map(select(.issue == $n)) | if length > 0 then .[0] else null end);
   def handoff_pr_of($n): ($handoff | map(select(.issue == $n)) | .[0]);
-  def issue_claimed($n): (($iss | map(select(.number == $n and has(.ln; "agent:claimed"))) | length) > 0);
   def closed_agent_in_window: ($pc
     | map(select((.headRefName | test("^agent/issue-"))
                  and .mergedAt == null
@@ -371,7 +380,9 @@ def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | so
       # `index/1` 의 인자는 **파이프 좌변(배열)** 을 입력으로 평가된다 — `.number` 를 그대로
       # 쓰면 배열을 문자열로 인덱싱해 죽는다. PR 을 먼저 $p 로 묶는다.
       ($ocand | map(. as $p | select(($hnums | index($p.number)) == null))
-        | map(. as $p | issue_claimed($p.issue) as $claimed
+        # 사망 의심 꼬리표도 같은 축(구현중 버킷)으로 — 라벨로 걸면 인계 창과 무관한
+        # 이슈(예 배포대기)의 갓 열린 PR 에 "0분 경과 · 워커 사망 의심" 이 붙는다.
+        | map(. as $p | in_claimed_bucket($p.issue) as $claimed
               | {kind: "orphan_pr", repo_short: $rs, pr: $p.number, issue: $p.issue,
                  handoff_overdue: ($claimed and $p.createdAt != null),
                  text: ("무소속 PR #\($p.number)(\($rs)) — 열린 agent PR 인데 단계 라벨 0 · "
