@@ -24,6 +24,33 @@ session (headless/cron environment) or `<VERIFY_URL>` is unreachable, skip the s
 report `스모크 skip: <reason>` (no hiding the gap — hand off to the human-report fallback
 path).
 
+**Suspect the address before you skip.** If Chrome reports `ERR_ADDRESS_UNREACHABLE`
+while `curl` gets 200 from the same host, the server is not down — that *address* just
+does not open in Chrome (measured 2026-09-10 on the BoDAT laptop's Chrome: the mini's LAN
+IP and mDNS name fail in Chrome only, while the same box's Tailscale address and loopback
+work, and that same Chrome opens the LAN router — so it is neither DNS nor macOS local
+network permission). Retry on another address for the same box before declaring it
+unreachable — (1) the repo's remote-access address (Tailscale for BoDAT), (2) an SSH
+tunnel. Report unreachable only when both fail.
+
+⚠️ **Verify the tunnel came up, or you will judge someone else's server.** A fixed port
+may already be held by a dev server or another tunnel; the smoke would score that as a
+pass and closeout closes the deploy issue on it (false green). Pick a fresh port, make
+ssh die if forwarding fails, and probe it once:
+
+```bash
+PORT=$(( 39000 + RANDOM % 1000 ))
+ssh -f -N -o ExitOnForwardFailure=yes -L "127.0.0.1:$PORT:127.0.0.1:<remote port>" <ssh host alias> \
+  && curl -fsS "http://127.0.0.1:$PORT/up" -o /dev/null && echo "tunnel ok on $PORT"
+# when done: pkill -f "127.0.0.1:$PORT:127.0.0.1:"
+```
+
+No `tunnel ok` means unreachable, not a tunnel. Clean up by that port only — a broad
+`pkill` cuts other people's tunnels. Find `<ssh host alias>`/`<remote port>` in that
+repo's deploy docs (BoDAT: `bodat-mini` on the office LAN, `bodat-remote` from outside,
+port 3000). If you cannot find them, do not invent them — report
+`스모크 skip: tunnel route unknown (<repo>)`.
+
 **Output contract.** One line per check item with `pass`/`fail`/`skip` and a rationale,
 then a final summary `스모크: <passed>/<total> 통과` (or `스모크 skip: <reason>`).
 Read-only — make no direct changes.
