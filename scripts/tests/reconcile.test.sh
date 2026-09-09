@@ -112,6 +112,11 @@ destroyed() { [ -s "$tmp/destroy.log" ] && echo yes || echo no; }
 seen()      { grep -qxF "$1" "$tmp/run/.loop/seen-merges" 2>/dev/null && echo yes || echo no; }
 event_has() { grep -q "\"event\":\"$1\"" "$tmp/events" && echo yes || echo no; }
 swept()     { grep -q -- '--state merged' "$tmp/gh.log" && echo yes || echo no; }
+# agent:claimed 를 실제로 뗐는지 — 스텁 gh 는 인자를 그대로 로그에 남긴다.
+# "라벨 제거 + 스윕 차단" 조합이 머지 유실의 원인이라 두 방향 모두 물어야 한다 (#141).
+claim_removed() {
+  grep -q -- 'issue edit 42 .*--remove-label agent:claimed' "$tmp/gh.log" && echo yes || echo no
+}
 
 merged_recent=$(ts 2)     # 스윕 cutoff(30분) 안 = 스윕이 발행 대상으로 삼는 최신 머지
 now=$(ts 0)
@@ -148,6 +153,10 @@ check "③ 옛 머지 PR: stale 로 claim 만 해제" \
   "$([ "$(event_has stale)" = yes ] && echo ok || echo no)"
 check "③ 옛 머지 PR: 스윕 차단용 레저 기록" \
   "$([ "$(seen 'owner/repo#7')" = yes ] && echo ok || echo no)"
+# 과교정 반대편 가드 (#141): 동률이 아닌 **확실히 이전**인 머지는 지금처럼 stale 로
+# agent:claimed 를 뗀다 — 축 2 를 고치느라 라벨 해제를 통째로 멈추면 죽은 claim 이 쌓인다.
+check "③ 옛 머지 PR: agent:claimed 는 여전히 제거(죽은 claim 해제 유지)" \
+  "$([ "$(claim_removed)" = yes ] && echo ok || echo no)"
 
 # ── ④ 같은 초 경계 — mergedAt == claim 시각은 이전 attempt (`<=`) ────────────
 same_second='[{"number":7,"state":"MERGED","mergedAt":"'$now'","statusCheckRollup":[],"labels":[]}]'
@@ -209,6 +218,52 @@ check "⑪ 같은 초 + worktree 생존: 조용한 working 아님" \
 check "⑪ 같은 초 + worktree 생존: 정리 미실행" \
   "$([ "$(destroyed)" = no ] && echo ok || echo no)"
 rm -rf "$tmp/proj/repo/.claude"
+
+# ── ⑫ 축 1 — fail-closed 는 **머지 후보만** 삼킨다, 이슈 전체가 아니다 (#141) ──
+# 브랜치 재사용이면 옛 MERGED PR 과 현재 OPEN PR 이 함께 잡힌다. 타임라인 조회가
+# 지속 실패할 때 `continue` 로 이슈를 통째로 버리면 안전한 pr_open·harvesting 분류까지
+# 안 나와 현재 PR 이 Maintain 에 못 들어가고 무기한 정체한다.
+mixed_prs='[{"number":7,"state":"MERGED","mergedAt":"'$merged_recent'","statusCheckRollup":[],"labels":[]},
+            {"number":8,"state":"OPEN","mergedAt":null,"statusCheckRollup":[],"labels":[]}]'
+run "$mixed_prs" "" "$sweep_prs"
+check "⑫ 타임라인 실패 + 옛 머지 + 현재 OPEN: pr_open 발행(분류는 계속된다)" \
+  "$([ "$(event_has pr_open)" = yes ] && echo ok || echo no)"
+check "⑫ 타임라인 실패 + 옛 머지 + 현재 OPEN: merged 미발행" \
+  "$([ "$(event_has merged)" = no ] && echo ok || echo no)"
+check "⑫ 타임라인 실패 + 옛 머지 + 현재 OPEN: 정리 미실행(주 루프·스윕 모두)" \
+  "$([ "$(destroyed)" = no ] && echo ok || echo no)"
+check "⑫ 타임라인 실패: 그 머지 PR 은 보류일 뿐 영속 레저에 안 굳는다" \
+  "$([ "$(seen 'owner/repo#7')" = no ] && echo ok || echo no)"
+# harvesting(closeout 점유)도 같은 안전 분류다 — 이것도 살아나야 한다.
+mixed_harvest='[{"number":7,"state":"MERGED","mergedAt":"'$merged_recent'","statusCheckRollup":[],"labels":[]},
+                {"number":8,"state":"OPEN","mergedAt":null,"statusCheckRollup":[],"labels":[{"name":"harvesting"}]}]'
+run "$mixed_harvest" "" "$sweep_prs"
+check "⑫ 타임라인 실패 + harvesting OPEN: harvesting 발행" \
+  "$([ "$(event_has harvesting)" = yes ] && echo ok || echo no)"
+check "⑫ 타임라인 실패 + harvesting OPEN: 정리 미실행" \
+  "$([ "$(destroyed)" = no ] && echo ok || echo no)"
+# 과교정 반대편 가드 (#141): 머지 아닌 PR 이 **하나도 없으면** 예전처럼 이슈를 통째로
+# 건너뛴다. 여기서 stale 로 흘려 agent:claimed 를 떼면, 그 머지는 이번 실행 보류(스윕
+# 차단)와 겹쳐 "라벨 제거 + 스윕 차단" = 영구 유실 조합이 된다.
+run "$branch_prs" "" "$sweep_prs"
+check "⑫ 타임라인 실패 + 머지 PR 뿐: stale 미발행" \
+  "$([ "$(event_has stale)" = no ] && echo ok || echo no)"
+check "⑫ 타임라인 실패 + 머지 PR 뿐: agent:claimed 미제거(유실 조합 금지)" \
+  "$([ "$(claim_removed)" = no ] && echo ok || echo no)"
+
+# ── ⑬ 축 2 — 동률 머지 + worktree 부재도 warn (라벨 유지) (#141) ─────────────
+# 종전엔 동률 경고가 `[ -d "$wt" ]` **안**에만 있어, worktree 가 이미 없으면 else 로 빠져
+# agent:claimed 를 stale 로 떼면서 그 머지는 보류 목록이 스윕을 막았다 → 다음 실행엔
+# 라벨이 없어 주 루프도 못 보고, cutoff 30분을 넘기면 스윕은 씨딩만 하고 지나간다(영구 유실).
+run "$same_second" "$now" '[]'
+check "⑬ 동률 + worktree 부재: warn 발행" \
+  "$([ "$(event_has warn)" = yes ] && echo ok || echo no)"
+check "⑬ 동률 + worktree 부재: stale 미발행" \
+  "$([ "$(event_has stale)" = no ] && echo ok || echo no)"
+check "⑬ 동률 + worktree 부재: agent:claimed 미제거(다음 실행이 재판정)" \
+  "$([ "$(claim_removed)" = no ] && echo ok || echo no)"
+check "⑬ 동률 + worktree 부재: 정리 미실행" \
+  "$([ "$(destroyed)" = no ] && echo ok || echo no)"
 
 # ── ⑧ 회수 경로 — 미룬 판단이 영구 유실되지 않는다 (리뷰 BLOCKER 가드) ──────
 # ① 과 같은 상태(타임라인 실패로 보류)에서, 다음 실행에 agent:claimed 가 이미 떨어져
