@@ -10,7 +10,9 @@
 #   harvesting — closeout 가 점유한 OPEN PR (harvesting 라벨) → Maintain 제외, 건드리지 않음
 #   working  — PR 없고 worktree 있음 → 워커 진행 중으로 간주
 #   stale    — PR 없고 worktree 도 없음 → 죽은 claim 해제
-#   warn     — dirty/unpushed worktree → 제거 보류, 사람 확인 필요
+#   warn     — dirty/unpushed worktree → 제거 보류, 사람 확인 필요.
+#              또는 머지 시각 == claim 시각(같은 초)이라 이전/현재 attempt 를 못 가르는데
+#              worktree 가 살아 있는 경우 → 정리 보류, 사람 확인 필요 (#131).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -46,7 +48,14 @@ seen_file="$PWD/.loop/seen-merges"
 # closeout 등이 agent:claimed 를 떼면 주 루프에서도 스윕에서도 영영 안 보여 정상 머지가
 # 유실된다(cutoff 30분 경과 후엔 복구 불가). 보류는 이 실행에서만 스윕을 막고, 다음
 # 실행이 타임라인을 정상 조회하면 그때 제대로 판정한다.
-skip_file=$(mktemp)
+# mktemp 실패(임시 디렉터리 불가·가득)를 삼키면 skip_file 이 빈 문자열이 되어 보류
+# 목록이 통째로 무력화되고, 스윕이 막으려던 그 정리를 그대로 수행한다 (#131 리뷰).
+# 이 스크립트는 set -e 가 아니므로 상태를 직접 본다.
+skip_file=$(mktemp) || skip_file=""
+if [ -z "$skip_file" ] || [ ! -f "$skip_file" ]; then
+  echo "reconcile 중단: 보류 목록 임시파일 생성 실패 — 스윕 차단 불가라 정리를 하지 않는다" >&2
+  exit 1
+fi
 trap 'rm -f "$skip_file"' EXIT
 cutoff=$(date -u -v-30M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
   || date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "0000")
@@ -79,6 +88,7 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
   dir=$("$SCRIPT_DIR/repo-dir.sh" "$repo")
   branch="agent/issue-$num"
   wt="$dir/.claude/worktrees/issue-$num"
+  tie_count=0   # 같은 초라 방향을 못 가른 머지 PR 수 (아래 warn 판정용)
 
   # 안전 제거는 공유 헬퍼(cleanup-worktree.sh)로 일원화 (#62). 동작 불변:
   # --merged 안 넘기므로 기존 더티/미push 가드·warn JSON·반환코드가 그대로다.
@@ -100,9 +110,19 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
   if printf '%s' "$prs" | jq -e 'any(.[]; .state=="MERGED")' >/dev/null 2>&1; then
     # grep 으로 형태를 검증한다 — `gh api -q` 는 실패 응답의 에러 JSON 을 stdout 으로
     # 흘리고(claim-issue.sh 와 같은 함정), --paginate 는 페이지마다 값을 한 줄씩 낸다.
-    claimed_at=$(gh api "repos/$repo/issues/$num/timeline?per_page=100" --paginate \
+    # **부분 페이지네이션은 통째로 버린다** (#131 리뷰): 타임라인이 100건을 넘고 뒤쪽
+    # 페이지가 실패하면 앞 페이지들이 이미 값을 뱉은 뒤다. 종전의 `|| true` 는 그 실패
+    # 상태를 삼켜, 마지막 성공 페이지의 **옛 claim 시각**이 현재 claim 으로 둔갑했다 —
+    # fail-closed 분기를 우회해 옛 머지가 "현재 claim 완료" 로 오인되는 경로가 남는다.
+    # 종료 상태를 따로 받아, 완주하지 못했으면 출력을 쓰지 않는다.
+    tl_out=$(gh api "repos/$repo/issues/$num/timeline?per_page=100" --paginate \
       --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed") | .created_at] | last // empty' \
-      2>/dev/null | grep -E '^[0-9]{4}-' | tail -n1 || true)
+      2>/dev/null)
+    tl_rc=$?
+    claimed_at=""
+    if [ "$tl_rc" = 0 ]; then
+      claimed_at=$(printf '%s\n' "$tl_out" | grep -E '^[0-9]{4}-' | tail -n1 || true)
+    fi
     if [ -n "$claimed_at" ]; then
       # 동률(`<=`)은 **이전 attempt** 로 본다 (#131): mergedAt·timeline created_at 은 초
       # 단위라, 이전 PR 이 머지된 바로 그 초에 재claim 되면 두 값이 같아진다. `<` 면 그
@@ -124,6 +144,8 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
             [ -n "$_old" ] || continue
             grep -qxF "$repo#$_old" "$seen_file" 2>/dev/null || printf '%s\n' "$repo#$_old" >> "$seen_file"
           done
+      tie_count=$(printf '%s' "$prs" | jq --arg c "$claimed_at" \
+        '[.[] | select(.state == "MERGED" and (.mergedAt // "") == $c)] | length')
       printf '%s' "$prs" | jq -r --arg c "$claimed_at" \
         '.[] | select(.state == "MERGED" and (.mergedAt // "") == $c) | .number' \
         | while IFS= read -r _tie; do
@@ -152,6 +174,14 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
 
   if [ -z "$pr" ]; then
     if [ -d "$wt" ]; then
+      # 동률(같은 초) 머지를 걸러낸 결과 후보가 비었는데 worktree 는 살아 있다 —
+      # 매 실행 같은 판정이 반복돼 주 루프도 스윕도 영영 정리하지 못하는 상태다
+      # (#131 리뷰). 해소 불가능한 모호성이므로 조용한 working 대신 사람에게 띄운다.
+      if [ "${tie_count:-0}" != 0 ]; then
+        printf '{"event":"warn","repo":"%s","number":%s,"msg":"머지 시각과 claim 시각이 같은 초라 이전/현재 attempt 를 가를 수 없다 — 정리 보류. 사람이 worktree(%s)와 PR 을 확인해 처리하라"}\n' \
+          "$repo" "$num" "$wt"
+        continue
+      fi
       printf '{"event":"working","repo":"%s","number":%s}\n' "$repo" "$num"
     else
       gh issue edit "$num" --repo "$repo" --remove-label "agent:claimed" >/dev/null 2>&1 || true

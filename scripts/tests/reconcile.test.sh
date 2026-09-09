@@ -76,7 +76,8 @@ case "$*" in
     printf '%s\n' "$STUB_SWEEP_PRS" ;;
   *timeline*)
     [ -n "$STUB_CLAIMED_AT" ] || exit 1
-    printf '%s\n' "$STUB_CLAIMED_AT" ;;
+    printf '%s\n' "$STUB_CLAIMED_AT"
+    exit "${STUB_TIMELINE_RC:-0}" ;;   # 0 이 아니면 "앞 페이지는 나왔지만 중단" 모사
   "issue edit"*) : ;;
   *) exit 1 ;;
 esac
@@ -102,7 +103,7 @@ rerun() {  # rerun <branch_prs> <claimed_at|""> <sweep_prs> [claimed_json] — .
   : > "$tmp/destroy.log"; : > "$tmp/gh.log"
   ( cd "$tmp/run" && \
     STUB_BRANCH_PRS="$1" STUB_CLAIMED_AT="$2" STUB_SWEEP_PRS="$3" \
-    STUB_CLAIMED="${4:-$default_claimed}" \
+    STUB_CLAIMED="${4:-$default_claimed}" STUB_TIMELINE_RC="${STUB_TIMELINE_RC:-0}" \
     STUB_DESTROY_LOG="$tmp/destroy.log" STUB_GH_LOG="$tmp/gh.log" \
     PATH="$tmp/bin:$PATH" bash "$sut_dir/reconcile.sh" ) \
     > "$tmp/events" 2> "$tmp/err"
@@ -169,6 +170,45 @@ check "⑥ 스텁 경유 실증: 타임라인 조회가 실제로 일어난다" 
   "$(grep -q 'timeline' "$tmp/gh.log" && echo ok || echo no)"
 check "⑥ 스텁 경유 실증: 브랜치 PR 조회가 실제로 일어난다" \
   "$(grep -q -- '--state all' "$tmp/gh.log" && echo ok || echo no)"
+
+# ── ⑨ 부분 페이지네이션 — 앞 페이지 값이 나왔어도 완주 못 했으면 버린다 ────
+# 타임라인이 100건을 넘고 뒤쪽 페이지가 실패하면 마지막 성공 페이지의 **옛 claim
+# 시각**이 남는다. 그걸 신뢰하면 옛 머지가 "현재 claim 완료" 로 오인돼 정리가 돈다.
+old_claim_from_partial=$(ts 20)   # 옛 claim (머지 2분 전보다 이르다)
+STUB_TIMELINE_RC=1 run "$branch_prs" "$old_claim_from_partial" "$sweep_prs"
+unset STUB_TIMELINE_RC
+check "⑨ 부분 페이지네이션: 그 값을 안 쓰고 fail-closed" \
+  "$(grep -q 'fail-closed' "$tmp/err" && echo ok || echo no)"
+check "⑨ 부분 페이지네이션: 정리 미실행" \
+  "$([ "$(destroyed)" = no ] && echo ok || echo no)"
+
+# ── ⑩ 보류 목록 임시파일을 못 만들면 아예 중단한다(스윕 차단 무력화 방지) ────
+rm -rf "$tmp/run"; mkdir -p "$tmp/run/.loop"; echo owner/repo > "$tmp/run/.loop/repos"
+: > "$tmp/destroy.log"; : > "$tmp/gh.log"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/mktemp"; chmod +x "$tmp/bin/mktemp"
+rc=0
+( cd "$tmp/run" && \
+  STUB_BRANCH_PRS="$branch_prs" STUB_CLAIMED_AT="$now" STUB_SWEEP_PRS="$sweep_prs" \
+  STUB_CLAIMED="$default_claimed" \
+  STUB_DESTROY_LOG="$tmp/destroy.log" STUB_GH_LOG="$tmp/gh.log" \
+  PATH="$tmp/bin:$PATH" bash "$sut_dir/reconcile.sh" ) > "$tmp/events" 2> "$tmp/err" || rc=$?
+check "⑩ mktemp 실패: 비0 종료" "$([ "$rc" != 0 ] && echo ok || echo no)"
+check "⑩ mktemp 실패: 정리 미실행" "$([ "$(destroyed)" = no ] && echo ok || echo no)"
+check "⑩ mktemp 실패: stderr 에 사유" \
+  "$(grep -q '보류 목록 임시파일' "$tmp/err" && echo ok || echo no)"
+rm -f "$tmp/bin/mktemp"
+
+# ── ⑪ 같은 초 + worktree 생존 → 조용한 working 이 아니라 warn(사람 확인) ────
+# 매 실행 같은 판정이 반복돼 주 루프도 스윕도 못 건드리는 상태다. 묻히면 안 된다.
+mkdir -p "$tmp/proj/repo/.claude/worktrees/issue-42"
+run "$same_second" "$now" '[]'
+check "⑪ 같은 초 + worktree 생존: warn 발행" \
+  "$([ "$(event_has warn)" = yes ] && echo ok || echo no)"
+check "⑪ 같은 초 + worktree 생존: 조용한 working 아님" \
+  "$([ "$(event_has working)" = no ] && echo ok || echo no)"
+check "⑪ 같은 초 + worktree 생존: 정리 미실행" \
+  "$([ "$(destroyed)" = no ] && echo ok || echo no)"
+rm -rf "$tmp/proj/repo/.claude"
 
 # ── ⑧ 회수 경로 — 미룬 판단이 영구 유실되지 않는다 (리뷰 BLOCKER 가드) ──────
 # ① 과 같은 상태(타임라인 실패로 보류)에서, 다음 실행에 agent:claimed 가 이미 떨어져
