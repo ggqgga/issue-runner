@@ -599,12 +599,16 @@ git -C "$tmp/proj/r" commit -q --allow-empty -m init
 git -C "$tmp/proj/r" worktree add -q -b "agent/issue-8" \
   "$tmp/proj/r/.claude/worktrees/issue-8" >/dev/null 2>&1
 echo dirty > "$tmp/proj/r/.claude/worktrees/issue-8/x.txt"
+# #131 이후로 이 픽스처는 **claim 시각**을 줘야 한다 — 타임라인을 못 얻으면 reconcile 은
+# 재claim 필터를 못 걸어 정리를 통째로 건너뛰기(fail-closed) 때문이다. mergedAt 이 claim
+# 이후 = 이번 claim 의 머지 → MERGED 분기 진입 → dirty worktree 라 warn 한 줄(동작 불변).
 cat > "$tmp/stub/gh" <<'EOF'
 #!/bin/sh
 case "$*" in
   *"api user"*) echo "tester" ;;
+  *timeline*) echo "2000-01-01T00:00:00Z" ;;
   *"search issues"*) echo '[{"repository":{"nameWithOwner":"o/r"},"number":8}]' ;;
-  *"pr list"*) echo '[{"number":80,"state":"MERGED","statusCheckRollup":[],"labels":[]}]' ;;
+  *"pr list"*) echo '[{"number":80,"state":"MERGED","mergedAt":"2000-01-02T00:00:00Z","statusCheckRollup":[],"labels":[]}]' ;;
   *) echo '' ;;
 esac
 EOF
@@ -811,6 +815,9 @@ bash scripts/tests/ci-queue.test.sh
 
 echo "[test] codex-review-gate.sh 내장 리뷰어 판정 매핑·fail-closed 테스트 (#134)"
 bash scripts/tests/codex-review-gate.test.sh
+
+echo "[test] reconcile.sh 재claim 필터 fail-closed·스윕 차단·gh-login 순차 폴백 (#131)"
+bash scripts/tests/reconcile.test.sh
 
 echo "[#88] 완결 유실 재파생 배선 검사 — 한/영 SKILL 동기"
 # STALE_FINISH_MIN 상수 + finish-classify.sh 분기 + 4b 인라인 대리 판정 배선이

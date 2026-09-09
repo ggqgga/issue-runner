@@ -10,22 +10,17 @@
 #   harvesting — closeout 가 점유한 OPEN PR (harvesting 라벨) → Maintain 제외, 건드리지 않음
 #   working  — PR 없고 worktree 있음 → 워커 진행 중으로 간주
 #   stale    — PR 없고 worktree 도 없음 → 죽은 claim 해제
-#   warn     — dirty/unpushed worktree → 제거 보류, 사람 확인 필요
+#   warn     — dirty/unpushed worktree → 제거 보류, 사람 확인 필요.
+#              또는 머지 시각 == claim 시각(같은 초)이라 이전/현재 attempt 를 못 가르는데
+#              worktree 가 살아 있는 경우 → 정리 보류, 사람 확인 필요 (#131).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# REST /user 가 503 을 뱉는 GitHub 부분 장애가 실측된다 — 그때 me 가 오염되어 아래
-# gh search 가 통째로 오사용/422 에러를 내고 큐가 빈 것과 구분이 안 된다. GraphQL
-# viewer 로 폴백하되, gh 는 실패해도 에러 본문을 stdout 으로 뱉으므로 로그인 형식을
-# 반드시 검증한다. 둘 다 실패하면 조용히 넘기지 말고 즉시 종료한다(fail-loud).
-me=""
-for _try in 1 2 3; do
-  for _cand in "$(gh api user -q .login 2>/dev/null)" \
-               "$(gh api graphql -f query='{viewer{login}}' --jq .data.viewer.login 2>/dev/null)"; do
-    if printf '%s' "$_cand" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}$'; then me="$_cand"; break 2; fi
-  done
-  sleep 2
-done
+# 사용자 확인은 공유 헬퍼(gh-login.sh)로 일원화 (#131) — REST /user 503 부분 장애
+# 폴백·형식 검증·3회 재시도는 그 안에 있고, REST 가 성공하면 GraphQL 은 호출하지
+# 않는다(종전 `for _cand in "$(…)" "$(…)"` 는 단어 전개 탓에 매번 둘 다 호출했다).
+# 실패는 조용히 넘기지 않고 즉시 종료한다(fail-loud) — me 오염은 빈 큐와 구분이 안 된다.
+me=$("$SCRIPT_DIR/gh-login.sh") || me=""
 if [ -z "$me" ]; then
   echo "reconcile: GitHub 사용자 확인 실패 (REST /user·GraphQL viewer 모두 응답 없음)" >&2
   exit 1
@@ -48,6 +43,20 @@ in_scope() {
 # 무더기로 재발행하지 않게 하는 유예창 — 그 이전 머지는 조용히 seen 으로 씨딩한다.
 seen_file="$PWD/.loop/seen-merges"
 [ -f "$seen_file" ] || : > "$seen_file"
+# **이번 실행 한정** 보류 목록 — 영속 레저(seen_file)와 반드시 분리한다 (#131 리뷰).
+# fail-closed 로 판단을 미룬 PR 을 seen_file 에 넣으면 "처리 완료" 로 굳어, 그 사이
+# closeout 등이 agent:claimed 를 떼면 주 루프에서도 스윕에서도 영영 안 보여 정상 머지가
+# 유실된다(cutoff 30분 경과 후엔 복구 불가). 보류는 이 실행에서만 스윕을 막고, 다음
+# 실행이 타임라인을 정상 조회하면 그때 제대로 판정한다.
+# mktemp 실패(임시 디렉터리 불가·가득)를 삼키면 skip_file 이 빈 문자열이 되어 보류
+# 목록이 통째로 무력화되고, 스윕이 막으려던 그 정리를 그대로 수행한다 (#131 리뷰).
+# 이 스크립트는 set -e 가 아니므로 상태를 직접 본다.
+skip_file=$(mktemp) || skip_file=""
+if [ -z "$skip_file" ] || [ ! -f "$skip_file" ]; then
+  echo "reconcile 중단: 보류 목록 임시파일 생성 실패 — 스윕 차단 불가라 정리를 하지 않는다" >&2
+  exit 1
+fi
+trap 'rm -f "$skip_file"' EXIT
 cutoff=$(date -u -v-30M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
   || date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "0000")
 
@@ -79,6 +88,7 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
   dir=$("$SCRIPT_DIR/repo-dir.sh" "$repo")
   branch="agent/issue-$num"
   wt="$dir/.claude/worktrees/issue-$num"
+  tie_count=0   # 같은 초라 방향을 못 가른 머지 PR 수 (아래 warn 판정용)
 
   # 안전 제거는 공유 헬퍼(cleanup-worktree.sh)로 일원화 (#62). 동작 불변:
   # --merged 안 넘기므로 기존 더티/미push 가드·warn JSON·반환코드가 그대로다.
@@ -100,12 +110,63 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
   if printf '%s' "$prs" | jq -e 'any(.[]; .state=="MERGED")' >/dev/null 2>&1; then
     # grep 으로 형태를 검증한다 — `gh api -q` 는 실패 응답의 에러 JSON 을 stdout 으로
     # 흘리고(claim-issue.sh 와 같은 함정), --paginate 는 페이지마다 값을 한 줄씩 낸다.
-    claimed_at=$(gh api "repos/$repo/issues/$num/timeline?per_page=100" --paginate \
+    # **부분 페이지네이션은 통째로 버린다** (#131 리뷰): 타임라인이 100건을 넘고 뒤쪽
+    # 페이지가 실패하면 앞 페이지들이 이미 값을 뱉은 뒤다. 종전의 `|| true` 는 그 실패
+    # 상태를 삼켜, 마지막 성공 페이지의 **옛 claim 시각**이 현재 claim 으로 둔갑했다 —
+    # fail-closed 분기를 우회해 옛 머지가 "현재 claim 완료" 로 오인되는 경로가 남는다.
+    # 종료 상태를 따로 받아, 완주하지 못했으면 출력을 쓰지 않는다.
+    tl_out=$(gh api "repos/$repo/issues/$num/timeline?per_page=100" --paginate \
       --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed") | .created_at] | last // empty' \
-      2>/dev/null | grep -E '^[0-9]{4}-' | tail -n1 || true)
+      2>/dev/null)
+    tl_rc=$?
+    claimed_at=""
+    if [ "$tl_rc" = 0 ]; then
+      claimed_at=$(printf '%s\n' "$tl_out" | grep -E '^[0-9]{4}-' | tail -n1 || true)
+    fi
     if [ -n "$claimed_at" ]; then
-      prs=$(printf '%s' "$prs" | jq -c --arg c "$claimed_at" \
-        '[.[] | select((.state == "MERGED" and (.mergedAt // "") < $c) | not)]')
+      # 동률(`<=`)은 **이전 attempt** 로 본다 (#131): mergedAt·timeline created_at 은 초
+      # 단위라, 이전 PR 이 머지된 바로 그 초에 재claim 되면 두 값이 같아진다. `<` 면 그
+      # 옛 MERGED PR 이 남아 새 claim 을 완료로 오인한다.
+      # 초 단위로는 "머지→재claim" 과 "재claim→머지" 를 못 가른다 — 둘 중 오판의 대가가
+      # 다르다: 전자를 놓치면 살아있는 워커의 미push 작업이 파괴되고(#3447 실측), 후자를
+      # 놓치면 정리가 한 틱 늦을 뿐이며 다음 틱·스윕이 회수한다. 그래서 동률은 보수적으로
+      # 이전 attempt 로 확정한다.
+      keep=$(printf '%s' "$prs" | jq -c --arg c "$claimed_at" \
+        '[.[] | select((.state == "MERGED" and (.mergedAt // "") <= $c) | not)]')
+      # 걸러낸 옛 머지 PR 은 ②-보강 스윕이 다시 주워 같은 파괴를 하지 않도록 기록한다
+      # (#131) — 스윕은 두 목록에 있는 키를 건너뛴다. 다만 **확실히 이전**(mergedAt <
+      # claim)인 것만 영속 레저에 넣고, **동률**(같은 초라 방향을 못 가르는 것)은 이번
+      # 실행 보류로만 막는다. 동률까지 영속화하면 "재claim 직후 같은 초에 머지" 라는
+      # 정상 완료가 영영 회수 불가가 된다 (#131 리뷰).
+      printf '%s' "$prs" | jq -r --arg c "$claimed_at" \
+        '.[] | select(.state == "MERGED" and (.mergedAt // "") < $c) | .number' \
+        | while IFS= read -r _old; do
+            [ -n "$_old" ] || continue
+            grep -qxF "$repo#$_old" "$seen_file" 2>/dev/null || printf '%s\n' "$repo#$_old" >> "$seen_file"
+          done
+      tie_count=$(printf '%s' "$prs" | jq --arg c "$claimed_at" \
+        '[.[] | select(.state == "MERGED" and (.mergedAt // "") == $c)] | length')
+      printf '%s' "$prs" | jq -r --arg c "$claimed_at" \
+        '.[] | select(.state == "MERGED" and (.mergedAt // "") == $c) | .number' \
+        | while IFS= read -r _tie; do
+            [ -n "$_tie" ] || continue
+            printf '%s\n' "$repo#$_tie" >> "$skip_file"
+          done
+      prs="$keep"
+    else
+      # fail-closed (#131): 타임라인 조회 실패(rate limit·권한·일시 오류)나 라벨 이벤트
+      # 부재로 claim 시각을 못 얻으면 **정리를 하지 않는다**. 종전엔 필터가 통째로
+      # 건너뛰어져 이전 attempt 의 머지 PR 이 현재 claim 의 PR 로 취급됐고, 살아있는
+      # 워커의 worktree·agent:claimed 가 지워졌다(#3447 재발 경로).
+      echo "reconcile: $repo#$num claim 시각 확인 실패 — 재claim 필터 불가로 정리를 건너뛴다(fail-closed)" >&2
+      # 스윕도 이번 실행에선 손대지 않도록 **보류 목록**에 넣는다(영속 레저 아님 —
+      # 판단을 미룬 것이지 처리한 게 아니다. 다음 실행이 다시 판정한다).
+      printf '%s' "$prs" | jq -r '.[] | select(.state == "MERGED") | .number' \
+        | while IFS= read -r _old; do
+            [ -n "$_old" ] || continue
+            printf '%s\n' "$repo#$_old" >> "$skip_file"
+          done
+      continue
     fi
   fi
 
@@ -113,6 +174,14 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
 
   if [ -z "$pr" ]; then
     if [ -d "$wt" ]; then
+      # 동률(같은 초) 머지를 걸러낸 결과 후보가 비었는데 worktree 는 살아 있다 —
+      # 매 실행 같은 판정이 반복돼 주 루프도 스윕도 영영 정리하지 못하는 상태다
+      # (#131 리뷰). 해소 불가능한 모호성이므로 조용한 working 대신 사람에게 띄운다.
+      if [ "${tie_count:-0}" != 0 ]; then
+        printf '{"event":"warn","repo":"%s","number":%s,"msg":"머지 시각과 claim 시각이 같은 초라 이전/현재 attempt 를 가를 수 없다 — 정리 보류. 사람이 worktree(%s)와 PR 을 확인해 처리하라"}\n' \
+          "$repo" "$num" "$wt"
+        continue
+      fi
       printf '{"event":"working","repo":"%s","number":%s}\n' "$repo" "$num"
     else
       gh issue edit "$num" --repo "$repo" --remove-label "agent:claimed" >/dev/null 2>&1 || true
@@ -176,6 +245,9 @@ sweep_repos | while IFS= read -r srepo; do
         case "$shead" in agent/issue-*) ;; *) continue ;; esac
         snum=${shead#agent/issue-}
         key="$srepo#$spr"
+        # 이번 실행 보류분은 seen 마킹조차 하지 않고 넘긴다 — 마킹하면 다음 실행에서
+        # "처리 완료" 로 굳어 정상 머지가 유실된다 (#131 리뷰).
+        grep -qxF "$key" "$skip_file" 2>/dev/null && continue
         grep -qxF "$key" "$seen_file" 2>/dev/null && continue
         printf '%s\n' "$key" >> "$seen_file"
         # cutoff 이전 머지는 씨딩만(재발행 금지). 이후(최근) 머지만 발행.

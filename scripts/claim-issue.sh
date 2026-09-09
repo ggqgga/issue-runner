@@ -47,16 +47,10 @@
 set -euo pipefail
 repo="${1:?usage: claim-issue.sh <owner/repo> <num>}"
 num="${2:?usage: claim-issue.sh <owner/repo> <num>}"
-# REST /user 503 부분 장애 폴백 (reconcile.sh·eligible-issues.sh 와 동일) — gh 는 실패해도
-# 에러 본문을 stdout 으로 뱉으므로 로그인 형식을 반드시 검증한다.
-me=""
-for _try in 1 2 3; do
-  for _cand in "$(gh api user -q .login 2>/dev/null)" \
-               "$(gh api graphql -f query='{viewer{login}}' --jq .data.viewer.login 2>/dev/null)"; do
-    if printf '%s' "$_cand" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}$'; then me="$_cand"; break 2; fi
-  done
-  sleep 2
-done
+# 사용자 확인은 공유 헬퍼(gh-login.sh) (#131) — REST /user 503 폴백·형식 검증·재시도는
+# 그 안에 있고, REST 성공 시 GraphQL 은 호출하지 않는다.
+CLAIM_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+me=$("$CLAIM_SCRIPT_DIR/gh-login.sh") || me=""
 [ -n "$me" ] || { echo "claim 중단: GitHub 사용자 확인 실패" >&2; exit 1; }
 stale_wait=${CLAIM_STALE_WAIT:-15}
 poll_step=${CLAIM_POLL_STEP:-3}
