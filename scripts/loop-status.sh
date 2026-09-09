@@ -32,7 +32,10 @@
 #                  이슈가 needs-human 을 달고 있어 사람대기로 오분류된다.
 #                  사다리 게이트가 필요한 이유: 제목만 보면 아직 구현·검증이 도는
 #                  이슈(`flow:verify` 등)가 배포대기로 새어 "배포만 기다린다"로 읽힌다.
-#     2. 사람대기 — `needs-human` (괄호에 사다리 위치 + 열린 연결 PR)
+#     2. 사람대기 — `needs-human` (괄호는 `<사다리 위치>, <사유>[, PR #n]` — 사유는
+#                  `hold:*` 라벨의 접미(`conflict`·`policy`·`ladder`; 플랜 §2). 여러 개면
+#                  정렬해 `, ` 로 잇는다. `hold:*` 가 하나도 없으면 `사유 없음` 을 적고
+#                  warn `needs-human 사유 없음` 을 올린다.)
 #     3. 마감중   — `harvesting`
 #     4. 마감대기 — `flow:ready`
 #     5. 검증대기 — `flow:verify`
@@ -42,11 +45,16 @@
 #   위 어느 라벨도 없는 열린 이슈는 루프 밖 — 세지 않는다(무소속 PR 의 연결 이슈일 때만
 #   warn 문구에 등장). `열림 N` = 1~7 버킷의 합이지 레포의 열린 이슈 총수가 아니다.
 #
-#   창(`--since`) 안에서만 세는 두 줄 — 버킷이 아니라 교차 집계다(같은 이슈가 위 버킷과
+#   창(`--since`) 안에서만 세는 세 줄 — 버킷이 아니라 교차 집계다(같은 이슈가 위 버킷과
 #   중복 등장할 수 있다):
-#     실패 — head 가 `agent/issue-*` 인 PR 이 `closedAt` 창 안 + `mergedAt` null
-#     파생 — `createdAt` 창 안 + `spinoff` 라벨인 열린 이슈
-#            (라벨 도입 전 이슈는 못 잡는다 — 제목 휴리스틱을 쓰지 않는다)
+#     실패     — head 가 `agent/issue-*` 인 PR 이 `closedAt` 창 안 + `mergedAt` null +
+#                PR 라벨에 `dup` 없음
+#     중복종료 — 같은 조건인데 PR 라벨에 `dup` 이 있는 것(closeout 이 "이미 main 에
+#                고쳐진 중복" 으로 닫은 건 — 플랜 §3). 판정은 **PR 라벨**이지 코멘트
+#                마커가 아니다. 실패에서 **빼고** 이 줄로 옮긴다 — 두 줄에 겹쳐 세지
+#                않는다("실패 N" 이 중복 종료로 부풀면 루프가 망가진 것처럼 읽힌다).
+#     파생     — `createdAt` 창 안 + `spinoff` 라벨인 열린 이슈
+#                (라벨 도입 전 이슈는 못 잡는다 — 제목 휴리스틱을 쓰지 않는다)
 #
 #   승격 대기 — `repos/<repo>/branches/release` 가 있으면
 #     `compare/release...<기본브랜치>` 의 `ahead_by`. release 가 없으면 `승격 대기 —`.
@@ -57,6 +65,24 @@
 #   · 무소속 PR      — 열린 PR + (head `agent/issue-*` 또는 연결 이슈 있음) + PR 라벨에
 #                      flow:ci·flow:codex·flow:verify·flow:ready·harvesting 이 하나도 없고
 #                      연결 이슈가 needs-human 이 아님 → 어느 루프도 안 문다.
+#                      **인계 전 창(플랜 §5)**: 그 후보 중 연결 이슈가 **구현중 버킷**이고
+#                      (=`agent:claimed` 이 이긴 이슈. 라벨이 아니라 버킷으로 본다 — 라벨로
+#                      걸면 `agent:claimed` 을 단 채 배포대기·flow:*·harvesting 으로 간
+#                      이슈의 PR 이 warn 에서만 빠지고 구현중 줄엔 안 그려져 아무 표시도
+#                      없이 사라진다) PR `createdAt` 이 지금으로부터
+#                      `HANDOFF_GRACE_MIN`(기본 90) 분 미만인
+#                      것은 warn 이 아니라 **구현중 줄**에 `← PR #n(인계 전)` 으로 붙는다 —
+#                      디스패치 직후 워커가 PR 을 열고 아직 단계 라벨을 못 찍은 정상 구간이
+#                      매 틱 warn 으로 울리는 걸 막는다. 창을 넘기면 같은 후보가 무소속 warn
+#                      으로 나오되 `(agent:claimed 인데 <N>분 경과 — 워커 사망 의심)` 이
+#                      덧붙는다. 후보 집합 하나를 둘로 **분할**하므로 표시와 warn 은 항상
+#                      서로 배타다(두 조건을 따로 쓰면 드리프트한다).
+#   · needs-human 사유 없음
+#                    — **사람대기 버킷** 이슈에 `hold:*` 라벨이 하나도 없음. 사유 없는
+#                      needs-human 은 사람이 무엇을 판단해야 하는지 아무도 모르는 쓰레기통이
+#                      된다(플랜 §2). 버킷 기준인 이유: `deploy-wait` 가 이겨 배포대기로 가는
+#                      needs-human 이슈는 루프 전이가 만든 게 아니라 사람이 손으로 붙인 것이라
+#                      이 불변식 밖이다.
 #   · 단계 라벨 중복 — 이슈에 사다리 라벨 2개 이상.
 #   · 미러 불일치    — 이슈와 **열린** 연결 PR 의 {flow:verify, flow:ready, harvesting}
 #                      집합이 다름. 연결 PR 이 없으면 대조할 상대가 없으니 warn 아님.
@@ -72,6 +98,10 @@
 #   `파이프라인 <short> — 조회 실패: <사유>` 한 줄만 찍고 다음 레포로 계속하며, 최종 exit 는
 #   1(부분 실패). release/compare 조회 실패는 레포를 실패로 만들지 않고 `승격 대기 —` 로
 #   degrade 한다(release 미존재와 같은 표기 — 둘 다 "셀 수 없음").
+#
+# ★환경 변수★ `HANDOFF_GRACE_MIN` — 인계 전 창(분, 기본 90, 0 이상 정수). 형식이 틀리면
+#   환경 실패로 죽는다(jq 에 그대로 넘겨 레포별 "집계 실패" 로 위장되지 않게). `0` 은 허용 —
+#   창이 없으면 warn 이 **늘어나지** `--since 0h` 처럼 거짓 "깨끗함" 이 되지 않는다.
 #
 # ★환경 실패 처리★ 레포와 무관한 실패(창 시각 계산 불가·jq 부재·집계/렌더/직렬화 jq 실패)는
 #   **stdout 에도** `파이프라인 — 스냅샷 실패: <사유>` 한 줄을 남기고 exit 1 한다. 세 루프는
@@ -94,6 +124,8 @@ usage() {
     echo "          둘 다 없으면 이 도움말(exit 64)."
     echo "  --since: 실패·파생 창. <N>h 또는 <N>d 만 (기본 24h)."
     echo "  --json : 사람용 블록 대신 JSON 한 덩어리."
+    echo "  env HANDOFF_GRACE_MIN: 인계 전 창(분, 기본 90). 그 안의 agent:claimed PR 은"
+    echo "          무소속 warn 대신 구현중 줄에 '← PR #n(인계 전)'."
   } >&2
   exit 64
 }
@@ -155,6 +187,19 @@ fi
 if [ -z "$cutoff" ]; then
   snapshot_abort "창 시작 시각 계산 실패 (date -v / date -d 둘 다 불가)"
 fi
+
+# ── 인계 전 창 — HANDOFF_GRACE_MIN(분) ─────────────────────────────────────
+# 여기서 검사한다: 값을 그대로 jq 에 넘기면 형식 오류가 레포별 "집계 실패(jq)" 로 위장돼
+# 환경 문제인지 GitHub 문제인지 구분이 안 된다. 0 은 허용(창 없음 = warn 이 늘어난다).
+grace_min=${HANDOFF_GRACE_MIN:-90}
+case "$grace_min" in
+  ""|*[!0-9]*) snapshot_abort "HANDOFF_GRACE_MIN 형식 오류: $grace_min (0 이상 정수 분만)" ;;
+esac
+
+now_epoch=$(date -u +%s 2>/dev/null)
+case "$now_epoch" in
+  ""|*[!0-9]*) snapshot_abort "현재 시각 계산 실패 (date -u +%s)" ;;
+esac
 
 # ── 스코프 확정 ────────────────────────────────────────────────────────────
 if [ "${#repos[@]}" -eq 0 ]; then
@@ -237,12 +282,18 @@ def linked($p):
     ($p.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber)
   else null end;
 def epoch($t): if $t == null then null else ($t | fromdateiso8601) end;
+def mins_since($t): (($now - epoch($t)) / 60 | floor);
+def stage_labels_of($l): $l | map(select(. as $x | pr_stage_labels | index($x) != null));
+# `hold:*` 접미만 뽑는다 — 허용 목록(conflict·policy·ladder)으로 거르지 않는다.
+# 금지 사유(`hold:dup`·`hold:hardware`)는 라벨을 아예 안 만드는 것으로 막는 게 SSOT
+# (setup-labels.sh) 이고, 여기서 또 걸러 내면 실수로 붙은 라벨이 화면에서 사라진다.
+def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | sort;
 
 ($issues | map({
     number, title, createdAt,
     ln: [.labels[].name]
   })
-  | map(. + {ladder: ladder_of(.ln)})
+  | map(. + {ladder: ladder_of(.ln), holds: holds_of(.ln)})
   | map(. + {stage: (if (.ladder | length) == 0 then "none" else key_of(.ladder[-1]) end)})
   | map(. + {bucket:
       (if has(.ln; "deploy-wait")
@@ -257,7 +308,35 @@ def epoch($t): if $t == null then null else ($t | fromdateiso8601) end;
 | ($iss | map(.number)) as $onums
 | ($prs_open | map({number, headRefName, createdAt, ln: [.labels[].name], issue: linked(.)})) as $po
 | ($prs_closed | map({number, headRefName, mergedAt, closedAt, ln: [.labels[].name], issue: linked(.)})) as $pc
+# 인계 전 창의 판정축은 `agent:claimed` **라벨**이 아니라 **구현중 버킷**이다.
+# 라벨로 걸면 `agent:claimed` 이 붙은 채 더 뒤 버킷으로 간 이슈(deploy-wait·flow:*·
+# harvesting)의 라벨 없는 PR 이 무소속 warn 에서는 빠지는데, 렌더는 구현중 줄에서만
+# 하므로 어디에도 안 그려진다 — 아무 표시도 없는 거짓 깨끗함. 버킷으로 걸면 표시와
+# warn 이 같은 축을 쓰므로 진짜 배타가 된다.
+| def in_claimed_bucket($n): (($iss | map(select(.number == $n and .bucket == "claimed")) | length) > 0);
+# 무소속 PR **후보** — 여기서 한 번만 정하고 아래에서 둘로 쪼갠다(인계 전 / warn).
+# 표시와 warn 을 각각 별도 조건으로 쓰면 언젠가 둘 다에 나오거나 둘 다에서 사라진다.
+  ($po | map(select(
+      ((.headRefName | test("^agent/issue-")) or (.issue != null))
+      and ((stage_labels_of(.ln) | length) == 0)
+      and (has(.ln; "needs-human") | not)
+      and ((.issue as $n | $iss | map(select(.number == $n and has(.ln; "needs-human"))) | length) == 0)))) as $ocand
+| ($ocand | map(. as $p | select(
+      $p.issue != null
+      and in_claimed_bucket($p.issue)
+      and ($p.createdAt != null)
+      and (($now - epoch($p.createdAt)) < ($grace * 60))))) as $handoff
+| ($handoff | map(.number)) as $hnums
 | def pr_of($n): ($po | map(select(.issue == $n)) | if length > 0 then .[0] else null end);
+  def handoff_pr_of($n): ($handoff | map(select(.issue == $n)) | .[0]);
+  def closed_agent_in_window: ($pc
+    | map(select((.headRefName | test("^agent/issue-"))
+                 and .mergedAt == null
+                 and .closedAt != null
+                 and (epoch(.closedAt) >= $cutoff)))
+    | sort_by(-.number));
+  def closed_pr_item($tail): {number: .number, repo_short: $rs, issue: .issue,
+    label: ("PR #\(.number)(" + (if .issue then "#\(.issue), " else "" end) + $tail + ")")};
   def item($i; $label): {number: $i.number, repo_short: $rs, label: $label};
   def bucket($k; f): ($iss | map(select(.bucket == $k)) | sort_by(-.number) | map(f));
 
@@ -268,22 +347,28 @@ def epoch($t): if $t == null then null else ($t | fromdateiso8601) end;
     since: $since,
     buckets: {
       waiting:     bucket("waiting";     item(.; "#\(.number)")),
-      claimed:     bucket("claimed";     item(.; "#\(.number)")),
+      claimed:     bucket("claimed";     . as $i | handoff_pr_of($i.number) as $p
+                     | (item($i; "#\($i.number)" + (if $p == null then "" else " ← PR #\($p.number)(인계 전)" end))
+                        + {pr: (if $p == null then null else $p.number end),
+                           handoff_pending: ($p != null)})),
       verify:      bucket("verify";      . as $i | pr_of($i.number) as $p | (item($i; "#\($i.number)" + (if $p then " ← PR #\($p.number)" else "" end)) + {pr: (if $p then $p.number else null end)})),
       ready:       bucket("ready";       . as $i | pr_of($i.number) as $p | (item($i; "#\($i.number)" + (if $p then " ← PR #\($p.number)" else "" end)) + {pr: (if $p then $p.number else null end)})),
       harvesting:  bucket("harvesting";  . as $i | pr_of($i.number) as $p | (item($i; "#\($i.number)" + (if $p then " ← PR #\($p.number)" else "" end)) + {pr: (if $p then $p.number else null end)})),
       human_wait:  bucket("human_wait";  . as $i | pr_of($i.number) as $p
-                     | (item($i; "#\($i.number)(" + ko_of($i.stage) + (if $p then ", PR #\($p.number)" else "" end) + ")")
-                        + {stage: $i.stage, pr: (if $p then $p.number else null end)})),
+                     | (item($i; "#\($i.number)(" + ko_of($i.stage)
+                                 + ", " + (if ($i.holds | length) == 0 then "사유 없음"
+                                           else ($i.holds | join(", ")) end)
+                                 + (if $p then ", PR #\($p.number)" else "" end) + ")")
+                        + {stage: $i.stage, holds: $i.holds,
+                           pr: (if $p then $p.number else null end)})),
       deploy_wait: bucket("deploy_wait"; item(.; "#\(.number)")),
-      failed: ($pc
-        | map(select((.headRefName | test("^agent/issue-"))
-                     and .mergedAt == null
-                     and .closedAt != null
-                     and (epoch(.closedAt) >= $cutoff)))
-        | sort_by(-.number)
-        | map({number: .number, repo_short: $rs, issue: .issue,
-               label: ("PR #\(.number)(" + (if .issue then "#\(.issue), " else "" end) + "머지 없이 닫힘)")})),
+      # 실패 ⊎ 중복종료 = 창 안의 미머지 agent PR. `dup` 라벨이 둘을 가른다(겹치지 않는다).
+      failed: (closed_agent_in_window
+        | map(select(has(.ln; "dup") | not))
+        | map(closed_pr_item("머지 없이 닫힘"))),
+      dup_closed: (closed_agent_in_window
+        | map(select(has(.ln; "dup")))
+        | map(closed_pr_item("중복 종료"))),
       spinoff: ($iss
         | map(select(has(.ln; "spinoff") and (epoch(.createdAt) >= $cutoff)))
         | sort_by(.createdAt, .number)
@@ -291,16 +376,25 @@ def epoch($t): if $t == null then null else ($t | fromdateiso8601) end;
     },
     promotion_ahead: $ahead,
     warns: (
-      # 무소속 PR
-      ($po | map(select(
-          ((.headRefName | test("^agent/issue-")) or (.issue != null))
-          and ((.ln | map(select(. as $x | pr_stage_labels | index($x) != null)) | length) == 0)
-          and (has(.ln; "needs-human") | not)
-          and ((.issue as $n | $iss | map(select(.number == $n and has(.ln; "needs-human"))) | length) == 0)))
-        | map({kind: "orphan_pr", repo_short: $rs, pr: .number, issue: .issue,
-               text: ("무소속 PR #\(.number)(\($rs)) — 열린 agent PR 인데 단계 라벨 0 · "
-                      + (if .issue == null then "연결 이슈 없음"
-                         else "연결 이슈 #\(.issue) 는 needs-human 아님" end))}))
+      # 무소속 PR — 후보($ocand)에서 인계 전 창($handoff)을 뺀 나머지.
+      # `index/1` 의 인자는 **파이프 좌변(배열)** 을 입력으로 평가된다 — `.number` 를 그대로
+      # 쓰면 배열을 문자열로 인덱싱해 죽는다. PR 을 먼저 $p 로 묶는다.
+      ($ocand | map(. as $p | select(($hnums | index($p.number)) == null))
+        # 사망 의심 꼬리표도 같은 축(구현중 버킷)으로 — 라벨로 걸면 인계 창과 무관한
+        # 이슈(예 배포대기)의 갓 열린 PR 에 "0분 경과 · 워커 사망 의심" 이 붙는다.
+        | map(. as $p | in_claimed_bucket($p.issue) as $claimed
+              | {kind: "orphan_pr", repo_short: $rs, pr: $p.number, issue: $p.issue,
+                 handoff_overdue: ($claimed and $p.createdAt != null),
+                 text: ("무소속 PR #\($p.number)(\($rs)) — 열린 agent PR 인데 단계 라벨 0 · "
+                        + (if $p.issue == null then "연결 이슈 없음"
+                           else "연결 이슈 #\($p.issue) 는 needs-human 아님" end)
+                        + (if $claimed and $p.createdAt != null
+                           then "(agent:claimed 인데 \(mins_since($p.createdAt))분 경과 — 워커 사망 의심)"
+                           else "" end))}))
+      # needs-human 인데 사유(hold:*)가 없다
+      + ($iss | map(select(.bucket == "human_wait" and (.holds | length) == 0))
+        | map({kind: "hold_no_reason", repo_short: $rs, issue: .number,
+               text: "needs-human 사유 없음 #\(.number)(\($rs)) — hold:* 라벨 없음"}))
       # 단계 라벨 중복
       + ($iss | map(select((.ladder | length) > 1))
         | map({kind: "dup_stage", repo_short: $rs, issue: .number,
@@ -348,7 +442,8 @@ RENDER_JQ=$(cat <<'JQ'
 def padded($k):
   {"waiting":"대기      ","claimed":"구현중    ","verify":"검증대기  ",
    "ready":"마감대기  ","harvesting":"마감중    ","human_wait":"사람대기  ",
-   "deploy_wait":"배포대기  ","failed":"실패      ","spinoff":"파생      "}[$k];
+   "deploy_wait":"배포대기  ","failed":"실패      ","dup_closed":"중복종료  ",
+   "spinoff":"파생      "}[$k];
 def row($k):
   (.buckets[$k]) as $b
   | "  " + padded($k) + "\($b | length)"
@@ -358,7 +453,7 @@ if .ok == false then
 else
   ([ "파이프라인 \(.repo_short) — 열림 \(.open_total) · 스코프 \($scope) · 창 \(.since)",
      row("waiting"), row("claimed"), row("verify"), row("ready"), row("harvesting"),
-     row("human_wait"), row("deploy_wait"), row("failed"), row("spinoff"),
+     row("human_wait"), row("deploy_wait"), row("failed"), row("dup_closed"), row("spinoff"),
      "  승격 대기 " + (if .promotion_ahead == null then "—" else "\(.promotion_ahead)커밋" end),
      "  warn      \(.warns | length)" ]
    + (.warns | map("    - " + .text)))
@@ -429,6 +524,8 @@ for repo in "${repos[@]}"; do
       --argjson prs_open "$prs_open_json" \
       --argjson prs_closed "$prs_closed_json" \
       --argjson cutoff "$cutoff" \
+      --argjson now "$now_epoch" \
+      --argjson grace "$grace_min" \
       --argjson ahead "$ahead" \
       --arg repo "$repo" --arg rs "$short" --arg since "$since" \
       "$BUILD_JQ" > "$tmpdir/repo.json"; then

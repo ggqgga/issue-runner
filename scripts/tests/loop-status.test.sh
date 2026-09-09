@@ -12,6 +12,14 @@
 #   ⑦ `.loop/repos` 의 `#` 주석·빈 줄 무시 + 형식 아닌 줄은 stderr 로 알린다.
 #   ⑧ 조용한 실패 6종(보조 리뷰) — 깨진 JSON 집계 실패 · compare 실패 degrade ·
 #      목록 상한 warn · 제목 폴백의 사다리 게이트 · `--since 0h` · repos 파일 부재 메시지.
+#   ⑨ (#147 T3) 사람대기 사유 병기 — `hold:*` 3종(ladder·policy·conflict) 표기와,
+#      `hold:*` 없는 건의 `사유 없음` + warn. 배포대기가 이긴 needs-human 은 warn 밖.
+#   ⑩ (#147 T3) 인계 전 창 — `HANDOFF_GRACE_MIN`(기본 90) 안의 **구현중 버킷** PR 은
+#      무소속 warn 대신 구현중 줄에 `← PR #n(인계 전)`, 창 밖이면 warn + 사망 의심.
+#      env 로 창을 넓히면 창 밖이던 PR 이 넘어온다(창이 실제로 동작한다는 대조군).
+#      판정축이 `agent:claimed` **라벨**이면 라벨을 단 채 배포대기로 간 이슈의 PR 이
+#      warn 에서만 빠져 어디에도 안 그려진다 — 그 조합(#4790/PR #4856)이 대조군.
+#   ⑪ (#147 T3) 실패 ⊎ 중복종료 — PR 라벨 `dup` 이 둘을 가르고 겹쳐 세지 않는다.
 #
 # 기대 줄은 **손으로 적는다** — SUT 의 jq 를 베껴 기대값을 만들면 공허하게 통과한다
 # (transition.test.sh 의 관행).
@@ -106,8 +114,9 @@ tsm() {  # tsm <분 전> → RFC3339 UTC
   date -u -v-"$1"M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
     || date -u -d "$1 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null
 }
-NOW=$(tsm 60)     # 창 안
+NOW=$(tsm 60)     # 창 안 · 인계 전 창(기본 90분) 안
 OLD=$(tsm 4320)   # 3일 전 — 창 밖
+AGO200=$(tsm 200) # 인계 전 창(기본 90분) 밖 — `--since 24h` 창에는 든다
 
 # ── 픽스처: ggqgga/BodaT (bodat) — 버킷 7종 + warn 5종(미러는 양방향 2건) + 창 밖 대조군 ─
 sed "s/@NOW@/$NOW/g; s/@OLD@/$OLD/g" > "$tmp/fx/ggqgga_BodaT.issues.json" <<'FX'
@@ -123,8 +132,11 @@ sed "s/@NOW@/$NOW/g; s/@OLD@/$OLD/g" > "$tmp/fx/ggqgga_BodaT.issues.json" <<'FX'
  {"number":4811,"title":"마감대기건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:ready"}]},
  {"number":4818,"title":"마감중건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"harvesting"}]},
  {"number":4700,"title":"중복단계건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"harvesting"}]},
- {"number":4825,"title":"사람대기 대기자리","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"}]},
- {"number":4770,"title":"사람대기 구현중자리","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"agent:claimed"}]},
+ {"number":4825,"title":"사람대기 대기자리","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:ladder"}]},
+ {"number":4770,"title":"사람대기 구현중자리","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"agent:claimed"},{"name":"hold:conflict"}]},
+ {"number":4780,"title":"사람대기 정책자리","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":4826,"title":"사람대기 사유 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"}]},
+ {"number":4790,"title":"agent:claimed 인데 배포대기가 이긴 건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"agent:claimed"},{"name":"deploy-wait"}]},
  {"number":4838,"title":"라벨로 배포대기","createdAt":"@NOW@","labels":[{"name":"deploy-wait"}]},
  {"number":4796,"title":"배포 대기: PR #4700 — 제목 폴백","createdAt":"@NOW@","labels":[]},
  {"number":4848,"title":"배포 검증: 화력 작전 — 제목 폴백 2형식","createdAt":"@NOW@","labels":[{"name":"needs-human"}]},
@@ -132,8 +144,14 @@ sed "s/@NOW@/$NOW/g; s/@OLD@/$OLD/g" > "$tmp/fx/ggqgga_BodaT.issues.json" <<'FX'
 ]
 FX
 
-sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_BodaT.pr_open.json" <<'FX'
+sed "s/@NOW@/$NOW/g; s/@AGO200@/$AGO200/g" > "$tmp/fx/ggqgga_BodaT.pr_open.json" <<'FX'
 [
+ {"number":4854,"headRefName":"agent/issue-4803","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":4803}],"labels":[]},
+ {"number":4855,"headRefName":"agent/issue-4701","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO200@",
+  "closingIssuesReferences":[{"number":4701}],"labels":[]},
+ {"number":4856,"headRefName":"agent/issue-4790","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":4790}],"labels":[]},
  {"number":4837,"headRefName":"agent/issue-4818","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
   "closingIssuesReferences":[{"number":4818}],"labels":[{"name":"harvesting"}]},
  {"number":4840,"headRefName":"agent/issue-4810","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
@@ -157,6 +175,8 @@ sed "s/@NOW@/$NOW/g; s/@OLD@/$OLD/g" > "$tmp/fx/ggqgga_BodaT.pr_closed.json" <<'
 [
  {"number":4792,"headRefName":"agent/issue-4753","state":"CLOSED","mergedAt":null,"closedAt":"@NOW@","createdAt":"@OLD@",
   "closingIssuesReferences":[{"number":4753}],"labels":[]},
+ {"number":4791,"headRefName":"agent/issue-4752","state":"CLOSED","mergedAt":null,"closedAt":"@NOW@","createdAt":"@OLD@",
+  "closingIssuesReferences":[{"number":4752}],"labels":[{"name":"dup"}]},
  {"number":4793,"headRefName":"agent/issue-4754","state":"MERGED","mergedAt":"@NOW@","closedAt":"@NOW@","createdAt":"@OLD@",
   "closingIssuesReferences":[{"number":4754}],"labels":[]},
  {"number":4794,"headRefName":"agent/issue-4755","state":"CLOSED","mergedAt":null,"closedAt":"@OLD@","createdAt":"@OLD@",
@@ -210,27 +230,33 @@ run() {  # run <인자...> — 출력은 $tmp/out, exit 는 RC
 run --repo ggqgga/BodaT --repo ggqgga/issue-runner --since 24h
 ck "정상 스코프: exit 0" "$RC" 0
 
-has_line "헤더: 열림=버킷합(13) · 스코프 · 창" "$tmp/out" \
-  "파이프라인 bodat — 열림 16 · 스코프 bodat·runner · 창 24h"
+has_line "헤더: 열림=버킷합(19) · 스코프 · 창" "$tmp/out" \
+  "파이프라인 bodat — 열림 19 · 스코프 bodat·runner · 창 24h"
 has_line "대기 3(창 밖 파생건도 대기에는 남는다)" "$tmp/out" \
   "  대기      4  #4901 #4832 #4831 #4600"
-has_line "구현중 2(좌초건 포함)" "$tmp/out" \
-  "  구현중    2  #4803 #4701"
+# 인계 전 창(기본 90분) — #4854 는 60분 전이라 무소속 warn 이 아니라 구현중 줄에 붙는다.
+# #4701 의 PR #4855 는 200분 전이라 붙지 않는다(아래 warn 에서 잡힌다).
+has_line "구현중 2(좌초건 포함) — 창 안 PR 만 '인계 전' 으로 병기" "$tmp/out" \
+  "  구현중    2  #4803 ← PR #4854(인계 전) #4701"
 has_line "검증대기 2 — 제목이 배포 대기… 여도 사다리 라벨이 이긴다" "$tmp/out" \
   "  검증대기  2  #4810 ← PR #4840 #4500"
 has_line "마감대기 1 + 연결 PR" "$tmp/out" \
   "  마감대기  1  #4811 ← PR #4841"
 has_line "마감중 2(중복단계건은 가장 뒤 단계로)" "$tmp/out" \
   "  마감중    2  #4818 ← PR #4837 #4700"
-has_line "사람대기 2 — 사다리 위치 + 열린 연결 PR" "$tmp/out" \
-  "  사람대기  2  #4825(대기, PR #4835) #4770(구현중)"
-has_line "배포대기 3 — 라벨 + 제목 폴백 2형식(배포 대기 / 배포 검증)" "$tmp/out" \
-  "  배포대기  3  #4848 #4838 #4796"
+# 사유 3종(ladder·policy·conflict) 전부 + hold:* 없는 건은 `사유 없음`
+has_line "사람대기 4 — 사다리 위치 + hold:* 사유 + 열린 연결 PR" "$tmp/out" \
+  "  사람대기  4  #4826(대기, 사유 없음) #4825(대기, ladder, PR #4835) #4780(대기, policy) #4770(구현중, conflict)"
+has_line "배포대기 4 — 라벨 + 제목 폴백 2형식 + agent:claimed 이 붙어도 배포대기가 이긴다" "$tmp/out" \
+  "  배포대기  4  #4848 #4838 #4796 #4790"
 # 배포대기가 사람대기보다 앞선다 — needs-human 을 단 `배포 검증:` 이슈가 사람대기로 새면 안 된다
 no_sub "제목 폴백건은 사람대기에 안 샌다" "$tmp/out" "#4848("
 # ② 창 필터: 머지된 PR·창 밖 PR·사람 브랜치는 실패 아님
-has_line "실패 1 — 창 안 미머지 agent PR 만" "$tmp/out" \
+has_line "실패 1 — 창 안 미머지 agent PR 만(dup 라벨 건은 뺀다)" "$tmp/out" \
   "  실패      1  PR #4792(#4753, 머지 없이 닫힘)"
+has_line "중복종료 1 — PR 라벨 dup 인 건은 별도 줄" "$tmp/out" \
+  "  중복종료  1  PR #4791(#4752, 중복 종료)"
+no_sub "중복종료: 실패 줄에 겹쳐 세지 않는다" "$tmp/out" "PR #4791(#4752, 머지 없이 닫힘)"
 no_sub "실패: 창 밖 PR #4794 제외" "$tmp/out" "#4794"
 no_sub "실패: 머지된 PR #4793 제외" "$tmp/out" "#4793"
 no_sub "실패: 사람 브랜치 PR #4795 제외" "$tmp/out" "#4795"
@@ -241,8 +267,8 @@ has_line "승격 대기 — release 없는 레포" "$tmp/out" \
 # 루프 밖 이슈는 어디에도 안 센다
 no_sub "루프 밖 이슈 #4900 미집계" "$tmp/out" "#4900"
 
-# ③ warn 5종
-has_line "warn 6건" "$tmp/out" "  warn      6"
+# ③ warn 5종 + 사유 없음 + 인계 지연
+has_line "warn 9건" "$tmp/out" "  warn      9"
 has_sub "warn 무소속 PR" "$tmp/out" \
   "    - 무소속 PR #4850(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4832 는 needs-human 아님"
 has_sub "warn 단계 라벨 중복" "$tmp/out" \
@@ -259,6 +285,24 @@ has_sub "warn 연결 이슈 종료" "$tmp/out" \
 no_sub "무소속: needs-human 연결 PR #4835 은 warn 아님" "$tmp/out" "무소속 PR #4835"
 # PR 자체에 needs-human 이 붙은 held PR(#4852 — verify-held/closeout-blocked 가 issue=- 로 남긴 형태)도 무소속이 아니다
 no_sub "무소속: PR 자체 needs-human(#4852) 은 warn 아님" "$tmp/out" "무소속 PR #4852"
+# 인계 전 창 — 창 안(#4854)은 warn 이 아니고, 창 밖(#4855)은 warn + 사망 의심 꼬리표
+no_sub "인계 전 창 안 PR #4854 는 warn 아님" "$tmp/out" "무소속 PR #4854"
+has_sub "인계 전 창 밖 PR #4855 는 무소속 warn" "$tmp/out" \
+  "    - 무소속 PR #4855(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4701 는 needs-human 아님(agent:claimed 인데 "
+has_sub "인계 전 창 밖: 워커 사망 의심 꼬리표" "$tmp/out" "분 경과 — 워커 사망 의심)"
+# 판정축은 `agent:claimed` **라벨**이 아니라 **구현중 버킷** — 라벨을 단 채 배포대기로 간
+# 이슈(#4790)의 라벨 없는 PR 은 warn 에서 빠지면 어디에도 안 그려져 거짓 깨끗함이 된다.
+# 정확히 이 줄이어야 한다(꼬리표가 붙으면 has_line 이 깨진다 — 인계 창과 무관한 건이다).
+has_line "구현중 버킷 밖의 agent:claimed PR 은 무소속 warn(꼬리표 없이)" "$tmp/out" \
+  "    - 무소속 PR #4856(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4790 는 needs-human 아님"
+no_sub "구현중 버킷 밖 PR 은 '인계 전' 으로도 안 그려진다" "$tmp/out" "PR #4856(인계 전)"
+# 사유 없는 needs-human 만 warn — hold:* 가 붙은 셋은 조용하다
+has_sub "warn needs-human 사유 없음" "$tmp/out" \
+  "    - needs-human 사유 없음 #4826(bodat) — hold:* 라벨 없음"
+no_sub "사유 있는 건은 사유 없음 warn 아님" "$tmp/out" "사유 없음 #4825"
+no_sub "사유 있는 건은 사유 없음 warn 아님(conflict)" "$tmp/out" "사유 없음 #4770"
+# 배포대기가 이긴 needs-human 이슈(#4848)는 이 warn 밖 — 루프 전이가 만든 게 아니다
+no_sub "배포대기로 간 needs-human 은 사유 없음 warn 밖" "$tmp/out" "사유 없음 #4848"
 
 # ③ 깨끗한 픽스처 + ④ 짧은 이름 특례
 has_line "runner 블록 헤더(issue-runner → runner)" "$tmp/out" \
@@ -271,12 +315,28 @@ run --repo ggqgga/BodaT --since 7d
 has_line "창 7d: 파생 2(옛 spinoff 포함)" "$tmp/out" "  파생      2  #4901 #4832"
 has_line "창 7d: 실패 2(창 밖이던 #4794 포함)" "$tmp/out" \
   "  실패      2  PR #4794(#4755, 머지 없이 닫힘) PR #4792(#4753, 머지 없이 닫힘)"
+has_line "창 7d: 중복종료는 여전히 1(실패로 새지 않는다)" "$tmp/out" \
+  "  중복종료  1  PR #4791(#4752, 중복 종료)"
+
+# ── §5 인계 전 창 — HANDOFF_GRACE_MIN 으로 창을 넓히면 #4855 도 '인계 전' 이 된다 ──
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" HANDOFF_GRACE_MIN=300 \
+  "$SUT" --repo ggqgga/BodaT --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "HANDOFF_GRACE_MIN=300: exit 0" "$RC" 0
+has_line "창 300분: #4855 도 인계 전으로 넘어온다" "$tmp/out" \
+  "  구현중    2  #4803 ← PR #4854(인계 전) #4701 ← PR #4855(인계 전)"
+no_sub "창 300분: #4855 무소속 warn 사라짐" "$tmp/out" "무소속 PR #4855"
+# 형식 오류는 레포별 '집계 실패(jq)' 로 위장되지 않고 환경 실패로 죽는다
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" HANDOFF_GRACE_MIN=90분 \
+  "$SUT" --repo ggqgga/BodaT --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "HANDOFF_GRACE_MIN 형식 오류: exit 1" "$RC" 1
+has_sub "HANDOFF_GRACE_MIN 형식 오류: stdout 에도 사유" "$tmp/out" \
+  "파이프라인 — 스냅샷 실패: HANDOFF_GRACE_MIN 형식 오류: 90분"
 
 # ── ⑤ 레포 하나 조회 실패 → 그 블록만 실패 줄, 나머지 정상, exit 1 ──────────
 run --repo ggqgga/BodaT --repo ggqgga/BoDAC --repo ggqgga/issue-runner --since 24h
 ck "부분 실패: exit 1" "$RC" 1
 has_sub "부분 실패: bodac 만 실패 줄" "$tmp/out" "파이프라인 bodac — 조회 실패: 이슈 목록 — "
-has_sub "부분 실패: bodat 블록은 정상" "$tmp/out" "파이프라인 bodat — 열림 16"
+has_sub "부분 실패: bodat 블록은 정상" "$tmp/out" "파이프라인 bodat — 열림 19"
 has_sub "부분 실패: runner 블록은 정상" "$tmp/out" "파이프라인 runner — 열림 1"
 
 # ── ⑥ --json: 모든 항목·warn 에 repo_short ──────────────────────────────────
@@ -291,12 +351,24 @@ ck "--json: repo_short 없는 warn 0" \
   "$(jq '[.repos[] | select(.ok) | .warns[] | select(has("repo_short") | not)] | length' < "$tmp/out")" 0
 ck "--json: 여러 레포의 repo_short 가 섞여 구분된다" \
   "$(jq -c '[.repos[].repo_short] | sort' < "$tmp/out")" '["bodat","runner"]'
-ck "--json: bodat 열림 16" \
-  "$(jq '.repos[] | select(.repo_short=="bodat") | .open_total' < "$tmp/out")" 16
+ck "--json: bodat 열림 19" \
+  "$(jq '.repos[] | select(.repo_short=="bodat") | .open_total' < "$tmp/out")" 19
 ck "--json: runner 승격 대기 7" \
   "$(jq '.repos[] | select(.repo_short=="runner") | .promotion_ahead' < "$tmp/out")" 7
 ck "--json: bodat 승격 대기 null(release 없음)" \
   "$(jq '.repos[] | select(.repo_short=="bodat") | .promotion_ahead' < "$tmp/out")" null
+ck "--json: dup_closed 배열에 dup PR 만" \
+  "$(jq -c '.repos[] | select(.repo_short=="bodat") | [.buckets.dup_closed[].number]' < "$tmp/out")" '[4791]'
+ck "--json: failed 에는 dup PR 이 없다" \
+  "$(jq -c '.repos[] | select(.repo_short=="bodat") | [.buckets.failed[].number]' < "$tmp/out")" '[4792]'
+ck "--json: 사람대기 holds" \
+  "$(jq -c '.repos[] | select(.repo_short=="bodat") | [.buckets.human_wait[] | {n:.number, h:.holds}]' < "$tmp/out")" \
+  '[{"n":4826,"h":[]},{"n":4825,"h":["ladder"]},{"n":4780,"h":["policy"]},{"n":4770,"h":["conflict"]}]'
+ck "--json: 인계 전 PR 은 구현중 항목에 handoff_pending" \
+  "$(jq -c '.repos[] | select(.repo_short=="bodat") | [.buckets.claimed[] | {n:.number, p:.pr, h:.handoff_pending}]' < "$tmp/out")" \
+  '[{"n":4803,"p":4854,"h":true},{"n":4701,"p":null,"h":false}]'
+ck "--json: 열림 합에 중복종료는 안 든다(창 교차 집계)" \
+  "$(jq '.repos[] | select(.repo_short=="bodat") | .open_total' < "$tmp/out")" 19
 
 # ── ⑦ .loop/repos — 주석·빈 줄 무시 ────────────────────────────────────────
 cat > "$tmp/repos" <<'FX'
@@ -340,7 +412,7 @@ FX
 run --repos-file "$tmp/repos-bad" --since 24h
 ck "무시된 줄: exit 0" "$RC" 0
 has_sub "무시된 줄: stderr 로 알린다" "$tmp/err" "무시된 줄: 오타로슬래시가없는줄"
-has_sub "무시된 줄: 나머지 레포는 정상" "$tmp/out" "파이프라인 bodat — 열림 16"
+has_sub "무시된 줄: 나머지 레포는 정상" "$tmp/out" "파이프라인 bodat — 열림 19"
 
 # ── usage — 스코프 없음 / --since 형식 오류 ────────────────────────────────
 STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" \

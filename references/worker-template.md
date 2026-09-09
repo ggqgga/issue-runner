@@ -141,8 +141,13 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    a. **참조 이슈(`#<NUM>`) 체크박스 reconcile.** `gh issue view <NUM> --repo <REPO>
       --json body` 로 본문을 읽어, PR `## Test plan` 에서 `[x]` 로 표시한 항목에 대응하는
       이슈 수용기준·Test plan 줄을 `[x]` 로, 미완은 `[ ]` 로 **유지**한 뒤 `gh issue edit
-      <NUM> --repo <REPO> --body` 로 되쓴다(라이브/하드웨어 검증처럼 PR 시점에 못 끝내는
-      항목은 정직하게 `[ ]`). **본문 전체 재생성 금지** — 체크박스 마크만 보수적으로
+      <NUM> --repo <REPO> --body` 로 되쓴다. **라이브 항목은 먼저
+      `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
+      의 칸을 올라 시도하고, 시도한 칸·실패 출력(명령 한 줄 + 마지막 20줄)을
+      PR `## Test plan` 에 인용한 뒤에만 `[ ]` 로
+      남긴다** — "실장비가 필요하다" 는 서술만으로는 `[ ]` 로 둘 수 없다(칸 ①②는
+      워크트리에서 그대로 시도할 수 있다. 아래 "금지" 는 그대로 지킨다).
+      **본문 전체 재생성 금지** — 체크박스 마크만 보수적으로
       치환하고 나머지 텍스트는 한 글자도 바꾸지 마라(글로벌 훅이 서브에이전트엔 안 닿아
       직접 한다).
    b. 검증 인계 전이를 한 줄로 걸어라 (cd 없이 단독 명령):

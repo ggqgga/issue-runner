@@ -19,12 +19,13 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
 
 - `MAX_CLOSEOUT = 1` — **concurrency 1** (only 1 PR closed out to completion at a
   time, serially). Not a per-tick cap — when a PR reaches a terminal state
-  (success·approval-required·blocked·exhausted), **do not wait for the next tick**;
+  (success·approval-required·blocked·dup·exhausted), **do not wait for the next tick**;
   loop back to ①①-b② and pick the next candidate (see ⑤ Drain). Only end the tick and
   rest for the `/loop` interval when the queue is empty (② Pick has 0 candidates). The
   drain is finite — a processed PR drops out of eligible (merged→gone from the OPEN
-  list · blocked→`needs-human` · approval-required→`배포 대기:` marker · re-dispatch→PR
-  `재디스패치:` marker + fresh updatedAt). The `/loop` interval only tunes the
+  list · blocked→`needs-human` · dup→the PR is **closed** without merging so it is gone
+  from the OPEN list too (same effect as a merge) · approval-required→`배포 대기:` marker ·
+  re-dispatch→PR `재디스패치:` marker + fresh updatedAt). The `/loop` interval only tunes the
   **re-scan cadence when the queue is empty** (not the drain rate). This drain fixes the
   accumulation that built up when only one PR was processed per tick.
 - `REPAIR_RECUR_LIMIT = 2` — if the same post-deploy failure recurs N times,
@@ -125,7 +126,7 @@ separate freshness gate needed:
 | `done_verdict` | latest `머지 판정: ✅` | eligible.sh's normal path handles it — sweep skips |
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). |
 | `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
-| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>` (attaches `needs-human` to **both** the PR and the linked issue and clears the stage labels — the human signal survives even with no linked issue), closeout leaves it (no auto-progress). |
+| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy` (attaches `needs-human` + `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the human signal survives even with no linked issue), closeout leaves it (no auto-progress). |
 | `active` | in progress · buffer not reached · not our shape | **Leave it** (next tick). |
 
 **`flow:*` supplementary signal**: finish-classify judges by comments, but a stale PR with
@@ -189,6 +190,12 @@ conflict needing human judgment·incomplete doc reconcile·etc.) **must use the
 `closeout-blocked` (to a human) or `closeout-redispatch` (back to a worker) transition —
 never a hand-run `gh issue edit`**. The transition table guarantees the `harvesting`·`flow:*`
 cleanup on both the PR and the issue (prevents stale stage-label residue).
+`closeout-blocked` **requires `--reason <conflict|policy|ladder>`** (without it the
+transition refuses with usage exit 64 — no reasonless `needs-human` can be created). A
+rebase/semantic conflict is `conflict`; anything else the loop cannot decide (spec·policy·
+no verdict) is `policy`; `ladder` only when the rungs of
+`~/.claude/skills/issue-runner/references/live-verification-ladder.md`
+were actually climbed and the failure output cited.
 
 ## ③ Pipeline — steps 1–6
 
@@ -222,12 +229,28 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
   `gh pr comment` must include **a final line `<!-- bodat:worker -->`** — it is how
   closeout-eligible tells a machine comment from a human review (#72). Without it, on
   re-evaluation the PR is mistaken for an unresolved human comment and drops out.
+- **Duplicate — the loop closes it itself (never handed to a human).** If the verifier
+  judges that the fix the issue asked for is **already on `origin/main`**, or that this PR
+  duplicates another, treat it as neither BLOCKER nor CLEAN. Confirm the evidence commit
+  (the SHA carrying that fix in `git log origin/<default>`), then close it in one line:
+  `$SCRIPTS/transition.sh closeout-dup <repo> <issue> <pr> --note "<evidence commit·reason>"`
+  — it closes the PR without merging, comments the evidence on the issue and closes it,
+  clears the stage labels, and leaves the `dup` label on the PR. **Do not attach
+  `needs-human`** — a duplicate is something the loop can decide, and handing it over piles
+  up reasonless `needs-human` (the #4803 shape: closeout judged it a duplicate and still
+  threw it at a human). → **dup exit** (no merge).
+  **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
+  report `BLOCKED: transition failed closeout-dup PR #<pr>(<repo_short>) — <one stderr line>`
+  in ④ Report. A hunch ("looks like a duplicate") is not dup — if you cannot name the
+  evidence commit, take the BLOCKER path below (`--reason policy`).
 - BLOCKER (including no-verdict, e.g. reason `검증자 미산출 — 타임아웃
   (>VERIFIER_TIMEOUT_MIN분)`) → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
   <!-- bodat:worker -->"`
-  + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>`
-  (removes `harvesting` from the PR, attaches `needs-human` to the linked issue and clears
-  the stage labels) → **blocked exit** (do not merge).
+  + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy`
+  (removes `harvesting` from the PR, attaches `needs-human` + `hold:policy` to the linked
+  issue and clears the stage labels) → **blocked exit** (do not merge). A verifier BLOCKER
+  or no-verdict needs a spec/policy call, so the reason is `policy` (neither `conflict`
+  nor `ladder`).
   **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
   report `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
   in ④ Report instead (the point is to leave the half-moved labels for the next tick to catch —
@@ -273,7 +296,8 @@ hook queried the cwd repo). Gate conditions: `$SCRIPTS/closeout-ci-pass.sh <repo
   permanently exit 2) → fill the **current HEAD** cache with
   `$SCRIPTS/run-local-ci.sh <repo> <N>`. If `run-local-ci.sh` exits nonzero (integration
   with the new base is broken), do not merge: exit on hold fail-closed
-  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>` + `blocked` exit, do not
+  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy` +
+  `blocked` exit, do not
   invent a new exit state — if that transition exits 1·2, report
   `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
   in ④ Report). If 0, the cache is
@@ -294,7 +318,8 @@ short bounded poll (e.g. 2–3s interval × max 5 tries, never wait forever) —
 step 3's `run-local-ci.sh` fills the cache synchronously this is usually pass
 immediately — and if pass is not reached within the limit, do not merge: exit on hold
 fail-closed (same path as step 3's nonzero-cache/not-reached handling — the
-`closeout-blocked` transition + `blocked` exit, do not invent a new exit state). **Right after `gh pr merge`
+`closeout-blocked … --reason policy` transition + `blocked` exit, do not invent a new
+exit state). **Right after `gh pr merge`
 succeeds**, call `$SCRIPTS/cleanup-worktree.sh <repo> <N> --merged` to clean up this
 PR's worktree (`agent/issue-<N>`) directly (`<N>` parsed from the PR head
 `agent/issue-N`, same as step 3). Since closeout monopolizes merging, it reaps the
@@ -319,8 +344,8 @@ dirty guard stays — if dirty, warn and hold; best-effort).
   to `agent-ready` (or spinoff), blocked exit. If 0,
   join the exit-0 merge gate above and squash-merge normally. If the agent **cannot resolve**
   the conflict (rebase abort / repeated failure), a semantic conflict is a human call:
-  `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>`, blocked exit (no
-  unattended forced resolution). For both transitions: **on exit 1 (readback mismatch) or
+  `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason conflict`,
+  blocked exit (no unattended forced resolution — this path alone uses `conflict`). For both transitions: **on exit 1 (readback mismatch) or
   2 (gh failure), do NOT change that PR's terminal state** — report
   `BLOCKED: transition failed <transition> PR #<pr>(<repo_short>) — <one stderr line>` in
   ④ Report instead.
@@ -365,7 +390,8 @@ comment.
   (exit 0) (a prior tick already cached the same HEAD), do not re-run `run-local-ci.sh`
   (the helper has no dedup of its own, so the caller guards). If `run-local-ci.sh`
   exits nonzero (=bin/ci failed) the cache is not filled with pass, so do not merge:
-  exit on hold fail-closed (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>`
+  exit on hold fail-closed
+  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy`
   + `blocked` exit, follow the existing BLOCKER path — do not invent a new exit state; if
   that transition exits 1·2, report
   `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
@@ -395,6 +421,25 @@ is filed at all, and free prose leaves that decision to per-tick interpretation,
 drifts (measured 2026-08-12~13: of 186 deploy-check issues, **zero** used checkboxes —
 all prose). A sentence like "없음. 주석 13줄이 전부다 — 관찰 가능한 변화가 없다" is clear
 to a human but is not `없음` to a machine branch.
+
+**Before carrying an item over, closeout climbs the ladder once (an untried `[ ]` is not
+carried over as-is).** Unfinished items the worker left as a bare `[ ]` **with no rung
+attempt and no citation** (no attempted rung, no failure output in the PR test plan) must
+not be copied into this section as-is — doing so promotes work nobody attempted into a
+human's lap. closeout attempts **rung ① (dev server — `bin/rails runner`·localhost) and
+rung ② (`bin/dry-run`·the AdsPower relay)** of
+`~/.claude/skills/issue-runner/references/live-verification-ladder.md`
+**once each** first (rung ③, real hardware, is not closeout's job — record it with the
+attempt results).
+- If rung ①② **yields a verdict**, **drop** the item from `<LIVE_CHECKS>` (it is not a human
+  action any more). Record the basis in a PR comment.
+- If they **fail**, carry the item over as `- [ ]` but **cite the rung attempted and its
+  failure output (the command plus its last 20 lines)**. The citation goes in the
+  `## 변경 요약` section — `<LIVE_CHECKS>` keeps the shape discipline above and holds
+  **actions only**, no prose or output.
+- If the attempt is impossible in this environment (no such entrypoint in the repo, etc.),
+  say so in one line in `## 변경 요약`. Never skip the attempt on the strength of the words
+  "real hardware needed".
 
 **Branch — once it is merged, always create a promotion ticket (user decision, 2026-08-16).**
 
@@ -552,7 +597,7 @@ duplicate-issuance marker).
 ## ⑤ Drain — continue to the next candidate immediately
 
 **Right after** ③ Pipeline drives the picked PR to a terminal state
-(success·approval-required·blocked·exhausted), accumulate that PR's result for ④ Report and
+(success·approval-required·blocked·dup·exhausted), accumulate that PR's result for ④ Report and
 **loop back to ①①-b② without waiting for the next tick** — this drain exhausts the queue
 within one tick, fixing the accumulation that built up when only one PR was handled per tick:
 
@@ -563,7 +608,8 @@ within one tick, fixing the accumulation that built up when only one PR was hand
   processed this tick at once** in ④ Report, then schedule the next tick on the `/loop` interval.
 
 Infinite-loop guard: each iteration reduces eligible/adopt candidates by ≥1 (merged→gone ·
-blocked→`needs-human` · approval-required→`배포 대기:` marker · re-dispatch→PR `재디스패치:`
+blocked→`needs-human` · dup→PR closed without merging so it is gone ·
+approval-required→`배포 대기:` marker · re-dispatch→PR `재디스패치:`
 marker so it is not re-selected — the sweep won't re-issue with no new activity after the marker).
 If the same PR is picked twice (unexpected, e.g. a missing marker), skip it and report
 `BLOCKED: re-selection loop — #<pr>` in ④ Report to break the drain. If a hard cap is needed, one
@@ -573,7 +619,8 @@ the next tick's).
 ## ④ Report
 
 When the drain ends (② Pick has 0 candidates), report **all PRs processed this tick summed**
-(N is this tick's cumulative count): `closed N · verify-hold N · deploy-wait N · spinoff N · recovered N · re-dispatched N · stale N`.
+(N is this tick's cumulative count): `closed N · verify-hold N · dup-closed N · deploy-wait N · spinoff N · recovered N · re-dispatched N · stale N`
+(the Korean report line calls the third one `중복종료 N`).
 Count PRs the ①-b sweep adopted to close/rebase as `recovered N` (also reflected in `closed`
 if it became that tick's Pick), and `stale_reverify` re-dispatches / `held` needs-human as
 `re-dispatched N`.
@@ -608,10 +655,13 @@ tick where every count is 0** — the snapshot is the only window onto what is i
   naming the repos touched this tick with `--repo <owner/repo>`; if there are none, leave one
   warn line `loop-status: 스코프 없음(.loop/repos 부재)`.
 
-State the 6 exit states — for **each** PR processed (per-PR when the drain handled several):
+State the 7 exit states — for **each** PR processed (per-PR when the drain handled several):
 - **success** — ran steps 1–6, merged the PR, and issued follow-ups (including adopt/rebase recoveries).
 - **clean no-op** — ② Pick had 0 candidates, so there was no PR to close (but if there were ①-b re-dispatches it is not a no-op — report `re-dispatched N`).
 - **blocked** — step-1 verification was a BLOCKER, or step-2 rebase integration failed, so it is on hold (no merge).
+- **dup** — step-1 verification judged it "already on `origin/main`·duplicate", so
+  `closeout-dup` closed the PR and the issue without merging (no `needs-human` — the loop
+  finished it). Counted as `dup-closed N` (`중복종료 N` in the Korean report line).
 - **approval-required** — step 4 issued a deploy issue and is awaiting the human gate.
 - **exhausted** — the same step-5 failure recurred `REPAIR_RECUR_LIMIT` times,
   escalated to needs-human.
@@ -638,3 +688,7 @@ Non-operational notes — they do not affect tick execution.
   (=`~/.claude/skills/issue-runner/scripts`), and the 3 references
   (`verifier-prompt.md`·`deploy-check-issue.md`·`spinoff-issue.md`) live in
   `skills/closeout/references/`.
+- The attempt order, transports and citation rules for anything needing live measurement
+  are in `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
+  (rung ①dev → ②worker runtime → ③TEST worker → ④human; the basis for the step-4 `<LIVE_CHECKS>` rung-①② attempt and the
+  precondition for `--reason ladder`).
