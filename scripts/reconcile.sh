@@ -171,9 +171,13 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
       # 상황에선 옛 머지 PR 과 **현재 OPEN PR** 이 함께 잡힌다. 종전의 `continue` 는 이슈를
       # 통째로 버려 안전한 pr_open·harvesting 이벤트까지 없앴고, 조회 실패가 지속되면
       # (권한·rate limit) 현재 PR 이 Maintain 에 못 들어가 무기한 정체했다.
-      # MERGED 후보만 폐기(위에서 보류 목록에 넣었다)하고 나머지는 계속 분류한다.
-      prs=$(printf '%s' "$prs" | jq -c '[.[] | select(.state != "MERGED")]')
-      # 단, 머지 아닌 PR 이 하나도 없으면 분류할 대상이 없다 — 예전처럼 이슈를 건너뛴다.
+      # 머지 후보를 폐기(위에서 보류 목록에 넣었다)하고 **OPEN 만** 남겨 계속 분류한다.
+      # CLOSED 도 함께 뺀다: CLOSED 분기는 pr_open/harvesting 과 달리 worktree 제거 +
+      # agent-ready 해제라는 **정리**를 한다. 브랜치 재사용이면 그 CLOSED 도 옛 attempt 의
+      # 것일 수 있는데 claim 시각을 모르는 상태라 가를 수 없다 — #139 가 막으려던 파괴적
+      # 오정리의 CLOSED 판이다. 여기서 복원하려는 건 정체를 푸는 **안전한 분류**뿐이다.
+      prs=$(printf '%s' "$prs" | jq -c '[.[] | select(.state == "OPEN")]')
+      # 단, 분류할 OPEN PR 이 하나도 없으면 할 일이 없다 — 예전처럼 이슈를 건너뛴다.
       # 그냥 흘려보내면 pr 이 비어 아래에서 stale 로 agent:claimed 를 떼는데, 방금 보류한
       # 머지는 이번 실행 스윕이 막혀 있다 = "라벨 제거 + 스윕 차단" 이라는 유실 조합이다.
       printf '%s' "$prs" | jq -e 'length > 0' >/dev/null 2>&1 || continue

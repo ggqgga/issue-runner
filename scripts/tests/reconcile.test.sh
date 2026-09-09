@@ -223,6 +223,9 @@ rm -rf "$tmp/proj/repo/.claude"
 # 브랜치 재사용이면 옛 MERGED PR 과 현재 OPEN PR 이 함께 잡힌다. 타임라인 조회가
 # 지속 실패할 때 `continue` 로 이슈를 통째로 버리면 안전한 pr_open·harvesting 분류까지
 # 안 나와 현재 PR 이 Maintain 에 못 들어가고 무기한 정체한다.
+# 전제: worktree 부재. 앞 블록의 정리에 기대지 않고 여기서 명시한다 — 사이에 케이스가
+# 끼면 조용히 전제가 뒤집혀 다른 세계를 재는 테스트가 된다(사전 리뷰 NIT).
+rm -rf "$tmp/proj/repo/.claude"
 mixed_prs='[{"number":7,"state":"MERGED","mergedAt":"'$merged_recent'","statusCheckRollup":[],"labels":[]},
             {"number":8,"state":"OPEN","mergedAt":null,"statusCheckRollup":[],"labels":[]}]'
 run "$mixed_prs" "" "$sweep_prs"
@@ -251,7 +254,21 @@ check "⑫ 타임라인 실패 + 머지 PR 뿐: stale 미발행" \
 check "⑫ 타임라인 실패 + 머지 PR 뿐: agent:claimed 미제거(유실 조합 금지)" \
   "$([ "$(claim_removed)" = no ] && echo ok || echo no)"
 
+# fail-closed 에서 남기는 건 **OPEN 뿐**이다 — CLOSED 분기는 pr_open 과 달리 worktree
+# 제거 + agent-ready 해제라는 정리를 하는데, 브랜치 재사용이면 그 CLOSED 도 옛 attempt 의
+# 것일 수 있고 claim 시각을 모르면 가를 수 없다(#139 가 막은 파괴의 CLOSED 판, 사전 리뷰 WARN).
+mixed_closed='[{"number":7,"state":"MERGED","mergedAt":"'$merged_recent'","statusCheckRollup":[],"labels":[]},
+               {"number":8,"state":"CLOSED","mergedAt":null,"statusCheckRollup":[],"labels":[]}]'
+run "$mixed_closed" "" "$sweep_prs"
+check "⑫ 타임라인 실패 + 옛 CLOSED PR: rejected 미발행" \
+  "$([ "$(event_has rejected)" = no ] && echo ok || echo no)"
+check "⑫ 타임라인 실패 + 옛 CLOSED PR: 정리 미실행" \
+  "$([ "$(destroyed)" = no ] && echo ok || echo no)"
+check "⑫ 타임라인 실패 + 옛 CLOSED PR: agent:claimed 미제거" \
+  "$([ "$(claim_removed)" = no ] && echo ok || echo no)"
+
 # ── ⑬ 축 2 — 동률 머지 + worktree 부재도 warn (라벨 유지) (#141) ─────────────
+# 전제: worktree 부재(위 ⑫ 에서 명시 제거했고 그 사이 다시 만들지 않는다).
 # 종전엔 동률 경고가 `[ -d "$wt" ]` **안**에만 있어, worktree 가 이미 없으면 else 로 빠져
 # agent:claimed 를 stale 로 떼면서 그 머지는 보류 목록이 스윕을 막았다 → 다음 실행엔
 # 라벨이 없어 주 루프도 못 보고, cutoff 30분을 넘기면 스윕은 씨딩만 하고 지나간다(영구 유실).
