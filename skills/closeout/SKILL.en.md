@@ -109,7 +109,10 @@ loaded onto issue-runner (role split, user decision 2026-07-06). Like the QUIET_
 
 **Targets**: `me=$(gh api user -q .login)`, then `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc` (FIFO). For each PR whose head is
-`agent/issue-*` and that is **not labeled `harvesting`**, judge it:
+`agent/issue-*` and that is **not labeled `harvesting`**, **not labeled `flow:verify`**, and **not
+labeled `needs-human`**, judge it. A `needs-human` PR is a human hold (`hold:*` reason — verify-held ·
+closeout-blocked · the dispatcher's runner-held repair cap); adopting or re-dispatching it here would undo
+that hold (#151) — never pick it until a human removes the label:
 
 **1) CONFLICTING first**: if `gh pr view <pr> --repo <repo> --json mergeable` is CONFLICTING
 → **Adopt (rebase path)** — hand to ② Pick; ③ step 2 has closeout rebase then merge (step-2
