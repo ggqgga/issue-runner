@@ -264,7 +264,7 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
     mirror_labels "$repo" "$num" escalate
     # 승격 코멘트에는 마커를 넣지 않는다 — 넣으면 재개 횟수가 스스로 부풀어 오른다.
     gh issue comment "$num" --repo "$repo" \
-      --body "재개 상한 초과($LADDER_RESUME_LIMIT) — 사람 판단 필요 <!-- bodat:worker -->" >/dev/null 2>&1 \
+      --body "사람 확인(policy): 사다리 재개 상한($LADDER_RESUME_LIMIT) 초과 — 마지막 재개 코멘트의 실패 출력을 읽고, 사다리 밖 통로(직접 조작·스펙 변경)가 필요한지 답하라 <!-- hold-note: policy --><!-- bodat:worker -->" >/dev/null 2>&1 \
       || emit_warn_after_edit "$repo" "$num" "승격 코멘트 실패(라벨은 이미 반영됨)"
     if ! back=$(read_labels "$repo" "$num"); then
       emit_warn_after_edit "$repo" "$num" "승격 readback 조회 실패 — 라벨 반영 여부 미상, 사람 확인 필요"
@@ -407,9 +407,21 @@ while IFS= read -r repo; do
       [ "$pmin" -ge "$RESUME_AFTER_MIN" ] || continue
       pout=$(gh issue view "$pnum" --repo "$repo" --json comments 2>/dev/null) \
         || { emit_warn "$repo" "$pnum" "재심 마커 조회 실패 — 이번 틱은 건너뛴다"; continue; }
-      if printf '%s' "$pout" | jq -e '[.comments[]? | select(.body | test("<!--\\s*policy-review:"))] | length > 0' >/dev/null 2>&1; then
-        continue   # 이미 1회 재심됨 — 사람이 라벨을 뗄 때까지 다시 안 묻는다
-      fi
+      # 에피소드 단위: 마지막 `hold-note: policy` 코멘트(=이번 홀드의 질문) **이후**에 재심 마커가
+      # 있어야 "이번 홀드는 재심됨" 이다. 옛 홀드의 마커가 새 홀드의 재심을 막지 않게.
+      # 질문(hold-note) 자체가 없으면 재심할 대상이 없다 — warn 으로만(레거시·손으로 붙인 홀드).
+      pstate=$(printf '%s' "$pout" | jq -r '
+        [.comments[]? | .body] as $b
+        | ([range(0; $b|length)] | map(select($b[.] | test("<!--\\s*hold-note:\\s*policy"))) | last) as $q
+        | if $q == null then "no-note"
+          else ([range($q+1; $b|length)] | map(select($b[.] | test("<!--\\s*policy-review:"))) | length) as $r
+               | if $r > 0 then "reviewed" else "due" end end' 2>/dev/null || echo "parse-fail")
+      case "$pstate" in
+        reviewed) continue ;;   # 이번 홀드는 이미 1회 재심됨 — 사람이 라벨을 뗄 때까지 다시 안 묻는다
+        no-note)  emit_warn "$repo" "$pnum" "hold:policy 인데 질문(hold-note) 코멘트가 없다 — 재심 불가, --note 로 다시 걸거나 사람이 처리"; continue ;;
+        due) ;;
+        *) emit_warn "$repo" "$pnum" "재심 마커 해석 실패 — 이번 틱은 건너뛴다"; continue ;;
+      esac
       printf '{"event":"policy_review_due","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$pnum" "$pmin"
     done 3< "$tmp/issues.policy"
   else
