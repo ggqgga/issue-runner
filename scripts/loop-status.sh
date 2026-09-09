@@ -32,10 +32,15 @@
 #                  이슈가 needs-human 을 달고 있어 사람대기로 오분류된다.
 #                  사다리 게이트가 필요한 이유: 제목만 보면 아직 구현·검증이 도는
 #                  이슈(`flow:verify` 등)가 배포대기로 새어 "배포만 기다린다"로 읽힌다.
-#     2. 사람대기 — `needs-human` (괄호는 `<사다리 위치>, <사유>[, PR #n]` — 사유는
-#                  `hold:*` 라벨의 접미(`conflict`·`policy`·`ladder`; 플랜 §2). 여러 개면
-#                  정렬해 `, ` 로 잇는다. `hold:*` 가 하나도 없으면 `사유 없음` 을 적고
-#                  warn `needs-human 사유 없음` 을 올린다.)
+#     2. 사람대기 — `needs-human` (괄호는 `<사다리 위치>, <사유>[, 질문 없음][, PR #n]` —
+#                  사유는 `hold:*` 라벨의 접미(`conflict`·`policy`·`ladder`; 플랜 §2). 여러
+#                  개면 정렬해 `, ` 로 잇는다. `hold:*` 가 하나도 없으면 `사유 없음` 을 적고
+#                  warn `needs-human 사유 없음` 을 올린다.
+#                  `질문 없음`(#157) — 사유가 `policy`·`conflict` 인데 `<!-- hold-note: … -->`
+#                  마커가 붙은 코멘트가 하나도 없는 건. 그 둘은 `--note`(사람이 답해야 할
+#                  질문 한 줄)가 필수라 질문이 없으면 사람은 무엇을 답할지 모른다. 옛 전이가
+#                  라벨만 붙이고 코멘트에 실패해 남긴 잔여물이거나(#157 이전), 사람이 손으로
+#                  붙인 홀드다. `ladder` 는 `--note` 가 선택이라 대상이 아니다.)
 #     3. 마감중   — `harvesting`
 #     4. 마감대기 — `flow:ready`
 #     5. 검증대기 — `flow:verify`
@@ -98,6 +103,8 @@
 #   `파이프라인 <short> — 조회 실패: <사유>` 한 줄만 찍고 다음 레포로 계속하며, 최종 exit 는
 #   1(부분 실패). release/compare 조회 실패는 레포를 실패로 만들지 않고 `승격 대기 —` 로
 #   degrade 한다(release 미존재와 같은 표기 — 둘 다 "셀 수 없음").
+#   질문 코멘트 조회(#157)가 실패하면 그 이슈만 `질문 없음` 표시를 **생략**하고 stderr 한
+#   줄을 남긴다 — 실패를 "질문 없음" 으로 접으면 없는 결함을 사람에게 들이민다.
 #
 # ★환경 변수★ `HANDOFF_GRACE_MIN` — 인계 전 창(분, 기본 90, 0 이상 정수). 형식이 틀리면
 #   환경 실패로 죽는다(jq 에 그대로 넘겨 레포별 "집계 실패" 로 위장되지 않게). `0` 은 허용 —
@@ -109,7 +116,10 @@
 #   "레포 하나 조회 실패"(부분 실패)와 구분되지 않는다.
 #
 # gh 호출 예산: 레포당 이슈 목록 1 + PR 목록(open/closed) 2 + release 확인 1 + 기본 브랜치 1
-# + compare 1 = 최대 6. 이슈·PR **개별** `gh view` 는 금지(N+1). `gh search` / `gh issue list
+# + compare 1 = 최대 6. **예외 하나**(#157): 사람대기 버킷에서 사유가 `policy`·`conflict` 인
+# 이슈에 한해 질문 코멘트 조회 `gh issue view --json comments` 를 1건씩 더 쓴다 — 라벨만으론
+# 질문 유무를 알 수 없고, 대상은 "지금 사람을 기다리는 건" 이라 목록 전체가 아니라 한 줌이다.
+# 그 밖의 이슈·PR **개별** `gh view` 는 여전히 금지(N+1). `gh search` / `gh issue list
 # --search` 도 금지 — 인덱스 지연 + 부정 라벨 오파싱(#21, eligible-issues.sh 주석 참조).
 # 라벨 필터는 전부 jq 로 한다. 목록은 `--limit 200` 상한 — `--since` 를 크게 잡으면
 # (예 30d) 닫힌 PR 이 상한에 잘려 "실패" 가 조용히 누락될 수 있다.
@@ -355,11 +365,13 @@ def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | so
       ready:       bucket("ready";       . as $i | pr_of($i.number) as $p | (item($i; "#\($i.number)" + (if $p then " ← PR #\($p.number)" else "" end)) + {pr: (if $p then $p.number else null end)})),
       harvesting:  bucket("harvesting";  . as $i | pr_of($i.number) as $p | (item($i; "#\($i.number)" + (if $p then " ← PR #\($p.number)" else "" end)) + {pr: (if $p then $p.number else null end)})),
       human_wait:  bucket("human_wait";  . as $i | pr_of($i.number) as $p
+                     | (($noteless | index($i.number)) != null) as $nomiss
                      | (item($i; "#\($i.number)(" + ko_of($i.stage)
                                  + ", " + (if ($i.holds | length) == 0 then "사유 없음"
                                            else ($i.holds | join(", ")) end)
+                                 + (if $nomiss then ", 질문 없음" else "" end)
                                  + (if $p then ", PR #\($p.number)" else "" end) + ")")
-                        + {stage: $i.stage, holds: $i.holds,
+                        + {stage: $i.stage, holds: $i.holds, note_missing: $nomiss,
                            pr: (if $p then $p.number else null end)})),
       deploy_wait: bucket("deploy_wait"; item(.; "#\(.number)")),
       # 실패 ⊎ 중복종료 = 창 안의 미머지 agent PR. `dup` 라벨이 둘을 가른다(겹치지 않는다).
@@ -519,7 +531,9 @@ for repo in "${repos[@]}"; do
     fi
   fi
 
-  if ! jq -n \
+  # build_snapshot <noteless JSON 배열> <출력 파일> — BUILD_JQ 한 패스(순수 · 부작용 없음).
+  build_snapshot() {
+    jq -n \
       --argjson issues "$issues_json" \
       --argjson prs_open "$prs_open_json" \
       --argjson prs_closed "$prs_closed_json" \
@@ -527,11 +541,64 @@ for repo in "${repos[@]}"; do
       --argjson now "$now_epoch" \
       --argjson grace "$grace_min" \
       --argjson ahead "$ahead" \
+      --argjson noteless "$1" \
       --arg repo "$repo" --arg rs "$short" --arg since "$since" \
-      "$BUILD_JQ" > "$tmpdir/repo.json"; then
+      "$BUILD_JQ" > "$2"
+  }
+  build_fail() {
     exit_code=1
     jq -nc --arg repo "$repo" --arg rs "$short" --arg err "집계 실패(jq)" \
       '{repo:$repo, repo_short:$rs, ok:false, error:$err}' >> "$tmpdir/repos.jsonl"
+  }
+
+  # ── 예비 패스 — 어느 이슈가 사람대기 버킷인지는 버킷 로직만이 안다 ────────
+  # 버킷 조건을 여기 다시 적으면(needs-human 이면서 배포대기가 아닌 것) 언젠가 SSOT 와
+  # 갈라진다. 그래서 같은 BUILD_JQ 를 `noteless=[]` 로 한 번 돌려 버킷을 얻고, 질문 조회가
+  # 실제로 필요할 때만 두 번째 패스를 돈다(jq 는 로컬 · gh 호출 0).
+  if ! build_snapshot '[]' "$tmpdir/repo.pre.json"; then
+    build_fail
+    continue
+  fi
+
+  # ── 질문(hold-note) 유무 — 사람대기 버킷의 hold:policy|conflict 에만 (#157) ──
+  # `hold:ladder` 는 `--note` 가 선택이라 질문이 없는 게 정상이고, 사유 없는 홀드는 이미
+  # 별도 warn 이 잡는다. 그 둘까지 물으면 N+1 만 늘고 화면엔 거짓 지적이 는다.
+  noteless="[]"
+  cands=$(jq -r '.buckets.human_wait[]
+                 | select(.holds | index("policy") != null or index("conflict") != null)
+                 | .number' "$tmpdir/repo.pre.json" 2>/dev/null) || cands=""
+  if [ -n "$cands" ]; then
+    nl_sep=""
+    nl_body=""
+    while IFS= read -r cand; do
+      [ -n "$cand" ] || continue
+      if ! run_gh gh issue view "$cand" --repo "$repo" --json comments; then
+        # 조회 실패를 "질문 없음" 으로 접으면 없는 결함을 사람에게 들이민다 — 모르는 건
+        # 표시하지 않고 사실만 stderr 로 남긴다(레포를 실패로 만들지는 않는다).
+        echo "$SELF: $short #$cand 질문(hold-note) 코멘트 조회 실패 — 표시 생략: $GH_ERR" >&2
+        continue
+      fi
+      # 파싱 실패와 "질문 없음" 을 구분한다 — jq 가 죽었을 때의 빈 출력이 `false` 로
+      # 읽히면 조회 실패가 조용히 `질문 없음` 이 된다.
+      hasnote=$(printf '%s' "$GH_OUT" \
+        | jq -r '[.comments[]? | .body // "" | select(test("<!--\\s*hold-note:"))] | length > 0' 2>/dev/null) \
+        || hasnote=""
+      case "$hasnote" in
+        true)  ;;
+        false) nl_body="${nl_body}${nl_sep}${cand}"; nl_sep="," ;;
+        *)     echo "$SELF: $short #$cand 코멘트 응답 파싱 실패 — 표시 생략" >&2 ;;
+      esac
+    done <<EOF
+$cands
+EOF
+    [ -z "$nl_body" ] || noteless="[$nl_body]"
+  fi
+
+  if [ "$noteless" = "[]" ]; then
+    # 질문 없는 홀드가 없으면 예비 패스의 결과가 곧 최종 결과다(재집계 불필요).
+    mv "$tmpdir/repo.pre.json" "$tmpdir/repo.json"
+  elif ! build_snapshot "$noteless" "$tmpdir/repo.json"; then
+    build_fail
     continue
   fi
   if ! jq -c . "$tmpdir/repo.json" >> "$tmpdir/repos.jsonl"; then
