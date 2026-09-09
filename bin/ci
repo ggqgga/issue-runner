@@ -822,6 +822,9 @@ bash scripts/tests/reconcile.test.sh
 echo "[test] transition.sh 전이 집합·readback 검증·라벨 보강 (#144 · #147 --reason·closeout-dup)"
 bash scripts/tests/transition.test.sh
 
+echo "[test] resume-sweep.sh 재개 스윕 — 창·상한·경합 가드·본문 마커 (#147)"
+bash scripts/tests/resume-sweep.test.sh
+
 echo "[test] loop-status.sh 파이프라인 스냅샷 버킷·창 필터·warn·부분 실패 (#144)"
 bash scripts/tests/loop-status.test.sh
 
@@ -1199,6 +1202,23 @@ grep -qF '예외 3' references/worker-template.md || { echo "  ✗ KO 템플릿 
 grep -qF 'Exception 3' references/worker-template.en.md || { echo "  ✗ EN 템플릿 Exception 3 없음"; exit 1; }
 grep -qE '\*\*10분\*\*' references/worker-template.md || { echo "  ✗ KO 템플릿 fail-open 10분 표기 없음"; exit 1; }
 grep -qE '\*\*10 minutes\*\*' references/worker-template.en.md || { echo "  ✗ EN 템플릿 fail-open 10 minutes 표기 없음"; exit 1; }
+
+echo "[#147] 검증 사다리 배선 검사 — 네 문서가 사다리를 가리키고, 스킬·템플릿에 '이월' 이 없다"
+# 실측 필요는 멈출 이유가 아니라 다음 할 일이다(Plans/live-verification-ladder.md). 사다리 참조가
+# 빠지면 워커·검증·마감이 다시 "라이브 항목은 [ ]" 로 도망가고, "이월" 이라는 단어는 그 도망의
+# 이름이라 스킬·템플릿 전체에서 금지한다.
+[ -f references/live-verification-ladder.md ] || { echo "  ✗ references/live-verification-ladder.md 없음"; exit 1; }
+for f in references/worker-template.md references/worker-template.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF "live-verification-ladder.md" "$f" || { echo "  ✗ $f: 검증 사다리 참조 없음"; exit 1; }
+done
+for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md references/worker-template.md references/worker-template.en.md references/live-verification-ladder.md; do
+  if grep -n "이월" "$f"; then echo "  ✗ $f: '이월' 등장 — 사다리를 올라 시도하고 출력을 인용하라"; exit 1; fi
+done
+for f in skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  if grep -nE 'transition\.sh (verify-held|closeout-blocked) [^\n]*' "$f" | grep -v -- '--reason' | grep -q .; then
+    echo "  ✗ $f: --reason 없는 verify-held/closeout-blocked 호출"; exit 1; fi
+done
+for f in SKILL.md SKILL.en.md; do grep -qF "resume-sweep.sh" "$f" || { echo "  ✗ $f: 재개 스윕 배선 없음"; exit 1; }; done
 
 echo "[#144] 전이·스냅샷 스크립트 배선 문서화 검사 — 세 루프 SKILL + 워커 템플릿"
 # 루프 문서가 산문 `gh issue edit` 대신 scripts/transition.sh(전이 표 SSOT)를 부르고,

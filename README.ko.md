@@ -144,7 +144,7 @@ flowchart LR
 
 </details>
 
-세 루프가 라벨을 어긋나게 옮기지 않도록, 라벨 이동은 전부 `scripts/transition.sh` 한 곳을 지난다 — `transition.sh <전이> <owner/repo> <이슈|-> <PR|->` 가 PR 과 연결 이슈를 한 호출로 옮기고(전이 표는 그 파일 상단이 SSOT), 편집 뒤 라벨을 다시 읽어 어긋나면 exit 1·gh 실패면 exit 2 로 실패를 드러낸다. 그리고 "지금 무엇이 걸려 있는가"는 `scripts/loop-status.sh` 가 찍는다 — 라벨·PR 상태만 읽는 순수 읽기 스냅샷(쓰기 0)으로, 레포별로 배포대기·사람대기·마감중·마감대기·검증대기·구현중·대기 버킷과 창 안의 실패·파생·승격 대기, 그리고 불변식 warn(무소속 PR·단계 라벨 중복·미러 불일치·좌초형)을 낸다. 세 루프가 ④ Report 끝에 이 출력을 그대로 붙이고, 사람은 손으로 친다 — 루프 세션 cwd(`.loop/repos` 가 있는 곳)에서는 인자 없이 `scripts/loop-status.sh`, 아니면 `scripts/loop-status.sh --repo owner/repo`.
+세 루프가 라벨을 어긋나게 옮기지 않도록, 라벨 이동은 전부 `scripts/transition.sh` 한 곳을 지난다 — `transition.sh <전이> <owner/repo> <이슈|-> <PR|->` 가 PR 과 연결 이슈를 한 호출로 옮기고(전이 표는 그 파일 상단이 SSOT), 편집 뒤 라벨을 다시 읽어 어긋나면 exit 1·gh 실패면 exit 2 로 실패를 드러낸다. 그리고 "지금 무엇이 걸려 있는가"는 `scripts/loop-status.sh` 가 찍는다 — 라벨·PR 상태만 읽는 순수 읽기 스냅샷(쓰기 0)으로, 레포별로 배포대기·사람대기·마감중·마감대기·검증대기·구현중·대기 버킷과 창 안의 실패·파생·승격 대기, 그리고 불변식 warn(무소속 PR·단계 라벨 중복·미러 불일치·좌초형·needs-human 사유 없음)을 낸다. 사람대기 줄에는 사유 라벨(`hold:conflict`·`hold:policy`·`hold:ladder`)이 병기되고, `closeout-dup` 으로 닫힌 PR 은 `중복종료` 로 따로 센다. `hold:ladder` 로 멈춘 이슈는 `scripts/resume-sweep.sh`(issue-runner ① Reconcile)가 `RESUME_AFTER_MIN` 뒤 자동 재개한다(상한 `LADDER_RESUME_LIMIT` 초과 시 `hold:policy` 로 승격) — 실측 필요는 멈출 이유가 아니라 다음 할 일이며, 통로는 `references/live-verification-ladder.md` 가 정한다. 세 루프가 ④ Report 끝에 이 출력을 그대로 붙이고, 사람은 손으로 친다 — 루프 세션 cwd(`.loop/repos` 가 있는 곳)에서는 인자 없이 `scripts/loop-status.sh`, 아니면 `scripts/loop-status.sh --repo owner/repo`.
 
 ## 배포 — main·release 와 배포 게이트
 
@@ -232,6 +232,8 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 | `blocked-by:<N>` / `Blocked by #N` | 의존성. 라벨 또는 전용 본문 라인 중 하나. OPEN 인 블로커가 하나라도 있으면 디스패치 제외. `<N>` 은 **이슈** 번호이며, 블로커가 닫히면 게이트가 자동 해제 |
 | `spinoff` | closeout 6단계가 발행한 파생 이슈라는 출처 표식. `loop-status.sh` 의 `파생` 집계가 이 라벨로만 센다 |
 | `deploy-wait` | closeout 4단계가 만든 배포 대기 이슈. `loop-status.sh` 가 배포대기와 사람대기를 가르는 버킷 라벨(`needs-human` 과 함께 붙는다) |
+| `hold:conflict` · `hold:policy` · `hold:ladder` | `needs-human` 의 **사유**. `transition.sh verify-held|closeout-blocked --reason <사유>` 가 함께 붙인다(사유 없는 `needs-human` 은 만들 수 없다). `ladder` 만 재개 스윕이 자동 재개한다. `hold:dup`·`hold:hardware` 는 일부러 없다 — 중복은 `closeout-dup` 이 닫고, 실장비는 사다리를 오른다 |
+| `dup` | `closeout-dup` 으로 머지 없이 닫힌 PR(이미 main 에 반영·중복). `loop-status.sh` 가 `실패` 와 갈라 `중복종료` 로 센다 |
 
 자격 조건: `open + agent-ready + ¬agent:claimed + 모든 블로커 CLOSED`. 정렬: `P0 > P1 > P2 > 없음`, 동순위는 오래된 순.
 
