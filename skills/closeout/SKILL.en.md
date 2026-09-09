@@ -124,8 +124,8 @@ separate freshness gate needed:
 |---|---|---|
 | `done_verdict` | latest `머지 판정: ✅` | eligible.sh's normal path handles it — sweep skips |
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). |
-| `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). Re-add `agent-ready` + remove `agent:claimed` on the linked issue → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
-| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — attach `needs-human` to the linked issue, closeout leaves it (no auto-progress). |
+| `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
+| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue> <pr>` (attaches `needs-human` to the linked issue and clears the stage labels), closeout leaves it (no auto-progress). |
 | `active` | in progress · buffer not reached · not our shape | **Leave it** (next tick). |
 
 **`flow:*` supplementary signal**: finish-classify judges by comments, but a stale PR with
@@ -137,8 +137,13 @@ present; judge by finish-classify alone when absent).
 `gh pr comment <pr> --repo <repo> --body "재디스패치: #<issue> — lost finish (died before verify) <!-- bodat:worker -->"`,
 and **if this marker already exists and there has been no new commit / verifier comment since,
 do not re-issue** (prevents /loop spam, isomorphic to the step-6 spinoff marker). Re-dispatch
-eligibility is `open + agent-ready + ¬agent:claimed` (eligible-issues.sh), so re-add
-`agent-ready` and also remove `agent:claimed` — issue-runner Dispatch's make-worktree reuses
+eligibility is `open + agent-ready + ¬agent:claimed` (eligible-issues.sh), and the
+`closeout-redispatch` transition sets both in one call (do not hand-run `gh issue edit`).
+For both transitions above: **on exit 1 (readback mismatch) or 2 (gh failure), do NOT change
+that PR's terminal state** — report
+`BLOCKED: transition failed <transition> PR #<pr>(<repo_short>) — <one stderr line>` in
+④ Report instead (the point is to leave the half-moved labels for the next tick to catch —
+never pass over it silently). Once the re-dispatch lands, issue-runner Dispatch's make-worktree reuses
 the existing `agent/issue-N` worktree, so **the fix continues on the same PR branch and no new
 PR is created** (a repair, not a duplicate).
 
@@ -153,29 +158,32 @@ CONFLICTING). One
 at a time, there is no module-overlap judgment to make (serial closeout — only after this
 PR is closed out to completion does ⑤ Drain pick the next candidate). Once
 picked, immediately declare occupation with
-`gh issue edit <pr> --repo <repo> --add-label harvesting` — this label is what keeps
-issue-runner ② Maintain from touching this PR. If there are 0 candidates, skip the
-③ pipeline and report a clean no-op in ④ Report.
+`$SCRIPTS/transition.sh closeout-pick <repo> - <pr>` (the issue number is only parsed in
+③-1, so pass `-` here). The transition attaches `harvesting` and strips the worker /
+verify-runner stage labels (`flow:ready`·`flow:codex`·`flow:ci`·`flow:verify`) — `harvesting`
+is what keeps issue-runner ② Maintain and verify-runner off this PR (verify-eligible also
+excludes harvesting), and leaving only `harvesting` makes "closing out" unambiguous in the
+PR list. If there are 0 candidates, skip the ③ pipeline and report a clean no-op in ④ Report.
 
-**Auto-provision a missing label.** Even an opted-in repo may lack the
-`harvesting` label until `setup-labels.sh` is re-run (common for existing repos).
-If `--add-label harvesting` fails with `'harvesting' not found` or similar, **call
-`$SCRIPTS/setup-labels.sh <repo>` once** (idempotent — existing labels are just
-updated), then retry `--add-label harvesting` exactly once. If the retry also
-fails, **do not loop further** (no infinite loop): skip this PR and report
-`BLOCKED: harvesting label provisioning failed — <repo>` in ④ Report.
+**Missing labels are auto-provisioned by the transition.** Even an opted-in repo may lack
+the `harvesting` label until `setup-labels.sh` is re-run (common for existing repos); on a
+`not found`-type failure `transition.sh` runs `setup-labels.sh` **once per process** and
+retries the same edit **exactly once** (no infinite loop). If that still fails it exits 2 —
+skip this PR and report
+`BLOCKED: transition failed closeout-pick PR #<pr>(<repo_short>) — <one stderr line>`
+in ④ Report.
 
 **Mirror onto the source issue (progress visibility).** Right after parsing `<issue>`
-(the PR body's `Closes #N`/`Refs #N`) in ③-1, if there is a linked issue run
-`gh issue edit <issue> --repo <repo> --add-label harvesting --remove-label flow:ready --remove-label flow:verify`
-so "closing out" also shows on the issue list — the stage (verify→closeout) is then
-visible from the issue list alone (it shows only briefly, since a successful merge
-closes the issue via `Closes #N`). And at **every point after ③ that re-attaches
-`agent-ready`/`needs-human` to the linked issue fail-closed** (delegation failure·
-conflict needing human judgment·incomplete doc reconcile·etc.), add
-`--remove-label harvesting --remove-label flow:ready --remove-label flow:verify` to that
-`gh issue edit <issue>` so the issue's label ladder returns to waiting/human-waiting
-(prevents stale stage-label residue).
+(the PR body's `Closes #N`/`Refs #N`) in ③-1, if there is a linked issue call
+`$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` **again** (idempotent — the PR
+side already matches and is a no-op; only the issue moves to `harvesting`) so "closing out"
+also shows on the issue list — the stage (verify→closeout) is then visible from the issue
+list alone (it shows only briefly, since a successful merge closes the issue via
+`Closes #N`). And **every point after ③ that lets go fail-closed** (delegation failure·
+conflict needing human judgment·incomplete doc reconcile·etc.) **must use the
+`closeout-blocked` (to a human) or `closeout-redispatch` (back to a worker) transition —
+never a hand-run `gh issue edit`**. The transition table guarantees the `harvesting`·`flow:*`
+cleanup on both the PR and the issue (prevents stale stage-label residue).
 
 ## ③ Pipeline — steps 1–6
 
@@ -212,9 +220,13 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
 - BLOCKER (including no-verdict, e.g. reason `검증자 미산출 — 타임아웃
   (>VERIFIER_TIMEOUT_MIN분)`) → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
   <!-- bodat:worker -->"`
-  + `gh issue edit <issue> --repo <repo> --add-label needs-human`
-  + `gh issue edit <pr> --repo <repo> --remove-label harvesting` →
-  **blocked exit** (do not merge).
+  + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>`
+  (removes `harvesting` from the PR, attaches `needs-human` to the linked issue and clears
+  the stage labels) → **blocked exit** (do not merge).
+  **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
+  report `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
+  in ④ Report instead (the point is to leave the half-moved labels for the next tick to catch —
+  never pass over it silently).
 - CLEAN/WARN → `gh pr comment <pr> --repo <repo> --body "마감 검증: ✅ <CLEAN or WARN n>
   <!-- bodat:worker -->"`
   (this comment is the step-1 completion marker).
@@ -255,8 +267,9 @@ hook queried the cwd repo). Gate conditions: `$SCRIPTS/closeout-ci-pass.sh <repo
   `gh pr view headRefOid` — without the sync, run-local-ci caches the old SHA and it stays
   permanently exit 2) → fill the **current HEAD** cache with
   `$SCRIPTS/run-local-ci.sh <repo> <N>`. If `run-local-ci.sh` exits nonzero (integration
-  with the new base is broken), do not merge: exit on hold fail-closed (remove
-  `harvesting` + `blocked` exit, do not invent a new exit state). If 0, the cache is
+  with the new base is broken), do not merge: exit on hold fail-closed
+  (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>` + `blocked` exit, do not
+  invent a new exit state). If 0, the cache is
   filled with pass, so join the exit-0 gate below. This path fires **independent of
   whether step 3 produced a doc commit** — step 3's cache supplement only runs after a
   doc push, so it cannot cover the rebase·no-doc-change case (where the worker's
@@ -273,8 +286,8 @@ commit**, re-confirm `$SCRIPTS/closeout-ci-pass.sh <repo> <pr>` is pass (exit 0)
 short bounded poll (e.g. 2–3s interval × max 5 tries, never wait forever) — since
 step 3's `run-local-ci.sh` fills the cache synchronously this is usually pass
 immediately — and if pass is not reached within the limit, do not merge: exit on hold
-fail-closed (same path as step 3's nonzero-cache/not-reached handling — remove
-`harvesting` + `blocked` exit, do not invent a new exit state). **Right after `gh pr merge`
+fail-closed (same path as step 3's nonzero-cache/not-reached handling — the
+`closeout-blocked` transition + `blocked` exit, do not invent a new exit state). **Right after `gh pr merge`
 succeeds**, call `$SCRIPTS/cleanup-worktree.sh <repo> <N> --merged` to clean up this
 PR's worktree (`agent/issue-<N>`) directly (`<N>` parsed from the PR head
 `agent/issue-N`, same as step 3). Since closeout monopolizes merging, it reaps the
@@ -294,12 +307,16 @@ dirty guard stays — if dirty, warn and hold; best-effort).
   `origin/<BASE>`, resolve conflicts per the original intent, `git push --force-with-lease`,
   **no merge commit**", keeping push discipline and prohibitions) → after the agent exits,
   run `$SCRIPTS/run-local-ci.sh <repo> <N>` to regenerate the rebased-HEAD cache. If nonzero
-  (integration with the new base is broken), do not merge — **delegate fail-closed**: remove
-  `harvesting` + re-add `agent-ready` to the linked issue (or spinoff), blocked exit. If 0,
+  (integration with the new base is broken), do not merge — **delegate fail-closed**:
+  `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` returns the linked issue
+  to `agent-ready` (or spinoff), blocked exit. If 0,
   join the exit-0 merge gate above and squash-merge normally. If the agent **cannot resolve**
-  the conflict (rebase abort / repeated failure), a semantic conflict is a human call: remove
-  `harvesting` + add `needs-human` to the linked issue, blocked exit (no unattended forced
-  resolution).
+  the conflict (rebase abort / repeated failure), a semantic conflict is a human call:
+  `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>`, blocked exit (no
+  unattended forced resolution). For both transitions: **on exit 1 (readback mismatch) or
+  2 (gh failure), do NOT change that PR's terminal state** — report
+  `BLOCKED: transition failed <transition> PR #<pr>(<repo_short>) — <one stderr line>` in
+  ④ Report instead.
 
 **Step 3 — doc reconcile (before merge, PR-branch commit).** Change the `- [ ]` to
 `- [x]` in the plan-doc section that step 1 confirmed implemented. Commit and push
@@ -341,8 +358,8 @@ comment.
   (exit 0) (a prior tick already cached the same HEAD), do not re-run `run-local-ci.sh`
   (the helper has no dedup of its own, so the caller guards). If `run-local-ci.sh`
   exits nonzero (=bin/ci failed) the cache is not filled with pass, so do not merge:
-  exit on hold fail-closed (remove `harvesting` + `blocked` exit, follow the existing
-  BLOCKER path — do not invent a new exit state).
+  exit on hold fail-closed (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>`
+  + `blocked` exit, follow the existing BLOCKER path — do not invent a new exit state).
 - **single-issue degrade**: if there is no `Plans/*.md`·`## Plan`, skip the doc edit.
   If there is no epic, skip the rollup. Reconcile only the issue's own checkboxes. If
   neither exists, this step is a no-op — **since there is no new doc commit·push, skip
@@ -374,7 +391,10 @@ to a human but is not `없음` to a machine branch.
 **A merged PR files exactly one deploy-wait issue, without exception.** Do not judge — even
 if it is tests-only or a one-line comment, being merged means it entered the promotion scope,
 and that fact must be visible to a human. File it with
-`gh issue create --repo <repo> --label needs-human`, leave the marker
+`gh issue create --repo <repo> --label needs-human --label deploy-wait` — `needs-human`
+stays for compatibility with the existing human-gate collection (deploy-bodat etc.), and
+`deploy-wait` is the bucket label `loop-status.sh` uses to separate deploy-waiting from
+human-waiting — leave the marker
 `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
 **exit as approval-required**.
 
@@ -434,8 +454,8 @@ structure/empty-state confirmation from real-data render confirmation in the res
   finalizes — the recommended option of the open decision).
 - **fail (any item fails)** → do not fix it directly; use the existing publish path: an
   agent-ready issue via `references/spinoff-issue.md` if auto-fixable (**use step 6's
-  "issuance command" form verbatim** — `--label agent-ready --label <P1|P2>`; no prose
-  substitute here either), a `--label needs-human` issue if live verification is needed.
+  "issuance command" form verbatim** — `--label agent-ready --label spinoff --label <P1|P2>`;
+  no prose substitute here either), a `--label needs-human` issue if live verification is needed.
   If the same failure recurs `REPAIR_RECUR_LIMIT`
   times, escalate to `needs-human` (**exhausted exit**). Do not close the deploy issue.
   The label is `needs-human` (hyphen) — `needs:human` does not exist and makes
@@ -472,7 +492,7 @@ duplicate-issuance marker).
 
   ```
   gh issue create --repo <repo> --title "<title>" --body-file <body-file> \
-    --label agent-ready --label <P1|P2> [--label <repo-convention label>...]
+    --label agent-ready --label spinoff --label <P1|P2> [--label <repo-convention label>...]
   ```
 
   **`--label agent-ready` is not optional** — `eligible-issues.sh` gates dispatch on
@@ -485,17 +505,20 @@ duplicate-issuance marker).
   Add the other axes per repo convention (BoDAT: `difficulty:*`·`frontend`/`backend`·
   `area:*`·`needs:hardware`), but **never let convention labels displace `agent-ready`** —
   that is exactly the observed failure shape.
+  `--label spinoff` is the provenance mark — `loop-status.sh`'s `파생` line counts spinoff
+  issues in the window by this label alone (no title heuristic). Without it the issue is
+  invisible in the inventory.
 - **Missing-label fail-closed (isomorphic to ② Pick's harvesting top-up).**
   `gh issue create` **fails without creating the issue** when a `--label` does not exist
-  (unlike the harmless `--remove-label`). On a `'agent-ready' not found`-type failure,
+  (unlike the harmless `--remove-label`). On a `'agent-ready' not found` / `'spinoff' not found`-type failure,
   call `$SCRIPTS/setup-labels.sh <repo>` **once** and retry the same command **once**.
   If the retry also fails, do not loop further — **create the issue without labels**
   (never lose the issuance) and report `BLOCKED: spinoff issue labeling failed —
   #<number>` in ④ Report.
 - **Verify right after issuance.** Check with
-  `gh issue view <number> --repo <repo> --json labels` that `agent-ready` actually
-  landed; if not, top it up with
-  `gh issue edit <number> --repo <repo> --add-label agent-ready`.
+  `gh issue view <number> --repo <repo> --json labels` that **both** `agent-ready` and
+  `spinoff` actually landed; if either is missing, top it up with
+  `gh issue edit <number> --repo <repo> --add-label agent-ready --add-label spinoff`.
 - **Do not issue what step 3 already absorbed.** A finding that passed step 3's
   "absorb surface corrections" criterion (does this flip the pass/fail of any test?)
   and rode along in that commit is not remaining work. When one finding mixes surface
@@ -535,6 +558,36 @@ Count PRs the ①-b sweep adopted to close/rebase as `recovered N` (also reflect
 if it became that tick's Pick), and `stale_reverify` re-dispatches / `held` needs-human as
 `re-dispatched N`.
 
+Below that, **name the numbers item by item** — counts alone do not tell the next tick where
+each PR/issue went:
+`closed: PR #4795(bodat)←#4788 · spinoff: #4823(bodat)←PR #4788 · re-dispatched: #4770(bodat, stale_reverify)`.
+The repo short-name rule is the same as `loop-status.sh`'s (the repo part of `owner/repo`
+lowercased — bodat·bodac; `issue-runner` alone maps to `runner`).
+
+**Also report `승격 대기 N커밋` every tick (never omit it).** Do not drop it even on a tick
+with zero closeouts — it is the only number a human reads to see whether anything is waiting
+to be promoted. If the repo has a promotion pointer branch (`release` etc.), count with
+`git fetch origin <pointer> <default-branch>` then
+`git rev-list --count origin/<pointer>..origin/<default-branch>`; if the repo has no pointer
+branch, write `승격 대기 —` to state that it does not apply. If it is 0, write
+`승격 대기 0커밋` verbatim (do not omit — omission and 0 are different).
+Evidenced 2026-08-16: three consecutive ticks dropped this line and, overlapping a period
+with no deploy issues, the closed work looked like it had evaporated. That incident is why
+step 4 went back to "merged ⇒ always a ticket".
+(The `loop-status.sh` block below also prints promotion-waiting, but this line **stays** —
+the duplication is deliberate redundancy given that omission history.)
+
+**Pipeline snapshot (required every tick).** After the lines above, run
+`$SCRIPTS/loop-status.sh` and paste its output **verbatim** — the counters only say "what
+this tick did"; what is piled up is visible only in this block. Call it with no `cd` (the
+scope auto-applies from the loop session cwd's `.loop/repos`). **Paste it even on a quiet
+tick where every count is 0** — the snapshot is the only window onto what is idling.
+- On exit 1 (partial failure — some repos failed to query), paste the output as-is and add
+  one warn line `loop-status 부분 실패`.
+- On exit 64 (no scope — an account-wide session with no `.loop/repos`), call it once more
+  naming the repos touched this tick with `--repo <owner/repo>`; if there are none, leave one
+  warn line `loop-status: 스코프 없음(.loop/repos 부재)`.
+
 State the 6 exit states — for **each** PR processed (per-PR when the drain handled several):
 - **success** — ran steps 1–6, merged the PR, and issued follow-ups (including adopt/rebase recoveries).
 - **clean no-op** — ② Pick had 0 candidates, so there was no PR to close (but if there were ①-b re-dispatches it is not a no-op — report `re-dispatched N`).
@@ -560,7 +613,8 @@ Non-operational notes — they do not affect tick execution.
 - Operation: run closeout as a `/loop` session separate from issue-runner
   (e.g. `/loop 20m /closeout`) — the two coordinate occupation purely by label.
 - Dependencies: the deterministic helpers (`closeout-reconcile.sh`·
-  `closeout-eligible.sh`·`closeout-ci-pass.sh`) live in `$SCRIPTS`
+  `closeout-eligible.sh`·`closeout-ci-pass.sh`·`transition.sh` (label moves)·
+  `loop-status.sh` (the ④ Report snapshot)) live in `$SCRIPTS`
   (=`~/.claude/skills/issue-runner/scripts`), and the 3 references
   (`verifier-prompt.md`·`deploy-check-issue.md`·`spinoff-issue.md`) live in
   `skills/closeout/references/`.
