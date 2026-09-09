@@ -126,8 +126,9 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   `gh issue view <num> --repo <repo> --json comments --jq '.comments | last.body'`
   가 `BLOCKED:` 로 시작하면 워커가 사람 개입이 필요해서 멈춘 것이다 (모호 스펙 /
   계획-현실 불일치 / 동일 실패 반복): 재디스패치 복귀 대신
-  `gh issue edit <num> --repo <repo> --add-label needs-human` 으로 `needs-human`
-  을 부착하고, worktree 제거 + claim 해제 후 warn 으로 ④ Report 에 BLOCKED 사유를
+  `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy` 로 `needs-human`
+  + `hold:policy` 를 부착하고(claim 해제 포함 — 사유 없는 `needs-human` 은 만들지 않는다, #151),
+  worktree 제거 후 warn 으로 ④ Report 에 BLOCKED 사유를
   올려라 (사람이 원인을 해소하고 needs-human 을 떼면 다시 흐른다 — README
   '가드레일' 규약). BLOCKED 코멘트가 아니면 worktree 제거 후 claim 해제
   (재디스패치 가능 상태로 복귀).
@@ -197,8 +198,8 @@ PR 이 아직 없어 이슈 `agent:claimed` 로만 보인다(`flow:ci` 는 재-C
 PR 본문에서 `<!-- repair-count: N -->` HTML 주석을 읽어라
 (`gh pr view <pr> --repo <repo> --json body`; 주석이 없으면 N = 0).
 N ≥ `MAX_REPAIRS_PER_PR` 이면 **보수를 디스패치하지 않는다** — 이슈에
-`gh issue edit <num> --repo <repo> --add-label needs-human` 으로 `needs-human`
-라벨을 부착하고 warn 으로 ④ Report 에 올려라. N 이 상한 미만이면 보수 에이전트를
+`$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy` 로 `needs-human` + `hold:policy`
+를 PR·이슈 양쪽에 부착하고 warn 으로 ④ Report 에 올려라(사유 없는 `needs-human` 은 만들지 않는다, #151). N 이 상한 미만이면 보수 에이전트를
 디스패치하면서 PR 본문의 주석을 `<!-- repair-count: N+1 -->` 로 갱신하라
 (`gh pr edit <pr> --repo <repo> --body ...` — 주석이 없었으면 본문 끝에 새로 추가,
 나머지 본문은 그대로 유지). 같은 PR 에 1~3 의 사유가 여러 개 겹쳐도 **틱당 같은 PR

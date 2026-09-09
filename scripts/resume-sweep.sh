@@ -38,7 +38,7 @@ LADDER_RESUME_LIMIT="${LADDER_RESUME_LIMIT:-2}"
 # 목록·탐색 조회 상한. 기본 200 — 기본 limit(30)은 조용히 잘라 그 이슈들이 영영 안 보인다.
 # 테스트가 상한 도달 경로를 200건짜리 픽스처 없이 재현하도록 env 로 낮출 수 있게 열어 뒀다
 # (운영에서 내리는 값이 아니다 — 내리면 그만큼 잘린다. 잘림 자체는 warn 으로 드러난다).
-LIST_LIMIT="${RESUME_LIST_LIMIT:-200}"
+LIST_LIMIT="${RESUME_LIST_LIMIT:-1000}"   # gh issue list 가 내부 페이지네이션(100/페이지)으로 채운다 — #151
 
 # 값 검증은 **모든 GitHub 호출 앞**에 둔다. `[ "$x" -lt "$y" ]` 는 정수가 아니면 bash 가
 # 에러를 내고 거짓으로 떨어지는데, set -e 가 아니라 그대로 흘러 "창이 지났다"·"상한을

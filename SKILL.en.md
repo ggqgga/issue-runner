@@ -120,9 +120,10 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   If it starts with `BLOCKED:`, the worker stopped because human intervention is
   needed (ambiguous spec / plan-reality mismatch / same failure repeating):
   instead of returning the issue to a re-dispatchable state, attach the
-  `needs-human` label with
-  `gh issue edit <num> --repo <repo> --add-label needs-human`, remove the
-  worktree, release the claim, and surface the BLOCKED reason as a warn in
+  `needs-human` + `hold:policy` labels with
+  `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy` (this also releases
+  the claim — a reason-less `needs-human` is never produced, #151), remove the
+  worktree, and surface the BLOCKED reason as a warn in
   ④ Report (once a human resolves the cause and removes needs-human, the issue
   flows again — the README 'guardrails' convention). If the latest comment is not
   a BLOCKED comment, remove the worktree and release the claim (returning the
@@ -196,9 +197,9 @@ For each `pr_open` event:
 read the `<!-- repair-count: N -->` HTML comment from the PR body
 (`gh pr view <pr> --repo <repo> --json body`; if the comment is absent, N = 0).
 If N ≥ `MAX_REPAIRS_PER_PR`, **do not dispatch a repair** — attach the
-`needs-human` label to the issue with
-`gh issue edit <num> --repo <repo> --add-label needs-human` and surface it as a
-warn in ④ Report. If N is below the cap, dispatch the maintenance agent and at
+`needs-human` + `hold:policy` labels to the PR and the issue with
+`$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy` and surface it as a
+warn in ④ Report (a reason-less `needs-human` is never produced, #151). If N is below the cap, dispatch the maintenance agent and at
 the same time update the comment in the PR body to `<!-- repair-count: N+1 -->`
 (`gh pr edit <pr> --repo <repo> --body ...` — if the comment was absent, append
 it at the end of the body, keeping the rest of the body unchanged). Even when

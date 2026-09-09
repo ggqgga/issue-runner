@@ -18,6 +18,7 @@
 #   closeout-pick         | harvesting  | flow:ready flow:codex flow:ci flow:verify | harvesting | flow:ready flow:verify
 #   closeout-blocked †    | needs-human hold:R | harvesting ⊘R               | needs-human hold:R | harvesting flow:ready flow:verify ⊘R
 #   closeout-redispatch   | —           | harvesting flow:ready flow:verify ⊘hold | agent-ready | harvesting flow:ready flow:verify agent:claimed ⊘hold
+#   runner-held(#151)     | needs-human hold:<r> | (다른 hold)                        | needs-human hold:<r> | agent:claimed (다른 hold)
 #   closeout-dup ‡        | dup         | harvesting flow:ci flow:codex flow:verify flow:ready | (라벨 편집 없음 — ④ release-labels.sh) |
 #
 #   기호: `hold:R` = `hold:<--reason>` · `⊘R` = 나머지 두 `hold:*`(사유 교체가 멱등이 되게)
@@ -64,8 +65,8 @@ set -uo pipefail
 usage() {
   echo "usage: transition.sh <전이> <owner/repo> <issue#|-> [pr#|-] [--reason R] [--note \"…\"]" >&2
   echo "  전이: handoff-verify verify-pass verify-redispatch verify-held \\" >&2
-  echo "        closeout-pick closeout-blocked closeout-redispatch closeout-dup" >&2
-  echo "  --reason <conflict|policy|ladder>: verify-held·closeout-blocked 에 **필수**(다른 전이엔 금지)" >&2
+  echo "        closeout-pick closeout-blocked closeout-redispatch closeout-dup runner-held" >&2
+  echo "  --reason <conflict|policy|ladder>: verify-held·closeout-blocked·runner-held 에 **필수**(다른 전이엔 금지)" >&2
   echo "        dup 은 closeout-dup 이 닫고, hardware 는 검증 사다리를 오른다 — 사유가 될 수 없다" >&2
   echo "  --note \"<근거>\": closeout-dup 에 **필수**(다른 전이엔 금지)" >&2
   exit 64
@@ -100,7 +101,7 @@ case "$repo" in */*) ;; *) usage ;; esac
 # 사유 검증 — 없거나 허용값 밖(dup·hardware 포함)이면 usage. 사유 없는 `needs-human` 을
 # 만들 수 없게 하는 게 목적이라 "빠뜨리면 조용히 기본값" 은 쓰지 않는다.
 case "$name" in
-  verify-held|closeout-blocked)
+  verify-held|closeout-blocked|runner-held)
     case "$reason" in conflict|policy|ladder) ;; *) usage ;; esac ;;
   *)
     # 다른 전이에 준 --reason 은 무시하지 않는다 — 무시하면 호출부가 붙였다고 착각한다.
@@ -145,6 +146,12 @@ case "$name" in
   closeout-redispatch)
     pr_add=""; pr_rm="harvesting flow:ready flow:verify needs-human $HOLD_ALL"
     iss_add="agent-ready"; iss_rm="harvesting flow:ready flow:verify agent:claimed needs-human $HOLD_ALL" ;;
+  runner-held)
+    # 디스패처(issue-runner) 자체의 사람 대기 — 죽은 워커 BLOCKED · 보수 상한(#151).
+    # PR 이 없을 수 있어 `-` 허용. 사다리 라벨(flow:*·harvesting)은 건드리지 않는다 — 디스패처가
+    # 멈추는 시점의 PR 은 워커 소유 단계(flow:ci/없음)라 뗄 단계 라벨이 없다.
+    pr_add="needs-human hold:$reason"; pr_rm="$(hold_others "$reason")"
+    iss_add="needs-human hold:$reason"; iss_rm="agent:claimed $(hold_others "$reason")" ;;
   closeout-dup)
     # 라벨 이동은 ① 단계뿐 — PR 만. 이슈 라벨은 ④ release-labels.sh 가 정리한다.
     pr_add="dup"; pr_rm="harvesting flow:ci flow:codex flow:verify flow:ready"

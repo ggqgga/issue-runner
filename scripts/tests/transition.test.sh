@@ -362,6 +362,21 @@ ck "따옴표 not found: exit 0" "$RC" 0
 ck "따옴표 not found: setup-labels 1회" "$(grep -c . "$tmp/setup.log")" 1
 ck "따옴표 not found: edit 3회(PR 원본+재시도, 이슈 1회)" "$(grep -c '^edit ' "$tmp/edit.log")" 3
 
+# runner-held(#151) — 디스패처 자체의 사람 대기: 이슈 agent:claimed 해제 + 양쪽 needs-human·hold:<r>,
+# 단계 라벨(flow:*·harvesting)은 손대지 않는다. PR 없음(`-`) 허용, --reason 필수.
+reset; seed 7 flow:ci; seed 9 agent-ready agent:claimed hold:ladder
+run ok runner-held 9 7 --reason policy
+ck "runner-held: exit 0" "$RC" 0
+ck "runner-held: 이슈 라벨" "$(labels_of 9)" "agent-ready hold:policy needs-human"
+ck "runner-held: PR 라벨(flow:ci 유지)" "$(labels_of 7)" "flow:ci hold:policy needs-human"
+reset; seed 9 agent-ready agent:claimed
+run ok runner-held 9 - --reason policy
+ck "runner-held issue만: exit 0" "$RC" 0
+ck "runner-held issue만: 이슈 라벨" "$(labels_of 9)" "agent-ready hold:policy needs-human"
+reset; seed 9 agent-ready agent:claimed
+run ok runner-held 9 -
+ck "runner-held --reason 없음: exit 64" "$RC" 64
+
 # 라벨 문맥이 아닌 404(오타 이슈 번호 등)는 setup-labels 를 **돌리지 않는다** —
 # setup-labels 는 라벨 14개 --force + `gh repo edit` 이라는 쓰기다.
 reset; seed 7 flow:verify; seed 9 flow:verify
