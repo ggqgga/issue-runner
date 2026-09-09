@@ -31,6 +31,11 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 - `MAX_REPAIRS_PER_PR = 3` — PR 1개당 보수 디스패치 상한 (② Maintain 서킷 브레이커)
 - `ISSUE_TIMEBOX_HOURS = 1` — PR 없는 `working` 이슈에 허용하는 claim 경과 시간
   (① Reconcile timebox)
+- `RESUME_AFTER_MIN = 120` — 재개 스윕이 멈춘 이슈를 다시 흘려보내기까지 기다리는
+  시간(분). `needs-human` + `hold:ladder` 이슈의 마지막 갱신이 이만큼 지나면 ① 의 재개
+  스윕이 집는다 (`resume-sweep.sh` 에 동명 환경변수로 전달된다).
+- `LADDER_RESUME_LIMIT = 2` — 이슈 1건당 자동 재개 상한. 초과하면 재개 대신
+  `hold:policy` 승격 — 그때만 사람이다(무한 재시도 금지).
 - `STALE_FINISH_MIN = 30` — 완결 유실 판별 시간버퍼(분). `finish-classify.sh` 의
   버퍼이며, 이제 이 헬퍼는 **closeout ①-b 정체 스윕**이 소비한다(issue-runner 는 규칙4
   원복 후 직접 쓰지 않음). 살아있는 워커는 `검증자 리뷰:` 직후 수초 내 최종 판정을
@@ -139,6 +144,25 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   ⓒ `gh issue edit <num> --repo <repo> --remove-label "agent:claimed"` 로 claim 을
   해제한 뒤, ⓓ warn 으로 ④ Report 에 올려라 (agent-ready 가 남아 있으므로 다음 틱이
   원격 브랜치 위 새 worktree 에서 재디스패치한다).
+
+**재개 스윕 — 멈춘 건은 틱이 다시 시도한다.** 위 이벤트를 전부 처리한 뒤
+`$SCRIPTS/resume-sweep.sh` 를 인자 없이 실행하라(스코프는 세션 cwd 의 `.loop/repos` 를
+스크립트가 알아서 적용한다). `needs-human` 이 사유 라벨로 남긴 정지 중 **`hold:ladder`**
+(실측 사다리 ①~③ 칸이 전부 실패해 멈춘 건)만 창(`RESUME_AFTER_MIN`)이 지나면 자동으로
+되돌린다 — `hold:conflict`·`hold:policy` 는 사람 결정이라 건드리지 않는다. ③ Dispatch
+**앞**에서 돌려야 이번 틱이 그 이슈를 바로 집는다. 이벤트별 처리:
+
+- `resumed` — `needs-human`·`hold:ladder` 가 떨어졌고 `agent-ready` 는 그대로다(자격은
+  건드리지 않는다). **디스패처가 따로 할 일은 없다** — 이번 틱 ③ 의 `eligible-issues.sh`
+  후보로 자연히 다시 나타난다. ④ Report 의 `재개` 에 번호와 `attempt` 를 적는다.
+- `escalated` — 재개 상한(`LADDER_RESUME_LIMIT`) 초과라 `hold:policy` 로 승격됐다. 라벨은
+  스크립트가 이미 붙였으니 **추가 조치 없이** ④ Report 의 `승격` 에 올려 사람이 보게 하라.
+- `warn` — 사유 라벨(`hold:*`) 없는 `needs-human`(사람이 손으로 붙였을 수 있어 자동 재개
+  대상이 아니다) · 사람 조작과의 경합 · 편집/readback 실패. **건드리지 말고** ④ Report 의
+  warn 에 그대로 옮겨라.
+- `waiting` — 아직 창 안이다. 조용히 넘긴다(보고 불필요).
+- exit 2 — 일부 레포의 `needs-human` 목록 조회 실패(나머지 레포는 정상 처리됐다).
+  ④ Report warn 에 `resume-sweep 부분 실패(레포 조회)` 한 줄을 남긴다.
 
 ## ② Maintain — 벌린 일 먼저 끝낸다
 
@@ -251,12 +275,24 @@ N 도 디스패치당 1만 올린다.
       없다 — 워커가 `TaskOutput` 블로킹으로 리뷰어를 기다리므로 스트림은 그 동안만 +1 이고 `MAX_AGENTS`
       는 그대로다. 워커 종료 보고의 `사전 리뷰: <값>` 줄을 ④ Report 에 옮겨 적어라(값 부재도 한 줄로) —
       효과는 verify-runner 반송(`재검증 실패:`) 건수 / 실제 리뷰가 돈(CLEAN·발견) 비율로 잰다.
+      **재개된 이슈면 프롬프트에 두 가지를 더 인라인하라.** 이슈 본문에
+      `<!-- ladder-resume: N -->` 마커가 있고 `N ≥ 1` 이면 ① 의 재개 스윕이 되살린 건이다.
+      채운 템플릿 뒤에 ⓐ 사다리 문서 경로
+      `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (어느 칸을 어떤
+      명령으로 올라가는지 워커가 읽을 곳) 와 ⓑ **직전 시도의 실패 출력** — 이슈의 마지막
+      사다리 관련 코멘트 본문 — 을 덧붙인다:
+      `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body|test("사다리|ladder")) and ((.body|test("^재개 "))|not))] | last.body // ""'`
+      (스윕이 남긴 `재개 N/…` 코멘트는 제외한다 — 그게 시간상 마지막이라 안 거르면 실패
+      출력 대신 그 줄을 물려준다). 그리고 한 줄로 지시하라: **"같은 칸에서 같은 실패를
+      반복하지 말고 다음 칸부터 시도하라(N번째 재개다). 그래도 못 오르면 시도한 칸과 실패
+      출력을 인용해 `BLOCKED:` 로 멈춰라"** — 인용 없는 미룸은 허용되지 않는다.
 
 ## ④ Report
 
-한 줄 요약: `정리 N · 보수 N · 신규 N · 대기(사람 리뷰) N · warn N`.
+한 줄 요약: `정리 N · 보수 N · 신규 N · 재개 N · 승격 N · 대기(사람 리뷰) N · warn N`
+(`재개`·`승격` 은 ① 재개 스윕의 `resumed`·`escalated` 수).
 그 아래 **항목마다 번호를 적는다** — 숫자만으론 어느 이슈·PR 이 어디로 갔는지 다음 틱이 못 읽는다:
-`정리: #4801(bodat, PR #4810 머지) · 보수: PR #4812(bodat, rebase) · 신규: #4818(bodat) · warn: #4799(bodat) dirty worktree`.
+`정리: #4801(bodat, PR #4810 머지) · 보수: PR #4812(bodat, rebase) · 신규: #4818(bodat) · 재개: #4772(bodat, 2/2) · 승격: #4803(bodat, hold:policy) · warn: #4799(bodat) dirty worktree`.
 레포 짧은 이름 규칙은 `loop-status.sh` 와 같다(`owner/repo` 의 repo 를 소문자로 — bodat·bodac,
 `issue-runner` 만 `runner` 특례).
 warn 이 있으면 경로와 사유를 그 아래 나열.

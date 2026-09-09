@@ -28,6 +28,13 @@ maintenance must come before new work).
   (② Maintain circuit breaker)
 - `ISSUE_TIMEBOX_HOURS = 1` — allowed claim age for a `working` issue with no PR
   (① Reconcile timebox)
+- `RESUME_AFTER_MIN = 120` — how long (minutes) the resume sweep waits before letting a
+  stalled issue flow again. Once a `needs-human` + `hold:ladder` issue has gone this long
+  without an update, ①'s resume sweep picks it up (passed to `resume-sweep.sh` as the
+  environment variable of the same name).
+- `LADDER_RESUME_LIMIT = 2` — cap on automatic resumes per issue. Beyond it the issue is
+  escalated to `hold:policy` instead of resumed — only then is it a human's (no infinite
+  retries).
 - `STALE_FINISH_MIN = 30` — lost-finish time buffer (minutes). The buffer for
   `finish-classify.sh`, which is now consumed by the **closeout ①-b stuck-PR sweep**
   (issue-runner no longer uses it directly after the rule-4 revert). A live worker
@@ -140,6 +147,28 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   ⓓ surface it as a warn in ④ Report (agent-ready remains, so the next tick
   re-dispatches in a fresh worktree on top of the remote branch).
 
+**Resume sweep — a stalled issue is retried by the tick.** After handling every event
+above, run `$SCRIPTS/resume-sweep.sh` with no arguments (the script applies the loop
+session cwd's `.loop/repos` scope on its own). Of the stops recorded by `needs-human` plus
+a reason label, only **`hold:ladder`** (stopped because ladder rungs ①–③ of live
+verification all failed) is reverted automatically once the window (`RESUME_AFTER_MIN`)
+passes — `hold:conflict` and `hold:policy` are human decisions and are left alone. Run it
+**before** ③ Dispatch so this same tick can pick the issue up. Per event:
+
+- `resumed` — `needs-human` and `hold:ladder` are off and `agent-ready` is untouched (the
+  eligibility label is never touched). **Nothing for the dispatcher to do** — the issue
+  reappears naturally as an `eligible-issues.sh` candidate in ③ this tick. Record the
+  number and `attempt` under `resumed` in ④ Report.
+- `escalated` — the resume cap (`LADDER_RESUME_LIMIT`) was exceeded, so it was escalated to
+  `hold:policy`. The script already applied the label, so with **no further action** list it
+  under `escalated` in ④ Report for a human to see.
+- `warn` — a `needs-human` with no reason label (`hold:*` — a human may have attached it by
+  hand, so it is not an auto-resume target), a race against human edits, or an edit/readback
+  failure. **Do not touch it** — copy it verbatim into ④ Report's warns.
+- `waiting` — still inside the window. Pass over it quietly (no reporting needed).
+- exit 2 — the `needs-human` listing failed for some repos (the rest were processed
+  normally). Leave one warn line `resume-sweep 부분 실패(레포 조회)` in ④ Report.
+
 ## ② Maintain — finish what you started first
 
 For each `pr_open` event:
@@ -248,13 +277,26 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       report's `pre-review: <value>` line into ④ Report (absence is a line too) — measure the
       effect by verify-runner bounces (`재검증 실패:` comments) / the share of reviews that
       actually ran (CLEAN or findings).
+      **If the issue was resumed, inline two more things in the prompt.** An issue body
+      carrying a `<!-- ladder-resume: N -->` marker with `N ≥ 1` was revived by ①'s resume
+      sweep. After the filled template, append ⓐ the ladder document's path
+      `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (where the
+      worker reads which rung is climbed with which command) and ⓑ **the previous attempt's
+      failure output** — the body of the issue's last ladder-related comment:
+      `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body|test("사다리|ladder")) and ((.body|test("^재개 "))|not))] | last.body // ""'`
+      (exclude the sweep's own `재개 N/…` comment — it is the most recent one, so without the
+      filter you would hand the worker that line instead of the failure output). Then state
+      in one line: **"Do not repeat the same failure on the same rung — start from the next
+      rung (this is resume N). If you still cannot climb it, stop with `BLOCKED:` quoting the
+      rung you tried and its failure output"** — deferring without a quote is not allowed.
 
 ## ④ Report
 
-One-line summary: `reconciled N · maintained N · new N · waiting(human review) N · warn N`.
+One-line summary: `reconciled N · maintained N · new N · resumed N · escalated N · waiting(human review) N · warn N`
+(`resumed`/`escalated` are the counts of ①'s resume-sweep `resumed`/`escalated` events).
 Below it, **name the numbers item by item** — counts alone do not tell the next tick where
 each issue/PR went:
-`reconciled: #4801(bodat, PR #4810 merged) · maintained: PR #4812(bodat, rebase) · new: #4818(bodat) · warn: #4799(bodat) dirty worktree`.
+`reconciled: #4801(bodat, PR #4810 merged) · maintained: PR #4812(bodat, rebase) · new: #4818(bodat) · resumed: #4772(bodat, 2/2) · escalated: #4803(bodat, hold:policy) · warn: #4799(bodat) dirty worktree`.
 The repo short-name rule is the same as `loop-status.sh`'s (the repo part of `owner/repo`
 lowercased — bodat·bodac; `issue-runner` alone maps to `runner`).
 If there are warns, list the paths and reasons below it.
