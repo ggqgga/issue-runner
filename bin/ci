@@ -1223,12 +1223,24 @@ for f in references/worker-template.md references/worker-template.en.md; do
   grep -qF -- 'transition.sh handoff-verify' "$f" \
     || { echo "  ✗ $f 에 transition.sh handoff-verify 배선 없음"; exit 1; }
 done
+# 전이 실패(exit 1 readback 불일치 · 2 gh 실패)를 조용히 넘기지 않는다는 보고 규약이
+# 호출부 문서마다 살아 있는지. 이게 빠지면 라벨이 반쯤 이동한 채 루프가 다음으로 넘어간다.
+# (문구는 파일마다 다르다 — 워커 템플릿은 종료 보고에 적는 `전이 실패: handoff-verify`,
+#  루프 SKILL 은 ④ Report 에 올리는 `BLOCKED: …`, 영문 closeout 은 그 영어판.)
+check_phrase() {
+  grep -qF -- "$2" "$1" || { echo "  ✗ $1 에 전이 실패 보고 규약('$2') 없음"; exit 1; }
+}
+check_phrase skills/verify-runner/SKILL.md   'BLOCKED: 전이 실패'
+check_phrase skills/closeout/SKILL.md        'BLOCKED: 전이 실패'
+check_phrase skills/closeout/SKILL.en.md     'BLOCKED: transition failed'
+check_phrase references/worker-template.md    '전이 실패: handoff-verify'
+check_phrase references/worker-template.en.md '전이 실패: handoff-verify'
 # 산문 회귀 가드 — 위 파일들에서 손수 라벨을 옮기는 형태가 되살아나면 실패.
 # (`--add-label` 형태만 본다 — setup-labels.sh 설명·라벨 표의 라벨명 나열은 안 걸린다.)
 for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md \
          skills/closeout/SKILL.md skills/closeout/SKILL.en.md \
          references/worker-template.md references/worker-template.en.md; do
-  if grep -nE -- '--add-label (flow:ready|harvesting|"flow:verify")' "$f"; then
+  if grep -nE -- '--add-label "?(flow:ready|flow:verify|harvesting)"?' "$f"; then
     echo "  ✗ $f: 산문 라벨 이동이 되살아남 — transition.sh 전이를 써라"
     exit 1
   fi

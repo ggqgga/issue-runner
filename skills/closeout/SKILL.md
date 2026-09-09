@@ -109,7 +109,7 @@ CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기�
 | `done_verdict` | 최신 `머지 판정: ✅` | eligible.sh 정상 경로가 처리 — 스윕은 skip |
 | `stale_inline` | 🔄 + 검증자 CLEAN + 버퍼 초과 (검증까지 도달·최종판정만 유실, #970형) | **입양(머지)** — ② Pick 후보로. ③ 1단계가 **독립 재검증** 후 마감. **새 이슈 안 만듦**(완료된 일 재수행 금지). |
 | `stale_reverify` | 🔄 + 검증자 부재/미해결 BLOCKER + 버퍼 초과 (검증 전 사망·구현 미완 가능, #971형) | **재디스패치** — 미완 코드를 codex 재검증 하나로 자동 머지하지 않는다(사용자 결정). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (연결 이슈를 `agent-ready` 로 되돌리고 `agent:claimed`·단계 라벨을 뗀다) → 새 워커가 같은 브랜치서 검증자 재실행→체크박스→최종판정으로 완결. 멱등 마커(아래). — head 커밋이 신선하면(#110, 스테일 클록에 커밋 시각 합류) 코멘트가 낡았어도 `active` 로 떨어져 살아있는 attempt N+1 워커를 오분류하지 않는다. |
-| `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue> <pr>` (연결 이슈에 `needs-human` 부착 + 단계 라벨 정리), closeout 무접촉(자동 진행 안 함). |
+| `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue> <pr>` (PR 과 연결 이슈 **양쪽**에 `needs-human` 부착 + 단계 라벨 정리 — 연결 이슈가 없어도 PR 에 사람 신호가 남는다), closeout 무접촉(자동 진행 안 함). |
 | `active` | 진행 중·버퍼 미도달·우리 형상 아님 | **무접촉**(다음 틱). |
 
 **flow:\* 보조 신호**: finish-classify 가 코멘트로 판정하지만, `flow:ready` 없이
@@ -154,6 +154,10 @@ harvesting 을 제외한다), PR 리스트에서 `harvesting` 하나만 남아 "
 **원 이슈 미러(진행 가시화).** ③-1 에서 `<issue>`(PR 본문 `Closes #N`/`Refs #N`)를 파싱한
 직후, 연결 이슈가 있으면 `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` 를
 **다시** 부른다(멱등 — PR 쪽은 이미 맞아 no-op, 이슈 쪽만 `harvesting` 으로 옮겨진다).
+**이 미러 호출이 exit 1(readback 불일치)·2(gh 실패)면 머지로 진행하지 마라** — 이 PR 을
+skip 하고 ④ Report 에
+`BLOCKED: 전이 실패 closeout-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다
+(PR 만 `harvesting` 이고 이슈는 아닌 반쯤 이동한 상태를 다음 틱이 잡게 한다).
 이슈 리스트만 봐도 단계(검증→마감)가 보이게 하는 것이다(머지 성공 시 `Closes #N` 으로
 이슈가 닫히므로 잠깐만 보인다). 그리고 ③ 이후 **fail-closed 로 손을 떼는 모든 지점**
 (위임 fail·conflict 사람판단·문서 reconcile 미완 등)은 반드시 `closeout-blocked`(사람에게)
@@ -233,7 +237,9 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   남는다) → `$SCRIPTS/run-local-ci.sh <repo> <N>` 로 **현재 HEAD** 캐시를 채운다. `run-local-ci.sh`
   가 비0(새 base 와의 통합이 깨짐)이면 머지하지 말고 fail-closed 로 보류 종료한다
   (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>` + `blocked` 종료,
-  새 종료 상태 안 만듦). 0이면 캐시가 pass 로
+  새 종료 상태 안 만듦 — 이 전이가 exit 1·2 면 ④ Report 에
+  `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다).
+  0이면 캐시가 pass 로
   채워졌으니 아래 exit 0 게이트로 합류한다. 이 경로는 **3단계 doc 커밋 유무와
   무관**하게 발동한다 — 3단계 캐시 보강은 doc push 후에만 돌아 rebase·doc무변경
   케이스(워커 `머지 판정 ✅` 이 새 SHA 에 안 따라온 채)를 못 메우기 때문이다.
@@ -309,7 +315,8 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   같은 SHA 는 재실행하지 않지만, 호출 자체를 아끼려 호출측도 가드한다). `run-local-ci.sh` 가 비0(=bin/ci 실패)이면 캐시가 pass 로
   안 채워진 것이므로 머지하지 말고 fail-closed 로 보류 종료한다
   (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>` + `blocked` 종료,
-  기존 BLOCKER 경로 준용 — 새 종료 상태를 만들지 않는다).
+  기존 BLOCKER 경로 준용 — 새 종료 상태를 만들지 않는다. 이 전이가 exit 1·2 면 ④ Report 에
+  `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다).
 - **단일 이슈 degrade**: `Plans/*.md`·`## Plan` 이 없으면 문서 편집을 skip 한다.
   epic 이 없으면 롤업을 skip 한다. 이슈 자체 체크박스만 reconcile 한다. 둘 다
   없으면 이 단계는 no-op — **새 doc 커밋·push 가 없으므로 위 캐시 보강도 건너뛴다**

@@ -125,7 +125,7 @@ separate freshness gate needed:
 | `done_verdict` | latest `머지 판정: ✅` | eligible.sh's normal path handles it — sweep skips |
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). |
 | `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
-| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue> <pr>` (attaches `needs-human` to the linked issue and clears the stage labels), closeout leaves it (no auto-progress). |
+| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue> <pr>` (attaches `needs-human` to **both** the PR and the linked issue and clears the stage labels — the human signal survives even with no linked issue), closeout leaves it (no auto-progress). |
 | `active` | in progress · buffer not reached · not our shape | **Leave it** (next tick). |
 
 **`flow:*` supplementary signal**: finish-classify judges by comments, but a stale PR with
@@ -176,7 +176,12 @@ in ④ Report.
 **Mirror onto the source issue (progress visibility).** Right after parsing `<issue>`
 (the PR body's `Closes #N`/`Refs #N`) in ③-1, if there is a linked issue call
 `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` **again** (idempotent — the PR
-side already matches and is a no-op; only the issue moves to `harvesting`) so "closing out"
+side already matches and is a no-op; only the issue moves to `harvesting`).
+**If this mirror call exits 1 (readback mismatch) or 2 (gh failure), do not proceed to the
+merge** — skip this PR and report
+`BLOCKED: transition failed closeout-pick PR #<pr>(<repo_short>) — <one stderr line>`
+in ④ Report (so the next tick picks up the half-moved state where the PR is `harvesting`
+but the issue is not). This way "closing out"
 also shows on the issue list — the stage (verify→closeout) is then visible from the issue
 list alone (it shows only briefly, since a successful merge closes the issue via
 `Closes #N`). And **every point after ③ that lets go fail-closed** (delegation failure·
@@ -269,7 +274,9 @@ hook queried the cwd repo). Gate conditions: `$SCRIPTS/closeout-ci-pass.sh <repo
   `$SCRIPTS/run-local-ci.sh <repo> <N>`. If `run-local-ci.sh` exits nonzero (integration
   with the new base is broken), do not merge: exit on hold fail-closed
   (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>` + `blocked` exit, do not
-  invent a new exit state). If 0, the cache is
+  invent a new exit state — if that transition exits 1·2, report
+  `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
+  in ④ Report). If 0, the cache is
   filled with pass, so join the exit-0 gate below. This path fires **independent of
   whether step 3 produced a doc commit** — step 3's cache supplement only runs after a
   doc push, so it cannot cover the rebase·no-doc-change case (where the worker's
@@ -359,7 +366,10 @@ comment.
   (the helper has no dedup of its own, so the caller guards). If `run-local-ci.sh`
   exits nonzero (=bin/ci failed) the cache is not filled with pass, so do not merge:
   exit on hold fail-closed (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr>`
-  + `blocked` exit, follow the existing BLOCKER path — do not invent a new exit state).
+  + `blocked` exit, follow the existing BLOCKER path — do not invent a new exit state; if
+  that transition exits 1·2, report
+  `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
+  in ④ Report).
 - **single-issue degrade**: if there is no `Plans/*.md`·`## Plan`, skip the doc edit.
   If there is no epic, skip the rollup. Reconcile only the issue's own checkboxes. If
   neither exists, this step is a no-op — **since there is no new doc commit·push, skip
