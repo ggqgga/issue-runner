@@ -398,6 +398,16 @@ human-waiting — leave the marker
 `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
 **exit as approval-required**.
 
+**Missing label — fail closed, never lose the ticket (same shape as the step-6 spinoff rule).**
+`gh issue create` fails **without creating the issue** when any `--label` does not exist in the
+repo. Existing opted-in repos lack `deploy-wait` until `setup-labels.sh` is rerun, so without
+this rule the first closeout after upgrading ends with the PR merged but no ticket and no marker.
+On a `'deploy-wait' not found`-style failure, run `$SCRIPTS/setup-labels.sh <repo>` **once** and
+retry the same command **once**. If the retry also fails, do not loop — file with
+**`--label needs-human` only** (no lost ticket — `loop-status.sh` still counts it as
+deploy-waiting via the `배포 대기:` title fallback) and report
+`BLOCKED: deploy-wait label attach failed on deploy issue — #<number>` in ④ Report.
+
 Why this rule was flipped: the previous rule created no issue when `<LIVE_CHECKS>` was `없음`,
 justified by "④ Report's `승격 대기 N커밋` holds the unpromoted state". But that Report line
 turns out to be easy to omit (observed 2026-08-16: three consecutive closeouts had neither an

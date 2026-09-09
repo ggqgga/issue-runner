@@ -343,6 +343,15 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 버킷 라벨이다 — `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"` 마커를
 남긴 뒤 → **approval-required 로 종료**한다.
 
+**라벨 부재 fail-closed — 티켓을 잃지 않는다 (6단계 파생과 동형).** `gh issue create` 는
+`--label` 에 레포에 없는 라벨이 있으면 **이슈 자체를 안 만들고 실패**한다. `setup-labels.sh`
+재실행 전의 기존 옵트인 레포엔 `deploy-wait` 가 없으므로, 이 규칙이 없으면 업그레이드 뒤
+첫 마감이 PR 은 머지된 채 티켓·마커 없이 끝난다. `'deploy-wait' not found` 류로 실패하면
+`$SCRIPTS/setup-labels.sh <repo>` 를 **1회** 호출한 뒤 같은 명령을 **1회만** 재시도한다.
+재시도도 실패하면 더 반복하지 말고 **`--label needs-human` 만으로 발행**하고(티켓 유실 방지 —
+`loop-status.sh` 는 제목 `배포 대기:` 폴백으로 여전히 배포대기로 센다) ④ Report 에
+`BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로 올린다.
+
 이 규칙이 뒤집힌 이유: 직전 규칙은 `<LIVE_CHECKS>` 가 `없음` 이면 이슈를 안 만들고
 "미승격 현황은 ④ Report 의 `승격 대기 N커밋` 이 갖는다" 로 정당화했다. 그런데 그
 Report 줄이 실제로는 누락되기 쉬워서(실증 2026-08-16: 3건 연속 마감에 이슈도 없고
