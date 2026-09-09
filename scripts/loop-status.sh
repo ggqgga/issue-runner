@@ -564,13 +564,17 @@ for repo in "${repos[@]}"; do
   # `hold:ladder` 는 `--note` 가 선택이라 질문이 없는 게 정상이고, 사유 없는 홀드는 이미
   # 별도 warn 이 잡는다. 그 둘까지 물으면 N+1 만 늘고 화면엔 거짓 지적이 는다.
   noteless="[]"
-  cands=$(jq -r '.buckets.human_wait[]
-                 | select(.holds | index("policy") != null or index("conflict") != null)
-                 | .number' "$tmpdir/repo.pre.json" 2>/dev/null) || cands=""
-  if [ -n "$cands" ]; then
+  if ! jq -r '.buckets.human_wait[]
+              | select(.holds | index("policy") != null or index("conflict") != null)
+              | .number' "$tmpdir/repo.pre.json" > "$tmpdir/cands" 2>/dev/null; then
+    echo "$SELF: $short 사람대기 질문 대상 추출 실패(jq) — 질문 없음 표시를 건너뛴다" >&2
+    : > "$tmpdir/cands"
+  fi
+  if [ -s "$tmpdir/cands" ]; then
     nl_sep=""
     nl_body=""
-    while IFS= read -r cand; do
+    # fd 3 으로 읽는다 — 루프 안에서 gh 를 부르므로 stdin 을 목록에 묶으면 안 된다.
+    while IFS= read -r cand <&3; do
       [ -n "$cand" ] || continue
       if ! run_gh gh issue view "$cand" --repo "$repo" --json comments; then
         # 조회 실패를 "질문 없음" 으로 접으면 없는 결함을 사람에게 들이민다 — 모르는 건
@@ -588,9 +592,7 @@ for repo in "${repos[@]}"; do
         false) nl_body="${nl_body}${nl_sep}${cand}"; nl_sep="," ;;
         *)     echo "$SELF: $short #$cand 코멘트 응답 파싱 실패 — 표시 생략" >&2 ;;
       esac
-    done <<EOF
-$cands
-EOF
+    done 3< "$tmpdir/cands"
     [ -z "$nl_body" ] || noteless="[$nl_body]"
   fi
 
