@@ -1200,4 +1200,38 @@ grep -qF 'Exception 3' references/worker-template.en.md || { echo "  ✗ EN 템�
 grep -qE '\*\*10분\*\*' references/worker-template.md || { echo "  ✗ KO 템플릿 fail-open 10분 표기 없음"; exit 1; }
 grep -qE '\*\*10 minutes\*\*' references/worker-template.en.md || { echo "  ✗ EN 템플릿 fail-open 10 minutes 표기 없음"; exit 1; }
 
+echo "[#144] 전이·스냅샷 스크립트 배선 문서화 검사 — 세 루프 SKILL + 워커 템플릿"
+# 루프 문서가 산문 `gh issue edit` 대신 scripts/transition.sh(전이 표 SSOT)를 부르고,
+# ④ Report 가 scripts/loop-status.sh 스냅샷을 붙이는지. 배선이 빠지면 라벨이 한쪽만
+# 옮겨져 PR·이슈가 갈리고(다음 틱이 어긋난 쪽을 진실로 읽는다), 재고가 아무 보고에도
+# 안 나온다.
+for tok in 'transition.sh verify-pass' 'transition.sh verify-redispatch' \
+           'transition.sh verify-held' 'loop-status.sh'; do
+  grep -qF -- "$tok" skills/verify-runner/SKILL.md \
+    || { echo "  ✗ skills/verify-runner/SKILL.md 에 '$tok' 배선 없음"; exit 1; }
+done
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  for tok in 'transition.sh closeout-pick' 'transition.sh closeout-blocked' \
+             'loop-status.sh' '--label spinoff' '--label deploy-wait'; do
+    grep -qF -- "$tok" "$f" || { echo "  ✗ $f 에 '$tok' 배선 없음"; exit 1; }
+  done
+done
+for f in SKILL.md SKILL.en.md; do
+  grep -qF -- 'loop-status.sh' "$f" || { echo "  ✗ $f 에 loop-status.sh 스냅샷 배선 없음"; exit 1; }
+done
+for f in references/worker-template.md references/worker-template.en.md; do
+  grep -qF -- 'transition.sh handoff-verify' "$f" \
+    || { echo "  ✗ $f 에 transition.sh handoff-verify 배선 없음"; exit 1; }
+done
+# 산문 회귀 가드 — 위 파일들에서 손수 라벨을 옮기는 형태가 되살아나면 실패.
+# (`--add-label` 형태만 본다 — setup-labels.sh 설명·라벨 표의 라벨명 나열은 안 걸린다.)
+for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md \
+         skills/closeout/SKILL.md skills/closeout/SKILL.en.md \
+         references/worker-template.md references/worker-template.en.md; do
+  if grep -nE -- '--add-label (flow:ready|harvesting|"flow:verify")' "$f"; then
+    echo "  ✗ $f: 산문 라벨 이동이 되살아남 — transition.sh 전이를 써라"
+    exit 1
+  fi
+done
+
 echo "CI pass"
