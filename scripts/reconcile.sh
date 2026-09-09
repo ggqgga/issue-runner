@@ -41,6 +41,13 @@ in_scope() {
 # 무더기로 재발행하지 않게 하는 유예창 — 그 이전 머지는 조용히 seen 으로 씨딩한다.
 seen_file="$PWD/.loop/seen-merges"
 [ -f "$seen_file" ] || : > "$seen_file"
+# **이번 실행 한정** 보류 목록 — 영속 레저(seen_file)와 반드시 분리한다 (#131 리뷰).
+# fail-closed 로 판단을 미룬 PR 을 seen_file 에 넣으면 "처리 완료" 로 굳어, 그 사이
+# closeout 등이 agent:claimed 를 떼면 주 루프에서도 스윕에서도 영영 안 보여 정상 머지가
+# 유실된다(cutoff 30분 경과 후엔 복구 불가). 보류는 이 실행에서만 스윕을 막고, 다음
+# 실행이 타임라인을 정상 조회하면 그때 제대로 판정한다.
+skip_file=$(mktemp)
+trap 'rm -f "$skip_file"' EXIT
 cutoff=$(date -u -v-30M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
   || date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "0000")
 
@@ -100,15 +107,28 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
       # 동률(`<=`)은 **이전 attempt** 로 본다 (#131): mergedAt·timeline created_at 은 초
       # 단위라, 이전 PR 이 머지된 바로 그 초에 재claim 되면 두 값이 같아진다. `<` 면 그
       # 옛 MERGED PR 이 남아 새 claim 을 완료로 오인한다.
+      # 초 단위로는 "머지→재claim" 과 "재claim→머지" 를 못 가른다 — 둘 중 오판의 대가가
+      # 다르다: 전자를 놓치면 살아있는 워커의 미push 작업이 파괴되고(#3447 실측), 후자를
+      # 놓치면 정리가 한 틱 늦을 뿐이며 다음 틱·스윕이 회수한다. 그래서 동률은 보수적으로
+      # 이전 attempt 로 확정한다.
       keep=$(printf '%s' "$prs" | jq -c --arg c "$claimed_at" \
         '[.[] | select((.state == "MERGED" and (.mergedAt // "") <= $c) | not)]')
-      # 걸러낸 옛 머지 PR 은 ②-보강 스윕이 다시 주워 같은 파괴를 하지 않도록 레저에
-      # 미리 기록한다 (#131) — 스윕은 seen_file 에 있는 키를 건너뛴다.
+      # 걸러낸 옛 머지 PR 은 ②-보강 스윕이 다시 주워 같은 파괴를 하지 않도록 기록한다
+      # (#131) — 스윕은 두 목록에 있는 키를 건너뛴다. 다만 **확실히 이전**(mergedAt <
+      # claim)인 것만 영속 레저에 넣고, **동률**(같은 초라 방향을 못 가르는 것)은 이번
+      # 실행 보류로만 막는다. 동률까지 영속화하면 "재claim 직후 같은 초에 머지" 라는
+      # 정상 완료가 영영 회수 불가가 된다 (#131 리뷰).
       printf '%s' "$prs" | jq -r --arg c "$claimed_at" \
-        '.[] | select(.state == "MERGED" and (.mergedAt // "") <= $c) | .number' \
+        '.[] | select(.state == "MERGED" and (.mergedAt // "") < $c) | .number' \
         | while IFS= read -r _old; do
             [ -n "$_old" ] || continue
             grep -qxF "$repo#$_old" "$seen_file" 2>/dev/null || printf '%s\n' "$repo#$_old" >> "$seen_file"
+          done
+      printf '%s' "$prs" | jq -r --arg c "$claimed_at" \
+        '.[] | select(.state == "MERGED" and (.mergedAt // "") == $c) | .number' \
+        | while IFS= read -r _tie; do
+            [ -n "$_tie" ] || continue
+            printf '%s\n' "$repo#$_tie" >> "$skip_file"
           done
       prs="$keep"
     else
@@ -117,11 +137,12 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
       # 건너뛰어져 이전 attempt 의 머지 PR 이 현재 claim 의 PR 로 취급됐고, 살아있는
       # 워커의 worktree·agent:claimed 가 지워졌다(#3447 재발 경로).
       echo "reconcile: $repo#$num claim 시각 확인 실패 — 재claim 필터 불가로 정리를 건너뛴다(fail-closed)" >&2
-      # 스윕도 같은 PR 을 주워 정리하지 않도록 이번 실행 한정으로 레저에 기록한다.
+      # 스윕도 이번 실행에선 손대지 않도록 **보류 목록**에 넣는다(영속 레저 아님 —
+      # 판단을 미룬 것이지 처리한 게 아니다. 다음 실행이 다시 판정한다).
       printf '%s' "$prs" | jq -r '.[] | select(.state == "MERGED") | .number' \
         | while IFS= read -r _old; do
             [ -n "$_old" ] || continue
-            grep -qxF "$repo#$_old" "$seen_file" 2>/dev/null || printf '%s\n' "$repo#$_old" >> "$seen_file"
+            printf '%s\n' "$repo#$_old" >> "$skip_file"
           done
       continue
     fi
@@ -194,6 +215,9 @@ sweep_repos | while IFS= read -r srepo; do
         case "$shead" in agent/issue-*) ;; *) continue ;; esac
         snum=${shead#agent/issue-}
         key="$srepo#$spr"
+        # 이번 실행 보류분은 seen 마킹조차 하지 않고 넘긴다 — 마킹하면 다음 실행에서
+        # "처리 완료" 로 굳어 정상 머지가 유실된다 (#131 리뷰).
+        grep -qxF "$key" "$skip_file" 2>/dev/null && continue
         grep -qxF "$key" "$seen_file" 2>/dev/null && continue
         printf '%s\n' "$key" >> "$seen_file"
         # cutoff 이전 머지는 씨딩만(재발행 금지). 이후(최근) 머지만 발행.

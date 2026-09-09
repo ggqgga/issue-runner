@@ -67,7 +67,9 @@ case "$*" in
   "api user"*)                  # SUT 가 헬퍼 대신 직접 물어보는 경우도 답한다
     echo tester ;;
   "search issues label:agent:claimed"*)
-    echo '[{"repository":{"nameWithOwner":"owner/repo"},"number":42}]' ;;
+    printf '%s\n' "$STUB_CLAIMED" ;;
+  "search issues label:agent-ready"*)   # 스윕 레포 목록(.loop/repos 없을 때 경로)
+    echo '[{"repository":{"nameWithOwner":"owner/repo"}}]' ;;
   *"--state all"*)              # 브랜치의 PR 전수 (main 루프 입력)
     printf '%s\n' "$STUB_BRANCH_PRS" ;;
   *"--state merged"*)           # ②-보강 스윕 입력
@@ -81,13 +83,26 @@ esac
 STUB
 chmod +x "$tmp/bin/gh"
 
+default_claimed='[{"repository":{"nameWithOwner":"owner/repo"},"number":42}]'
+
 # run — 픽스처 한 케이스 실행. stdout(이벤트) 은 $tmp/events, stderr 는 $tmp/err,
 # 파괴 호출은 $tmp/destroy.log, gh 호출은 $tmp/gh.log 에 남는다.
 run() {  # run <branch_prs_json> <claimed_at|""> <sweep_prs_json>
   rm -rf "$tmp/run"; mkdir -p "$tmp/run/.loop"
+  echo owner/repo > "$tmp/run/.loop/repos"   # 스윕 대상 레포 — 이게 없으면 스윕이 안 돈다
   : > "$tmp/destroy.log"; : > "$tmp/gh.log"
   ( cd "$tmp/run" && \
     STUB_BRANCH_PRS="$1" STUB_CLAIMED_AT="$2" STUB_SWEEP_PRS="$3" \
+    STUB_CLAIMED="${4:-$default_claimed}" \
+    STUB_DESTROY_LOG="$tmp/destroy.log" STUB_GH_LOG="$tmp/gh.log" \
+    PATH="$tmp/bin:$PATH" bash "$sut_dir/reconcile.sh" ) \
+    > "$tmp/events" 2> "$tmp/err"
+}
+rerun() {  # rerun <branch_prs> <claimed_at|""> <sweep_prs> [claimed_json] — .loop 상태 유지
+  : > "$tmp/destroy.log"; : > "$tmp/gh.log"
+  ( cd "$tmp/run" && \
+    STUB_BRANCH_PRS="$1" STUB_CLAIMED_AT="$2" STUB_SWEEP_PRS="$3" \
+    STUB_CLAIMED="${4:-$default_claimed}" \
     STUB_DESTROY_LOG="$tmp/destroy.log" STUB_GH_LOG="$tmp/gh.log" \
     PATH="$tmp/bin:$PATH" bash "$sut_dir/reconcile.sh" ) \
     > "$tmp/events" 2> "$tmp/err"
@@ -95,6 +110,7 @@ run() {  # run <branch_prs_json> <claimed_at|""> <sweep_prs_json>
 destroyed() { [ -s "$tmp/destroy.log" ] && echo yes || echo no; }
 seen()      { grep -qxF "$1" "$tmp/run/.loop/seen-merges" 2>/dev/null && echo yes || echo no; }
 event_has() { grep -q "\"event\":\"$1\"" "$tmp/events" && echo yes || echo no; }
+swept()     { grep -q -- '--state merged' "$tmp/gh.log" && echo yes || echo no; }
 
 merged_recent=$(ts 2)     # 스윕 cutoff(30분) 안 = 스윕이 발행 대상으로 삼는 최신 머지
 now=$(ts 0)
@@ -114,10 +130,12 @@ check "① 타임라인 실패: merged 이벤트 미발행" \
   "$([ "$(event_has merged)" = no ] && echo ok || echo no)"
 
 # ── ② 같은 실행의 보강 스윕도 그 PR 을 다시 줍지 않는다 ──────────────────────
-check "② 스윕: 걸러낸 PR 이 레저(seen-merges)에 기록" \
-  "$([ "$(seen 'owner/repo#7')" = yes ] && echo ok || echo no)"
-check "② 스윕: 최근 머지인데도 정리 미실행(레저로 차단)" \
+check "② 스윕이 실제로 돌았다(공회전 아님)" \
+  "$([ "$(swept)" = yes ] && echo ok || echo no)"
+check "② 스윕: 최근 머지인데도 정리 미실행(보류 목록으로 차단)" \
   "$([ "$(destroyed)" = no ] && echo ok || echo no)"
+check "② 보류분은 영속 레저(seen-merges)에 굳지 않는다 — 다음 실행이 재판정" \
+  "$([ "$(seen 'owner/repo#7')" = no ] && echo ok || echo no)"
 
 # ── ③ 정상 타임라인 + 옛 머지 → 필터됨 (현재 claim 의 PR 아님) ───────────────
 run "$branch_prs" "$now" "$sweep_prs"
@@ -151,6 +169,17 @@ check "⑥ 스텁 경유 실증: 타임라인 조회가 실제로 일어난다" 
   "$(grep -q 'timeline' "$tmp/gh.log" && echo ok || echo no)"
 check "⑥ 스텁 경유 실증: 브랜치 PR 조회가 실제로 일어난다" \
   "$(grep -q -- '--state all' "$tmp/gh.log" && echo ok || echo no)"
+
+# ── ⑧ 회수 경로 — 미룬 판단이 영구 유실되지 않는다 (리뷰 BLOCKER 가드) ──────
+# ① 과 같은 상태(타임라인 실패로 보류)에서, 다음 실행에 agent:claimed 가 이미 떨어져
+# 주 루프가 그 이슈를 못 보는 상황을 만든다. 보류를 영속 레저에 굳혔다면 스윕도 건너뛰어
+# 정상 머지가 영영 유실된다 — 여기서는 스윕이 회수해야 한다.
+run "$branch_prs" "" "$sweep_prs"                    # 1회차: 보류
+rerun '[]' "" "$sweep_prs" '[]'                      # 2회차: 라벨 소멸(claimed 없음)
+check "⑧ 회수: 다음 실행의 스윕이 머지를 발행" \
+  "$([ "$(event_has merged)" = yes ] && echo ok || echo no)"
+check "⑧ 회수: 정리도 수행" \
+  "$([ "$(destroyed)" = yes ] && echo ok || echo no)"
 
 # ── ⑦ gh-login.sh 순차 폴백 — REST 성공이면 GraphQL 을 호출하지 않는다 ───────
 cat > "$tmp/bin/gh" <<'STUB'
