@@ -31,6 +31,8 @@ chmod +x "$tmp/setup-labels.sh"
 cat > "$tmp/release-labels.sh" <<'REL'
 #!/usr/bin/env bash
 printf 'release-labels %s\n' "$2" >> "$STUB_MUT_LOG"
+[ "${STUB_REL_FAIL:-0}" = "1" ] && exit 1
+exit 0
 REL
 chmod +x "$tmp/release-labels.sh"
 
@@ -102,12 +104,15 @@ if [ "$sub" = "pr close" ] || [ "$sub" = "issue close" ]; then
   exit 0
 fi
 
-if [ "$sub" = "issue comment" ]; then
+if [ "$sub" = "issue comment" ] || [ "$sub" = "pr comment" ]; then
   num=$1; shift
-  printf 'issue-comment %s\n' "$num" >> "$STUB_MUT_LOG"
+  case "$sub" in
+    "pr comment") printf 'pr-comment %s\n' "$num" >> "$STUB_MUT_LOG"; cf="$STUB_STATE_DIR/$num.prcomment" ;;
+    *)            printf 'issue-comment %s\n' "$num" >> "$STUB_MUT_LOG"; cf="$STUB_STATE_DIR/$num.comment" ;;
+  esac
   [ "$mode" = "fail" ] && { echo "gh: connection refused" >&2; exit 1; }
   while [ $# -gt 0 ]; do
-    case "$1" in --body) shift; printf '%s\n' "${1:-}" > "$STUB_STATE_DIR/$num.comment" ;; esac
+    case "$1" in --body) shift; printf '%s\n' "${1:-}" >> "$cf" ;; esac
     shift
   done
   exit 0
@@ -177,6 +182,7 @@ run() {
   STUB_MODE="$mode" STUB_STATE_DIR="$tmp/state" STUB_SETUP_FAIL="${STUB_SETUP_FAIL:-0}" \
   STUB_EDIT_LOG="$tmp/edit.log" STUB_SETUP_LOG="$tmp/setup.log" STUB_MUT_LOG="$tmp/mut.log" \
   STUB_PRCLOSE_FAIL="${STUB_PRCLOSE_FAIL:-0}" STUB_NOCLOSE="${STUB_NOCLOSE:-0}" \
+  STUB_REL_FAIL="${STUB_REL_FAIL:-0}" \
   PATH="$tmp/bin:$PATH" "$SUT" "$tname" owner/repo "$iss" "$prn" "$@" >"$tmp/out" 2>"$tmp/err"
   RC=$?
 }
@@ -354,7 +360,7 @@ reset; seed 7 flow:verify; seed 9 flow:verify
 run notfound-quoted-once verify-held 9 7 --reason ladder
 ck "따옴표 not found: exit 0" "$RC" 0
 ck "따옴표 not found: setup-labels 1회" "$(grep -c . "$tmp/setup.log")" 1
-X
+ck "따옴표 not found: edit 3회(PR 원본+재시도, 이슈 1회)" "$(grep -c '^edit ' "$tmp/edit.log")" 3
 
 # 라벨 문맥이 아닌 404(오타 이슈 번호 등)는 setup-labels 를 **돌리지 않는다** —
 # setup-labels 는 라벨 14개 --force + `gh repo edit` 이라는 쓰기다.
@@ -483,8 +489,9 @@ dup_seed
 run ok closeout-dup 9 7 --note "$NOTE"
 ck "closeout-dup: exit 0" "$RC" 0
 ck "closeout-dup: PR 라벨 = dup" "$(labels_of 7)" "dup"
-ck "closeout-dup: 쓰기 순서" "$(mut_order)" \
-  "edit 7|pr-close 7|issue-comment 9|issue-close 9|release-labels 9"
+# PR close 는 **맨 뒤** — 먼저 닫으면 뒤가 실패했을 때 closeout 이 다시 못 집는다.
+ck "closeout-dup: 쓰기 순서(PR close 가 마지막)" "$(mut_order)" \
+  "edit 7|pr-comment 7|issue-comment 9|issue-close 9|release-labels 9|pr-close 7"
 ck "closeout-dup: PR CLOSED" "$(cat "$tmp/state/7.state")" CLOSED
 ck "closeout-dup: 이슈 CLOSED" "$(cat "$tmp/state/9.state")" CLOSED
 check "closeout-dup: 이슈 코멘트에 근거·PR 번호" \
@@ -511,7 +518,7 @@ ck "closeout-dup pr=-: exit 64" "$RC" 64
 dup_seed
 run ok closeout-dup - 7 --note "$NOTE"
 ck "closeout-dup issue=-: exit 0" "$RC" 0
-ck "closeout-dup issue=-: PR 만" "$(mut_order)" "edit 7|pr-close 7"
+ck "closeout-dup issue=-: PR 만" "$(mut_order)" "edit 7|pr-comment 7|pr-close 7"
 check "closeout-dup issue=-: PR 코멘트 본문" \
   "$(grep -q "중복 종료: $NOTE" "$tmp/state/7.prcomment" 2>/dev/null && echo ok || echo no)"
 
@@ -520,8 +527,10 @@ dup_seed
 seed_state 7 CLOSED; seed_state 9 CLOSED
 run ok closeout-dup 9 7 --note "$NOTE"
 ck "closeout-dup 이미 CLOSED: exit 0" "$RC" 0
-ck "closeout-dup 이미 CLOSED: close 미호출" "$(mut_order)" \
-  "edit 7|issue-comment 9|release-labels 9"
+ck "closeout-dup 이미 CLOSED: close 미호출(코멘트는 남는다)" "$(mut_order)" \
+  "edit 7|pr-comment 7|issue-comment 9|release-labels 9"
+check "closeout-dup 이미 CLOSED: PR 근거는 그래도 남는다" \
+  "$(grep -q "중복 종료: $NOTE" "$tmp/state/7.prcomment" && echo ok || echo no)"
 
 # 두 번 걸어도 무해 — 두 번째 런은 close 를 건너뛰고 같은 상태로 끝난다
 dup_seed
@@ -532,7 +541,7 @@ run ok closeout-dup 9 7 --note "$NOTE"
 ck "closeout-dup 2회차: exit 0" "$RC" 0
 ck "closeout-dup 2회차: PR 라벨 동일" "$(labels_of 7)" "$first_dup"
 ck "closeout-dup 2회차: close 미호출" "$(mut_order)" \
-  "edit 7|issue-comment 9|release-labels 9"
+  "edit 7|pr-comment 7|issue-comment 9|release-labels 9"
 
 # readback — 라벨이 안 붙었으면 1
 dup_seed
@@ -555,9 +564,29 @@ STUB_PRCLOSE_FAIL=1 run ok closeout-dup 9 7 --note "$NOTE"
 ck "closeout-dup pr close 실패: exit 2" "$RC" 2
 check "closeout-dup pr close 실패: stderr 한 줄" \
   "$(grep -q '종료 실패' "$tmp/err" && echo ok || echo no)"
-ck "closeout-dup pr close 실패: 이슈는 안 건드린다" \
-  "$(mut_order)" "edit 7|pr-close 7"
+# ⑤ 만 남기고 ①~④ 는 끝나 있다 — PR 은 열린 채 dup 을 달고 남아 다음 틱이 다시 집는다.
+ck "closeout-dup pr close 실패: ①~④ 는 완료" "$(mut_order)" \
+  "edit 7|pr-comment 7|issue-comment 9|issue-close 9|release-labels 9|pr-close 7"
+ck "closeout-dup pr close 실패: PR 은 열린 채 남는다" "$(cat "$tmp/state/7.state" 2>/dev/null || echo OPEN)" OPEN
+ck "closeout-dup pr close 실패: PR 에 dup 은 붙어 있다" "$(labels_of 7)" dup
 unset STUB_PRCLOSE_FAIL
+
+# 실패 뒤 같은 전이를 다시 걸면(다음 틱) 완주한다 — ①~④ 는 멱등, ⑤ 만 남았다
+: > "$tmp/mut.log"
+run ok closeout-dup 9 7 --note "$NOTE"
+ck "closeout-dup 재시도: exit 0" "$RC" 0
+ck "closeout-dup 재시도: PR CLOSED" "$(cat "$tmp/state/7.state")" CLOSED
+ck "closeout-dup 재시도: 이슈 close 는 건너뛴다" "$(mut_order)" \
+  "edit 7|pr-comment 7|issue-comment 9|release-labels 9|pr-close 7"
+
+# ④ 라벨 회수 실패는 흐름을 막지 않되(exit 0) 조용히 넘어가지도 않는다
+dup_seed
+STUB_REL_FAIL=1 run ok closeout-dup 9 7 --note "$NOTE"
+ck "release-labels 실패: exit 0(흐름 유지)" "$RC" 0
+check "release-labels 실패: stderr 경고 한 줄" \
+  "$(grep -q '라벨 회수 실패(best-effort) — 사람 확인' "$tmp/err" && echo ok || echo no)"
+ck "release-labels 실패: PR 은 그래도 닫힌다" "$(cat "$tmp/state/7.state")" CLOSED
+unset STUB_REL_FAIL
 
 echo "transition: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

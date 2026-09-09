@@ -40,10 +40,17 @@
 #
 # ★closeout-dup 순서★ — 이슈가 요구한 수정이 **이미 main 에 있을 때** 루프가 직접 닫는다
 #   (`needs-human` 금지 — 루프가 결정할 수 있는 건 루프가 끝낸다).
-#     ① PR 라벨 `dup` 부착 + `harvesting`·`flow:*` 제거   ② `gh pr close`(머지 없이)
+#     ① PR 라벨 `dup` 부착 + `harvesting`·`flow:*` 제거   ② PR 코멘트(근거)
 #     ③ 이슈 코멘트 + `gh issue close`                    ④ `release-labels.sh`(닫힌 이슈
-#        라 agent-ready 까지 회수). 이슈가 `-` 면 ①② 만.
-#   멱등: 이미 CLOSED 면 그 close 를 건너뛴다(코멘트는 남긴다).
+#        라 agent-ready 까지 회수)                        ⑤ **마지막에** `gh pr close`
+#     이슈가 `-` 면 ①②⑤ 만.
+#   ★PR close 가 왜 마지막인가★ — 먼저 닫으면 뒤(③④)가 실패했을 때 PR 이 CLOSED 라
+#   closeout 의 다음 틱이 **다시 집지 못한다**(복구 불능). 마지막에 두면 중간 실패 시
+#   PR 은 `dup` 라벨을 단 채 열려 남고, 다음 틱이 같은 전이를 다시 걸어 완주한다.
+#   그래서 ①~④ 는 전부 멱등이어야 한다 — 라벨 편집은 원래 멱등이고, 코멘트는 중복을
+#   감수한다(근거가 두 번 남는 쪽이 안 남는 쪽보다 낫다).
+#   멱등: 이미 CLOSED 인 쪽의 close 만 건너뛴다. readback 은 순서가 아니라 **최종 상태**
+#   (PR 라벨 dup 부착·harvesting 부재 · PR/이슈 CLOSED)를 본다.
 #
 # 멱등: 같은 전이를 두 번 걸어도 무해하다(`--remove-label` 은 없는 라벨에 무해).
 # 검증: edit 뒤 라벨을 **다시 읽어** add ⊆ 현재 · remove ∩ 현재 = ∅ 인지 확인한다.
@@ -232,16 +239,13 @@ if [ "$name" = "closeout-dup" ]; then
   # ① PR 라벨: dup 부착 + harvesting·flow:* 제거
   run_edit pr "$pr" "$pr_add" "$pr_rm" || exit 2
 
-  # ② PR 을 머지 없이 닫는다. 이미 닫혀 있으면(재실행) close 는 건너뛴다 — 멱등.
-  st=$(gh_state pr "$pr") || exit 2
-  if [ "$st" = "OPEN" ]; then
-    # 본문은 printf 로 만든다 — 인용 안 한 heredoc 은 lint-heredoc.sh 대상이고,
-    # 인용한 heredoc 은 $note 를 전개하지 않는다.
-    body=$(printf '중복 종료: %s\n<!-- bodat:worker -->' "$note")
-    if ! out=$(gh pr close "$pr" --repo "$repo" --comment "$body" 2>&1); then
-      echo "transition $name: pr #$pr 종료 실패 — $out" >&2
-      exit 2
-    fi
+  # ② PR 에 근거를 남긴다 — **무조건**. close 조건에 묶으면 재실행 때 근거가 안 남는다.
+  #    본문은 printf 로 만든다: 인용 안 한 heredoc 은 lint-heredoc.sh 대상이고, 인용한
+  #    heredoc 은 $note 를 전개하지 않는다.
+  body=$(printf '중복 종료: %s\n<!-- bodat:worker -->' "$note")
+  if ! out=$(gh pr comment "$pr" --repo "$repo" --body "$body" 2>&1); then
+    echo "transition $name: pr #$pr 코멘트 실패 — $out" >&2
+    exit 2
   fi
 
   if [ "$issue" != "-" ]; then
@@ -260,11 +264,23 @@ if [ "$name" = "closeout-dup" ]; then
       fi
     fi
     # ④ 라벨 정리 — **닫은 뒤에** 부른다(release-labels.sh 는 CLOSED 일 때만 agent-ready
-    #    까지 회수한다). 계약상 best-effort 라 rc 는 보지 않는다.
-    "$(dirname "$0")/release-labels.sh" "$repo" "$issue" || true
+    #    까지 회수한다). best-effort 라 흐름은 안 막지만, 조용히 넘기지도 않는다 —
+    #    회수가 빠지면 닫힌 이슈에 실행 흔적 라벨이 남아 다음 틱이 오판할 수 있다.
+    if ! "$(dirname "$0")/release-labels.sh" "$repo" "$issue"; then
+      echo "transition $name: issue #$issue 라벨 회수 실패(best-effort) — 사람 확인" >&2
+    fi
   fi
 
-  # readback — PR 라벨(dup 부착·harvesting 부재) + 양쪽 CLOSED
+  # ⑤ 마지막에 PR 을 머지 없이 닫는다(위 순서 주석 참조). 이미 닫혀 있으면 건너뛴다.
+  st=$(gh_state pr "$pr") || exit 2
+  if [ "$st" = "OPEN" ]; then
+    if ! out=$(gh pr close "$pr" --repo "$repo" 2>&1); then
+      echo "transition $name: pr #$pr 종료 실패 — $out" >&2
+      exit 2
+    fi
+  fi
+
+  # readback — 순서가 아니라 최종 상태: PR 라벨(dup 부착·harvesting 부재) + 양쪽 CLOSED
   verify_side pr "$pr" "$pr_add" "$pr_rm" || exit $?
   st=$(gh_state pr "$pr") || exit 2
   if [ "$st" != "CLOSED" ]; then
