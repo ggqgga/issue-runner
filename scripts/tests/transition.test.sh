@@ -528,6 +528,23 @@ check "마커 계약: resume-sweep.sh 가 같은 마커를 찾는다" \
   "$(grep -qF 'hold-note:' "$DIR/resume-sweep.sh" && echo ok || echo no)"
 check "마커 계약: 워커 마커가 마지막 줄" \
   "$(tail -1 "$tmp/state/9.comment" | grep -qF '<!-- bodat:worker -->' && echo ok || echo no)"
+# ★사유별 계약★ (#160) — loop-status 는 **지금 붙은 사유와 같은 사유**의 마커만 질문으로
+# 센다(코멘트는 홀드가 풀려도 남으므로 낡은 사유의 마커가 지금 홀드를 가리면 안 된다).
+# 그 규칙이 성립하려면 생산자가 사유를 **가려낼 수 있게** 실어 써야 한다 — 여기서 두 사유의
+# 실제 생성 본문을 서로의 정규식으로 물어 "같은 사유에만 걸린다" 를 양방향으로 못 박는다.
+check "사유별 마커: policy 본문은 conflict 정규식에 안 걸린다" \
+  "$(grep -qE '<!--[[:space:]]*hold-note:[[:space:]]*conflict' "$tmp/state/9.comment" && echo no || echo ok)"
+reset; seed 7 flow:verify; seed 9 flow:verify agent:claimed
+run ok verify-held 9 7 --reason conflict --note "어느 쪽으로 풀까"
+ck "사유별 마커: conflict 홀드 exit 0" "$RC" 0
+check "사유별 마커: conflict 본문이 conflict 정규식에 걸린다" \
+  "$(grep -qE '<!--[[:space:]]*hold-note:[[:space:]]*conflict' "$tmp/state/9.comment" && echo ok || echo no)"
+check "사유별 마커: conflict 본문은 policy 정규식에 안 걸린다" \
+  "$(grep -qE '<!--[[:space:]]*hold-note:[[:space:]]*policy' "$tmp/state/9.comment" && echo no || echo ok)"
+# 소비자(loop-status.sh)가 사유를 실제로 가리는지 — 사유 없는 마커 정규식 하나로 되돌아가면
+# 여기서 걸린다(그 회귀의 행동 단언은 loop-status.test.sh ⑫-d 가 든다).
+check "마커 계약: loop-status.sh 의 마커 정규식이 사유를 실어 나른다" \
+  "$(grep -qF 'hold-note:\\s*(" + $reasons' "$DIR/loop-status.sh" && echo ok || echo no)"
 
 # --note 가 없는 전이(ladder 선택 · 그 밖의 전이)는 코멘트 단계를 아예 거치지 않는다 —
 # 코멘트 API 가 죽어 있어도 라벨은 종전대로 움직인다(과차단 회귀 가드).
