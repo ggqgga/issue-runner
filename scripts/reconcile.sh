@@ -14,18 +14,11 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# REST /user 가 503 을 뱉는 GitHub 부분 장애가 실측된다 — 그때 me 가 오염되어 아래
-# gh search 가 통째로 오사용/422 에러를 내고 큐가 빈 것과 구분이 안 된다. GraphQL
-# viewer 로 폴백하되, gh 는 실패해도 에러 본문을 stdout 으로 뱉으므로 로그인 형식을
-# 반드시 검증한다. 둘 다 실패하면 조용히 넘기지 말고 즉시 종료한다(fail-loud).
-me=""
-for _try in 1 2 3; do
-  for _cand in "$(gh api user -q .login 2>/dev/null)" \
-               "$(gh api graphql -f query='{viewer{login}}' --jq .data.viewer.login 2>/dev/null)"; do
-    if printf '%s' "$_cand" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}$'; then me="$_cand"; break 2; fi
-  done
-  sleep 2
-done
+# 사용자 확인은 공유 헬퍼(gh-login.sh)로 일원화 (#131) — REST /user 503 부분 장애
+# 폴백·형식 검증·3회 재시도는 그 안에 있고, REST 가 성공하면 GraphQL 은 호출하지
+# 않는다(종전 `for _cand in "$(…)" "$(…)"` 는 단어 전개 탓에 매번 둘 다 호출했다).
+# 실패는 조용히 넘기지 않고 즉시 종료한다(fail-loud) — me 오염은 빈 큐와 구분이 안 된다.
+me=$("$SCRIPT_DIR/gh-login.sh") || me=""
 if [ -z "$me" ]; then
   echo "reconcile: GitHub 사용자 확인 실패 (REST /user·GraphQL viewer 모두 응답 없음)" >&2
   exit 1
@@ -104,8 +97,33 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
       --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed") | .created_at] | last // empty' \
       2>/dev/null | grep -E '^[0-9]{4}-' | tail -n1 || true)
     if [ -n "$claimed_at" ]; then
-      prs=$(printf '%s' "$prs" | jq -c --arg c "$claimed_at" \
-        '[.[] | select((.state == "MERGED" and (.mergedAt // "") < $c) | not)]')
+      # 동률(`<=`)은 **이전 attempt** 로 본다 (#131): mergedAt·timeline created_at 은 초
+      # 단위라, 이전 PR 이 머지된 바로 그 초에 재claim 되면 두 값이 같아진다. `<` 면 그
+      # 옛 MERGED PR 이 남아 새 claim 을 완료로 오인한다.
+      keep=$(printf '%s' "$prs" | jq -c --arg c "$claimed_at" \
+        '[.[] | select((.state == "MERGED" and (.mergedAt // "") <= $c) | not)]')
+      # 걸러낸 옛 머지 PR 은 ②-보강 스윕이 다시 주워 같은 파괴를 하지 않도록 레저에
+      # 미리 기록한다 (#131) — 스윕은 seen_file 에 있는 키를 건너뛴다.
+      printf '%s' "$prs" | jq -r --arg c "$claimed_at" \
+        '.[] | select(.state == "MERGED" and (.mergedAt // "") <= $c) | .number' \
+        | while IFS= read -r _old; do
+            [ -n "$_old" ] || continue
+            grep -qxF "$repo#$_old" "$seen_file" 2>/dev/null || printf '%s\n' "$repo#$_old" >> "$seen_file"
+          done
+      prs="$keep"
+    else
+      # fail-closed (#131): 타임라인 조회 실패(rate limit·권한·일시 오류)나 라벨 이벤트
+      # 부재로 claim 시각을 못 얻으면 **정리를 하지 않는다**. 종전엔 필터가 통째로
+      # 건너뛰어져 이전 attempt 의 머지 PR 이 현재 claim 의 PR 로 취급됐고, 살아있는
+      # 워커의 worktree·agent:claimed 가 지워졌다(#3447 재발 경로).
+      echo "reconcile: $repo#$num claim 시각 확인 실패 — 재claim 필터 불가로 정리를 건너뛴다(fail-closed)" >&2
+      # 스윕도 같은 PR 을 주워 정리하지 않도록 이번 실행 한정으로 레저에 기록한다.
+      printf '%s' "$prs" | jq -r '.[] | select(.state == "MERGED") | .number' \
+        | while IFS= read -r _old; do
+            [ -n "$_old" ] || continue
+            grep -qxF "$repo#$_old" "$seen_file" 2>/dev/null || printf '%s\n' "$repo#$_old" >> "$seen_file"
+          done
+      continue
     fi
   fi
 
