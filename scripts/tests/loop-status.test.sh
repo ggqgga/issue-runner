@@ -22,7 +22,9 @@
 #   ⑪ (#147 T3) 실패 ⊎ 중복종료 — PR 라벨 `dup` 이 둘을 가르고 겹쳐 세지 않는다.
 #   ⑫ (#157) 질문 없는 홀드 — `hold:policy|conflict` 인데 `hold-note` 코멘트가 없으면
 #      사람대기 줄에 `질문 없음`. 조회는 그 조건의 이슈에만(다른 버킷·`hold:ladder`·
-#      사유 없는 건엔 gh 를 안 부른다), 조회 실패는 `질문 없음` 으로 단정하지 않는다.
+#      사유 없는 건엔 gh 를 안 부른다). **모르는 것은 모른다고 말한다** — 조회 실패·
+#      코멘트 100건 상한·`HOLD_NOTE_MAX` 초과는 `질문 없음` 이 아니라 warn `질문 유무
+#      미확인` 이고, `--json` 의 `note_missing` 도 `false` 가 아니라 `null` 이다.
 #
 # 기대 줄은 **손으로 적는다** — SUT 의 jq 를 베껴 기대값을 만들면 공허하게 통과한다
 # (transition.test.sh 의 관행).
@@ -215,6 +217,24 @@ cat > "$tmp/fx/ggqgga_BodaT.comments.4770.json" <<'FX'
 FX
 : > "$tmp/fx/ggqgga_BodaT.comments.4771.fail"
 
+# ── 픽스처: ggqgga/Capped (capped) — 코멘트 100건 상한 · HOLD_NOTE_MAX 전용 ──
+# 큰 bodat 픽스처를 더 부풀리지 않으려고 상한 두 축만 따로 세운다.
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Capped.issues.json" <<'FX'
+[
+ {"number":12,"title":"질문 없는 홀드","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":11,"title":"코멘트 100건인데 마커 있음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:conflict"}]},
+ {"number":10,"title":"코멘트 100건인데 마커 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:policy"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_Capped.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_Capped.pr_closed.json"
+# `--json comments` 는 페이지네이션 없이 첫 100건만 준다 — 마커가 그 밖으로 밀린 홀드를
+# `질문 없음` 으로 찍으면 없는 결함을 사람에게 들이민다. 상한에 닿았으면 "모른다" 다.
+jq -n '{comments: [range(0;100) | {body: "잡담 \(.)"}]}' > "$tmp/fx/ggqgga_Capped.comments.10.json"
+jq -n '{comments: ([range(0;99) | {body: "잡담 \(.)"}]
+                   + [{body: "사람 확인(conflict): 어느 쪽? <!-- hold-note: conflict --><!-- bodat:worker -->"}])}' \
+  > "$tmp/fx/ggqgga_Capped.comments.11.json"
+
 # ── 픽스처: ggqgga/issue-runner (runner) — 깨끗함 + release 있음 ─────────────
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_issue-runner.issues.json" <<'FX'
 [
@@ -298,7 +318,7 @@ has_line "승격 대기 — release 없는 레포" "$tmp/out" \
 no_sub "루프 밖 이슈 #4900 미집계" "$tmp/out" "#4900"
 
 # ③ warn 5종 + 사유 없음 + 인계 지연
-has_line "warn 9건" "$tmp/out" "  warn      9"
+has_line "warn 10건(질문 유무 미확인 1 포함)" "$tmp/out" "  warn      10"
 has_sub "warn 무소속 PR" "$tmp/out" \
   "    - 무소속 PR #4850(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4832 는 needs-human 아님"
 has_sub "warn 단계 라벨 중복" "$tmp/out" \
@@ -345,6 +365,9 @@ no_sub "사유 없는 홀드(#4826)엔 질문 없음 표시 없음" "$tmp/out" "
 no_sub "코멘트 조회 실패건은 질문 없음 으로 단정하지 않는다" "$tmp/out" "#4771(대기, conflict, 질문 없음)"
 has_sub "코멘트 조회 실패는 stderr 한 줄로 드러난다" "$tmp/err" \
   "bodat #4771 질문(hold-note) 코멘트 조회 실패"
+# stderr 로만 말하면 세 루프의 ④ Report(stdout 만 붙인다)에서 기능이 통째로 사라진다
+has_sub "코멘트 조회 실패는 stdout warn 으로도 올라온다" "$tmp/out" \
+  "    - 질문 유무 미확인 #4771(bodat) — 조회 실패"
 # 조회는 **사람대기 버킷의 policy·conflict** 에만 — 다른 버킷·다른 사유엔 안 묻는다(N+1 억제)
 ck "코멘트 조회 대상은 정확히 3건" "$(grep -c '^comments ' "$STUB_CALL_LOG")" 3
 for n in 4770 4771 4780; do
@@ -357,6 +380,7 @@ for n in 4825 4826 4848 4832 4803 4818; do
 done
 check "코멘트 조회: 깨끗한 레포(runner)엔 0건" \
   "$(grep -q '^comments ggqgga/issue-runner ' "$STUB_CALL_LOG" && echo no || echo ok)"
+
 
 # ③ 깨끗한 픽스처 + ④ 짧은 이름 특례
 has_line "runner 블록 헤더(issue-runner → runner)" "$tmp/out" \
@@ -417,7 +441,7 @@ ck "--json: failed 에는 dup PR 이 없다" \
   "$(jq -c '.repos[] | select(.repo_short=="bodat") | [.buckets.failed[].number]' < "$tmp/out")" '[4792]'
 ck "--json: 사람대기 holds + note_missing (#157)" \
   "$(jq -c '.repos[] | select(.repo_short=="bodat") | [.buckets.human_wait[] | {n:.number, h:.holds, m:.note_missing}]' < "$tmp/out")" \
-  '[{"n":4826,"h":[],"m":false},{"n":4825,"h":["ladder"],"m":false},{"n":4780,"h":["policy"],"m":false},{"n":4771,"h":["conflict"],"m":false},{"n":4770,"h":["conflict"],"m":true}]'
+  '[{"n":4826,"h":[],"m":false},{"n":4825,"h":["ladder"],"m":false},{"n":4780,"h":["policy"],"m":false},{"n":4771,"h":["conflict"],"m":null},{"n":4770,"h":["conflict"],"m":true}]'
 ck "--json: 인계 전 PR 은 구현중 항목에 handoff_pending" \
   "$(jq -c '.repos[] | select(.repo_short=="bodat") | [.buckets.claimed[] | {n:.number, p:.pr, h:.handoff_pending}]' < "$tmp/out")" \
   '[{"n":4803,"p":4854,"h":true},{"n":4701,"p":null,"h":false}]'
@@ -487,6 +511,34 @@ ck "--since 0h: exit 64" "$RC" 64
 STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" \
   "$SUT" --repo ggqgga/BodaT --since 0d >"$tmp/out" 2>"$tmp/err"; RC=$?
 ck "--since 0d: exit 64" "$RC" 64
+
+# ⑫-b 코멘트 100건 상한 — 마커가 그 밖으로 밀렸을 수 있으니 `질문 없음` 으로 단정 못 한다
+run --repo ggqgga/Capped --since 24h
+ck "capped: exit 0" "$RC" 0
+has_line "capped 사람대기 — 100건 상한은 미확인, 마커 있으면 조용, 0건이면 질문 없음" "$tmp/out" \
+  "  사람대기  3  #12(대기, policy, 질문 없음) #11(대기, conflict) #10(대기, policy)"
+has_sub "capped: 100건 상한은 warn 으로" "$tmp/out" \
+  "    - 질문 유무 미확인 #10(capped) — 코멘트 100건 상한"
+no_sub "capped: 마커가 상한 안에 있으면 미확인 아님" "$tmp/out" "질문 유무 미확인 #11"
+ck "capped: warn 은 그 1건뿐" "$(grep -c '질문 유무 미확인' "$tmp/out")" 1
+
+# ⑫-c HOLD_NOTE_MAX — 레포당 조회 상한. 넘는 후보는 묻지 않고 미확인으로 남는다.
+: > "$STUB_CALL_LOG"
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" HOLD_NOTE_MAX=1 \
+  "$SUT" --repo ggqgga/Capped --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "HOLD_NOTE_MAX=1: exit 0" "$RC" 0
+ck "HOLD_NOTE_MAX=1: gh 조회는 1건뿐" "$(grep -c '^comments ' "$STUB_CALL_LOG")" 1
+has_sub "HOLD_NOTE_MAX=1: 넘는 후보는 상한 초과 warn" "$tmp/out" \
+  "    - 질문 유무 미확인 #11(capped) — 조회 상한(1) 초과"
+has_sub "HOLD_NOTE_MAX=1: 상한 초과 warn 2건째" "$tmp/out" \
+  "    - 질문 유무 미확인 #10(capped) — 조회 상한(1) 초과"
+# 상한을 넘긴 건은 `질문 없음` 으로 찍히지 않는다 — 안 물어본 걸 단정하지 않는다
+no_sub "HOLD_NOTE_MAX=1: 안 물어본 건을 질문 없음 으로 찍지 않는다" "$tmp/out" "#11(대기, conflict, 질문 없음)"
+# 형식 오류는 조용한 기본값이 아니라 환경 실패(HANDOFF_GRACE_MIN 과 같은 규율)
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" HOLD_NOTE_MAX=50건 \
+  "$SUT" --repo ggqgga/Capped --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "HOLD_NOTE_MAX 형식 오류: exit 1" "$RC" 1
+has_sub "HOLD_NOTE_MAX 형식 오류: stdout 에도 사유" "$tmp/out" "HOLD_NOTE_MAX 형식 오류"
 
 echo "loop-status: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

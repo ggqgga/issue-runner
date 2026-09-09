@@ -112,7 +112,13 @@ if [ "$sub" = "issue comment" ] || [ "$sub" = "pr comment" ]; then
   esac
   [ "$mode" = "fail" ] && { echo "gh: connection refused" >&2; exit 1; }
   # 코멘트 API 만 일시 실패(#157) — 라벨 편집은 멀쩡한데 코멘트만 안 되는 실측 상황.
+  # STUB_COMMENT_FAIL=1 이면 전부, STUB_COMMENT_FAIL_NTH=<n> 이면 n 번째 호출만 실패한다
+  # (양쪽 대상 중 **둘째**만 실패하는 부분 성공을 재현하려면 카운터가 있어야 한다).
+  n=1
+  if [ -f "$STUB_STATE_DIR/.commentcount" ]; then n=$(( $(cat "$STUB_STATE_DIR/.commentcount") + 1 )); fi
+  echo "$n" > "$STUB_STATE_DIR/.commentcount"
   [ "${STUB_COMMENT_FAIL:-0}" = "1" ] && { echo "gh: HTTP 502 Bad Gateway" >&2; exit 1; }
+  [ "$n" = "${STUB_COMMENT_FAIL_NTH:-0}" ] && { echo "gh: HTTP 502 Bad Gateway" >&2; exit 1; }
   while [ $# -gt 0 ]; do
     case "$1" in --body) shift; printf '%s\n' "${1:-}" >> "$cf" ;; esac
     shift
@@ -185,6 +191,7 @@ run() {
   STUB_EDIT_LOG="$tmp/edit.log" STUB_SETUP_LOG="$tmp/setup.log" STUB_MUT_LOG="$tmp/mut.log" \
   STUB_PRCLOSE_FAIL="${STUB_PRCLOSE_FAIL:-0}" STUB_NOCLOSE="${STUB_NOCLOSE:-0}" \
   STUB_REL_FAIL="${STUB_REL_FAIL:-0}" STUB_COMMENT_FAIL="${STUB_COMMENT_FAIL:-0}" \
+  STUB_COMMENT_FAIL_NTH="${STUB_COMMENT_FAIL_NTH:-0}" \
   PATH="$tmp/bin:$PATH" "$SUT" "$tname" owner/repo "$iss" "$prn" "$@" >"$tmp/out" 2>"$tmp/err"
   RC=$?
 }
@@ -486,12 +493,19 @@ for t in verify-held closeout-blocked runner-held; do
 done
 unset STUB_COMMENT_FAIL
 
-# 이슈 쪽 코멘트가 실패하면 PR 코멘트가 이미 갔더라도 라벨은 여전히 0회여야 한다 —
-# "코멘트 둘 다 성공해야 라벨" 이 계약(부분 성공으로 라벨을 붙이지 않는다).
+# **부분 성공** — 첫 코멘트(이슈)는 갔는데 둘째(PR)가 실패한 경우. "코멘트 둘 다 성공해야
+# 라벨" 이 계약이라 여기서도 라벨은 0회다. 전부 실패시키는 스위치로는 이 경로를 못 짚는다
+# (SUT 가 이슈부터 부르므로 PR 코멘트는 아예 시도되지 않는다) — 둘째만 실패시켜야 한다.
 reset; seed 7 flow:verify; seed 9 flow:verify
-STUB_COMMENT_FAIL=1 run ok verify-held 9 7 --reason conflict --note q
-ck "코멘트 실패(양쪽 대상): 라벨 편집 0회" "$(edits)" 0
-unset STUB_COMMENT_FAIL
+STUB_COMMENT_FAIL_NTH=2 run ok verify-held 9 7 --reason conflict --note q
+ck "둘째 코멘트만 실패: exit 2" "$RC" 2
+ck "둘째 코멘트만 실패: 라벨 편집 0회" "$(edits)" 0
+ck "둘째 코멘트만 실패: 첫 코멘트는 실제로 갔다" "$(mut_order)" "issue-comment 9|pr-comment 7"
+ck "둘째 코멘트만 실패: PR 라벨 무편집" "$(labels_of 7)" "flow:verify"
+ck "둘째 코멘트만 실패: 이슈 라벨 무편집" "$(labels_of 9)" "flow:verify"
+check "둘째 코멘트만 실패: 실패한 쪽을 지목한다" \
+  "$(grep -q 'pr #7 사유 코멘트 실패' "$tmp/err" && echo ok || echo no)"
+unset STUB_COMMENT_FAIL_NTH
 
 # 과차단 회귀 가드 — 코멘트가 되는 정상 경로에선 라벨이 종전대로 붙고, 쓰기 순서가
 # 코멘트 → 라벨 이다(순서를 실측으로 못 박는다).
@@ -502,6 +516,18 @@ ck "순서: 코멘트가 라벨 편집보다 앞" "$(mut_order)" \
   "issue-comment 9|pr-comment 7|edit 7|edit 9"
 ck "순서: PR 라벨 종전대로" "$(labels_of 7)" "$(sorted "needs-human hold:policy")"
 ck "순서: 이슈 라벨 종전대로" "$(labels_of 9)" "$(sorted "needs-human hold:policy")"
+# ★생산자↔소비자 마커 계약★ — 이 코멘트를 읽는 쪽은 loop-status.sh(질문 유무)와
+# resume-sweep.sh(policy 재심)다. 양쪽이 각자 손으로 적은 정규식을 쓰므로, 여기서 실제
+# 생성 본문을 **그 소비자들의 정규식으로** 물어 둔다 — 안 그러면 포맷이 바뀌어도 세 스위트가
+# 다 초록인 채 프로덕션만 깨진다(각 스위트는 자기 사본만 보므로).
+check "마커 계약: 생성 본문이 소비자 정규식에 걸린다" \
+  "$(grep -qE '<!--[[:space:]]*hold-note:[[:space:]]*policy' "$tmp/state/9.comment" && echo ok || echo no)"
+check "마커 계약: loop-status.sh 가 같은 마커를 찾는다" \
+  "$(grep -qF 'hold-note:' "$DIR/loop-status.sh" && echo ok || echo no)"
+check "마커 계약: resume-sweep.sh 가 같은 마커를 찾는다" \
+  "$(grep -qF 'hold-note:' "$DIR/resume-sweep.sh" && echo ok || echo no)"
+check "마커 계약: 워커 마커가 마지막 줄" \
+  "$(tail -1 "$tmp/state/9.comment" | grep -qF '<!-- bodat:worker -->' && echo ok || echo no)"
 
 # --note 가 없는 전이(ladder 선택 · 그 밖의 전이)는 코멘트 단계를 아예 거치지 않는다 —
 # 코멘트 API 가 죽어 있어도 라벨은 종전대로 움직인다(과차단 회귀 가드).

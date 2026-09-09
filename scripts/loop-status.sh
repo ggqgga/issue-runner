@@ -82,6 +82,10 @@
 #                      으로 나오되 `(agent:claimed 인데 <N>분 경과 — 워커 사망 의심)` 이
 #                      덧붙는다. 후보 집합 하나를 둘로 **분할**하므로 표시와 warn 은 항상
 #                      서로 배타다(두 조건을 따로 쓰면 드리프트한다).
+#   · 질문 유무 미확인
+#                    — **사람대기 버킷**의 `hold:policy|conflict` 이슈인데 질문(hold-note)
+#                      코멘트의 유무를 못 봤다(조회 실패·응답 파싱 실패·코멘트 100건 상한·
+#                      `HOLD_NOTE_MAX` 초과). "질문 없음" 으로 접지 않고 모른다고 말한다.
 #   · needs-human 사유 없음
 #                    — **사람대기 버킷** 이슈에 `hold:*` 라벨이 하나도 없음. 사유 없는
 #                      needs-human 은 사람이 무엇을 판단해야 하는지 아무도 모르는 쓰레기통이
@@ -103,12 +107,16 @@
 #   `파이프라인 <short> — 조회 실패: <사유>` 한 줄만 찍고 다음 레포로 계속하며, 최종 exit 는
 #   1(부분 실패). release/compare 조회 실패는 레포를 실패로 만들지 않고 `승격 대기 —` 로
 #   degrade 한다(release 미존재와 같은 표기 — 둘 다 "셀 수 없음").
-#   질문 코멘트 조회(#157)가 실패하면 그 이슈만 `질문 없음` 표시를 **생략**하고 stderr 한
-#   줄을 남긴다 — 실패를 "질문 없음" 으로 접으면 없는 결함을 사람에게 들이민다.
+#   질문 코멘트 조회(#157)가 실패하면 그 이슈만 `질문 없음` 표시를 **생략**하고 warn
+#   `질문 유무 미확인` 을 올린다 — 실패를 "질문 없음" 으로 접으면 없는 결함을 사람에게
+#   들이민다. stderr 로만 말하지 않는 이유: 세 루프는 ④ Report 에 **stdout 만** 붙인다.
 #
 # ★환경 변수★ `HANDOFF_GRACE_MIN` — 인계 전 창(분, 기본 90, 0 이상 정수). 형식이 틀리면
 #   환경 실패로 죽는다(jq 에 그대로 넘겨 레포별 "집계 실패" 로 위장되지 않게). `0` 은 허용 —
 #   창이 없으면 warn 이 **늘어나지** `--since 0h` 처럼 거짓 "깨끗함" 이 되지 않는다.
+#   `HOLD_NOTE_MAX` — 레포당 질문(hold-note) 코멘트 조회 상한(기본 50, 0 이상 정수, #157).
+#   넘는 후보는 조회하지 않고 warn `질문 유무 미확인` 으로만 남는다. 형식이 틀리면 같은
+#   이유로 환경 실패.
 #
 # ★환경 실패 처리★ 레포와 무관한 실패(창 시각 계산 불가·jq 부재·집계/렌더/직렬화 jq 실패)는
 #   **stdout 에도** `파이프라인 — 스냅샷 실패: <사유>` 한 줄을 남기고 exit 1 한다. 세 루프는
@@ -205,6 +213,15 @@ grace_min=${HANDOFF_GRACE_MIN:-90}
 case "$grace_min" in
   ""|*[!0-9]*) snapshot_abort "HANDOFF_GRACE_MIN 형식 오류: $grace_min (0 이상 정수 분만)" ;;
 esac
+
+# ── 질문 코멘트 조회 상한 — HOLD_NOTE_MAX (#157) ───────────────────────────
+# 레포당 이 개수까지만 `gh issue view --json comments` 를 쓴다. 넘는 후보는 조회하지 않고
+# `질문 유무 미확인` warn 으로만 남는다(거짓 `질문 없음` 을 만들지 않는다).
+hold_note_max=${HOLD_NOTE_MAX:-50}
+case "$hold_note_max" in
+  ""|*[!0-9]*) snapshot_abort "HOLD_NOTE_MAX 형식 오류: $hold_note_max (0 이상 정수만)" ;;
+esac
+HOLD_NOTE_MAX=$hold_note_max
 
 now_epoch=$(date -u +%s 2>/dev/null)
 case "$now_epoch" in
@@ -365,11 +382,15 @@ def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | so
       ready:       bucket("ready";       . as $i | pr_of($i.number) as $p | (item($i; "#\($i.number)" + (if $p then " ← PR #\($p.number)" else "" end)) + {pr: (if $p then $p.number else null end)})),
       harvesting:  bucket("harvesting";  . as $i | pr_of($i.number) as $p | (item($i; "#\($i.number)" + (if $p then " ← PR #\($p.number)" else "" end)) + {pr: (if $p then $p.number else null end)})),
       human_wait:  bucket("human_wait";  . as $i | pr_of($i.number) as $p
-                     | (($noteless | index($i.number)) != null) as $nomiss
+                     # 3상태: true=질문 없음 · false=질문 있음 · null=미확인(조회·파싱 실패
+                     # ·코멘트 상한). 미확인을 false 로 접으면 기계 판독면이 "질문 있음" 이라
+                     # 거짓 단정을 하게 된다 — 텍스트가 침묵하는 것과 같은 이유로 null 이다.
+                     | (if ($noteunknown | map(.n) | index($i.number)) != null then null
+                        else (($noteless | index($i.number)) != null) end) as $nomiss
                      | (item($i; "#\($i.number)(" + ko_of($i.stage)
                                  + ", " + (if ($i.holds | length) == 0 then "사유 없음"
                                            else ($i.holds | join(", ")) end)
-                                 + (if $nomiss then ", 질문 없음" else "" end)
+                                 + (if $nomiss == true then ", 질문 없음" else "" end)
                                  + (if $p then ", PR #\($p.number)" else "" end) + ")")
                         + {stage: $i.stage, holds: $i.holds, note_missing: $nomiss,
                            pr: (if $p then $p.number else null end)})),
@@ -407,6 +428,11 @@ def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | so
       + ($iss | map(select(.bucket == "human_wait" and (.holds | length) == 0))
         | map({kind: "hold_no_reason", repo_short: $rs, issue: .number,
                text: "needs-human 사유 없음 #\(.number)(\($rs)) — hold:* 라벨 없음"}))
+      # 질문(hold-note) 유무를 못 봤다 — stderr 로만 말하면 세 루프의 ④ Report(stdout 만
+      # 붙인다)에서 기능이 통째로 사라진 채 exit 0 이라 "질문 없는 홀드 0건" 으로 읽힌다.
+      + ($noteunknown | sort_by(-.n)
+        | map({kind: "hold_note_unknown", repo_short: $rs, issue: .n,
+               text: "질문 유무 미확인 #\(.n)(\($rs)) — \(.why)"}))
       # 단계 라벨 중복
       + ($iss | map(select((.ladder | length) > 1))
         | map({kind: "dup_stage", repo_short: $rs, issue: .number,
@@ -531,7 +557,8 @@ for repo in "${repos[@]}"; do
     fi
   fi
 
-  # build_snapshot <noteless JSON 배열> <출력 파일> — BUILD_JQ 한 패스(순수 · 부작용 없음).
+  # build_snapshot <noteless 배열> <noteunknown 배열> <출력 파일>
+  #   — BUILD_JQ 한 패스(순수 · 부작용 없음).
   build_snapshot() {
     jq -n \
       --argjson issues "$issues_json" \
@@ -542,8 +569,9 @@ for repo in "${repos[@]}"; do
       --argjson grace "$grace_min" \
       --argjson ahead "$ahead" \
       --argjson noteless "$1" \
+      --argjson noteunknown "$2" \
       --arg repo "$repo" --arg rs "$short" --arg since "$since" \
-      "$BUILD_JQ" > "$2"
+      "$BUILD_JQ" > "$3"
   }
   build_fail() {
     exit_code=1
@@ -555,7 +583,7 @@ for repo in "${repos[@]}"; do
   # 버킷 조건을 여기 다시 적으면(needs-human 이면서 배포대기가 아닌 것) 언젠가 SSOT 와
   # 갈라진다. 그래서 같은 BUILD_JQ 를 `noteless=[]` 로 한 번 돌려 버킷을 얻고, 질문 조회가
   # 실제로 필요할 때만 두 번째 패스를 돈다(jq 는 로컬 · gh 호출 0).
-  if ! build_snapshot '[]' "$tmpdir/repo.pre.json"; then
+  if ! build_snapshot '[]' '[]' "$tmpdir/repo.pre.json"; then
     build_fail
     continue
   fi
@@ -563,43 +591,73 @@ for repo in "${repos[@]}"; do
   # ── 질문(hold-note) 유무 — 사람대기 버킷의 hold:policy|conflict 에만 (#157) ──
   # `hold:ladder` 는 `--note` 가 선택이라 질문이 없는 게 정상이고, 사유 없는 홀드는 이미
   # 별도 warn 이 잡는다. 그 둘까지 물으면 N+1 만 늘고 화면엔 거짓 지적이 는다.
+  # 결과는 3상태다 — 질문 있음 / 없음(`$noteless`) / **모름**(`$noteunknown`). 모름을
+  # "없음" 으로 접으면 없는 결함을 사람에게 들이밀고, "있음" 으로 접으면 진짜 결함을
+  # 감춘다. 둘 다 거짓이라 모름은 모름으로 실어 warn `질문 유무 미확인` 으로 낸다.
   noteless="[]"
-  if ! jq -r '.buckets.human_wait[]
-              | select(.holds | index("policy") != null or index("conflict") != null)
-              | .number' "$tmpdir/repo.pre.json" > "$tmpdir/cands" 2>/dev/null; then
-    echo "$SELF: $short 사람대기 질문 대상 추출 실패(jq) — 질문 없음 표시를 건너뛴다" >&2
+  noteunknown="[]"
+  nl_sep=""; nl_body=""
+  nu_sep=""; nu_body=""
+  # unknown <번호> <사유> — 표시는 생략하고 stdout warn 으로 사실을 남긴다.
+  mark_unknown() {
+    nu_body="${nu_body}${nu_sep}{\"n\":$1,\"why\":\"$2\"}"; nu_sep=","
+  }
+  cand_err=$(jq -r '.buckets.human_wait[]
+                    | select(.holds | index("policy") != null or index("conflict") != null)
+                    | .number' "$tmpdir/repo.pre.json" 2>&1 > "$tmpdir/cands")
+  # shellcheck disable=SC2181  # 위 대입의 종료코드를 봐야 한다(cand_err 은 stderr 만 담는다)
+  if [ $? -ne 0 ]; then
+    echo "$SELF: $short 사람대기 질문 대상 추출 실패(jq) — 질문 없음 표시를 건너뛴다: $(printf '%s' "$cand_err" | tr '\n' ' ' | cut -c1-200)" >&2
     : > "$tmpdir/cands"
   fi
   if [ -s "$tmpdir/cands" ]; then
-    nl_sep=""
-    nl_body=""
+    seen=0
     # fd 3 으로 읽는다 — 루프 안에서 gh 를 부르므로 stdin 을 목록에 묶으면 안 된다.
     while IFS= read -r cand <&3; do
       [ -n "$cand" ] || continue
-      if ! run_gh gh issue view "$cand" --repo "$repo" --json comments; then
-        # 조회 실패를 "질문 없음" 으로 접으면 없는 결함을 사람에게 들이민다 — 모르는 건
-        # 표시하지 않고 사실만 stderr 로 남긴다(레포를 실패로 만들지는 않는다).
-        echo "$SELF: $short #$cand 질문(hold-note) 코멘트 조회 실패 — 표시 생략: $GH_ERR" >&2
+      seen=$((seen + 1))
+      # 호출 상한 — 목록 조회에 `--limit 200` 이 있는데 여기만 무제한이면, 사람대기가
+      # 쌓일수록(그게 이 기능이 있는 이유다) 매 틱 gh 호출이 선형으로 는다.
+      if [ "$seen" -gt "$HOLD_NOTE_MAX" ]; then
+        mark_unknown "$cand" "조회 상한($HOLD_NOTE_MAX) 초과"
         continue
       fi
-      # 파싱 실패와 "질문 없음" 을 구분한다 — jq 가 죽었을 때의 빈 출력이 `false` 로
-      # 읽히면 조회 실패가 조용히 `질문 없음` 이 된다.
-      hasnote=$(printf '%s' "$GH_OUT" \
-        | jq -r '[.comments[]? | .body // "" | select(test("<!--\\s*hold-note:"))] | length > 0' 2>/dev/null) \
-        || hasnote=""
-      case "$hasnote" in
-        true)  ;;
-        false) nl_body="${nl_body}${nl_sep}${cand}"; nl_sep="," ;;
-        *)     echo "$SELF: $short #$cand 코멘트 응답 파싱 실패 — 표시 생략" >&2 ;;
+      if ! run_gh gh issue view "$cand" --repo "$repo" --json comments; then
+        echo "$SELF: $short #$cand 질문(hold-note) 코멘트 조회 실패: $GH_ERR" >&2
+        mark_unknown "$cand" "조회 실패"
+        continue
+      fi
+      # 세 갈래를 한 번에 가른다. `capped` 가 필요한 이유: `--json comments` 는 페이지네이션
+      # 없이 첫 100건만 준다 — 오래 걸린 홀드일수록 코멘트가 길어 마커가 상한 밖으로 밀리면
+      # 거짓 `질문 없음` 이 된다. 상한에 닿았는데 못 찾았으면 "없다" 가 아니라 "모른다" 다.
+      # 파싱 실패의 빈 출력이 `none` 으로 읽히지 않게 종료코드도 함께 본다.
+      nstate=$(printf '%s' "$GH_OUT" | jq -r '
+        [.comments[]? | .body // ""] as $b
+        | if ([$b[] | select(test("<!--\\s*hold-note:"))] | length) > 0 then "has"
+          elif ($b | length) >= 100 then "capped"
+          else "none" end' 2>/dev/null) || nstate=""
+      case "$nstate" in
+        has)    ;;
+        none)   nl_body="${nl_body}${nl_sep}${cand}"; nl_sep="," ;;
+        capped) echo "$SELF: $short #$cand 코멘트가 조회 상한(100)에 닿아 마커를 못 봤다" >&2
+                mark_unknown "$cand" "코멘트 100건 상한" ;;
+        *)      echo "$SELF: $short #$cand 코멘트 응답 파싱 실패" >&2
+                mark_unknown "$cand" "응답 파싱 실패" ;;
       esac
     done 3< "$tmpdir/cands"
     [ -z "$nl_body" ] || noteless="[$nl_body]"
+    [ -z "$nu_body" ] || noteunknown="[$nu_body]"
   fi
 
-  if [ "$noteless" = "[]" ]; then
-    # 질문 없는 홀드가 없으면 예비 패스의 결과가 곧 최종 결과다(재집계 불필요).
-    mv "$tmpdir/repo.pre.json" "$tmpdir/repo.json"
-  elif ! build_snapshot "$noteless" "$tmpdir/repo.json"; then
+  if [ "$noteless" = "[]" ] && [ "$noteunknown" = "[]" ]; then
+    # 질문 없는 홀드도 미확인도 없으면 예비 패스의 결과가 곧 최종 결과다(재집계 불필요).
+    # mv 실패를 흘리면 바로 아래 jq 가 **직전 레포의** 스냅샷을 읽어 붙인다 — 부분 실패가
+    # "성공(남의 데이터)" 으로 접히는 경로라 여기서 끊는다.
+    if ! mv "$tmpdir/repo.pre.json" "$tmpdir/repo.json"; then
+      build_fail
+      continue
+    fi
+  elif ! build_snapshot "$noteless" "$noteunknown" "$tmpdir/repo.json"; then
     build_fail
     continue
   fi
