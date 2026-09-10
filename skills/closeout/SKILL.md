@@ -101,6 +101,13 @@ closeout 이 머지한다. 그래서 `closeout-eligible.sh` 는 ✅ 존재만으
    인덱스**로 잰다 — GitHub 코멘트 시각은 초 단위라 동초에 달린 ✅ 와 마커의 순서를
    시각만으로는 가릴 수 없다.
 
+두 겹 모두 **코멘트를 전부 봤다**는 전제 위에 선다. `gh pr view --json comments` 는
+페이지네이션 없이 **첫 100건**만 주므로 두 헬퍼는 그 경로를 쓰지 않고 `pr-comments.sh`
+(= `gh api .../issues/N/comments --paginate`) **한 자리**로 읽는다. 반송을 여러 번 도는
+PR 은 워커·verify·closeout 코멘트가 겹겹이 쌓여 100건이 먼 숫자가 아니고, 상한에 갇히면
+양방향으로 조용히 틀린다 — 새 ✅ 가 101번째 이후면 머지 가능한 PR 이 영영 후보에 안 뜨고
+(조용한 큐 사망), 반송 마커가 101번째 이후면 반송된 PR 이 안전망을 통과한다.
+
 **대상**: `me=$(gh api user -q .login)` 후 `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc`(FIFO)로 열린 PR 을 모으고,
 head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify` 미부착**이고 **`needs-human`

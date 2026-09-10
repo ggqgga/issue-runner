@@ -31,7 +31,9 @@
 # (재리뷰·재판정 대비). 한/영 병행 워커라 영문 접두(Merge verdict/Verifier review)도 본다.
 #
 # 테스트/재현용 env 오버라이드 (없으면 gh/date 로 실측):
-#   FC_COMMENTS_JSON  코멘트 배열 JSON([{body,createdAt},...]) — gh 대체
+#   FC_COMMENTS_JSON  코멘트 배열 JSON([{body,createdAt},...]) — 실조회 대체.
+#                      미지정 시 pr-comments.sh 로 **페이지네이션 전량** 조회한다
+#                      (`gh pr view --json comments` 의 첫 100건 상한 회피, #171).
 #   FC_FAILING        실패 체크 수(정수) — statusCheckRollup 대체
 #   FC_HEAD_AT        head 커밋 시각(ISO8601) — gh pr view --json commits 대체.
 #                      빈 값/파싱 불가 = **못 얻음**. 🔄 계열 갈래(#110 스테일 클록)에선
@@ -40,6 +42,8 @@
 #   FC_NOW            현재 epoch(초) — date 대체
 #   STALE_FINISH_MIN  시간버퍼(분, 기본 30)
 set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 repo=${1:?repo}
 pr=${2:?pr_num}
@@ -52,7 +56,17 @@ now=${FC_NOW:-$(date -u +%s)}
 if [ -n "${FC_COMMENTS_JSON:-}" ]; then
   comments="$FC_COMMENTS_JSON"
 else
-  comments=$(gh pr view "$pr" --repo "$repo" --json comments -q '.comments' 2>/dev/null)
+  # 코멘트는 **페이지네이션**해서 전량 읽는다(#171 반송 3회차 [P1-2]).
+  # `gh pr view --json comments` 는 첫 100건만 준다 — 반송을 여러 번 도는 PR 은
+  # 코멘트가 쉽게 그 상한을 넘고, 그러면 101번째 이후의 새 ✅ 를 못 봐 머지 가능한
+  # PR 이 영영 후보에 안 뜨거나(조용한 큐 사망) 101번째 이후의 반송 마커를 놓쳐
+  # 반송된 PR 이 통과한다. 조회 로직은 pr-comments.sh **한 자리**에 있다(사유·순서
+  # 계약은 그 파일 주석 참조).
+  #
+  # 조회 실패는 `[]` 로 떨어뜨린다 — 빈 코멘트에는 판정 코멘트가 없으므로 아래 모든
+  # 갈래가 active(게이트 닫힘)로 수렴한다. 부분 출력을 정상값으로 채택하지 않는 것이
+  # 핵심이다(PR#139 교훈: 빈 결과와 실패를 구분하고, 실패는 가드 분기로 보내라).
+  comments=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$pr" 2>/dev/null) || comments=''
 fi
 [ -n "$comments" ] || comments='[]'
 
@@ -73,8 +87,25 @@ else
 fi
 
 # ISO8601(...Z) → epoch. BSD(date -j -f) 우선, GNU(date -d) 폴백.
+#
+# **파싱 전에 형식을 검사한다**(#171 반송 3회차 [P1-1]). GNU 폴백이 있다는 것 자체가
+# GNU 박스를 지원 대상으로 삼았다는 뜻인데, 두 구현은 *잘못된 입력*에서 갈린다:
+#   BSD `date -j -f "%Y-%m-%dT%H:%M:%SZ" "" +%s` → `illegal time format`, 실패(빈 값)
+#   GNU `date -d "" +%s`                        → **실패하지 않고 "오늘 자정" epoch**
+# 그래서 형식 검사가 없으면 GNU 박스에서 head 조회가 비었는데도 head_epoch 가 비지
+# 않는다 — 자정 이후 찍힌 정상 ✅ 이면 `head <= verdict` 가 참이 돼 done_verdict 가
+# 나온다. 아래 ✅ 갈래가 없애려던 fail-open 이 GNU 에서만 되살아나는 것이다.
+# (GNU 는 `yesterday`·`now` 같은 느슨한 표현도 받는다 — 빈 문자열만의 문제가 아니다.)
+#
+# 게이트가 "빈 입력이 유효값으로 둔갑" 을 입구에서 막아야 한다는 게 PR#139 교훈의 3판:
+# 저기선 실패가 부분 출력으로, 여기선 **실패조차 안 하고** 그럴듯한 값으로 새어 든다.
+# 형식 검사를 앞에 두면 두 date 구현에서 결과가 같아진다(테스트는 GNU 스텁으로 재현).
 iso_to_epoch() {
-  local iso="$1"
+  local iso="${1:-}"
+  case "$iso" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+    *) return 1 ;;
+  esac
   date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null && return 0
   date -u -d "$iso" +%s 2>/dev/null
 }

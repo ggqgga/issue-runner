@@ -124,6 +124,13 @@ the code closeout itself blocked. So `closeout-eligible.sh` never promotes on th
    by `createdAt` — GitHub comment times are second-granular, so a ✅ and a marker written in the
    same second cannot be ordered by time.
 
+Both layers rest on having seen **every** comment. `gh pr view --json comments` returns only the
+**first 100**, with no pagination, so neither helper uses that path — both read through
+`pr-comments.sh` (`gh api .../issues/N/comments --paginate`), in **one place**. A PR that bounces
+several times piles up worker/verify/closeout comments, so 100 is not a distant number, and being
+capped is silently wrong in both directions: a new ✅ past #100 means a mergeable PR never surfaces
+as a candidate (a queue that dies quietly), and a bounce marker past #100 slips through the net.
+
 **Targets**: `me=$(gh api user -q .login)`, then `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc` (FIFO). For each PR whose head is
 `agent/issue-*` and that is **not labeled `harvesting`**, **not labeled `flow:verify`**, and **not

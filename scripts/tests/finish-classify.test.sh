@@ -302,5 +302,167 @@ if [ "$got" = stale_reverify ]; then pass=$((pass + 1)); else
 fi
 rm -rf "$stub"
 
+# ── #171(반송 3회차) [P1-1]: 날짜 파싱이 BSD·GNU 두 구현에서 같아야 한다 ──────
+# `iso_to_epoch` 는 BSD(`date -j -f`) 실패 시 GNU(`date -d`) 로 폴백한다. 그 폴백이
+# 있다는 것 자체가 GNU 박스를 지원 대상으로 삼았다는 뜻인데, 두 구현은 **잘못된
+# 입력**에서 갈린다:
+#   BSD: `date -u -j -f ... "" +%s` → illegal time format, 실패(빈 값) → active
+#   GNU: `date -u -d "" +%s`        → **실패하지 않고 오늘 자정 epoch**
+# 형식 검사가 없으면 GNU 박스에서 head 조회가 비었는데도 head_epoch 가 비지 않고,
+# 자정 이후 찍힌 정상 ✅ 이면 `head <= verdict` 가 참이 돼 done_verdict — 이 PR 이
+# 없애려던 fail-open 이 GNU 에서만 되살아난다. 실 GNU 박스가 없으므로 스텁 date 로
+# 그 동작을 재현한다.
+gnu=$(mktemp -d)
+cat > "$gnu/date" <<'STUB'
+#!/bin/sh
+# GNU coreutils date 흉내 (BSD 맥에서 GNU 박스 동작 재현):
+#   · `-j -f` 는 GNU 에 없는 옵션 → 실패(= BSD 우선 시도가 떨어져 폴백을 탄다)
+#   · `-d ""` 는 실패하지 않고 **오늘 자정**(고정: $GNU_MIDNIGHT)
+#   · `-d yesterday` 같은 느슨한 표현도 파싱한다(ISO 아닌 값이 통과하는 실증)
+#   · 정상 ISO8601 은 그대로 epoch (실 date 에 위임 — BSD/GNU 어느 쪽이든)
+case "$*" in
+  *" -j "*) echo "date: invalid option -- 'j'" >&2; exit 1 ;;
+esac
+if [ "${1:-}" = "-u" ] && [ "${2:-}" = "-d" ]; then
+  case "${3:-}" in
+    "")        echo "$GNU_MIDNIGHT"; exit 0 ;;
+    yesterday) echo $((GNU_MIDNIGHT - 86400)); exit 0 ;;
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z)
+      /bin/date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$3" +%s 2>/dev/null && exit 0
+      /bin/date -u -d "$3" +%s 2>/dev/null && exit 0
+      exit 1 ;;
+    *) echo "date: invalid date '${3:-}'" >&2; exit 1 ;;
+  esac
+fi
+exec /bin/date "$@"
+STUB
+chmod +x "$gnu/date"
+GNU_MIDNIGHT=$((NOW - 12 * 3600))   # NOW=12:00Z 이므로 같은 날 00:00Z
+
+# assert_gnu <name> <expected> <comments-json> <head_at> — GNU 스텁 date 로 같은 판정.
+assert_gnu() {
+  local name="$1" expect="$2" comments="$3" head_at="$4" got
+  got=$(PATH="$gnu:$PATH" GNU_MIDNIGHT="$GNU_MIDNIGHT" \
+    FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
+    FC_COMMENTS_JSON="$comments" FC_HEAD_AT="$head_at" "$SUT" owner/repo 1 2>/dev/null)
+  if [ "$got" = "$expect" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "  ✗ [GNU] $name — 기대=$expect 실제=$got"
+  fi
+}
+
+verdict_after_midnight='[
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:01:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:02:00Z"}
+]'
+
+# G1) 스텁 자체가 GNU 를 재현하는지 먼저 고정한다 — `-d ""` 가 **실패하지 않고** 자정을
+#     준다는 전제가 깨지면 아래 G2 는 아무것도 안 재는 빈 테스트가 된다.
+got=$(PATH="$gnu:$PATH" GNU_MIDNIGHT="$GNU_MIDNIGHT" date -u -d "" +%s 2>/dev/null)
+if [ "$got" = "$GNU_MIDNIGHT" ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [GNU] 스텁 전제(-d \"\" → 오늘 자정) — 실제='$got'"
+fi
+
+# G2) **핵심 회귀** — head 시각을 못 얻었는데(빈 문자열) ✅ 는 자정 이후(11:02).
+#     형식 검사가 없으면 head_epoch=자정 ≤ verdict → done_verdict 로 게이트가 열린다.
+#     뮤테이션: iso_to_epoch 의 case 형식 검사를 지우면 이 줄이 빨개진다.
+assert_gnu "head시각못얻음(빈문자열)→active" active "$verdict_after_midnight" ""
+
+# G3) GNU 가 파싱하지만 ISO8601 이 아닌 값(`yesterday`) → active.
+#     빈 문자열만의 문제가 아니다 — GNU 는 느슨한 표현을 다 받는다.
+assert_gnu "ISO아닌GNU표현(yesterday)→active" active "$verdict_after_midnight" "yesterday"
+
+# G4) 두 구현 모두에서 실패하는 쓰레기 문자열 → active(동작 일치 확인).
+assert_gnu "쓰레기문자열→active" active "$verdict_after_midnight" "not-a-real-timestamp"
+
+# G5) 무회귀 — 정상 ISO8601 은 GNU 에서도 그대로 파싱돼 done_verdict.
+#     (형식 검사가 정상 경로를 막지 않는다.)
+assert_gnu "정상ISO→done_verdict(무회귀)" done_verdict "$verdict_after_midnight" "2026-07-05T10:55:00Z"
+
+# G6) 대칭 확인 — 같은 입력을 **BSD(이 박스 실 date)** 로 돌려도 판정이 같다.
+#     이 네 줄이 위 G2~G5 와 짝을 이뤄 "두 구현에서 같게 동작한다" 를 실증한다.
+assert "BSD·head시각못얻음→active" active "$verdict_after_midnight" ""
+assert "BSD·ISO아닌표현(yesterday)→active" active "$verdict_after_midnight" "yesterday"
+assert "BSD·쓰레기문자열→active" active "$verdict_after_midnight" "not-a-real-timestamp"
+assert "BSD·정상ISO→done_verdict" done_verdict "$verdict_after_midnight" "2026-07-05T10:55:00Z"
+
+rm -rf "$gnu"
+
+# ── #171(반송 3회차) [P1-2]: 코멘트 100건 상한을 넘겨 읽는다 ─────────────────
+# `gh pr view --json comments` 는 페이지네이션 없이 첫 100건만 준다 — 이 레포가 이미
+# 아는 함정(scripts/tests/loop-status.test.sh:267 이 `range(0;100)` 픽스처로 같은 경계를
+# 잰다). 반송을 여러 번 도는 PR 은 코멘트가 100건을 쉽게 넘고, 그때 **새 커밋 + 새 ✅**
+# 가 101번째 이후면 분류기는 첫 100건의 낡은 ✅ 만 보고 active 를 유지한다 →
+# 머지 가능한 PR 이 영영 후보에 안 뜬다(조용한 큐 사망). 스텁 gh 는 실 gh 처럼 두
+# 경로를 **다르게** 응답한다: `pr view --json comments` 는 첫 100건만,
+# `api .../issues/N/comments --paginate` 는 전량(+ 넘겨받은 --jq 를 그대로 적용).
+pg=$(mktemp -d)
+# 122건: [0]=낡은 ✅(09:00) · [1..120]=잡담 · [121]=새 ✅(11:30). head 커밋은 11:00.
+#   전량 조회 → 최신 ✅=11:30 ≥ head=11:00 → done_verdict
+#   첫 100건만  → 최신 ✅=09:00 <  head=11:00 → active (증명 실패)
+jq -n '
+  [ {body:"머지 판정: ✅ 머지 가능(구판정)\n<!-- bodat:worker -->", created_at:"2026-07-05T09:00:00Z"} ]
+  + [ range(0;120) | {body:("검증자 리뷰: 진행 메모 \(.)\n<!-- bodat:worker -->"), created_at:"2026-07-05T10:00:00Z"} ]
+  + [ {body:"머지 판정: ✅ 머지 가능(재검증)\n<!-- bodat:worker -->", created_at:"2026-07-05T11:30:00Z"} ]' \
+  > "$pg/all.json"
+cat > "$pg/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_CAPTURE"
+paginate=0; jqf='.'; prev=''
+for a in "$@"; do
+  [ "$prev" = "--jq" ] && jqf="$a"
+  [ "$a" = "--paginate" ] && paginate=1
+  prev="$a"
+done
+if [ "$paginate" = 1 ]; then
+  # 실 gh: --jq 를 페이지마다 적용해 오브젝트를 줄줄이 낸다(상한 없음).
+  jq -c "$jqf" < "$STUB_ALL"
+  exit 0
+fi
+case "$*" in
+  # 실 gh 의 100건 상한 재현 — 옛 경로로 되돌리면 여기 걸려 판정이 뒤집힌다.
+  *"pr view"*"--json comments"*)
+    jq -c '[.[0:100][] | {body: .body, createdAt: .created_at}]' < "$STUB_ALL" ;;
+  *) echo "" ;;
+esac
+STUB
+chmod +x "$pg/gh"
+pgcap="$pg/capture"; : > "$pgcap"
+
+# (a) 전량을 읽어야 최신 ✅(101번째 이후)를 본다 → done_verdict.
+#     뮤테이션: 조회를 `gh pr view --json comments` 로 되돌리면 active 로 빨개진다.
+got=$(PATH="$pg:$PATH" STUB_CAPTURE="$pgcap" STUB_ALL="$pg/all.json" \
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 FC_HEAD_AT="2026-07-05T11:00:00Z" \
+  "$SUT" owner/repo 1 2>/dev/null)
+if [ "$got" = done_verdict ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ 코멘트100건초과·새✅가101번째이후 — 기대=done_verdict 실제=$got"
+fi
+# (b) 그 조회가 실제로 페이지네이션 경로였는지 (인자 계약 — 25(b) 와 같은 취지).
+if grep -q -- '--paginate' "$pgcap" && grep -q 'issues/1/comments' "$pgcap"; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "  ✗ 코멘트 조회 인자 계약 — '--paginate'/issues/1/comments 없음:"
+  sed 's/^/      /' "$pgcap"
+fi
+# (c) 조회 실패(gh 비정상 종료)는 빈 결과와 구분해 fail-closed → active.
+#     부분 출력을 정상값으로 채택하면 "뒤쪽 코멘트가 없다" 로 읽혀 가드가 우회된다.
+cat > "$pg/gh" <<'STUB'
+#!/usr/bin/env bash
+# --paginate 중간 페이지 실패: 부분 출력을 내고 비정상 종료(실 gh 동작).
+printf '%s\n' '{"body":"머지 판정: ✅ 머지 가능","createdAt":"2026-07-05T11:30:00Z"}'
+exit 1
+STUB
+chmod +x "$pg/gh"
+got=$(PATH="$pg:$PATH" STUB_CAPTURE="$pgcap" STUB_ALL="$pg/all.json" \
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 FC_HEAD_AT="2026-07-05T11:00:00Z" \
+  "$SUT" owner/repo 1 2>/dev/null)
+if [ "$got" = active ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ 코멘트 조회 부분실패→fail-closed — 기대=active 실제=$got"
+fi
+rm -rf "$pg"
+
 echo "finish-classify.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]

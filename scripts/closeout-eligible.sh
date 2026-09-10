@@ -36,7 +36,7 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   in_scope "$repo" || continue
 
   meta=$(gh pr view "$pr" --repo "$repo" \
-    --json headRefName,mergeable,labels,comments,closingIssuesReferences,commits 2>/dev/null)
+    --json headRefName,mergeable,labels,closingIssuesReferences,commits 2>/dev/null)
   [ -n "$meta" ] || continue
 
   head=$(printf '%s' "$meta" | jq -r '.headRefName')
@@ -56,8 +56,21 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
     CONFLICTING|UNKNOWN) continue ;;
   esac
 
-  printf '%s' "$meta" \
-    | jq -e '[.comments[].body] | map(select(startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))) | length > 0' \
+  # 코멘트는 meta 에 안 싣고 pr-comments.sh 로 **페이지네이션 전량** 읽는다(#171 [P1-2]).
+  # `gh pr view --json comments` 는 첫 100건만 준다 — 아래 세 판정(✅ 존재 · 반송 마커
+  # 안전망 · 미해결 사람 코멘트)이 전부 그 상한 안에 갇혀 조용히 틀린다:
+  #   · 101번째 이후의 새 ✅ 를 못 봄 → 머지 가능한 PR 이 영영 후보에 안 뜬다.
+  #   · 101번째 이후의 반송 마커를 못 봄 → 반송된 PR 이 안전망을 통과한다.
+  # 반송을 여러 번 도는 PR 은 워커·verify·closeout 코멘트가 겹겹이 쌓여 100건이 먼
+  # 숫자가 아니다. 조회는 finish-classify 와 **같은 헬퍼 한 자리**를 공유한다.
+  #
+  # 조회 실패(exit 1)면 후보에서 뺀다 — 코멘트를 못 읽었다는 건 반송되지 않았음을
+  # **증명하지 못한** 것이고, 머지 게이트에서 증명 실패는 통과가 아니다(fail-closed).
+  comments=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$pr" 2>/dev/null) || continue
+  [ -n "$comments" ] || continue
+
+  printf '%s' "$comments" \
+    | jq -e '[.[].body] | map(select(startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))) | length > 0' \
     >/dev/null || continue
 
   # 결정론 재사용 — finish-classify.sh 의 head-SHA 대조 판정을 그대로 쓴다(#171 개발계획
@@ -66,12 +79,16 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # done_verdict 를 내지 않고(active) 여기서도 걸러진다.
   # FC_COMMENTS_JSON·FC_HEAD_AT 으로 이미 가져온 comments·commits 를 그대로 넘겨
   # 중복 gh 조회를 피한다(사전 리뷰 WARN — ✅ 후보마다 별도 gh 왕복이 나던 것을
-  # 여기 meta 에 commits 를 추가로 얹어 없앤다). failing(CI 실패 카운트)만 finish-classify
-  # 가 자체 실측한다 — 그 판정 로직(statusCheckRollup jq 필터)을 여기서 다시 베끼지
-  # 않는다(같은 이유로 로직 두 벌 금지).
+  # 여기 meta 에 commits 를 추가로 얹어 없앤다).
+  #
+  # FC_FAILING=0 도 넘긴다: finish-classify 의 CI 실패 가드는 `🔄` 갈래에만 걸리는데
+  # 여기서 받는 판정은 `✅` 갈래(done_verdict) 하나뿐이라 그 값이 쓰이지 않는다. 안
+  # 넘기면 후보마다 statusCheckRollup 을 헛조회한다(실 CI 게이트는 아래
+  # closeout-ci-pass.sh 가 로컬 CI 캐시로 따로 본다). 판정 로직을 여기서 베끼는 게
+  # 아니라 **쓰이지 않는 입력의 조회만** 생략하는 것이다.
   head_at=$(printf '%s' "$meta" | jq -r '(.commits // [])[-1].committedDate // empty')
-  verdict=$(FC_COMMENTS_JSON="$(printf '%s' "$meta" | jq -c '.comments')" \
-    FC_HEAD_AT="$head_at" \
+  verdict=$(FC_COMMENTS_JSON="$comments" \
+    FC_HEAD_AT="$head_at" FC_FAILING=0 \
     "$SCRIPT_DIR/finish-classify.sh" "$repo" "$pr" 2>/dev/null)
   [ "$verdict" = "done_verdict" ] || continue
 
@@ -87,8 +104,8 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 달린 정상 재완결은 통과해야 하므로, 단순 시각 비교로는 양방향을 못 가린다. 코멘트
   # 배열은 GitHub 이 생성 순으로 주므로 인덱스가 그 순서를 그대로 담는다(초 단위로
   # 뭉개지지 않는 유일한 값 — PR#168 교훈: 정보를 담을 수 있는 값으로 바꿔라).
-  bounce_state=$(printf '%s' "$meta" | jq -r --argjson bm "$BOUNCE_MARKERS" '
-    [.comments[].body] as $bodies
+  bounce_state=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
+    [.[].body] as $bodies
     | ([ $bodies | to_entries[]
          | select(.value as $x | ($bm | any(. as $m | $x | startswith($m))))
          | .key ] | last) as $bi
@@ -118,7 +135,7 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 제약일 뿐(마커가 "머지 판정: ✅" 앞에 오면 startswith 가 깨진다) 이 필터의
   # 요구사항이 아니다. 마지막-줄을 jq 로 강제하면 마커 오배치가 사람 코멘트로
   # 오인돼 #72 false-positive 가 재발하므로 그렇게 바꾸지 마라.
-  unresolved=$(printf '%s' "$meta" | jq '[.comments[].body
+  unresolved=$(printf '%s' "$comments" | jq '[.[].body
     | select((contains("<!-- bodat:worker -->")
               or startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
     | length')

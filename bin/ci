@@ -226,12 +226,18 @@ printf '#!/bin/sh\nexit 0\n' > "$tmp/proj/r/bin/ci"   # 가짜 레포(로컬 CI 
 chmod +x "$tmp/proj/r/bin/ci"
 cat > "$tmp/stub/gh" <<'STUB'
 #!/bin/sh
+# #171: 코멘트는 pr-comments.sh 가 `api .../issues/N/comments --paginate` 로 읽는다
+# (`--json comments` 의 첫 100건 상한 회피). 스텁은 --jq 적용 결과 형상(줄줄이 오브젝트)
+# 을 그대로 낸다 — 헬퍼가 슬러프해 배열로 만든다.
+case "$*" in
+  *--paginate*) echo '{"body":"머지 판정: ✅ 머지 가능","createdAt":"2026-01-02T00:00:00Z"}'; exit 0 ;;
+esac
 case "$*" in
   *"api user"*) echo "tester" ;;
   *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
   *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
   *"pr view"*headRefName*)
-    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"comments":[{"body":"머지 판정: ✅ 머지 가능","createdAt":"2026-01-02T00:00:00Z"}],"closingIssuesReferences":[{"number":5}],"commits":[{"committedDate":"2026-01-01T00:00:00Z"}]}' ;;
+    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"closingIssuesReferences":[{"number":5}],"commits":[{"committedDate":"2026-01-01T00:00:00Z"}]}' ;;
   *) echo '' ;;
 esac
 STUB
@@ -271,20 +277,25 @@ realroot=$(cd "$tmp/proj/r" && pwd -P)
 slug=$(printf '%s' "$realroot" | sed 's#[/ ]#_#g; s#^_##')
 mkdir -p "$tmp/home/.claude/.local-ci/$slug"
 echo pass > "$tmp/home/.claude/.local-ci/$slug/feed0070ab.result"   # 캐시 pass → revalidate:false 경로
-mkgh() {  # $1 = comments JSON 배열 → gh pr view ...headRefName 분기에 주입
+mkgh() {  # $1 = comments JSON 배열 → 페이지네이션 코멘트 조회 분기에 주입
   # #171: ✅ 신선도 게이트가 판정 시각과 head 커밋 시각을 **둘 다** 요구한다(못 얻으면
   # active=후보 아님). 이 절의 관심사는 마커/unresolved 판정이므로, 시각은 "판정이 커밋보다
   # 늦다" 는 정상 형상으로 자동 부여해 게이트를 상수로 고정한다.
-  local mkgh_comments
-  mkgh_comments=$(printf '%s' "$1" | jq -c '[ .[] | {createdAt: "2026-01-02T00:00:00Z"} + . ]')
+  # 코멘트는 이제 `api .../issues/N/comments --paginate` 로 읽히므로(첫 100건 상한 회피)
+  # 파일에 두고 스텁이 --jq 적용 결과 형상(줄줄이 오브젝트)으로 흘린다.
+  printf '%s' "$1" | jq -c '[ .[] | {createdAt: "2026-01-02T00:00:00Z"} + . ]' \
+    > "$tmp/comments.json"
   cat > "$tmp/stub/gh" <<STUB
 #!/bin/sh
+case "\$*" in
+  *--paginate*) jq -c '.[]' "$tmp/comments.json"; exit 0 ;;
+esac
 case "\$*" in
   *"api user"*) echo "tester" ;;
   *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
   *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
   *"pr view"*headRefName*)
-    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"comments":$mkgh_comments,"closingIssuesReferences":[{"number":5}],"commits":[{"committedDate":"2026-01-01T00:00:00Z"}]}' ;;
+    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"closingIssuesReferences":[{"number":5}],"commits":[{"committedDate":"2026-01-01T00:00:00Z"}]}' ;;
   *) echo '' ;;
 esac
 STUB
@@ -328,14 +339,18 @@ slug=$(printf '%s' "$realroot" | sed 's#[/ ]#_#g; s#^_##')
 mkdir -p "$tmp/home/.claude/.local-ci/$slug"
 echo pass > "$tmp/home/.claude/.local-ci/$slug/feed0070ab.result"   # 캐시 pass → ci-pass exit 0
 mkgh2() {  # $1 = labels JSON 배열, $2 = mergeable 값 → gh pr view headRefName 분기에 주입
+  # 코멘트는 #171 이후 페이지네이션 경로(`api .../comments --paginate`)로 읽힌다.
   cat > "$tmp/stub/gh" <<STUB
 #!/bin/sh
+case "\$*" in
+  *--paginate*) echo '{"body":"머지 판정: ✅ 머지 가능 <!-- bodat:worker -->","createdAt":"2026-01-02T00:00:00Z"}'; exit 0 ;;
+esac
 case "\$*" in
   *"api user"*) echo "tester" ;;
   *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
   *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
   *"pr view"*headRefName*)
-    echo '{"headRefName":"agent/issue-5","mergeable":"$2","labels":$1,"comments":[{"body":"머지 판정: ✅ 머지 가능 <!-- bodat:worker -->","createdAt":"2026-01-02T00:00:00Z"}],"closingIssuesReferences":[{"number":5}],"commits":[{"committedDate":"2026-01-01T00:00:00Z"}]}' ;;
+    echo '{"headRefName":"agent/issue-5","mergeable":"$2","labels":$1,"closingIssuesReferences":[{"number":5}],"commits":[{"committedDate":"2026-01-01T00:00:00Z"}]}' ;;
   *) echo '' ;;
 esac
 STUB
