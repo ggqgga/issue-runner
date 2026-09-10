@@ -4,17 +4,10 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 me=$(gh api user -q .login 2>/dev/null); [ -n "$me" ] || exit 0
 
-# ── 반송(bounce) 마커 집합 — 한 자리 (#171) ──────────────────────────────
-# PR 을 워커에게 되돌리는 채널이 둘이고, 각자 자기 어휘로 코멘트를 남긴다:
-#   `재디스패치:`   closeout 마감 검증 BLOCKER·완결 유실 반송 (skills/closeout/SKILL.md:124)
-#   `재검증 실패:`  verify-runner 재검증 반려          (skills/verify-runner/SKILL.md:227)
-# 두 채널의 효과는 같다 — 교체 워커가 새 커밋을 올리기 전까지 head 가 그대로라, 그
-# 이전에 찍힌 ✅ 가 살아 남아 "방금 반려된 PR" 을 머지 후보로 만든다. 그래서 **한 집합**
-# 으로 다룬다. 새 반송 어휘가 늘면 **이 배열 한 곳만** 고쳐라 — 채널마다 가드를 베끼면
-# 하나 빠진 채로 fail-open 이 된다(실제로 verify-runner 채널이 그렇게 빠져 있었다).
-# 두 마커 모두 한/영 SKILL 이 같은 한글 문자열을 찍는다(SKILL.en.md 도 동일) — 영문
-# 변종이 생기면 여기에 함께 넣는다.
-BOUNCE_MARKERS='["재디스패치:","재검증 실패:"]'
+# 반송(bounce) 마커 집합과 그 선후 판정은 `bounce-state.sh` **한 자리**에 있다
+# (#171 에서 여기 인라인으로 태어났고 #196 에서 헬퍼로 옮겼다 — closeout SKILL ①-b 의
+# CONFLICTING 입양 경로가 같은 판정을 필요로 하는데, 거긴 finish-classify 를 일부러
+# 건너뛰어 이 파일을 통과하지 않기 때문이다). 새 반송 어휘가 늘면 그 파일 하나만 고친다.
 
 # 코멘트 전량을 finish-classify 에 넘기는 통로 (#171 반송 4회차 [P2]).
 # 환경변수 하나로 넘기면 페이지네이션으로 상한이 사라진 코멘트가 exec 한계(리눅스
@@ -121,26 +114,13 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 다를 수 있다는 전제). 최신 반송 마커가 최신 ✅ 보다 **뒤**면(그 사이 새 ✅ 가 안
   # 찍혔으면) 후보에서 뺀다.
   #
-  # 선후는 **코멘트 배열의 마지막 매칭 인덱스**로 판정한다 — createdAt 이 아니라.
-  # GitHub 코멘트 시각은 초 단위라 ✅ 직후 같은 초에 반송 마커가 달리면 두 값이 같아져
-  # 시각 비교(`>`)가 거짓이 되고 반송된 PR 이 통과한다. 반대로 같은 초에 마커 뒤 새 ✅ 가
-  # 달린 정상 재완결은 통과해야 하므로, 단순 시각 비교로는 양방향을 못 가린다. 코멘트
-  # 배열은 GitHub 이 생성 순으로 주므로 인덱스가 그 순서를 그대로 담는다(초 단위로
-  # 뭉개지지 않는 유일한 값 — PR#168 교훈: 정보를 담을 수 있는 값으로 바꿔라).
-  bounce_state=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
-    [.[].body] as $bodies
-    | ([ $bodies | to_entries[]
-         | select(.value as $x | ($bm | any(. as $m | $x | startswith($m))))
-         | .key ] | last) as $bi
-    | ([ $bodies | to_entries[]
-         | select(.value | startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))
-         | .key ] | last) as $vi
-    | if   $bi == null then "ok"
-      elif $vi == null then "bounced"
-      elif $bi > $vi   then "bounced"
-      else "ok" end' 2>/dev/null)
-  # jq 실패·빈 출력도 "ok 아님" 이라 후보에서 빠진다(fail-closed — 위 ✅ 갈래와 같은 방향:
-  # 반송되지 않았음을 **증명**했을 때만 통과).
+  # 판정은 `bounce-state.sh` 한 자리다(#196) — 마커 집합·선후 규칙(코멘트 배열의 마지막
+  # 매칭 **인덱스**, createdAt 아님)은 그 파일 주석 참조. 이미 읽은 코멘트를 파일로 넘겨
+  # 중복 gh 조회를 피한다(위 fc_comments_file 을 그대로 재사용 — 방금 같은 내용으로 썼다).
+  # 조회·판정 실패(exit 1)·`bounced` 모두 "ok 아님" 이라 후보에서 빠진다(fail-closed —
+  # 위 ✅ 갈래와 같은 방향: 반송되지 않았음을 **증명**했을 때만 통과).
+  bounce_state=$(BOUNCE_COMMENTS_FILE="$fc_comments_file" \
+    "$SCRIPT_DIR/bounce-state.sh" "$repo" "$pr" 2>/dev/null)
   [ "$bounce_state" = "ok" ] || continue
 
   # 미해결(사람 리뷰) 코멘트 판정 — 머신 코멘트는 sentinel 마커 <!-- bodat:worker -->
