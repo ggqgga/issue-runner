@@ -231,7 +231,7 @@ case "$*" in
   *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
   *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
   *"pr view"*headRefName*)
-    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"comments":[{"body":"머지 판정: ✅ 머지 가능"}],"closingIssuesReferences":[{"number":5}]}' ;;
+    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"comments":[{"body":"머지 판정: ✅ 머지 가능","createdAt":"2026-01-02T00:00:00Z"}],"closingIssuesReferences":[{"number":5}],"commits":[{"committedDate":"2026-01-01T00:00:00Z"}]}' ;;
   *) echo '' ;;
 esac
 STUB
@@ -272,6 +272,11 @@ slug=$(printf '%s' "$realroot" | sed 's#[/ ]#_#g; s#^_##')
 mkdir -p "$tmp/home/.claude/.local-ci/$slug"
 echo pass > "$tmp/home/.claude/.local-ci/$slug/feed0070ab.result"   # 캐시 pass → revalidate:false 경로
 mkgh() {  # $1 = comments JSON 배열 → gh pr view ...headRefName 분기에 주입
+  # #171: ✅ 신선도 게이트가 판정 시각과 head 커밋 시각을 **둘 다** 요구한다(못 얻으면
+  # active=후보 아님). 이 절의 관심사는 마커/unresolved 판정이므로, 시각은 "판정이 커밋보다
+  # 늦다" 는 정상 형상으로 자동 부여해 게이트를 상수로 고정한다.
+  local mkgh_comments
+  mkgh_comments=$(printf '%s' "$1" | jq -c '[ .[] | {createdAt: "2026-01-02T00:00:00Z"} + . ]')
   cat > "$tmp/stub/gh" <<STUB
 #!/bin/sh
 case "\$*" in
@@ -279,7 +284,7 @@ case "\$*" in
   *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
   *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
   *"pr view"*headRefName*)
-    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"comments":$1,"closingIssuesReferences":[{"number":5}]}' ;;
+    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"comments":$mkgh_comments,"closingIssuesReferences":[{"number":5}],"commits":[{"committedDate":"2026-01-01T00:00:00Z"}]}' ;;
   *) echo '' ;;
 esac
 STUB
@@ -330,7 +335,7 @@ case "\$*" in
   *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
   *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
   *"pr view"*headRefName*)
-    echo '{"headRefName":"agent/issue-5","mergeable":"$2","labels":$1,"comments":[{"body":"머지 판정: ✅ 머지 가능 <!-- bodat:worker -->"}],"closingIssuesReferences":[{"number":5}]}' ;;
+    echo '{"headRefName":"agent/issue-5","mergeable":"$2","labels":$1,"comments":[{"body":"머지 판정: ✅ 머지 가능 <!-- bodat:worker -->","createdAt":"2026-01-02T00:00:00Z"}],"closingIssuesReferences":[{"number":5}],"commits":[{"committedDate":"2026-01-01T00:00:00Z"}]}' ;;
   *) echo '' ;;
 esac
 STUB
