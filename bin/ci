@@ -932,6 +932,12 @@ bash scripts/tests/resume-sweep.test.sh
 echo "[test] loop-status.sh 파이프라인 스냅샷 버킷·창 필터·warn·부분 실패 (#144)"
 bash scripts/tests/loop-status.test.sh
 
+echo "[test] timebox-check.sh 진행 증거 판정·queue.log 마지막 줄·유예 상한 (#200)"
+# 디스패처가 `"$SCRIPTS/timebox-check.sh"` 로 직접 exec 하므로 실행 비트도 여기서 문다
+# (비트가 빠지면 조용히 exit 126 → 판정 줄이 빈 값이 되고 그 이슈의 timebox 가 무판정으로 샌다).
+[ -x scripts/timebox-check.sh ] || { echo "  ✗ timebox-check.sh 실행 비트 없음"; exit 1; }
+bash scripts/tests/timebox-check.test.sh
+
 echo "[#88] 완결 유실 재파생 배선 검사 — 한/영 SKILL 동기"
 # STALE_FINISH_MIN 상수 + finish-classify.sh 분기 + 4b 인라인 대리 판정 배선이
 # 한/영 SKILL 양쪽에 있어야 한다(완결 유실 갭 자가 재파생 — 규칙4 분리).
@@ -940,6 +946,28 @@ for f in SKILL.md SKILL.en.md; do
     || { echo "  ✗ $f 에 STALE_FINISH_MIN 상수 없음"; exit 1; }
   grep -qF 'finish-classify.sh' "$f" \
     || { echo "  ✗ $f 에 finish-classify.sh 분기 배선 없음"; exit 1; }
+done
+
+echo "[#200] timebox 진행 증거 판정 배선 검사 — 한/영 SKILL 동기"
+# 상수(STALL_MIN·MAX_TIMEBOX_GRACE) + 판정자 호출이 한/영 양쪽에 있어야 한다. 스크립트만
+# 고치고 프롬프트에 옛 규칙("경과가 넘으면 중단")이 남으면 **디스패처는 옛 규칙을 따른다** —
+# 이 루프에서 실제로 판정하는 것은 프롬프트다.
+for f in SKILL.md SKILL.en.md; do
+  for token in 'STALL_MIN' 'MAX_TIMEBOX_GRACE' 'timebox-check.sh'; do
+    grep -qF "$token" "$f" \
+      || { echo "  ✗ $f 에 $token 배선 없음"; exit 1; }
+  done
+done
+# 값 드리프트 검사 — 스크립트 기본값과 프롬프트가 말하는 값이 갈리면 디스패처는 문서의 값을
+# 믿는데 실제 판정은 스크립트 값으로 난다. 존재만 grep 하면 이 어긋남을 못 잡는다.
+for pair in 'STALL_MIN:25' 'MAX_TIMEBOX_GRACE:3' 'ISSUE_TIMEBOX_HOURS:1'; do
+  name="${pair%%:*}"
+  want=$(sed -n "s/^[A-Z_]*=\"\${$name:-\([0-9][0-9]*\)}\".*/\1/p" scripts/timebox-check.sh | head -1)
+  [ -n "$want" ] || { echo "  ✗ scripts/timebox-check.sh 에서 $name 기본값을 읽지 못함"; exit 1; }
+  for f in SKILL.md SKILL.en.md; do
+    grep -qF "\`$name = $want\`" "$f" \
+      || { echo "  ✗ $f 의 $name 값이 스크립트 기본값($want)과 다르다"; exit 1; }
+  done
 done
 
 echo "[#109] repo-flag.sh repos.conf 플래그 파싱 스모크"
