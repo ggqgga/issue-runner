@@ -50,60 +50,73 @@ as "bound fine but the probe never answered / timed out," since both are remote-
 problems). Clean up through **the control socket this invocation created**, never a
 broad `pkill` (which would cut someone else's tunnel on the same port).
 
-**The control socket path does not rely on variable handoff — derive it from the port,
-fixed.** The snippet that opens the tunnel and the "clean up after the smoke" snippet are
-**separate Bash calls**, so a shell variable (`CTL`) does not survive between them. So the
-socket path is derived, fixed, from the port that bound successfully
-(`/tmp/smoke-tun-<port>.sock`) instead of a random `mktemp` value — the port is printed
-verbatim in the tunnel snippet's output, so the cleanup snippet can reconstruct the same
-path from just that number.
+**The control socket path does not rely on variable handoff — copy the path printed in the
+output, verbatim.** The snippet that opens the tunnel and the "clean up after the smoke"
+snippet are **separate Bash calls**, so a shell variable (`CTL`) does not survive between
+them. So the success line prints **the path itself** —
+`tunnel ok on <port>, control socket <path>` — and the cleanup snippet copies that path
+**verbatim** (it does not re-derive it from the port).
 
-⚠️ **Because the path is derived from the port alone, "the bind succeeded" and "we own
-this socket" are not the same thing.** If a prior tick died before cleanup and left the
-socket file behind while its port was freed, or another live master already holds that
-same path — OpenSSH can print `ControlSocket ... already exists, disabling multiplexing`
-and still succeed at the forwarding itself, non-multiplexed. Taking that as `PORT=$P;
+⚠️ **Mix this invocation's own identifier (its PID) into the path —
+`/tmp/smoke-tun-<port>-<pid>.sock` (`$$`).** Deriving the path from the port alone
+(`/tmp/smoke-tun-<port>.sock`) makes it **predictable**, with no guarantee it belongs to
+this invocation: a prior tick may have died before cleanup and left the socket file
+behind, or a concurrent invocation may have drawn the same port and created a master at
+that path. OpenSSH then prints `ControlSocket ... already exists, disabling multiplexing`
+and still **succeeds at the forwarding**, non-multiplexed. Taking that as `PORT=$P;
 CTL=$C` means the cleanup step's `-O exit` **kills someone else's live master**, while the
-tunnel we actually just opened has no `CTL` to hold onto and leaks (#170). So we verify
-ownership with `-O check` at two points, before and right after using the path:
+tunnel we actually just opened has no `CTL` to hold onto and leaks (#170).
 
-- **Before use (stale-socket handling):** if this port's path already exists as a file,
-  don't jump straight to `ssh -M` — `-O check` it first. If it's dead (check fails), it's
-  crash leftover — remove it and keep using this port. If it's alive (check succeeds),
-  it's **someone else's master** — abandon this port and move to the next one (don't even
-  attempt the bind; touching it at all means touching someone else's connection).
-- **Right after binding (ownership confirmation):** even when `ssh -M` reports success,
-  don't take that at face value — `-O check` the same path once more. Only if that
-  succeeds is it **the live master we just created**, and only then do we adopt
-  `PORT`/`CTL`. If it fails (the non-multiplex fallback above), don't carry an unowned
-  socket as `CTL` — treat it as a local problem and retry the next port (if all five tries
-  hit this, it folds into the same `tunnel port exhausted` as bind collisions — the
-  three-way verdict below is unchanged).
+**Do not try to prevent that with `-O check` — it does not prove ownership.** It says only
+"a master is alive at that path"; it says *nothing about who created it.* If another
+invocation creates a master at the same path between the pre-check and `ssh -M`, this
+`ssh` falls back to non-multiplexed and succeeds while that `-O check` **attaches to the
+foreign master and succeeds** — the exact accident we meant to prevent. So ownership is
+established by the **path**, not by a check. With `$$` mixed in, the path belongs to this
+shell invocation and no other invocation can hold it; two more problems disappear with it:
+
+- Paths that aren't ours are **never touched** — no `rm -f` of someone else's `/tmp`
+  socket on the assumption that a failed `-O check` means "our own dead leftover" (that
+  check also fails when a live master fails to answer, or when a *different* socket owned
+  by the same account happens to sit at that predictable path).
+- The path is fresh, so the `disabling multiplexing` fallback never happens in the first
+  place.
+
+**The `-O check` right after binding stays — but as a liveness check, not an ownership
+check.** On a unique path, no master found means "something went wrong on our side," not
+"someone else's master." Don't count that attempt as a success (never carry that socket as
+`CTL`) — and don't just drop the forwarder `ssh -f` **may already have backgrounded**:
+tear it down best-effort with `ssh -S "$C" -O exit`, then move to the next port. If that
+teardown fails too, **say so in the output** (never swallow it with `|| true` — it is the
+only trace that a forwarder may still hold that port). Even if all five tries land here it
+is still a local problem, so it folds into the same `tunnel port exhausted` as bind
+collisions — the three-way verdict below is unchanged.
 
 ```bash
 ERR=$(mktemp); PORT=""; CTL=""; ALL_BIND=1
 for _try in 1 2 3 4 5; do
   P=$(( 39000 + RANDOM % 1000 ))
-  C="/tmp/smoke-tun-$P.sock"          # socket path = derived fixed from port (no variable handoff)
+  C="/tmp/smoke-tun-$P-$$.sock"       # port + this invocation's PID = a path only we can hold
   if [ -e "$C" ]; then
-    # Stale-socket handling (crash-resume defense) — check ownership before trying this port.
-    if ssh -S "$C" -O check <ssh host alias> >/dev/null 2>&1; then
-      continue                        # someone else's live master — leave it, try next port
-    else
-      rm -f "$C"                      # dead leftover — remove it and keep using this port
-    fi
+    # Practically unreachable on a unique path (needs PID reuse + the same port + a prior
+    # leftover). If it happens anyway it still isn't provably ours — don't remove it,
+    # just take another port.
+    continue
   fi
   if ssh -f -N -M -S "$C" -o ExitOnForwardFailure=yes \
        -L "127.0.0.1:$P:127.0.0.1:<remote port>" <ssh host alias> 2>"$ERR"; then
-    # Don't trust a reported bind success at face value — if ControlPath already holds a
-    # live (someone else's) master, OpenSSH can print "ControlSocket ... already exists,
-    # disabling multiplexing" and still return success here, non-multiplexed. Adopt it
-    # only after -O check confirms it's the live master we just created.
+    # The path is this invocation's, so a master found here cannot be someone else's. Still
+    # confirm it is alive — on a unique path a failed -O check means "something wrong on
+    # our side," not "a foreign master."
     if ssh -S "$C" -O check <ssh host alias> >/dev/null 2>&1; then
-      PORT=$P; CTL=$C; break          # ownership confirmed — genuine success
-    else
-      continue                        # unowned socket (non-multiplex fallback) — don't carry it as CTL
+      PORT=$P; CTL=$C; break          # healthy — the live master this invocation created
     fi
+    # ssh -f may already have backgrounded a forwarder — don't drop it, tear it down
+    # best-effort. If that fails too, don't swallow it: print why (the only trace that
+    # this port may still be held).
+    ssh -S "$C" -O exit <ssh host alias> >/dev/null 2>&1 \
+      || echo "control socket teardown failed (a forwarder may remain on port $P): $C"
+    continue                          # this attempt does not count as success — next port
   fi
   # The stderr ExitOnForwardFailure=yes produces on a bind failure is "bind: Address
   # already in use" (or similar) — that's what this grep matches. Non-bind failures it
@@ -113,7 +126,7 @@ for _try in 1 2 3 4 5; do
   grep -qi 'bind\|address already in use' "$ERR" || { ALL_BIND=0; break; }   # remote/path problem
 done
 if [ -z "$PORT" ] && [ "$ALL_BIND" = 1 ]; then
-  echo "tunnel port exhausted"        # five bind collisions (or unconfirmed ownership) — a local problem, not unreachable
+  echo "tunnel port exhausted"        # five bind collisions (or no live master) — a local problem, not unreachable
 elif [ -z "$PORT" ]; then
   echo "tunnel unreachable"           # non-bind ssh failure (host down/auth/DNS/routing) — remote/path problem
 elif curl -fsS --connect-timeout 3 --max-time 10 \
@@ -126,37 +139,32 @@ fi
 rm -f "$ERR"
 ```
 
-The `-O check` calls above judge only **whether this invocation owns a live master** —
-no socket at all (no leftover, proceed normally), the check itself failing to run (treat
-both spots as failure and fold to the safe side: before use, remove and continue; right
-after binding, don't adopt as `CTL` and retry), and a live master owned by someone else
-(leave it alone and move on) are three distinct meanings, so their exit codes are never
-collapsed into a single `|| true`.
+The `-O check` above judges only **whether the master this invocation created is alive** —
+no socket at all (proceed normally) and a failed check (something wrong on our side →
+best-effort `-O exit`, then next port) are distinct meanings, so their exit codes are
+never collapsed into a single `|| true`. Ownership itself is established by the `$$` in
+the path, not by this check.
 
-**Left out of scope — the already-backgrounded, non-multiplex forwarding process itself
-when ownership is unconfirmed right after binding.** The before-use stale-socket check
-narrows the window, but a very tight race (TOCTOU) between that check and the actual
-`ssh -M` call can in theory still trigger the non-multiplex fallback. When that happens,
-failing the `-O check` keeps us from adopting `CTL`, which prevents **killing someone
-else's master** and **falsely reporting success** — but the local forwarding process that
-already forked to the background at that instant has no control socket, so it can't be
-stopped via `-O exit`, and `pkill` is forbidden (see above). This is rare (needs a crash
-leftover plus a race window to coincide) and its blast radius is a single occupied local
-port. This issue is scoped to **socket ownership** only (see "Do not filter out" above) —
-tracking the child's PID to also kill this residual process is left out of scope.
+**Left out of scope — the already-backgrounded forwarding process when both `-O check` and
+`-O exit` fail.** On a unique path a foreign master cannot be involved, so anything landing
+in this branch is our own anomaly (e.g. the master died instantly). The forwarder `ssh -f`
+already backgrounded then has no control socket, so it can't be stopped via `-O exit`, and
+`pkill` is forbidden (see above) — which is why **printing that we could not stop it** is
+part of the contract. This is rare and its blast radius is a single occupied local port.
+Tracking the child's PID to also kill this residual process is left out of scope.
 
 **On `tunnel ok`, leave the tunnel up and run the whole Chrome smoke through it** — tearing
 it down right after the probe means you never see the screen you came to check (all you
-verified is `/up`). `CTL` is only ever adopted above after the loop's own `-O check`
-confirmed ownership, so firing `-O exit` at cleanup time carries no risk of cutting
-someone else's master — though the master could still have died in the meantime (normal
-exit or crash) while the smoke ran long, so the `-S` existence check below stays in place.
+verified is `/up`). `CTL` is a path stamped with this invocation's PID, so firing `-O exit`
+at cleanup time carries no risk of cutting someone else's master — though the master could
+still have died in the meantime (normal exit or crash) while the smoke ran long, so the
+`-S` existence check below stays in place.
 Clean up after the smoke finishes, once, on **every** path — pass,
-fail, or abort — by reconstructing the same path from the port number printed above
-(carry over the digits, not a variable):
+fail, or abort — by copying the path printed above **verbatim** (don't re-derive it from
+the port; this snippet's `$$` differs from the PID of the call that opened the tunnel):
 
 ```bash
-CTL="/tmp/smoke-tun-<PORT>.sock"   # <PORT> = the port number from the tunnel snippet's output (e.g. "tunnel ok on 39441" → 39441)
+CTL="<control socket path from the tunnel snippet's output>"   # e.g. "tunnel ok on 39441, control socket /tmp/smoke-tun-39441-51234.sock" → /tmp/smoke-tun-39441-51234.sock
 if [ -S "$CTL" ]; then
   ssh -S "$CTL" -O exit <ssh host alias> 2>/dev/null || echo "control socket teardown failed: $CTL"
 else
