@@ -24,7 +24,10 @@ cat > "$TMP/stub/gh" <<'STUB'
 printf '%s\n' "$*" >> "${GH_LOG:-/dev/null}"
 case "${GH_MODE:-ok}" in
   fail_branch)   echo "gh: could not connect" >&2; exit 1 ;;
-  missing_branch) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+  # 없는 브랜치의 실제 지문 — 이 엔드포인트는 404 가 아니라 422 를 낸다(실측).
+  missing_branch) echo "gh: No commit found for SHA: agent/issue-200 (HTTP 422)" >&2; exit 1 ;;
+  # 레포 자체를 못 찾음 — 이건 부재가 아니라 조회 실패다(권한 상실·오타).
+  repo_404)      echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
   fail_comment)
     case "$*" in
       *"issue comment"*) exit 1 ;;
@@ -223,10 +226,16 @@ out=$(run_raw TB_NOW="$NOW" TB_CLAIM_AT="$CLAIM" TB_QUEUE_LOG="$TMP/none.log" TB
   GH_MODE=fail_branch)
 assert_verdict "브랜치 조회 실패 → unknown" unknown branch_lookup_failed 2 "$out"
 
-# 404(브랜치 없음)는 **정상 입력** — 커밋 증거 없음으로 진행해 중단 판정까지 간다.
+# 422 `No commit found`(브랜치 없음)는 **정상 입력** — 커밋 증거 없음으로 진행해 중단까지 간다.
 out=$(run_raw TB_NOW="$NOW" TB_CLAIM_AT="$CLAIM" TB_QUEUE_LOG="$TMP/none.log" TB_NO_POST=1 \
   TB_COMMENTS_JSON='[]' GH_MODE=missing_branch)
-assert_verdict "브랜치 404 → 중단(unknown 아님)" stop no_progress 1 "$out"
+assert_verdict "브랜치 422(부재) → 중단(unknown 아님)" stop no_progress 1 "$out"
+
+# 반대편 — 레포 404 는 **부재가 아니라 실패**다. 404 를 부재로 접으면 권한 상실 한 번에
+# 살아있는 워커를 죽인다(이 경계를 넓게 잡았다가 실 gh 스모크에서 뒤집힌 자리).
+out=$(run_raw TB_NOW="$NOW" TB_CLAIM_AT="$CLAIM" TB_QUEUE_LOG="$TMP/none.log" TB_NO_POST=1 \
+  TB_COMMENTS_JSON='[]' GH_MODE=repo_404)
+assert_verdict "레포 404 → unknown(중단 아님)" unknown branch_lookup_failed 2 "$out"
 
 echo "[timebox-check] 유예 마커는 실제로 append 된다(그래야 다음 틱이 셀 수 있다)"
 

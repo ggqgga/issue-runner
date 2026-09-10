@@ -113,8 +113,13 @@ fi
 
 # ── 진행 증거 ① 브랜치 최신 커밋 ────────────────────────────────────────
 # 실조회는 `gh api repos/<repo>/commits/<branch>` 한 번으로 head SHA 와 커밋 시각을 함께 얻는다.
-# 브랜치 **부재**(404)와 조회 **실패**를 구분한다 — 부재는 "아직 push 가 없다"는 정상 입력이고
+# 브랜치 **부재**와 조회 **실패**를 구분한다 — 부재는 "아직 push 가 없다"는 정상 입력이고
 # (커밋 증거 없음으로 진행), 실패는 판정 불가다(PR#139: 빈 결과와 실패를 섞지 마라).
+#
+# 부재의 지문은 **HTTP 422 `No commit found for SHA: <ref>`** 다(실측 — 없는 브랜치를 이
+# 엔드포인트에 넣으면 404 가 아니라 422 다). 404 를 부재로 읽으면 **반대편으로 넘어간다**:
+# 이 경로의 404 는 레포 자체를 못 찾은 것(오타·권한 상실)이라, 그걸 "커밋 없음" 으로 접으면
+# 살아있는 워커를 조회 실패로 죽인다. 그래서 404 를 포함한 그 밖의 실패는 전부 unknown 이다.
 head_sha=""
 last_commit_at=""
 if [ -n "${TB_LAST_COMMIT_AT:-}" ] || [ -n "${TB_HEAD_SHA:-}" ]; then
@@ -128,7 +133,7 @@ else
     last_commit_at="${api_out##* }"
     [ -n "$head_sha" ] || head_sha=none
     [ -n "$last_commit_at" ] || last_commit_at=none
-  elif grep -q -e '404' -e 'Not Found' -- "$api_err" 2>/dev/null; then
+  elif grep -q -e 'No commit found' -- "$api_err" 2>/dev/null; then
     head_sha=none; last_commit_at=none     # 브랜치 없음 = push 된 커밋이 아직 없다(정상 입력)
   else
     rm -f "$api_err"
