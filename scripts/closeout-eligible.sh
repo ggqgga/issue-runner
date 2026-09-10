@@ -121,11 +121,15 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 조회는 **코멘트·head 를 읽은 뒤**에 한다. 그 사이 사람이 보류를 새로 걸었다면 이
   # 스냅샷엔 안 잡히지만, 그건 라벨 조회(더 앞)와 같은 창이고 다음 틱이 잡는다. 반대로
   # 먼저 뜨면 그 사이의 **해제**를 놓쳐 사람이 푼 건이 또 한 틱을 기다린다.
+  # 창의 **여는 쪽 경계** = 최신 `마감 검증: ⚠ 보류` 코멘트 시각. 이게 없으면 이 PR 엔
+  # 해소할 보류 자체가 없으므로 타임라인을 **아예 조회하지 않는다**(흔한 경로 비용 0).
+  # 이건 판정이 아니라 창의 경계다 — "그 ⚠ 가 ✅ 를 실제로 가리는가" 의 판정은
+  # finish-classify **한 자리**에 있다(로직 두 벌 금지).
+  hold_at=$(printf '%s' "$comments" | jq -r '
+    ([ .[] | select(.body | startswith("마감 검증") or startswith("Closeout verification"))
+            | select(.body | contains("⚠")) ] | last | .createdAt? // "")' 2>/dev/null)
   hold_released_at=''
-  need_hold=$(printf '%s' "$comments" | jq -r '
-    if ([.[] | select(.body | startswith("마감 검증") or startswith("Closeout verification"))
-              | select(.body | contains("⚠"))] | length) > 0 then "yes" else "no" end' 2>/dev/null)
-  if [ "$need_hold" = yes ] || [ "$(printf '%s' "$human_comments" | jq 'length' 2>/dev/null)" != 0 ]; then
+  if [ -n "$hold_at" ]; then
     # 조회 실패(exit 1)·해제 이벤트 없음(exit 0·빈 출력) 모두 빈 값으로 떨어진다 —
     # 둘 다 "보류가 해소됐음을 증명 못 함" 이라 하류가 게이트를 닫는다(fail-closed).
     hold_released_at=$("$SCRIPT_DIR/pr-hold-released-at.sh" "$repo" "$pr" 2>/dev/null) || hold_released_at=''
@@ -190,17 +194,23 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 요구사항이 아니다. 마지막-줄을 jq 로 강제하면 마커 오배치가 사람 코멘트로
   # 오인돼 #72 false-positive 가 재발하므로 그렇게 바꾸지 마라.
   #
-  # **해제 이전의 사람 코멘트는 미해결이 아니다 (#174).** 사람이 `needs-human`·`hold:*`
-  # 를 뗀 행위가 곧 "내 몫은 끝났다" 는 신호다 — 운영자는 결정문을 코멘트로 남기고
-  # 그 직후 라벨을 뗀다(실측 BodaT #4922: 결정문 08:18:51 → 라벨 제거 08:18:56).
-  # 그 결정문을 미해결로 세면 사람이 답을 준 PR 이 영영 후보에 안 뜬다(이 이슈의 실측).
-  # 해제 **이후**에 달린 사람 코멘트는 종전대로 미해결이다 — 사람이 새 질문을 던졌는데
-  # 자동 머지가 지나가면 안 된다. 해제 시각을 못 얻었으면($rel 빈 값) 아무것도 면제하지
-  # 않는다(fail-closed — 종전 동작 그대로).
+  # **보류~해제 창 안의 사람 코멘트는 미해결이 아니다 (#174).** 사람이 사유 라벨을 뗀
+  # 행위가 곧 "내 몫은 끝났다" 는 신호다 — 운영자는 결정문을 코멘트로 남기고 그 직후
+  # 라벨을 뗀다(실측 BodaT #4922: 결정문 08:18:51 → 라벨 제거 08:18:56). 그 결정문을
+  # 미해결로 세면 사람이 답을 준 PR 이 영영 후보에 안 뜬다(이 이슈의 실측).
+  #
+  # 면제 창은 **반개구간 `(보류 코멘트, 해제]`** 로 좁힌다 — 해제 시각 하나로 "그 이전
+  # 전부" 를 면제하면, 그 보류와 **무관한** 옛 사람 질문(보류 코멘트보다도 앞선 것)까지
+  # 삼킨다. 사람이 답한 것은 *그 보류가 물은 것*이지 PR 의 모든 과거가 아니다.
+  #   · 해제 **이후**의 사람 코멘트 → 미해결(사람이 새 질문을 던졌다).
+  #   · 보류 코멘트 **이전**의 사람 코멘트 → 미해결(그 보류와 무관한 미결).
+  #   · `$rel`·`$hold` 중 하나라도 못 얻음 → **아무것도 면제 안 함**(fail-closed, 종전 동작).
   # 결정문의 *내용*이 "원안 그대로 머지" 인지, 아니면 게이트를 다시 돌려야 하는지는
   # closeout SKILL ③-1 재진입 규칙이 판정한다(스크립트는 후보에 올리는 데까지만).
-  unresolved=$(printf '%s' "$human_comments" | jq --arg rel "$hold_released_at" '[.[]
-    | select(($rel == "") or ((.createdAt // "") == "") or ((.createdAt // "") > $rel))]
+  unresolved=$(printf '%s' "$human_comments" \
+    | jq --arg rel "$hold_released_at" --arg hold "$hold_at" '[.[]
+    | select(($rel == "") or ($hold == "") or ((.createdAt // "") == "")
+             or ((.createdAt // "") <= $hold) or ((.createdAt // "") > $rel))]
     | length')
   [ "${unresolved:-0}" -gt 0 ] && continue
 

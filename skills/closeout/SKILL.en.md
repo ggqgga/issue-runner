@@ -125,15 +125,22 @@ the code closeout itself blocked. So `closeout-eligible.sh` never promotes on th
    same second cannot be ordered by time.
 3. **Hold-release check (#174)** — when the latest ✅ is shadowed by a `마감 검증: ⚠ 보류`
    comment written **after** it, the ✅ revives only once `pr-hold-released-at.sh` (timeline
-   `unlabeled` events, read in full with `--paginate`) **proves** a human removed
-   `needs-human`·`hold:*` later than that hold. Lookup failure, no release event, and same-second
-   ties all fall to `active` (leave it) — not `held`, because `held` tells the sweep to run
-   `closeout-blocked` (which **attaches** `needs-human`), i.e. the loop would re-apply a hold a
-   human just removed (#151). A hold that precedes the latest ✅ is already water under the
-   bridge and shadows nothing (so a normal re-completion after a bounce is not suppressed
-   forever). Human comments written **before** the release are answered by that release, so they
-   no longer count as "unresolved human comments" — that is the path that kept the operator's
-   decision from ever reaching the queue.
+   `unlabeled` events, read in full with `--paginate`) **proves** a human removed a
+   **human-owned reason label** (`hold:policy`·`hold:conflict`) later than that hold. Lookup
+   failure, no release event, and same-second ties all fall to `active` (leave it) — not `held`,
+   because `held` tells the sweep to run `closeout-blocked` (which **attaches** `needs-human`),
+   i.e. the loop would re-apply a hold a human just removed (#151). **Removals of `needs-human`
+   or `hold:ladder` do not count** — `resume-sweep.sh` strips those two **automatically** on
+   ladder auto-resume (:159, :299), so counting them would dress a machine action up as "a human
+   decided" (the mirror image of this issue's first "must not" item). Whether the PR is waiting
+   on a human is already owned by the **`needs-human` exclusion in the target filter** above —
+   the two signals are not folded into one value. A hold that precedes the latest ✅ is already
+   water under the bridge and shadows nothing (so a normal re-completion after a bounce is not
+   suppressed forever). And human comments inside the **`(hold comment, release]` window** are
+   answered by that release, so they no longer count as "unresolved human comments" — that is
+   the path that kept the operator's decision from ever reaching the queue. Outside that window
+   nothing changes: neither a new question after the release nor an unrelated older open
+   question is swallowed.
 
 All three layers rest on having seen **every** comment. `gh pr view --json comments` returns only the
 **first 100**, with no pagination, so neither helper uses that path — both read through
@@ -249,7 +256,8 @@ For the picked PR, perform the 6 steps below in order. At the end of each step, 
 the marker command (① Reconcile marker table) so the next tick can resume idempotently.
 
 **Before step 1 — hold-release re-entry (#174).** If this PR already carries a
-`마감 검증: ⚠ 보류` comment and a human removed `needs-human`·`hold:*` **after** it — which is
+`마감 검증: ⚠ 보류` comment and a human removed a human-owned reason label
+(`hold:policy`·`hold:conflict`) **after** it — which is
 why the PR is a candidate again (`closeout-eligible.sh` → `pr-hold-released-at.sh` proved the
 release time is later than that hold comment) — **do not just re-run the gate.** The code did
 not change, so the same gate produces the same `[P1]` → hold again → the human unblocks again →

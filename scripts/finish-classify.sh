@@ -47,7 +47,8 @@
 #                      빈 값/파싱 불가 = **못 얻음**. 🔄 계열 갈래(#110 스테일 클록)에선
 #                      종전대로 epoch 0 으로 degrade 하지만, `✅` 갈래(#171 머지 게이트)
 #                      에선 증명 실패이므로 done_verdict 를 내지 않고 active 다.
-#   FC_HOLD_RELEASED_AT  사람이 `needs-human`·`hold:*` 를 뗀 최근 시각(ISO8601) —
+#   FC_HOLD_RELEASED_AT  사람이 사람 몫 사유 라벨(`hold:policy`·`hold:conflict`)을 뗀
+#                      최근 시각(ISO8601) —
 #                      pr-hold-released-at.sh 실조회 대체. 빈 값/파싱 불가 = **못 얻음**
 #                      → 보류가 해소됐음을 증명 못 한 것이므로 held(fail-closed, #174).
 #                      미지정 시엔 `마감 검증: ⚠` 가 최신 ✅ 를 가릴 때에만 실조회한다
@@ -174,10 +175,16 @@ verdict_idx=$(last_index "머지 판정" "Merge verdict")
 closeout_hold=0
 case "$closeout_body" in
   *⚠*)
-    # jq 실패(빈 출력)는 -1 로 떨어지지 않고 빈 문자열이 된다 → 비교 자체가 실패하므로
-    # 아래 산술 비교를 `2>/dev/null` 로 감싸고 참일 때만 hold 로 본다(빈 값 = 판정 불가
-    # = 가리지 않음. 이 갈래를 잘못 켜면 정상 PR 이 영구 held 가 된다).
-    if [ "${closeout_idx:--1}" -gt "${verdict_idx:--1}" ] 2>/dev/null; then closeout_hold=1; fi
+    # ⚠ 보류 코멘트가 **있다**는 것까지는 확인된 상태다. 그게 최신 ✅ 를 가리는지는
+    # 인덱스 비교로 가르는데, jq 가 실패하면(빈 출력) 그 비교를 못 한다 — 그때는
+    # **가린다**(닫는 쪽)로 떨어뜨린다. 이 갈래에서 "모르니까 안 가린다" 로 열면 보류
+    # 코멘트가 있는데도 해제 증명 없이 done_verdict 가 나온다(이 PR 이 없애려는 그것).
+    # 닫는 쪽 오차의 대가는 한 틱 지연뿐이다(다음 틱이 다시 잰다).
+    if [ -z "$closeout_idx" ] || [ -z "$verdict_idx" ]; then
+      closeout_hold=1
+    elif [ "$closeout_idx" -gt "$verdict_idx" ] 2>/dev/null; then
+      closeout_hold=1
+    fi
     ;;
 esac
 

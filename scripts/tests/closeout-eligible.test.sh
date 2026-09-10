@@ -332,14 +332,49 @@ run_case "해제이후사람코멘트→후보아님" no "$after_release_comment
 STUB_TIMELINE="$released_timeline"
 run_case "해제후새커밋→후보아님(#171우선)" no "$held_then_released" "2026-07-05T09:00:00Z"
 
-# 21) **무회귀** — 보류·사람 코멘트가 전혀 없는 평범한 PR 은 타임라인을 아예 조회하지
-#     않는다(조회하면 gh 스텁이 fail 로 답해 후보에서 빠진다 = 여기서 빨개진다).
-#     해제 시각이 필요 없는 흔한 경로에 페이지네이션 호출을 얹지 않는다는 계약.
-STUB_TIMELINE="fail"
-run_case "평범한PR→타임라인미조회(무회귀)" yes '[
+# 21) 보류 코멘트보다 **앞선** 사람 코멘트는 그 해제로 답해진 것이 아니다 → 후보 아님.
+#     해제 시각 하나로 "그 이전 전부" 를 면제하면 그 보류와 무관한 옛 미결 질문까지
+#     삼킨다. 면제 창은 반개구간 `(보류 코멘트, 해제]` 다.
+pre_hold_comment='[
+  {"body":"이건 별개 건인데 확인 좀 부탁합니다.","createdAt":"2026-07-05T05:00:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T06:16:02Z"},
+  {"body":"마감 검증: ⚠ 보류 — P1 1건\n<!-- bodat:worker -->","createdAt":"2026-07-05T07:00:21Z"},
+  {"body":"사람 결정(운영자): P1 기각 — 원안 그대로 머지.","createdAt":"2026-07-05T08:18:51Z"}
+]'
+STUB_TIMELINE="$released_timeline"
+run_case "보류이전사람코멘트→후보아님(면제창 밖)" no "$pre_hold_comment" "2026-07-05T05:00:00Z"
+
+# 22) **무회귀 + 비용 계약** — `마감 검증: ⚠` 가 없는 평범한 PR 은 타임라인을 **아예
+#     호출하지 않는다**. 호출 여부를 STUB_CAPTURE 로 직접 잰다 — 스텁 응답으로 재려 하면
+#     이 형상은 해제 시각이 있든 없든 판정이 안 바뀌어(가릴 ⚠ 도 사람 코멘트도 없다)
+#     아무것도 못 재는 껍데기 픽스처가 된다.
+STUB_CAPTURE="$tmp/timeline-capture"; : > "$STUB_CAPTURE"
+STUB_TIMELINE='[]'
+run_case "평범한PR→후보맞음(기준선)" yes '[
   {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:10:00Z"},
   {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"}
 ]' "2026-07-05T04:10:00Z"
+if grep -q -- '/timeline' "$STUB_CAPTURE"; then
+  fail=$((fail + 1))
+  echo "  ✗ 평범한PR→타임라인 미호출 — 호출됐다:"
+  grep -- '/timeline' "$STUB_CAPTURE" | sed 's/^/      /'
+else
+  pass=$((pass + 1))
+fi
+
+# 23) 반대쪽 — `마감 검증: ⚠` 가 있으면 **호출한다**(위 22 가 "영영 호출 안 함" 을 굳혀
+#     기능을 죽이는 뮤테이션을 잡는다).
+: > "$STUB_CAPTURE"
+STUB_TIMELINE="$released_timeline"
+run_case "보류있는PR→후보맞음(호출 확인용)" yes "$held_then_released" "2026-07-05T05:00:00Z"
+if grep -q -- '/timeline' "$STUB_CAPTURE"; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "  ✗ 보류있는PR→타임라인 호출돼야 한다 — 호출 기록 없음:"
+  sed 's/^/      /' "$STUB_CAPTURE"
+fi
+STUB_CAPTURE=""
 STUB_TIMELINE='[]'
 
 # 12) 코멘트 조회 자체가 실패(gh 비정상 종료) → 후보 아님.

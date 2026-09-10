@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # pr-hold-released-at.sh <repo> <pr>
 #
-# 사람이 이 PR 의 **사람 대기 보류를 푼 가장 최근 시각**을 ISO8601(`...Z`) 로 stdout 에
-# 낸다 = 타임라인의 `unlabeled` 이벤트 중 라벨이 `needs-human` 또는 `hold:*` 인 것의 최대
+# 사람이 이 PR 의 **사람 몫 보류 사유를 뗀 가장 최근 시각**을 ISO8601(`...Z`) 로 stdout 에
+# 낸다 = 타임라인의 `unlabeled` 이벤트 중 라벨이 `hold:policy`·`hold:conflict` 인 것의 최대
 # `created_at`.
 #
 #   exit 0 + 시각   해제 이벤트를 찾았다
@@ -31,6 +31,28 @@
 # 읽혀 **더 이른 해제 시각**이 답이 되고, 그 뒤에 달린 보류가 해소된 것처럼 보일 수
 # 있다. 그래서 비정상 종료면 출력을 통째로 버리고 exit 1 이다(PR#139 교훈).
 #
+# ★왜 `needs-human` 도 `hold:*` 전체도 아니고 이 **두 라벨만** 인가★ — 이 값은 "사람이
+# 결정을 내렸다" 의 **증명**으로 쓰인다. 그러니 **루프가 스스로 뗄 수 있는 라벨은 셀 수
+# 없다**(기계가 뗀 것이 사람 결정으로 둔갑하면 #174 「걸러선 안 되는 것」 1항의 거울상
+# fail-open 이다). 실측:
+#   · `resume-sweep.sh:159,299` 는 `needs-human` **과** `hold:ladder` 를 **자동으로 뗀다**
+#     (사다리 자동 재개). 그래서 그 둘은 사람 신호가 아니다 — `needs-human` 제거만 보면
+#     사다리 재개가 곧 "사람이 풀었다" 가 된다.
+#   · 같은 스크립트는 사람 몫으로 넘길 때 오히려 `hold:policy` 를 **붙인다**(:173,:260)
+#     — 이 두 라벨(`policy`·`conflict`)을 떼는 자동 경로는 반송 전이뿐이고, 반송은 최신
+#     판정을 `🔄` 로 되돌리므로 이 헬퍼를 쓰는 `✅` 갈래에 애초에 닿지 않는다.
+#   · `resume-sweep.sh:228-231` 도 같은 선을 긋는다 — `hold:ladder` 옆에 사람 몫 `hold:*`
+#     가 함께 있으면 자동 재개를 **안 한다**.
+# 즉 `hold:policy`·`hold:conflict` 의 제거만이 사람 손을 함의한다(`transition.sh:133-134`
+# 의 사유 집합에서 `ladder` 를 뺀 것). actor 로는 가를 수 없다 — 루프와 운영자가 같은
+# 계정으로 움직여 `actor.login` 이 동일하다.
+#
+# 반대로 이 좁힘은 **닫는 쪽 오차만** 낸다: 사람이 `needs-human` 만 떼고 사유 라벨을
+# 남겨 두면 해제를 못 읽어 종전대로 정체한다(fail-closed). 그리고 `needs-human` 이 아직
+# 붙어 있는 PR 은 `closeout-eligible.sh`·①-b 스윕의 **라벨 필터**가 이미 제외한다 —
+# "사람 대기 중인가" 는 그 필터가 소유하고, 이 헬퍼는 "사람 몫 사유가 언제 풀렸나" 만
+# 답한다(두 신호를 한 값에 겹쳐 담지 않는다).
+#
 # 범위 메모: 여기서 하는 것은 "언제 풀렸나" 까지다. **루프가 스스로 `hold:*` 를 떼는
 # 경로는 만들지 않는다** — 이 헬퍼는 사람이 뗀 것을 *읽기만* 한다(#174 「걸러선 안 되는
 # 것」). 사람 결정문의 *내용* 판정은 스크립트가 아니라 closeout SKILL ③-1 의 몫이다.
@@ -42,8 +64,8 @@ pr=${2:?pr_num}
 # `issues/<pr>/timeline` 은 PR 에도 그대로 쓴다(GitHub 은 PR 을 이슈로도 노출한다).
 raw=$(gh api "repos/$repo/issues/$pr/timeline?per_page=100" --paginate \
   --jq '.[] | select(.event == "unlabeled")
-        | select(((.label.name // "") == "needs-human")
-                 or ((.label.name // "") | startswith("hold:")))
+        | select(((.label.name // "") == "hold:policy")
+                 or ((.label.name // "") == "hold:conflict"))
         | (.created_at // "")' 2>/dev/null) || exit 1
 
 # 해제 이벤트 0건 = 정상적인 "아직 안 풀렸다". 실패(위 exit 1)와 **구분**해서 exit 0.

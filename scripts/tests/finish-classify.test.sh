@@ -674,30 +674,82 @@ exit 0
 STUB
 check_h "helper: 해제이벤트없음→rc0·무출력" 0 ""
 
-# h3) `unlabeled needs-human` 과 `unlabeled hold:*` 중 **가장 최근** 시각을 낸다.
+# h3) `hold:policy`·`hold:conflict` 의 `unlabeled` 중 **가장 최근** 시각을 낸다.
 #     (라벨 이벤트는 페이지네이션 대상이라 --paginate 로 전량을 읽어야 한다.)
 mk_gh <<'STUB'
 #!/bin/sh
 jqf='.'; prev=''
 for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
 printf '%s' '[
-  {"event":"labeled","label":{"name":"needs-human"},"created_at":"2026-07-05T07:00:00Z"},
+  {"event":"labeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T07:00:00Z"},
+  {"event":"unlabeled","label":{"name":"hold:conflict"},"created_at":"2026-07-05T10:29:00Z"},
   {"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"},
-  {"event":"unlabeled","label":{"name":"needs-human"},"created_at":"2026-07-05T10:29:00Z"},
   {"event":"unlabeled","label":{"name":"flow:verify"},"created_at":"2026-07-05T23:00:00Z"},
   {"event":"closed","created_at":"2026-07-05T23:30:00Z"}
 ]' | jq -r "$jqf"
 STUB
-check_h "helper: 최신 해제 시각(hold:*·needs-human 만)" 0 "2026-07-05T10:30:00Z"
+check_h "helper: 최신 해제 시각(사람 몫 사유 라벨만)" 0 "2026-07-05T10:30:00Z"
+
+# h3b) **핵심 회귀 가드** — `needs-human`·`hold:ladder` 의 제거는 **사람 신호가 아니다**.
+#      `resume-sweep.sh:159,299` 가 사다리 자동 재개로 그 둘을 **기계가** 뗀다. 이걸 세면
+#      기계 동작이 "사람이 결정했다" 는 증명으로 둔갑해 가려진 ✅ 가 되살아난다
+#      (#174 「걸러선 안 되는 것」 1항의 거울상 fail-open). → 해제 이벤트 없음(rc0·무출력).
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+printf '%s' '[
+  {"event":"unlabeled","label":{"name":"needs-human"},"created_at":"2026-07-05T10:30:00Z"},
+  {"event":"unlabeled","label":{"name":"hold:ladder"},"created_at":"2026-07-05T10:30:00Z"}
+]' | jq -r "$jqf"
+STUB
+check_h "helper: 사다리 자동재개(needs-human·hold:ladder)는 해제 아님" 0 ""
 
 # h4) 형식이 깨진 시각만 온다 → 유효한 해제 시각을 못 얻은 것 = exit 1(빈 출력).
 mk_gh <<'STUB'
 #!/bin/sh
 jqf='.'; prev=''
 for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
-printf '%s' '[{"event":"unlabeled","label":{"name":"needs-human"},"created_at":"garbage"}]' | jq -r "$jqf"
+printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"garbage"}]' | jq -r "$jqf"
 STUB
 check_h "helper: 시각형식깨짐→rc1·무출력" 1 ""
+
+# ── 실조회 배선 — FC_HOLD_RELEASED_AT 미지정 시 finish-classify 가 헬퍼를 실제로 부른다 ──
+# 위 h1~h4 는 헬퍼 **단독** 계약이고, 아래 둘은 finish-classify → 헬퍼 **배선**을 문다.
+# 이 배선이 끊기면(경로 오타·실행 비트 누락 → exit 126) 프로덕션에선 해제 시각이 항상
+# 빈 값이라 사람이 푼 보류가 **영영** 안 풀리는데, env 를 항상 주입하는 다른 픽스처는
+# 그걸 하나도 못 잰다. gh 를 PATH 스텁으로 갈아 네트워크 없이 끝까지 돌린다.
+wired_shape='[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:11:00Z"},
+  {"body":"마감 검증: ⚠ 보류 — P1 1건\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:00:00Z"}
+]'
+run_wired() {  # FC_HOLD_RELEASED_AT 를 **안** 넘긴다(실조회 갈래).
+  PATH="$hb:$PATH" FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
+    FC_COMMENTS_JSON="$wired_shape" FC_HEAD_AT="2026-07-05T09:05:00Z" \
+    "$SUT" owner/repo 1 2>/dev/null
+}
+check_wired() {
+  local name="$1" expect="$2" got
+  got=$(run_wired)
+  if [ "$got" = "$expect" ]; then pass=$((pass + 1)); else
+    fail=$((fail + 1)); echo "  ✗ $name — 기대=$expect 실제=$got"; fi
+}
+
+# w1) 헬퍼가 보류보다 늦은 해제 시각을 내면 → done_verdict (배선이 살아 있다).
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}]' | jq -r "$jqf"
+STUB
+check_wired "실조회 배선: 해제 읽힘→done_verdict" done_verdict
+
+# w2) 같은 배선에서 gh 가 실패하면 → active (조회 실패가 게이트를 열지 않는다).
+mk_gh <<'STUB'
+#!/bin/sh
+exit 1
+STUB
+check_wired "실조회 배선: gh실패→active(fail-closed)" active
 rm -rf "$hb"
 
 echo "finish-classify.test: pass=$pass fail=$fail"
