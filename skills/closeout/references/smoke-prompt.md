@@ -34,12 +34,16 @@ Tailscale 주소·루프백은 정상. DNS 도 권한도 아니다). 이때는 `
 **포트를 매번 새로 뽑고**, `ExitOnForwardFailure=yes` 로 포워딩 실패 시 ssh 가 죽게 하고,
 열자마자 한 번 찔러 확인한다:
 
-**로컬 포트 충돌과 원격 도달 불가는 다른 것이다.** 뽑은 포트를 이미 누가 물고 있으면
-`ExitOnForwardFailure=yes` 덕에 ssh 가 죽는데, 그걸 "도달 불가" 로 적으면 멀쩡한 경로를
-버리게 된다 — 바인드 실패면 **다른 포트로 재시도**하고, 5회 전부 충돌하면 전용 문자열로
-갈라 보고한다(아래 `tunnel port exhausted` — **로컬 문제, 도달 불가 아님**). 정리는 `pkill`
-이 아니라 **이 호출이 만든 control socket** 으로만 한다(같은 포트를 쓰는 남의 터널을 끊지
-않게).
+**로컬 포트 충돌과 원격 도달 불가는 다른 것이다 — 가르는 축은 "몇 번 실패했나" 가 아니라
+"어느 쪽 문제인가" 다.** 뽑은 포트를 이미 누가 물고 있으면(바인드 충돌)
+`ExitOnForwardFailure=yes` 덕에 ssh 가 죽는데, 이건 **로컬 문제**다 — 바인드 실패면
+**다른 포트로 재시도**하고, 5회 전부 바인드 충돌이면 전용 문자열로 갈라 보고한다(아래
+`tunnel port exhausted` — **로컬 문제, 도달 불가 아님**). 반대로 ssh 가 **비-바인드
+사유**(호스트 다운·인증 실패·DNS·라우팅)로 실패하면 그건 **원격/경로 문제**이므로 재시도해도
+의미가 없다 — 곧장 `tunnel unreachable` 로 보고한다(새 문자열을 만들지 않는다. 바인드는 됐는데
+프로브가 무응답·10초 초과인 경우와 같은 문자열로 합류시킨다 — 둘 다 원격 쪽 문제라서다).
+정리는 `pkill` 이 아니라 **이 호출이 만든 control socket** 으로만 한다(같은 포트를 쓰는
+남의 터널을 끊지 않게).
 
 **control socket 경로는 변수 전달에 기대지 않는다 — 포트에서 고정 유도한다.** 터널을 여는
 스니펫과 "스모크가 끝난 뒤 정리" 스니펫은 **서로 다른 Bash 호출**이라 셸 변수(`CTL`)가
@@ -48,7 +52,7 @@ Tailscale 주소·루프백은 정상. DNS 도 권한도 아니다). 이때는 `
 그대로 찍히므로, 정리 스니펫이 그 숫자만으로 같은 경로를 재구성해 쓸 수 있다:
 
 ```bash
-ERR=$(mktemp); PORT=""; CTL=""
+ERR=$(mktemp); PORT=""; CTL=""; ALL_BIND=1
 for _try in 1 2 3 4 5; do
   P=$(( 39000 + RANDOM % 1000 ))
   C="/tmp/smoke-tun-$P.sock"          # 소켓 경로 = 포트로 고정 유도(변수 전달에 안 기댐)
@@ -56,10 +60,16 @@ for _try in 1 2 3 4 5; do
        -L "127.0.0.1:$P:127.0.0.1:<원격포트>" <호스트별칭> 2>"$ERR"; then
     PORT=$P; CTL=$C; break            # 바인드 성공
   fi
-  grep -qi 'bind\|address already in use' "$ERR" || break   # 바인드 문제가 아니면 재시도 무의미
+  # ExitOnForwardFailure=yes 가 바인드 실패 시 내는 stderr 는 "bind: Address already in
+  # use" 류 — 이 grep 에 걸린다. 걸리지 않는(=비-바인드) 실패 예: "Could not resolve
+  # hostname"(DNS) · "Connection refused"/"No route to host"(호스트 다운·라우팅) ·
+  # "Permission denied"(인증 실패). 그런 실패는 포트를 바꿔 재시도해도 소용없으므로 즉시 break.
+  grep -qi 'bind\|address already in use' "$ERR" || { ALL_BIND=0; break; }   # 원격/경로 문제
 done
-if [ -z "$PORT" ]; then
-  echo "tunnel port exhausted"        # 5회 전부 포트 충돌 — 로컬 문제, 도달 불가 아님
+if [ -z "$PORT" ] && [ "$ALL_BIND" = 1 ]; then
+  echo "tunnel port exhausted"        # 5회 전부 바인드 충돌 — 로컬 문제, 도달 불가 아님
+elif [ -z "$PORT" ]; then
+  echo "tunnel unreachable"           # 비-바인드 ssh 실패(호스트 다운·인증·DNS·라우팅) — 원격/경로 문제
 elif curl -fsS --connect-timeout 3 --max-time 10 \
      "http://127.0.0.1:$PORT/up" -o /dev/null; then
   echo "tunnel ok on $PORT, control socket $CTL"   # ← 스모크 URL 은 http://127.0.0.1:$PORT
@@ -84,9 +94,11 @@ else
 fi
 ```
 
-`tunnel unreachable` 이 찍혔을 때만 도달 불가다 — 바인드 충돌은 위 루프가 이미 걸러 `tunnel
-port exhausted` 로 따로 갈렸고(로컬 문제로 분류, skip 사유일 뿐 도달 불가 판정에 넣지 않는다),
-무응답·지연은 `--max-time` 이 10초에서 끊어 같은 결론으로 모은다(closeout 이 매달리지 않게).
+`tunnel unreachable` 이 찍혔을 때만 도달 불가다 — 5회 전부 바인드 충돌은 위 루프가 이미 걸러
+`tunnel port exhausted` 로 따로 갈렸고(로컬 문제로 분류, skip 사유일 뿐 도달 불가 판정에 넣지
+않는다), 그 외의 실패 경로 둘 — ① ssh 가 비-바인드 사유로 실패 ② 바인드는 됐지만 원격
+무응답·지연(`--max-time` 이 10초에서 끊음, closeout 이 매달리지 않게) — 은 둘 다 원격/경로
+쪽 문제이므로 같은 문자열로 합류한다.
 정리는 control socket(`-O exit`)으로만 한다 — 포트 문자열로 넓게 `pkill` 하면 같은 포트를
 쓰던 남의 터널까지 끊는다. 소켓을 못 찾으면(`-S` 실패) `|| true` 로 삼키지 말고 그 사실을
 적는다. `<호스트별칭>`·`<원격포트>` 는 그 레포의 배포 절차 문서에서 찾는다(BoDAT =
