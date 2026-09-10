@@ -620,5 +620,73 @@ setup "needs-human,agent-ready" 200 0
 run
 check "정상 번호: number 유지·표식 없음" "$(evq warn '.number == 42 and (.msg | test("이슈 번호 미상") | not)')"
 
+# ── ㉛ (#193) `msg` 없는 이벤트 넷도 같은 자리를 안전하게 — waiting·escalated·resumed·
+#    policy_review_due. 이쪽은 사실을 적을 `msg` 칸이 없어 **형식 안전만** 취한다(번호 0).
+#    방출 조건은 안 바뀐다 — 특히 waiting 은 원래 조용히 넘기는 이벤트라 줄 수가 늘면 안 된다.
+#    이슈 본문 `## 범위 — 한 자리가 아니라 파일 전역이다` 가 요구한 넓히기.
+setup "needs-human,hold:ladder,agent-ready" 10 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 10)"
+echo '[]' > "$tmp/human.json"
+run
+check "빈 번호 waiting(창 전): 유효 JSON"    "$(lines_all_json)"
+check "빈 번호 waiting(창 전): 1줄만"        "$([ "$(nlines '"event":"waiting"')" = 1 ] && echo ok || echo no)"
+check "빈 번호 waiting(창 전): number 는 0"  "$(evq waiting '.number == 0')"
+check "빈 번호 waiting(창 전): minutes 유지"  "$(evq waiting '.minutes >= 9 and .minutes <= 11')"
+
+# 창 재판정 경로(목록 스냅샷 뒤 사람이 건드려 live updatedAt 이 새 기준이 된 경우)의 waiting.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/human.json"
+printf '%s' "$(ts 5)" > "$tmp/updated.livefile"
+STUB_UPDATED_LIVE="$tmp/updated.livefile"
+run
+check "빈 번호 waiting(창 재판정): 유효 JSON"   "$(lines_all_json)"
+check "빈 번호 waiting(창 재판정): number 는 0" "$(evq waiting '.number == 0')"
+check "빈 번호 waiting(창 재판정): 무편집"      "$(none 'issue edit')"
+
+# 재개(resumed) — 번호가 비어도 줄은 유효 JSON 이어야 한다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/human.json"
+run
+check "빈 번호 resumed: 유효 JSON"      "$(lines_all_json)"
+check "빈 번호 resumed: number 는 0"    "$(evq resumed '.number == 0')"
+check "빈 번호 resumed: attempt 유지"   "$(evq resumed '.attempt == 1')"
+
+# 승격(escalated) — 마커 2개로 상한 초과.
+setup "needs-human,hold:ladder,agent-ready" 200 2
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/human.json"
+run
+check "빈 번호 escalated: 유효 JSON"        "$(lines_all_json)"
+check "빈 번호 escalated: number 는 0"      "$(evq escalated '.number == 0')"
+check "빈 번호 escalated: attempt·limit 유지" "$(evq escalated '.attempt == 2 and .limit == 2')"
+
+# policy 재심 due — ③ 의 pnum 이 빈 경우.
+setup "needs-human,hold:policy,agent-ready" 200 0
+bad_num_rows "$tmp/policy.json" "" "needs-human,hold:policy,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/ladder.json"
+echo '[]' > "$tmp/human.json"
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "빈 번호 policy_review_due: 유효 JSON"   "$(lines_all_json)"
+check "빈 번호 policy_review_due: number 는 0" "$(evq policy_review_due '.number == 0')"
+check "빈 번호 policy_review_due: 무편집"      "$(none 'issue edit')"
+
+# 정상 번호(42)일 때 넷 다 번호를 그대로 싣는다 — 바이트 무회귀 가드.
+setup "needs-human,hold:ladder,agent-ready" 10 0
+run
+check "정상 번호 waiting: number 42 유지" "$(evq waiting '.number == 42')"
+setup "needs-human,hold:ladder,agent-ready" 200 0
+run
+check "정상 번호 resumed: number 42 유지" "$(evq resumed '.number == 42')"
+setup "needs-human,hold:ladder,agent-ready" 200 2
+run
+check "정상 번호 escalated: number 42 유지" "$(evq escalated '.number == 42')"
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "정상 번호 policy_review_due: number 42 유지" "$(evq policy_review_due '.number == 42')"
+
 echo "resume-sweep: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

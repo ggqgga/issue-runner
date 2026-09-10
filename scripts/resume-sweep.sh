@@ -106,6 +106,12 @@ _emit() {  # _emit <event> <repo> <num> <msg>
   printf '{"event":"%s","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$num" "$msg"
 }
 
+# `msg` 가 없는 이벤트(waiting·escalated·resumed·policy_review_due)도 같은 자리에 같은
+# 위험을 안는다 — 그쪽은 `printf` 가 인라인이고 필드 구성이 제각각이라 `_emit` 을 못 쓴다.
+# 사실을 적을 `msg` 칸이 없으니 **형식 안전만** 취한다: 정수가 아니면 0. 방출 조건은
+# 손대지 않는다(특히 `waiting` 은 원래 조용히 넘기는 이벤트라 줄 수가 늘면 안 된다).
+_emit_num() { if _nonneg_int "$1"; then printf '%s' "$1"; else printf 0; fi; }
+
 emit_warn() {  # emit_warn <repo> <num> <msg> — msg 는 이 파일이 쓰는 고정 문구(따옴표 없음)
   _emit warn "$1" "$2" "$3"
 }
@@ -240,7 +246,7 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
     # SKILL 은 이 이벤트를 보고하지 않지만(조용히 넘긴다) **내보내는 것 자체가 계약**이다 —
     # "창 안이라 안 건드렸다" 와 "대상이 아예 없었다" 를 구분하는 유일한 신호라, 사람이
     # 스윕을 손으로 돌려 디버깅할 때·앞으로 loop-status 가 세게 될 때 이 줄이 근거다.
-    printf '{"event":"waiting","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$num" "$elapsed"
+    printf '{"event":"waiting","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$(_emit_num "$num")" "$elapsed"
     return 0
   fi
 
@@ -271,7 +277,7 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
       elapsed=$(( (now_epoch - then_epoch) / 60 ))
       [ "$elapsed" -lt 0 ] && elapsed=0
       if [ "$elapsed" -lt "$RESUME_AFTER_MIN" ]; then
-        printf '{"event":"waiting","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$num" "$elapsed"
+        printf '{"event":"waiting","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$(_emit_num "$num")" "$elapsed"
         return 0
       fi
     fi
@@ -310,7 +316,7 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
     # 승격에선 마커를 안 남기므로 next 를 실으면 GitHub 어디에도 대응하는 숫자가 없는 값이
     # 이벤트에만 떠돈다(합산하는 소비자는 승격마다 1씩 과다 계수한다).
     printf '{"event":"escalated","repo":"%s","number":%s,"attempt":%s,"limit":%s}\n' \
-      "$repo" "$num" "$attempts" "$LADDER_RESUME_LIMIT"
+      "$repo" "$(_emit_num "$num")" "$attempts" "$LADDER_RESUME_LIMIT"
     return 0
   fi
 
@@ -342,7 +348,7 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
     emit_warn_after_edit "$repo" "$num" "재개 readback 불일치(needs-human·hold:ladder 가 남아 있다) — 사람 확인 필요"
     return 0
   fi
-  printf '{"event":"resumed","repo":"%s","number":%s,"attempt":%s}\n' "$repo" "$num" "$next"
+  printf '{"event":"resumed","repo":"%s","number":%s,"attempt":%s}\n' "$repo" "$(_emit_num "$num")" "$next"
 }
 
 # ── 스코프 레포 목록 ───────────────────────────────────────────────────────
@@ -488,7 +494,7 @@ while IFS= read -r repo; do
         due) ;;
         *) emit_warn "$repo" "$pnum" "재심 마커 해석 실패 — 이번 틱은 건너뛴다"; continue ;;
       esac
-      printf '{"event":"policy_review_due","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$pnum" "$pmin"
+      printf '{"event":"policy_review_due","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$(_emit_num "$pnum")" "$pmin"
     done 3< "$tmp/issues.policy"
   else
     echo "resume-sweep: $repo needs-human+hold:policy 목록 조회 실패 — 재심 점검을 건너뛴다" >&2
