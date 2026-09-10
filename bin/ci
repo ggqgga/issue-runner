@@ -1333,4 +1333,37 @@ for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md \
   fi
 done
 
+echo "[#185] 워커 템플릿 CI 큐 대기 규율 문서화 검사 — 한/영 동기"
+# 워커가 run-local-ci.sh 큐 대기 중 조용히 턴을 끝내면 디스패처가 사망으로 오독한다
+# (#185 배경). 직접호출 금지·중복실행 금지 규율과, 큐가 실제로 내는 두 실패 모드
+# (폐기=HEAD 불일치·중단=짧은 타임아웃)가 워커 템플릿 9단계 한/영 양쪽에 있어야 한다.
+for f in references/worker-template.md references/worker-template.en.md; do
+  for tok in 'ps -Ao pid,etime,command' 'queue.log' '폐기' '중단(INT/TERM)' 'CI 대기 중'; do
+    grep -qF -- "$tok" "$f" || { echo "  ✗ $f 에 CI 큐 대기 규율 토큰 없음: $tok"; exit 1; }
+  done
+done
+
+echo "[#185] 턴 종료 시 'CI 대기 중' 보고 형식 검사 — 워커 템플릿 한/영"
+# 조용한 종료를 막는 게 이 이슈의 핵심 — 대기열 번호·다음 할 일을 담은 정확한
+# 종료 보고 형식이 명문화돼 있는지 본다(형식 문구가 사라지면 워커마다 표현이
+# 갈려 디스패처가 다시 못 알아본다).
+for f in references/worker-template.md references/worker-template.en.md; do
+  grep -qF -- '대기열 N번째, 다음 할 일:' "$f" \
+    || { echo "  ✗ $f 에 'CI 대기 중' 종료 보고 형식(대기열 N번째, 다음 할 일:) 없음"; exit 1; }
+done
+
+echo "[#185] SKILL working 항목 — CI 대기 재개 갈래(사망 오독 방지) 검사 — 한/영"
+# SKILL.md/SKILL.en.md ① Reconcile 의 working 항목이 'CI 대기 중' 마지막 보고를
+# 사망이 아니라 재개 대상으로 갈라내고, SendMessage 재개를 지시하며, worktree
+# 제거·claim 해제를 하지 말라고 못박아야 한다(#185). 셋 중 하나만 빠져도 죽은
+# 워커 취급 경로로 새는 회귀라 세 토큰을 각각 검사한다.
+grep -qF -- 'CI 대기 중' SKILL.md || { echo "  ✗ SKILL.md working 항목에 'CI 대기 중' 갈래 없음"; exit 1; }
+grep -qF -- 'SendMessage' SKILL.md || { echo "  ✗ SKILL.md 에 SendMessage 재개 지시 없음"; exit 1; }
+grep -qF -- 'worktree 제거·claim 해제를 하지 말고' SKILL.md \
+  || { echo "  ✗ SKILL.md 에 CI 대기 재개 갈래의 worktree 제거·claim 해제 금지 명문화 없음"; exit 1; }
+grep -qF -- 'CI 대기 중' SKILL.en.md || { echo "  ✗ SKILL.en.md working 항목에 'CI 대기 중' 갈래 없음"; exit 1; }
+grep -qF -- 'SendMessage' SKILL.en.md || { echo "  ✗ SKILL.en.md 에 SendMessage 재개 지시 없음"; exit 1; }
+grep -qF -- 'Do not remove the worktree or release the claim' SKILL.en.md \
+  || { echo "  ✗ SKILL.en.md 에 CI 대기 재개 갈래의 worktree 제거·claim 해제 금지 명문화 없음"; exit 1; }
+
 echo "CI pass"

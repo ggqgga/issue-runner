@@ -113,7 +113,16 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   Report so a human sees it.
 - `pr_open` — input to ② Maintain.
 - `working` — a worker is in progress. Use TaskList to check whether that
-  background agent is actually alive. If it is dead and there are pushed commits,
+  background agent is actually alive. **Do not assume "looks dead" (the task has
+  ended in TaskList) means actually dead** — first read the task's last message with
+  `TaskOutput(task_id)`. If it reads `CI 대기 중 — <SHA> 대기열 N번째, 다음 할 일:
+  <...>`, the worker only ended its turn while waiting in the `run-local-ci.sh` queue
+  — it is not dead (#185). **Do not remove the worktree or release the claim** —
+  wake the worker with `SendMessage` to that task, telling it to resume (pick up the
+  "다음 할 일" / next step it reported). Once resumed, record it in ④ Report's
+  `maintained` line as `#<num>(resumed from CI wait)`. If the message is not in that
+  format (a genuine death), continue below.
+  If it is dead and there are pushed commits,
   treat it as a maintenance target for ②. If there are no commits at all, check
   the issue's latest comment **before** releasing the claim —
   `gh issue view <num> --repo <repo> --json comments --jq '.comments | last.body'`.
