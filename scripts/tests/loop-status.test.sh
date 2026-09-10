@@ -612,6 +612,27 @@ ck "--json: 사망 의심 경과는 3상태(분 / null=미상)" \
   "$(jq -c '[.repos[0].warns[] | select(.kind=="orphan_pr") | {p:.pr, m:.claimed_minutes}]' < "$tmp/out")" \
   '[{"p":61,"m":5},{"p":62,"m":null},{"p":63,"m":null},{"p":64,"m":null}]'
 
+# 상한 — 넘는 후보는 조회하지 않고 `경과 미상`(거짓 숫자를 만들지 않는다). 상한이 없으면
+# 루프가 크게 어긋난 날 이 스크립트가 틱을 잡아먹는다.
+: > "$STUB_CALL_LOG"
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" CLAIM_TIME_MAX=1 \
+  "$SUT" --repo ggqgga/Reclaim --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "CLAIM_TIME_MAX=1: exit 0" "$RC" 0
+ck "CLAIM_TIME_MAX=1: 타임라인 조회 1건" "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 1
+has_sub "CLAIM_TIME_MAX=1: 상한 안의 #31 은 그대로 5분" "$tmp/out" \
+  "연결 이슈 #31 는 needs-human 아님(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
+has_sub "CLAIM_TIME_MAX=1: 상한 밖은 경과 미상" "$tmp/out" \
+  "연결 이슈 #32 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+has_sub "CLAIM_TIME_MAX=1: 상한 초과 사유가 stderr 에" "$tmp/err" \
+  "reclaim #32 claim 시각 조회 상한(1) 초과"
+has_line "CLAIM_TIME_MAX=1: warn 은 여전히 4건" "$tmp/out" "  warn      4"
+# 형식 오류는 조용한 기본값이 아니라 환경 실패(HANDOFF_GRACE_MIN·HOLD_NOTE_MAX 와 같은 규율)
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" CLAIM_TIME_MAX=스물 \
+  "$SUT" --repo ggqgga/Reclaim --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "CLAIM_TIME_MAX 형식 오류: exit 1" "$RC" 1
+has_sub "CLAIM_TIME_MAX 형식 오류: stdout 에도 사유" "$tmp/out" \
+  "파이프라인 — 스냅샷 실패: CLAIM_TIME_MAX 형식 오류: 스물"
+
 # 인계 전 창을 넓히면 셋 다 창 안 → warn 이 아니니 타임라인 조회도 0건(틱 비용).
 : > "$STUB_CALL_LOG"
 STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" HANDOFF_GRACE_MIN=300 \

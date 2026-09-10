@@ -545,6 +545,10 @@ def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | so
               # PR `createdAt` 으로 대신 재면(옛 동작) 재디스패치 건이 통째로 오탐이 된다.
               | (if $claimed then claim_at($p.issue) else null end) as $cat
               | {kind: "orphan_pr", repo_short: $rs, pr: $p.number, issue: $p.issue,
+                 # 종전의 `$claimed and $p.createdAt != null` 에서 뒷조건을 뗐다 — 그건 PR
+                 # 나이로 재던 시절 "잴 값이 있나" 였다. 이제 재는 값은 claim 시각이라
+                 # PR `createdAt` 은 이 판정과 무관하고, 남겨 두면 createdAt 이 없는 PR 만
+                 # 꼬리표에서 조용히 빠진다(구현중 버킷인데 아무 말도 없는 상태).
                  handoff_overdue: $claimed,
                  # 3상태: 분(정수) · null=미확인. 기계 판독면도 미상을 0 으로 접지 않는다.
                  claimed_minutes: (if $cat == null then null else mins_since($cat) end),
