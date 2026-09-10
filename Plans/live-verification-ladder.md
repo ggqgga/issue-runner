@@ -61,6 +61,8 @@ closeout 1단계가 "이슈가 요구한 수정이 이미 main 에 있다" 로 �
 
 연결 이슈가 `agent:claimed` 이고 PR 나이가 `HANDOFF_GRACE_MIN`(기본 90) 미만이면 무소속 warn 이 아니라 `구현중 ← PR #n(인계 전)`. 넘기면 warn(워커 사망 의심).
 
+꼬리표의 경과시간은 **가장 최근 `agent:claimed` 부착 시각**(이슈 타임라인, `--paginate` 전량) 기준이다 (#177) — PR `createdAt` 으로 재면 홀드 해제 뒤 재디스패치된 건이 통째로 오탐이 된다(실측: 231분으로 신고했으나 실제 claim 은 7분 전). 창 분할은 종전대로 PR 나이. 시각을 못 얻으면 숫자 대신 `경과 미상 — 확인 필요`(warn 은 유지).
+
 ### 6. 미니 설치
 
 worker-ssh · worker-recipe-test 는 `~/.claude/skills/` 의 개인 디렉터리(레포 밖)다. 미니 `~/.claude/skills/` 에 **복사**하고(심볼릭 링크 불가), 이 절차를 README 설치 절에 적는다. 미니 `ssh test` 직결과 맥북 중첩 경로 둘 다 사다리 문서에.
