@@ -107,6 +107,23 @@ is owned by this loop** (the closer) — the finish logic is unified into closeo
 loaded onto issue-runner (role split, user decision 2026-07-06). Like the QUIET_TICKS rule
 (gh-query-only, ~0 cost), it runs every tick even when stagnated.
 
+**A ✅ must also answer "which SHA was it about?" (#171).** A bounced PR still carries the ✅
+that was written for the very code the bounce was about — leave that alone and closeout merges
+the code closeout itself blocked. So `closeout-eligible.sh` never promotes on the presence of a
+✅ alone; two layers guard it, both pointing the same way — **do not open unless proven**:
+
+1. Reuse `finish-classify.sh` (never a second copy of the logic) — `done_verdict` only when
+   **both** the ✅ comment time and the head commit time were obtained and the verdict is shown
+   to postdate the head. A lookup/parse failure is `active`, not a pass (treating failure-to-prove
+   as a pass is exactly fail-open on a merge gate).
+2. **Bounce-marker safety net** — covers the window right after a bounce, before the replacement
+   worker pushes, when the head time is still unchanged. The marker set lives in **one place**
+   (`BOUNCE_MARKERS` in `closeout-eligible.sh`) and holds both bounce channels: `재디스패치:`
+   (this skill, ①-b) and `재검증 실패:` (verify-runner ④). New bounce wording goes in that array
+   and nowhere else. Ordering is decided by the **last matching index in the comment array**, not
+   by `createdAt` — GitHub comment times are second-granular, so a ✅ and a marker written in the
+   same second cannot be ordered by time.
+
 **Targets**: `me=$(gh api user -q .login)`, then `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc` (FIFO). For each PR whose head is
 `agent/issue-*` and that is **not labeled `harvesting`**, **not labeled `flow:verify`**, and **not
@@ -126,11 +143,11 @@ separate freshness gate needed:
 
 | finish-classify output | Meaning | Action |
 |---|---|---|
-| `done_verdict` | latest `머지 판정: ✅` | eligible.sh's normal path handles it — sweep skips |
+| `done_verdict` | latest `머지 판정: ✅` **and it is proven to postdate the current head commit** (#171) | eligible.sh's normal path handles it — sweep skips |
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). |
 | `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
 | `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `needs-human` + `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the human signal survives even with no linked issue), closeout leaves it (no auto-progress). |
-| `active` | in progress · buffer not reached · not our shape | **Leave it** (next tick). |
+| `active` | in progress · buffer not reached · not our shape, **or the ✅'s freshness could not be proven** (✅ predates the head commit, or either timestamp could not be obtained, #171) | **Leave it** (next tick). |
 
 **`flow:*` supplementary signal**: finish-classify judges by comments, but a stale PR with
 `flow:codex`/`flow:ci` and no `flow:ready` is itself evidence of "worker died during verify"

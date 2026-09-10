@@ -4,6 +4,18 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 me=$(gh api user -q .login 2>/dev/null); [ -n "$me" ] || exit 0
 
+# ── 반송(bounce) 마커 집합 — 한 자리 (#171) ──────────────────────────────
+# PR 을 워커에게 되돌리는 채널이 둘이고, 각자 자기 어휘로 코멘트를 남긴다:
+#   `재디스패치:`   closeout 마감 검증 BLOCKER·완결 유실 반송 (skills/closeout/SKILL.md:124)
+#   `재검증 실패:`  verify-runner 재검증 반려          (skills/verify-runner/SKILL.md:227)
+# 두 채널의 효과는 같다 — 교체 워커가 새 커밋을 올리기 전까지 head 가 그대로라, 그
+# 이전에 찍힌 ✅ 가 살아 남아 "방금 반려된 PR" 을 머지 후보로 만든다. 그래서 **한 집합**
+# 으로 다룬다. 새 반송 어휘가 늘면 **이 배열 한 곳만** 고쳐라 — 채널마다 가드를 베끼면
+# 하나 빠진 채로 fail-open 이 된다(실제로 verify-runner 채널이 그렇게 빠져 있었다).
+# 두 마커 모두 한/영 SKILL 이 같은 한글 문자열을 찍는다(SKILL.en.md 도 동일) — 영문
+# 변종이 생기면 여기에 함께 넣는다.
+BOUNCE_MARKERS='["재디스패치:","재검증 실패:"]'
+
 scope_file="$PWD/.loop/repos"
 in_scope() {
   [ -f "$scope_file" ] || return 0
@@ -63,21 +75,33 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
     "$SCRIPT_DIR/finish-classify.sh" "$repo" "$pr" 2>/dev/null)
   [ "$verdict" = "done_verdict" ] || continue
 
-  # 재디스패치 마커 안전망(#171 개발계획 3항) — 1·2 의 head-SHA 시각 비교가 못 잡는
-  # 창을 막는다: 반송 직후 워커가 아직 새 커밋을 안 올렸으면 head 커밋 시각이 그대로라
+  # 반송 마커 안전망(#171 개발계획 3항) — 1·2 의 head 커밋 시각 비교가 못 잡는 창을
+  # 막는다: 반송 직후 워커가 아직 새 커밋을 안 올렸으면 head 커밋 시각이 그대로라
   # finish-classify 도 done_verdict 를 낼 수 있다(코멘트 시각과 커밋 시각의 시계가
-  # 다를 수 있다는 전제). 최신 `재디스패치:` 코멘트가 최신 ✅ 코멘트보다 **뒤**면(그
-  # 사이 새 ✅ 가 안 찍혔으면) 후보에서 뺀다. createdAt 은 둘 다 ISO8601 UTC(...Z) 라
-  # 문자열 비교로 시간순이 보존된다(reconcile.sh:278 와 같은 관행).
-  redispatch_at=$(printf '%s' "$meta" | jq -r \
-    '[.comments[] | select(.body|startswith("재디스패치:"))] | last | .createdAt // empty')
-  if [ -n "$redispatch_at" ]; then
-    verdict_at=$(printf '%s' "$meta" | jq -r \
-      '[.comments[] | select((.body|startswith("머지 판정: ✅")) or (.body|startswith("Merge verdict: ✅")))] | last | .createdAt // empty')
-    if [ -z "$verdict_at" ] || [[ "$redispatch_at" > "$verdict_at" ]]; then
-      continue
-    fi
-  fi
+  # 다를 수 있다는 전제). 최신 반송 마커가 최신 ✅ 보다 **뒤**면(그 사이 새 ✅ 가 안
+  # 찍혔으면) 후보에서 뺀다.
+  #
+  # 선후는 **코멘트 배열의 마지막 매칭 인덱스**로 판정한다 — createdAt 이 아니라.
+  # GitHub 코멘트 시각은 초 단위라 ✅ 직후 같은 초에 반송 마커가 달리면 두 값이 같아져
+  # 시각 비교(`>`)가 거짓이 되고 반송된 PR 이 통과한다. 반대로 같은 초에 마커 뒤 새 ✅ 가
+  # 달린 정상 재완결은 통과해야 하므로, 단순 시각 비교로는 양방향을 못 가린다. 코멘트
+  # 배열은 GitHub 이 생성 순으로 주므로 인덱스가 그 순서를 그대로 담는다(초 단위로
+  # 뭉개지지 않는 유일한 값 — PR#168 교훈: 정보를 담을 수 있는 값으로 바꿔라).
+  bounce_state=$(printf '%s' "$meta" | jq -r --argjson bm "$BOUNCE_MARKERS" '
+    [.comments[].body] as $bodies
+    | ([ $bodies | to_entries[]
+         | select(.value as $x | ($bm | any(. as $m | $x | startswith($m))))
+         | .key ] | last) as $bi
+    | ([ $bodies | to_entries[]
+         | select(.value | startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))
+         | .key ] | last) as $vi
+    | if   $bi == null then "ok"
+      elif $vi == null then "bounced"
+      elif $bi > $vi   then "bounced"
+      else "ok" end' 2>/dev/null)
+  # jq 실패·빈 출력도 "ok 아님" 이라 후보에서 빠진다(fail-closed — 위 ✅ 갈래와 같은 방향:
+  # 반송되지 않았음을 **증명**했을 때만 통과).
+  [ "$bounce_state" = "ok" ] || continue
 
   # 미해결(사람 리뷰) 코멘트 판정 — 머신 코멘트는 sentinel 마커 <!-- bodat:worker -->
   # (마지막 줄)로 식별한다(#72). 워커/closeout 이 남기는 모든 자기-문서화 코멘트엔

@@ -29,12 +29,12 @@ assert() {
   fi
 }
 
-# 1) done_verdict — 최신 머지 판정이 ✅
+# 1) done_verdict — 최신 머지 판정이 ✅ (+ head 커밋 시각을 얻어 판정이 그 뒤임을 증명)
 assert "done_verdict" done_verdict '[
   {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
   {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:01:00Z"},
   {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:02:00Z"}
-]'
+]' "2026-07-05T10:55:00Z"
 
 # ── #171: ✅ 를 head SHA 와 묶는다 ──────────────────────────────────────
 
@@ -59,6 +59,28 @@ assert "✅와head동일초→done_verdict(경계)" done_verdict '[
   {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
   {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:02:00Z"}
 ]' "2026-07-05T11:02:00Z"
+
+# ── #171(반송 회차): 증명되지 않으면 게이트를 열지 않는다 ────────────────
+# 아래 셋은 전부 "두 시각 중 하나를 못 얻은" 형상이다. 옛 구현은 못 얻은 값을 epoch 0
+# 으로 뭉개 `0 -gt ve` 가 거짓 → done_verdict 를 냈다(= 머지 게이트를 증명 없이 열었다).
+
+# 1e) head 커밋 시각 조회 실패(빈 commits·gh 실패) → active.
+assert "head시각못얻음→active" active '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:01:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:02:00Z"}
+]' ""
+
+# 1f) head 커밋 시각 파싱 실패(쓰레기 값) → active.
+assert "head시각파싱실패→active" active '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:02:00Z"}
+]' "not-a-real-timestamp"
+
+# 1g) 판정 시각 파싱 실패(코멘트 createdAt 이 깨짐) → active. head 는 유효한데도
+#     "판정이 head 이후" 를 증명 못 하므로 통과시키지 않는다.
+assert "판정시각파싱실패→active" active '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"garbage"}
+]' "2026-07-05T10:55:00Z"
 
 # 2) held — 최신 머지 판정이 ⚠ 보류
 assert "held" held '[
@@ -121,7 +143,7 @@ assert "재리뷰-BLOCKER복귀" stale_reverify '[
 assert "english-done" done_verdict '[
   {"body":"Merge verdict: 🔄 in progress","createdAt":"2026-07-05T11:00:00Z"},
   {"body":"Merge verdict: ✅ mergeable\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:02:00Z"}
-]'
+]' "2026-07-05T10:55:00Z"
 
 # 10) 판정 코멘트 자체가 없음(너무 이른 단계) → active(우리 형상 아님, 무접촉)
 assert "no-verdict→active" active '[

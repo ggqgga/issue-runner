@@ -5,16 +5,18 @@
 # 다섯 중 하나로 stdout 에 분류한다 (SKILL ② Maintain 규칙4 가 이 결과로 4a/4b/4c
 # 를 분기한다 — SKILL prose 를 얇게 유지하고 결정적으로 테스트 가능하게).
 #
-#   done_verdict   최신 `머지 판정:` 이 ✅ 이고 그 판정 시각이 head 커밋보다 늦음(또는
-#                  같음)     → 4a 무접촉(closeout 픽업 대기)
+#   done_verdict   최신 `머지 판정:` 이 ✅ 이고, **두 시각(판정·head 커밋)을 모두 얻어**
+#                  그 판정이 head 커밋보다 늦음(또는 같음)을 증명함
+#                  → 4a 무접촉(closeout 픽업 대기)
 #   held           최신 `머지 판정:` 이 ⚠            → 4a 무접촉(워커 명시 보류·needs-human)
 #   stale_inline   🔄(최종 판정 없음) + 최신 검증자 CLEAN + 그 코멘트가 STALE_FINISH_MIN
 #                  초과            → 4b 인라인 최종 판정 대리 append(에이전트 없음)
 #   stale_reverify 🔄 + 검증자 부재 또는 미해결 BLOCKER + STALE_FINISH_MIN 초과
 #                  → 4c 완결 에이전트 재디스패치(검증자 재실행)
 #   active         위 어디에도 안 걸림(진행 중·시간버퍼 미도달·우리 형상 아님) 또는
-#                  최신 `머지 판정: ✅` 가 head 커밋보다 **이름**(반송 뒤 재디스패치된
-#                  새 커밋이 아직 검증 안 됨, #171) → 무접촉(새 판정을 기다림)
+#                  최신 `머지 판정: ✅` 의 신선도를 **증명하지 못함**(head 커밋보다 이르거나,
+#                  두 시각 중 하나라도 못 얻음 — 반송 뒤 재디스패치된 새 커밋이 아직
+#                  검증 안 됨, #171) → 무접촉(새 판정을 기다림)
 #
 # 판별 근거: 살아있는 워커는 `검증자 리뷰:` 코멘트 직후 수초 내 최종 판정을 찍는다.
 # 최신 검증자가 CLEAN 인데 STALE_FINISH_MIN 넘게 최종 판정이 없으면 워커 사망 확실.
@@ -32,8 +34,9 @@
 #   FC_COMMENTS_JSON  코멘트 배열 JSON([{body,createdAt},...]) — gh 대체
 #   FC_FAILING        실패 체크 수(정수) — statusCheckRollup 대체
 #   FC_HEAD_AT        head 커밋 시각(ISO8601) — gh pr view --json commits 대체.
-#                      빈 값/파싱 불가면 epoch 0 취급(기존 판정에 영향 없음 — degrade,
-#                      fail-open 아님. #110).
+#                      빈 값/파싱 불가 = **못 얻음**. 🔄 계열 갈래(#110 스테일 클록)에선
+#                      종전대로 epoch 0 으로 degrade 하지만, `✅` 갈래(#171 머지 게이트)
+#                      에선 증명 실패이므로 done_verdict 를 내지 않고 active 다.
 #   FC_NOW            현재 epoch(초) — date 대체
 #   STALE_FINISH_MIN  시간버퍼(분, 기본 30)
 set -uo pipefail
@@ -93,19 +96,27 @@ verdict_epoch=$(iso_to_epoch "$verdict_at")
 # ── 최종 판정이 이미 있는 경우(4a) ──
 case "$verdict_body" in
   *✅*)
-    # #171: ✅ 를 head SHA 와 묶는다. 반송(재디스패치) 뒤 새 커밋이 올라왔는데 그
-    # 커밋 **이전**에 찍힌 ✅ 를 근거로 머지 후보 삼지 않는다 — 판정이 head 보다
-    # 이르면(head_epoch > verdict_epoch) done_verdict 를 내지 않고 active 로
-    # 떨어뜨린다(워커가 새 판정을 찍을 때까지 대기). 같은 초(경계) 또는 판정이
-    # head 보다 늦으면 종전대로 done_verdict — 새 보류 상태를 만드는 게 아니라
-    # 시각 비교 하나만 더하는 것이다.
-    # head_epoch·verdict_epoch 파싱 실패/공란은 0 취급(FC_HEAD_AT 계약과 동일 —
-    # degrade, fail-open 아님: 기존 done_verdict 판정을 유지).
-    he="${head_epoch:-0}"; ve="${verdict_epoch:-0}"
-    if [ "$he" -gt "$ve" ] 2>/dev/null; then
-      echo active
-    else
+    # #171: ✅ 를 head 커밋과 묶는다. 반송(재디스패치) 뒤 새 커밋이 올라왔는데 그
+    # 커밋 **이전**에 찍힌 ✅ 를 근거로 머지 후보 삼지 않는다.
+    #
+    # 게이트 방향 = **증명되지 않으면 열지 않는다.** 두 시각(판정·head 커밋)을 모두
+    # 얻어 `head <= verdict` 를 확인했을 때만 done_verdict 다. 하나라도 못 얻으면
+    # (빈 commits·gh 조회 실패·날짜 파싱 실패) 판정이 현재 head 이후임을 *증명하지
+    # 못한* 것이므로 active — 워커의 새 판정을 기다린다.
+    #
+    # 옛 구현은 못 얻은 시각을 `${head_epoch:-0}` 으로 뭉개 done_verdict 로 떨어뜨리고
+    # 이를 "degrade, fail-open 아님" 이라 적었다. 그건 틀렸다 — **머지 게이트에서
+    # 증명 실패를 통과로 처리하는 것이 곧 fail-open** 이다(PR#139 교훈: 빈 결과와
+    # 실패를 구분하라). 🔄 계열 갈래의 epoch-0 degrade 는 그대로 둔다: 거긴 게이트가
+    # 아니라 스테일 클록이라 0 이 "더 오래된 활동" 으로 안전하게 흡수된다.
+    #
+    # 정상 판정은 막지 않는다 — 판정이 head 보다 늦거나 같은 초면 종전대로
+    # done_verdict 다(새 보류 상태를 만드는 게 아니다).
+    if [ -n "$head_epoch" ] && [ -n "$verdict_epoch" ] \
+       && [ "$head_epoch" -le "$verdict_epoch" ] 2>/dev/null; then
       echo done_verdict
+    else
+      echo active
     fi
     exit 0
     ;;
