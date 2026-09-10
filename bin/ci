@@ -154,6 +154,50 @@ rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/pr-head-at.sh owner/r 123 2>/dev/null
   || { echo "  ✗ pr-head-at: 커밋 조회 빈값 rc=$rc out='$out' (기대 rc=1·무출력)"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] bounce-state 헬퍼 fail-closed·실행비트 스모크 (#196)"
+# 반송 판정을 못 하면 **아무것도 안 내고 exit≠0** 이어야 한다 — 빈 결과를 유효값으로
+# 둔갑시키면 CONFLICTING 입양 게이트가 증명 없이 열린다(PR#139 교훈).
+# 소비자(closeout-eligible.sh · closeout SKILL ①-b 프로즈)가 직접 exec 하므로 실행 비트도
+# 여기서 함께 문다(비트가 빠지면 조용히 exit 126 → 판정이 항상 빈 값으로 degrade 된다).
+[ -x scripts/bounce-state.sh ] || { echo "  ✗ bounce-state.sh 실행 비트 없음"; exit 1; }
+tmp=$(mktemp -d); mkdir "$tmp/stub"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/stub/gh"; chmod +x "$tmp/stub/gh"
+rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/bounce-state.sh owner/r 123 2>/dev/null) || rc=$?
+[ "$rc" != 0 ] && [ -z "$out" ] \
+  || { echo "  ✗ bounce-state: gh 실패 시 rc=$rc out='$out' (기대 rc≠0·무출력)"; rm -rf "$tmp"; exit 1; }
+# 인자 누락도 조용한 `ok` 가 아니라 판정 실패다.
+rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/bounce-state.sh 2>/dev/null) || rc=$?
+[ "$rc" != 0 ] && [ -z "$out" ] \
+  || { echo "  ✗ bounce-state: 인자 누락 rc=$rc out='$out' (기대 rc≠0·무출력)"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
+echo "[closeout] 반송 마커 집합은 bounce-state.sh 한 자리 (#171 · #196)"
+# 마커 집합을 다른 스크립트가 자기 벌로 들고 있으면 새 반송 어휘가 생겼을 때 한쪽만
+# 고쳐져 fail-open 이 된다(실제로 verify-runner 채널이 그렇게 빠져 있었다).
+# 판정선은 **집합 정의(`BOUNCE_MARKERS`)의 존재**다 — 마커 문자열 자체는 다른 파일의
+# 설명 주석에도 나오고(그건 사본이 아니다), 정의만 한 자리면 계약이 지켜진다.
+dup=$(grep -l 'BOUNCE_MARKERS' scripts/*.sh | grep -v '^scripts/bounce-state.sh$' || true)
+[ -z "$dup" ] || { echo "  ✗ 반송 마커 집합 정의가 bounce-state.sh 밖에도 있다: $dup"; exit 1; }
+
+echo "[closeout] ①-b CONFLICTING 입양의 반송 게이트 배선 — 한/영 SKILL (#196)"
+# CONFLICTING 은 finish-classify 를 건너뛰므로, 반송 안전망은 프로즈가 bounce-state.sh 를
+# 직접 부르는 배선 하나로만 선다. 그 호출이 사라지면 #196 사고(살아있는 워커의 PR 입양·
+# rebase)가 그대로 되살아난다 — 문서 회귀를 여기서 문다.
+# 존재만 보면 문서 아무 데나 적혀 있어도 통과한다(사전 리뷰 NIT) — **1) CONFLICTING 절
+# 안**에 있는지까지 본다. 헤더 문구는 번역되므로 언어 불변 앵커를 쓴다: 호출 줄
+# (`$SCRIPTS/bounce-state.sh`)이 2) 절의 첫 줄(`$SCRIPTS/finish-classify.sh`)보다 **앞**이어야
+# 1) 안이다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  b_line=$(grep -nF '$SCRIPTS/bounce-state.sh' "$f" | head -1 | cut -d: -f1)
+  fc_line=$(grep -nF '$SCRIPTS/finish-classify.sh' "$f" | head -1 | cut -d: -f1)
+  [ -n "$b_line" ] \
+    || { echo "  ✗ $f 에 ①-b CONFLICTING 반송 게이트(\$SCRIPTS/bounce-state.sh) 호출 없음"; exit 1; }
+  [ -n "$fc_line" ] \
+    || { echo "  ✗ $f 에 \$SCRIPTS/finish-classify.sh 앵커 없음 — 가드가 의미를 잃었다"; exit 1; }
+  [ "$b_line" -lt "$fc_line" ] \
+    || { echo "  ✗ $f: bounce-state 호출(줄 $b_line)이 2) finish-classify 절(줄 $fc_line) 뒤다 — 1) CONFLICTING 절 안이어야 한다"; exit 1; }
+done
+
 echo "[closeout] ci-pass 로컬 CI 분기 세 결과 구분 스모크 (#70 — pass=0/fail=1/부재=2)"
 # 로컬 CI 옵트인 레포(root 에 실행가능 bin/ci) → head SHA 캐시 결과로 0/1/2 구분.
 # rebase 로 HEAD 가 바뀐 PR 은 새 SHA 결과파일이 부재 → exit 2(재검증 필요)여야 한다.
@@ -863,6 +907,9 @@ bash scripts/tests/finish-classify.test.sh
 
 echo "[test] closeout-eligible.sh 후보 필터 — ✅ 를 head SHA 와 대조 (#171)"
 bash scripts/tests/closeout-eligible.test.sh
+
+echo "[test] bounce-state.sh 반송 판정 — ①-b CONFLICTING 입양 안전망 (#196)"
+bash scripts/tests/bounce-state.test.sh
 
 echo "[test] release-labels.sh 라벨 해제 규칙 테스트 (#117)"
 bash scripts/tests/release-labels.test.sh
