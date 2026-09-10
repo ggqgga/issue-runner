@@ -812,7 +812,10 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   # ①-c 헤더부터 다음 `## ` 헤더 직전까지 = 그 절의 본문.
   sec=$(awk '/^## ①-c /{on=1} on && /^## / && !/^## ①-c /{exit} on' "$f")
   [ -n "$sec" ] || { echo "  ✗ $f 의 ①-c 절 본문이 비었다"; exit 1; }
-  for tok in 'pr-comments.sh' 'pr-head-at.sh' 'policy-review: resumed' \
+  # 호출·마커뿐 아니라 **판정의 뼈대**(보류 경계 정의·kept 제외 규약)도 함께 문다 — 그
+  # 문단이 통째로 지워지면 절차가 결정성을 잃는데 호출 토큰만 보면 초록으로 남는다.
+  for tok in 'pr-comments.sh' 'pr-head-at.sh' '마감 검증: ⚠ 보류' 'hold-note' \
+             'policy-review: resumed' 'policy-review: kept' \
              'closeout-redispatch' '재디스패치:' 'closeout-blocked' '--reason policy'; do
     printf '%s' "$sec" | grep -qF -- "$tok" \
       || { echo "  ✗ $f 의 ①-c 절에 '$tok' 배선 없음"; exit 1; }
@@ -822,14 +825,20 @@ done
 echo "[closeout] ①-b active 행에 ①-c 시정 반송 갈래 유지 — 한/영 SKILL (#198)"
 # ①-c 의 결론은 finish-classify 표의 `active` 행에서도 읽혀야 한다("미해소 보류 + 시정
 # 방향이면 무접촉이 아니라 반송"). 이 행은 #196(CONFLICTING 반송 마커 게이트)도 같은
-# 회차에 손대는 자리다 — 두 조건은 AND 가 아니라 **서로 독립인 축**이라 충돌 해소가 한쪽
-# 문장을 통째로 버리면 조용히 fail-open 이 된다(이 레포 실측: 해소가 정의를 버리고 호출부만
-# 남긴 적이 있다). 그래서 각 축을 **따로** 문다.
+# 회차에 손대는 자리다 — 두 조건은 AND 가 아니라 **서로 독립인 축**이고 방향까지 반대다
+# (#196 은 CONFLICTING 을 active 로 **보내고**, #198 은 미해소 보류를 active 에서 **뺀다**).
+# 충돌 해소가 한쪽 문장을 통째로 버리면 그 축의 가드가 조용히 사라진다(이 레포 실측: 해소가
+# 정의를 버리고 호출부만 남긴 적이 있다). 여기서 무는 것은 **#198 축 하나**다 — #196 축은
+# 그 PR 이 자기 가드를 들고 온다. 리터럴 `#198` 만 보면 문장이 반대로 뒤집혀도 통과하므로
+# 결론 토큰(`closeout-redispatch`)을 같은 줄에서 함께 요구한다.
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   row=$(grep -n '^| `active`' "$f" | head -1 | cut -d: -f1)
   [ -n "$row" ] || { echo "  ✗ $f 에 finish-classify 표의 active 행 없음"; exit 1; }
-  sed -n "${row}p" "$f" | grep -qF '#198' \
+  line=$(sed -n "${row}p" "$f")
+  printf '%s' "$line" | grep -qF '#198' \
     || { echo "  ✗ $f 의 active 행에 #198(①-c 시정 반송) 갈래 없음"; exit 1; }
+  printf '%s' "$line" | grep -qF 'closeout-redispatch' \
+    || { echo "  ✗ $f 의 active 행에 #198 축의 결론(closeout-redispatch = 반송) 없음"; exit 1; }
 done
 
 echo "[closeout] ci-gate --repo 분기 스모크 (positive + fail-closed)"
