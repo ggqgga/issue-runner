@@ -1623,4 +1623,24 @@ grep -qF -- 'do not run the timebox cleanup at its end' SKILL.en.md \
 grep -qF -- 'tick is exempt' SKILL.en.md \
   || { echo "  ✗ SKILL.en.md timebox 문단에 '이번 틱 재개분 면제' 명문화 없음"; exit 1; }
 
+echo "[#185] 큐 중단·유령 티켓 회수·HEAD 폐기 = 미실행(같은 SHA 재큐잉) 판별 검사 — 워커 템플릿 한/영"
+# 정책 재심(2026-09-11, 이슈 #185 코멘트) — 러너를 detach 하지 않는다(범위 밖 유지).
+# 결과 파일(<sha>.result)이 안 생겼을 때 queue.log 의 그 SHA 줄이 중단(INT/TERM)·
+# 유령 티켓 회수·폐기 중 하나면 CI 실패가 아니라 미실행이다 — 로그를 뒤지지 말고
+# 같은 SHA 로 run-local-ci.sh 를 다시 건다. 세 상태 + 미실행 판정 문구 + 재큐잉 지시가
+# 한/영 템플릿 양쪽에 있어야 한다.
+for f in references/worker-template.md references/worker-template.en.md; do
+  for tok in '유령 티켓 회수' '폐기' '중단(INT/TERM)'; do
+    grep -qF -- "$tok" "$f" || { echo "  ✗ $f 에 미실행 판별 상태 토큰 없음: $tok"; exit 1; }
+  done
+done
+grep -qF -- 'CI 실패가 아니라 미실행이다' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 '실패가 아니라 미실행' 판정 문구 없음"; exit 1; }
+grep -qF -- 'not a CI failure' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 'not a CI failure' 판정 문구 없음"; exit 1; }
+grep -qF -- '같은 SHA(지금 HEAD)로' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 같은 SHA 재큐잉 지시 없음"; exit 1; }
+grep -qF -- 're-queue the same SHA (current HEAD)' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 same-SHA 재큐잉 지시 없음"; exit 1; }
+
 echo "CI pass"
