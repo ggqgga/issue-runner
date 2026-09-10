@@ -14,6 +14,8 @@
 #   warn_after_edit — 쓰기가 **이미 반영된 뒤** 후속 단계가 실패했다(라벨·PR 미러·readback).
 #               warn 과 섞으면 "손대지 않았다" 가 거짓이 되어, 보고를 읽는 쪽이 GitHub 상태를
 #               되짚어야 할 때(사람 확인)와 그냥 다음 틱을 기다리면 될 때를 못 가른다.
+#   note      — **아무것도 안 건드린** 정보 줄. warn 과 달리 조치할 것이 **없는** 정상 상태다
+#               (배포 대기 이슈의 사유 없는 needs-human). 버리지 않고 남기는 이유는 emit_note 주석.
 #
 # 상태 파일 없음 — 재개 횟수는 **이슈 코멘트에 붙은 마커**(`<!-- ladder-resume: N -->`)의
 # 개수가 SSOT 다. 재개 코멘트가 자기 마커를 품으므로 카운터와 알림이 한 번의 append 로 끝나고,
@@ -93,6 +95,16 @@ emit_warn() {  # emit_warn <repo> <num> <msg> — msg 는 이 파일이 쓰는 �
 # warn 은 "그대로 두면 다음 틱이 다시 본다", 이건 "상태가 반쯤 바뀌었으니 사람이 본다".
 emit_warn_after_edit() {  # emit_warn_after_edit <repo> <num> <msg>
   printf '{"event":"warn_after_edit","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$3"
+}
+
+# 조치할 것이 **없는** 정보 줄. warn 의 정의를 "루프가 교정 가능한 불변식 위반" 으로 좁히고
+# (형제 이슈 #188 이 loop-status.sh 에서 정한 정의) 거기서 빠지는 건을 여기로 내린다.
+# 그냥 빼지 않는 이유: 관측에서 통째로 사라지면 그 자체가 다른 사각지대가 된다.
+# msg 는 이 파일이 쓰는 고정 문구다 — 라벨 이름을 끼워 넣지만 그 값은 아래 ② 가 고르는
+# **jq 문자열 리터럴 두 개("deploy-wait"·"full-cycle") 중 하나**이지 GitHub 에서 온 텍스트가
+# 아니다. 따옴표·개행이 못 들어오므로 printf JSON 포맷 계약이 깨질 경로가 없다.
+emit_note() {  # emit_note <repo> <num> <msg>
+  printf '{"event":"note","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$3"
 }
 
 # ── GitHub 읽기 헬퍼 — 전부 **조회 실패는 rc 1** ──────────────────────────
@@ -384,8 +396,43 @@ while IFS= read -r repo; do
       [ -n "$row" ] || continue
       if ! printf '%s' "$row" \
            | jq -e '[.labels[].name | select(startswith("hold:"))] | length > 0' >/dev/null 2>&1; then
-        emit_warn "$repo" "$(printf '%s' "$row" | jq -r '.number')" \
-          "needs-human 사유 없음(hold:* 부재) — 사람이 붙였을 수 있어 자동 재개 안 함"
+        # 배포 대기 이슈는 **사유 라벨 없이 needs-human 으로 쉬는 것이 정상**이다(머지 뒤 사람이
+        # 배포할 때까지). 교정할 불변식 위반이 없는데 매 틱 warn 이면, 머지가 쌓일수록 그 줄들이
+        # 진짜 "사람이 사유 없이 붙인 needs-human" 을 묻어 버린다 — warn 은 **루프가 교정 가능한
+        # 불변식 위반일 때만**(형제 이슈 #188 이 loop-status.sh 에서 정한 정의). 그래서 note 로
+        # 강등한다. 조용히 버리지 않는 이유는 emit_note 주석 참고.
+        #
+        # 축은 **라벨만** 본다 — 제목은 사람이 자유롭게 쓰므로 판별 축이 될 수 없다(그래서 이
+        # 스크립트는 title 을 조회조차 하지 않는다). 제외 판정도 **같은 row 에 대한 jq 테스트**로만
+        # 한다: 별도 `gh issue list --label deploy-wait` 로 제외 집합을 만들면 그 조회의 실패가
+        # "배포 대기 이슈 없음" 으로 위장돼 전부 다시 warn 이 된다(조회 실패를 '해당 없음' 으로
+        # 삼키지 않는다는 이 파일의 규율).
+        #
+        # `deploy-wait` 가 정본 축이다(closeout 이 배포 대기 이슈에 붙인다) — 그래서 둘 다 있으면
+        # 이쪽을 문구에 남긴다. `full-cycle` 은 **과도기 축**이다: 사람 세션 스킬 full-cycle §7 이
+        # 배포 대기 이슈에 `needs-human`+`full-cycle` 만 붙이고 `deploy-wait` 를 빠뜨려서 생긴
+        # 구멍인데, 그 스킬은 이 레포 밖이라 여기서 못 고친다. **그쪽이 `deploy-wait` 를 붙이는 날
+        # 이 갈래(full-cycle)는 뗀다** — 원칙적 축으로 오해하지 마라. 그때까지의 대가는 `full-cycle`
+        # 이 붙은 구현 이슈까지 note 로 내려간다는 것이고, 이는 의도된 트레이드오프다
+        # (실측상 그런 이슈는 계정 전체에 0건 — 2026-09-11).
+        # 번호와 축을 **한 번의 jq 로 함께** 뽑는다 — 이 루프는 레포의 needs-human 이슈 수만큼
+        # 도니 필드마다 프로세스를 띄우면 조회보다 파싱이 더 비싸진다(read_state 가 같은 이유로
+        # 같은 모양이다). jq 가 실패하면 둘 다 비고, 빈 축은 아래에서 warn 으로 떨어진다 —
+        # 강등이 조회 실패를 타고 번지지 않는 방향이다.
+        row_tsv=$(printf '%s' "$row" | jq -r '
+          [.labels[].name] as $n
+          | [(.number|tostring),
+             (if ($n | index("deploy-wait") != null) then "deploy-wait"
+              elif ($n | index("full-cycle") != null) then "full-cycle"
+              else "" end)] | @tsv' 2>/dev/null) || row_tsv=""
+        hnum=${row_tsv%%$'\t'*}
+        dwlabel=${row_tsv#*$'\t'}
+        if [ -n "$dwlabel" ]; then
+          emit_note "$repo" "$hnum" "배포 대기(라벨 $dwlabel) — needs-human 이 정상 상태라 warn 아님"
+        else
+          emit_warn "$repo" "$hnum" \
+            "needs-human 사유 없음(hold:* 부재) — 사람이 붙였을 수 있어 자동 재개 안 함"
+        fi
       fi
     done 3< "$tmp/issues.human"
   else

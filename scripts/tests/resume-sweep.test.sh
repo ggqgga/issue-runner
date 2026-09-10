@@ -12,6 +12,7 @@
 #      안 그러면 PR 이 영구 사람대기로 남고 뒤 전이가 그 라벨을 안 뗀다.
 #   ⑤ 두 쿼리(AND 재개 대상 · 사유 점검)가 각각 상한에 닿으면 알린다.
 #   ⑥ 사유 라벨 없는 needs-human 은 손대지 않고 warn 만 · 사람 몫 hold 동존도 재개 금지.
+#      단 배포 대기 라벨(deploy-wait·full-cycle)이면 **정상 상태**라 warn 이 아니라 note (#190).
 #   ⑦ 조회 실패는 "없음" 으로 위장되지 않는다(exit 2) · 상수 오타는 쓰기 전에 exit 64.
 #   ⑧ 사람 조작 경합은 **쓰기 전** 재조회로 잡는다(사후 readback 으론 원리적으로 불가).
 set -uo pipefail
@@ -456,6 +457,72 @@ check "탐색 상한 미만: warn 없음"        "$(no_ev warn)"
 setup "needs-human,hold:ladder,agent-ready" 200 0
 run
 check "정상 경로: exit 0"                "$([ "$RC" = 0 ] && echo ok || echo no)"
+
+# ── ㉔~㉗ (#190) 배포 대기 라벨의 사유 없는 needs-human 은 warn 이 아니라 note ────
+# warn 은 "루프가 교정 가능한 불변식 위반" 일 때만이다(#188 이 loop-status.sh 에서 정한 정의).
+# 배포 대기 이슈는 사유 라벨 없이 needs-human 으로 쉬는 것이 **정상 상태**라 교정할 것이
+# 없다 — 그런데 머지될 때마다 늘어 진짜 "사람이 사유 없이 붙인 needs-human" 을 묻는다.
+# 그렇다고 그냥 빼면 존재가 관측에서 사라지므로 note 로 강등한다.
+
+# ── ㉔ deploy-wait(정본 축) → warn 0 · note 1 · 무편집 ─────────────────────
+setup "needs-human,deploy-wait" 200 0
+run
+check "deploy-wait: note"                "$(has_ev note)"
+check "deploy-wait: warn 없음"           "$(no_ev warn)"
+check "deploy-wait: 문구가 라벨을 남긴다" "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("deploy-wait"))' >/dev/null 2>&1 && echo ok || echo no)"
+check "deploy-wait: 편집 0회"            "$(none 'issue edit')"
+check "deploy-wait: exit 0"              "$([ "$RC" = 0 ] && echo ok || echo no)"
+
+# ── ㉕ full-cycle(과도기 축) → warn 0 · note 1 (실측 #5000 형태) ───────────
+# 사람 세션 스킬 full-cycle §7 이 배포 대기 이슈에 needs-human+full-cycle 만 붙이고
+# deploy-wait 를 빠뜨려 생긴 구멍이다 — 그쪽이 deploy-wait 를 붙이면 이 갈래는 뗀다.
+setup "needs-human,full-cycle" 200 0
+run
+check "full-cycle: note"                 "$(has_ev note)"
+check "full-cycle: warn 없음"            "$(no_ev warn)"
+check "full-cycle: 문구가 라벨을 남긴다" "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("full-cycle"))' >/dev/null 2>&1 && echo ok || echo no)"
+check "full-cycle: 편집 0회"             "$(none 'issue edit')"
+
+# ── ㉖ 회귀 방지 — 배포 대기 라벨이 없으면 종전대로 warn ───────────────────
+# ⑫ 와 같은 픽스처다(의도). 추가 단언은 "note 로는 내려가지 않는다" 쪽 —
+# 강등 조건이 넓어져 진짜 사유 없는 needs-human 까지 조용해지면 이 줄이 잡는다.
+setup "needs-human,agent-ready" 200 0
+run
+check "배포 대기 라벨 없음: 종전대로 warn" "$(has_ev warn)"
+check "배포 대기 라벨 없음: note 아님"     "$(no_ev note)"
+check "배포 대기 라벨 없음: 사유 문구"     "$(saysl 'hold:\* 부재')"
+
+# ── ㉗ 과도기 축의 부작용을 못박는다 — full-cycle 이면 구현 이슈여도 note ──
+# 제목이 배포 대기 형태가 아닌 구현 이슈(agent-ready 를 달았던 모양)라도 지금은 note 로
+# 강등된다. 판별은 **라벨로만** 하기 때문이다(제목은 사람이 자유롭게 쓴다) — 스크립트가
+# title 을 애초에 조회조차 하지 않으므로 제목 축은 원천적으로 불가능하다. 이 트레이드오프는
+# 의도된 것이고, 실측상 그런 이슈(needs-human+full-cycle 인 구현 이슈)는 계정 전체에 0건이다.
+setup "needs-human,full-cycle,agent-ready" 200 0
+run
+check "full-cycle 구현 이슈: 그래도 note" "$(has_ev note)"
+check "full-cycle 구현 이슈: warn 없음"   "$(no_ev warn)"
+check "제목은 조회조차 안 한다(라벨 축)"   "$(grep -q -- '--json [^ ]*title' "$tmp/gh.log" && echo no || echo ok)"
+
+# ── ㉘ (#190) 강등은 `hold:*` 가드 **안쪽**이다 — 사유 라벨이 있으면 note 도 아니다 ──
+# 배포 대기 라벨이 붙어 있어도 `hold:*` 가 있으면 ② 는 그 행을 아예 보지 않는다(무편집 통과)
+# — 판정을 가드 밖으로 끌어내는 리팩터가 이 단언 없이는 전건 통과한다. ③ 이 정상적으로
+# 집어 가는지(policy_review_due)까지 확인해 "흘러갔다" 를 실증한다.
+setup "needs-human,deploy-wait,hold:policy" 200 0
+jq --arg b "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->" \
+  '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/c.tmp" && mv "$tmp/c.tmp" "$tmp/comments.json"
+run
+check "deploy-wait+hold:policy: note 아님"     "$(no_ev note)"
+check "deploy-wait+hold:policy: ② warn 도 아님" "$(printf '%s' "$out" | grep -q '사유 없음' && echo no || echo ok)"
+check "deploy-wait+hold:policy: ③ 으로 흐른다"  "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .number == 42' >/dev/null 2>&1 && echo ok || echo no)"
+check "deploy-wait+hold:policy: 편집 0회"      "$(none 'issue edit')"
+
+# ── ㉙ (#190) 두 축이 동존하면 정본 축(deploy-wait)이 문구에 남는다 ────────
+# 우선순위가 결정론적이어야 다음 사람이 "어느 라벨로 걸렀나" 를 되짚을 수 있다.
+setup "needs-human,deploy-wait,full-cycle" 200 0
+run
+check "두 축 동존: note 1건"                "$(has_ev note)"
+check "두 축 동존: 정본 축 deploy-wait 를 적는다" "$(printf '%s' "$out" | jq -e 'select(.event=="note") | (.msg | test("deploy-wait")) and (.msg | test("full-cycle") | not)' >/dev/null 2>&1 && echo ok || echo no)"
+check "두 축 동존: warn 없음"               "$(no_ev warn)"
 
 # ── policy 재심 due(#155) — 창 넘긴 hold:policy 에 재심 마커가 없으면 1회 이벤트, 무편집
 note() { jq --arg b "$1" '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/c.tmp" && mv "$tmp/c.tmp" "$tmp/comments.json"; }

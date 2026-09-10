@@ -177,6 +177,11 @@ closeout-pick) never remove it. Per event:
   invisible this tick — repeated hits mean it is time to narrow scope with `.loop/repos`;
   a `repo` of `*` means the account-wide search). The script did **not** touch it —
   **do not touch it either**; copy it verbatim into ④ Report's warns.
+- `note` — an informational line the script did **not** touch (a `needs-human` with no reason
+  label on a deploy-wait issue, for example — a **normal state** with nothing to act on). It
+  is not a warn, so it does not go into ④ Report's warns — if it is worth reporting at all,
+  carry it as an info line only. Narrowing `warn` to "an invariant violation the loop can
+  correct" and demoting everything else to `note` is the contract #188/#190 set.
 - `warn_after_edit` — a side failure **after** a write was already applied (label-release
   failure · escalate/resume readback lookup failure or mismatch · **linked-PR mirror label
   release failure**, whose message names `PR #<number>`). The
