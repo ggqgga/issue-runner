@@ -322,7 +322,7 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       invisible counter counts a different number — #197)
 
       ````sh
-      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("(^|\\n) {0,3}```[\\s\\S]*?\\n {0,3}```[^\\n]*"; " ") | gsub("`[^`\\n]*`"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("(^|\\n) {0,3}```[\\s\\S]*?\\n {0,3}```[^\\n]*"; " ") | gsub("(`+)([^\\n]*?)\\1(?!`)"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
       ````
 
       After the filled template, append ⓐ the ladder document's path
