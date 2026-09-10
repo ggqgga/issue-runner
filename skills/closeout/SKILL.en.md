@@ -118,7 +118,7 @@ the code closeout itself blocked. So `closeout-eligible.sh` never promotes on th
    as a pass is exactly fail-open on a merge gate).
 2. **Bounce-marker safety net** — covers the window right after a bounce, before the replacement
    worker pushes, when the head time is still unchanged. The marker set lives in **one place**
-   (`BOUNCE_MARKERS` in `closeout-eligible.sh`) and holds both bounce channels: `재디스패치:`
+   (`BOUNCE_MARKERS` in `bounce-state.sh`) and holds both bounce channels: `재디스패치:`
    (this skill, ①-b) and `재검증 실패:` (verify-runner ④). New bounce wording goes in that array
    and nowhere else. Ordering is decided by the **last matching index in the comment array**, not
    by `createdAt` — GitHub comment times are second-granular, so a ✅ and a marker written in the

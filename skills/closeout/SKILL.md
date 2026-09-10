@@ -95,7 +95,7 @@ closeout 이 머지한다. 그래서 `closeout-eligible.sh` 는 ✅ 존재만으
    얻어** 판정이 head 이후임을 확인했을 때만 `done_verdict`. 조회·파싱 실패는 통과가 아니라
    `active` 다(머지 게이트에서 증명 실패를 통과로 처리하면 그게 fail-open).
 2. **반송 마커 안전망** — 반송 직후 아직 새 커밋이 없어 head 시각이 그대로인 창을 덮는다.
-   마커 집합은 반송 채널 둘을 **한 자리**(`closeout-eligible.sh` 의 `BOUNCE_MARKERS`)에
+   마커 집합은 반송 채널 둘을 **한 자리**(`bounce-state.sh` 의 `BOUNCE_MARKERS`)에
    묶는다: `재디스패치:`(이 스킬 ①-b) · `재검증 실패:`(verify-runner ④). 새 반송 어휘가
    생기면 그 배열만 고친다. 선후는 `createdAt` 이 아니라 **코멘트 배열의 마지막 매칭
    인덱스**로 잰다 — GitHub 코멘트 시각은 초 단위라 동초에 달린 ✅ 와 마커의 순서를
