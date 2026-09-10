@@ -714,6 +714,58 @@ printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"
 STUB
 check_h "helper: 시각형식깨짐→rc1·무출력" 1 ""
 
+# h5) **핵심 회귀 가드 (#174 재작업 — P1)** — `policy_review_due` 재심(issue-runner
+#     SKILL.md §policy_review_due)이 `hold:policy` 를 **스스로** 뗀다. 이 재심은
+#     `<!-- hold-note: policy -->`(이번 홀드의 질문) **이후**에 `<!-- policy-review:
+#     resumed -->` 마커 코멘트를 남기고 나서 `transition.sh verify-redispatch` 로
+#     라벨을 뗀다 — 그 unlabeled 이벤트는 사람이 아니라 루프가 낸 것이다. 세지 않으면
+#     h3b 가 막은 것(사다리 자동재개)의 거울상이 policy 재심 경로로 되살아난다(반송 사유
+#     P1). 마커가 있으면 그 hold:policy 해제는 **후보에서 빠진다** → 다른 해제 이벤트가
+#     없으므로 rc0·무출력(사람 해제를 증명 못 함 — h3b 와 같은 형).
+#     스텁은 URL 로 timeline/comments 를 가른다 — 이 헬퍼가 이제 `pr-comments.sh` 를
+#     통해 코멘트도 읽기 때문(마커는 코멘트에만 있다, 타임라인엔 없다).
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[
+      {"body":"사람 확인(policy): 질문 한 줄\n<!-- hold-note: policy --><!-- bodat:worker -->","created_at":"2026-07-05T09:00:00Z"},
+      {"body":"재심: 플랜에서 답을 찾음 — 그대로 진행\n<!-- policy-review: resumed --><!-- bodat:worker -->","created_at":"2026-07-05T10:29:50Z"}
+    ]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+check_h "helper: policy_review_due 재심 해제(마커있음)는 사람 신호 아님→rc0·무출력" 0 ""
+
+# h5b) **무회귀** — 같은 unlabeled(hold:policy) 이벤트라도 마커가 **없으면**(진짜 사람이
+#      GitHub UI 에서 라벨만 뗀 경우) 종전대로 해제 시각을 낸다. hold-note 는 있지만 그
+#      이후 재심 마커가 없다 = 재심을 거치지 않고 사람이 직접 뗀 것.
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[
+      {"body":"사람 확인(policy): 질문 한 줄\n<!-- hold-note: policy --><!-- bodat:worker -->","created_at":"2026-07-05T09:00:00Z"}
+    ]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+check_h "helper: 재심 마커 없는 해제는 종전대로 사람 신호→rc0·시각" 0 "2026-07-05T10:30:00Z"
+
 # ── 실조회 배선 — FC_HOLD_RELEASED_AT 미지정 시 finish-classify 가 헬퍼를 실제로 부른다 ──
 # 위 h1~h4 는 헬퍼 **단독** 계약이고, 아래 둘은 finish-classify → 헬퍼 **배선**을 문다.
 # 이 배선이 끊기면(경로 오타·실행 비트 누락 → exit 126) 프로덕션에선 해제 시각이 항상
@@ -750,6 +802,33 @@ mk_gh <<'STUB'
 exit 1
 STUB
 check_wired "실조회 배선: gh실패→active(fail-closed)" active
+
+# w3) **반송 사유의 핵심 시나리오 (#174 재작업 — P1)** — `policy_review_due` 재심이
+#     `hold:policy` 를 뗀 뒤에도 낡은 `머지 판정: ✅`(가려진 채) 가 남아 있으면 분류는
+#     `done_verdict` 가 **아니어야** 한다. 재심 마커(`<!-- policy-review: resumed -->`)가
+#     hold-note 이후·unlabeled 이전에 있어 그 해제는 기계 해제로 걸러지고, 다른 해제
+#     이벤트가 없으므로 헬퍼가 rc0·무출력을 내 finish-classify 는 보류가 해소됐음을
+#     증명 못 한 것으로 보고 active 로 떨어진다(#174 「걸러선 안 되는 것」 1항의 거울상
+#     fail-open — 이걸 막는 게 이번 반송의 요지).
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[
+      {"body":"사람 확인(policy): 질문 한 줄\n<!-- hold-note: policy --><!-- bodat:worker -->","created_at":"2026-07-05T09:30:00Z"},
+      {"body":"재심: 플랜에서 답을 찾음 — 그대로 진행\n<!-- policy-review: resumed --><!-- bodat:worker -->","created_at":"2026-07-05T10:29:50Z"}
+    ]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+check_wired "실조회 배선: policy_review_due 재심 해제는 기계 해제→active(무회귀)" active
 rm -rf "$hb"
 
 echo "finish-classify.test: pass=$pass fail=$fail"

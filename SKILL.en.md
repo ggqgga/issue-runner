@@ -192,6 +192,11 @@ closeout-pick) never remove it. Per event:
   decision, leave only `재심: 사람 몫 유지 — <one-line reason> <!-- policy-review: kept --><!-- bodat:worker -->`.
   Either way a marker remains, so **the same issue is never asked twice** (until a human removes
   the label). Report it in ④ as `re-reviewed N (resumed n · kept m)`.
+  **If there is a linked PR (`pr` ≠ `-`), mirror that comment to the PR too** (#174 rework) —
+  closeout's `pr-hold-released-at.sh` uses this exact marker on the PR's own timeline to tell "a
+  machine released `hold:policy` via this re-review" apart from a genuine human release. Leaving
+  it only on the issue makes that check blind, letting a shadowed stale `머지 판정: ✅` revive
+  without re-verification (see closeout SKILL ③-1 item 3).
 - `waiting` — still inside the window. Pass over it quietly (no reporting needed).
 - exit 2 — a listing failed for some repos (the rest were processed normally), or the
   account-wide search failed. Leave one warn line `resume-sweep 부분 실패(레포 조회)` in

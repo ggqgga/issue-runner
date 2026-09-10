@@ -132,15 +132,32 @@ the code closeout itself blocked. So `closeout-eligible.sh` never promotes on th
    i.e. the loop would re-apply a hold a human just removed (#151). **Removals of `needs-human`
    or `hold:ladder` do not count** — `resume-sweep.sh` strips those two **automatically** on
    ladder auto-resume (:159, :299), so counting them would dress a machine action up as "a human
-   decided" (the mirror image of this issue's first "must not" item). Whether the PR is waiting
-   on a human is already owned by the **`needs-human` exclusion in the target filter** above —
-   the two signals are not folded into one value. A hold that precedes the latest ✅ is already
-   water under the bridge and shadows nothing (so a normal re-completion after a bounce is not
-   suppressed forever). And human comments inside the **`(hold comment, release]` window** are
-   answered by that release, so they no longer count as "unresolved human comments" — that is
+   decided" (the mirror image of this issue's first "must not" item). **`hold:policy` has a
+   second machine path (#174 rework, bounce P1)** — the runner SKILL.md's own
+   `policy_review_due` **dispatcher re-review**. That is not a "bounce" (which resets the latest
+   verdict to `🔄` for re-verification) — the loop just answers the issue's hold-note question
+   itself and calls `transition.sh verify-redispatch` to drop `hold:policy`, leaving the shadowed
+   ✅ untouched. So for each `hold:policy` release event, `pr-hold-released-at.sh` checks whether
+   a `<!-- policy-review: resumed -->`/`kept` marker exists after the preceding `<!-- hold-note:
+   policy -->` comment, and if so excludes that release (a machine re-review is not a human
+   decision). For this check to work, the `policy_review_due` procedure must mirror its
+   re-review answer comment to the **PR** too (issue-only leaves this helper blind) — the
+   issue-runner SKILL.md's `policy_review_due` section says so explicitly. Whether the PR is
+   waiting on a human is already owned by the **`needs-human` exclusion in the target filter**
+   above — the two signals are not folded into one value. A hold that precedes the latest ✅ is
+   already water under the bridge and shadows nothing (so a normal re-completion after a bounce
+   is not suppressed forever). And human comments inside the **`(hold comment, release]` window**
+   are answered by that release, so they no longer count as "unresolved human comments" — that is
    the path that kept the operator's decision from ever reaching the queue. Outside that window
    nothing changes: neither a new question after the release nor an unrelated older open
-   question is swallowed.
+   question is swallowed. ★Known narrowing (#174 rework [P2], open)★ — that window's closing
+   edge (`hold_released_at`) is the **globally latest** release, not the one paired with *this*
+   hold. If a human answers the original hold, later leaves a new question, and then an
+   **unrelated but genuinely human-resolved** `hold:policy`/`hold:conflict` cycle releases after
+   that, the new question can be swept into the exemption too — this round only closed the
+   machine-review path above (P1, the most common trigger). A real fix needs
+   `pr-hold-released-at.sh`'s interface to pair a release with its own hold, so the scope was
+   narrowed here (file it as its own follow-up).
 
 All three layers rest on having seen **every** comment. `gh pr view --json comments` returns only the
 **first 100**, with no pagination, so neither helper uses that path — both read through
