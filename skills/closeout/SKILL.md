@@ -243,9 +243,12 @@ Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에
    `<PLAN_REF>`=이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<ISSUE_BODY>`=`gh issue view <issue>
    --repo <repo>` 출력(연결 이슈 없으면 빈 문자열)·`<LESSONS_OR_"없음">`=`$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑
    **`.loop/lessons-verifier.md`**(검증 판정 사례집 — 과거 오판 패턴 주입; 없으면 `.loop/lessons.md` 폴백, 둘 다
-   없거나 비면 `없음`. `lessons.md` 는 **구현 워커**용이라 섞지 않는다 — 오판 방지 신호 희석). `<DIFF>` 는 동봉하지
-   않는다 — 내장 리뷰어가 워크트리에서 직접 읽는다. 지시문은 "이 변경이 계획/이슈 AC 를 충족하는가만 판정,
-   미충족·범위 이탈은 `[P1]`, 경미한 편차는 `[P2]` 로" 를 명시한다.
+   없거나 비면 `없음`. `lessons.md` 는 **구현 워커**용이라 섞지 않는다 — 오판 방지 신호 희석). diff 는 프롬프트에
+   동봉하지 않는다 — 템플릿(`references/verifier-prompt.md`)이 "판정 근거는 위 `--base` 범위다, 이 워크트리에서
+   직접 조회해 읽어라(로컬 git 조회 허용·gh/git fetch 등 네트워크만 금지)" 라고 명시해 내장 리뷰어가 워크트리에서
+   직접 읽는다(#207 — "동봉이 유일한 SSOT·git 조회 금지"라던 옛 문구는 이 동봉-안-함 계약과 정면 충돌해 리뷰어가
+   아무것도 못 본 채 항목 0(=CLEAN)을 내는 fail-open 을 냈다). 지시문은 "이 변경이 계획/이슈 AC 를 충족하는가만
+   판정, 미충족·범위 이탈은 `[P1]`, 경미한 편차는 `[P2]` 로" 를 명시한다.
 헬퍼는 자체 타임아웃(`CODEX_GATE_TIMEOUT` 기본 900s = `VERIFIER_TIMEOUT_MIN` 과 동조)을 가진다. 두 호출 중 하나라도
 **exit 2(`verdict=NONE`) = 미산출**(codex 부재·모델 오류·타임아웃)이면 그때만 ## 상수의 `VERIFIER` 폴백(general-purpose,
 diff·이슈 본문·lessons 를 프롬프트에 동봉, `run_in_background` + `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을

@@ -496,9 +496,11 @@ for f in skills/closeout/references/verifier-prompt.md \
          skills/closeout/references/spinoff-issue.md; do
   [ -f "$f" ] || { echo "  ✗ 누락: $f"; exit 1; }
   case "$f" in
-    # <DIFF>·<ISSUE_BODY>: 검증자가 sandbox 네트워크 없이 판정하도록 메인 세션이
-    # diff·이슈 본문을 동봉하는 지점 — 지우면 원문 fetch 회귀(#54).
-    *verifier-prompt.md)    phs="<PR> <REPO> <BASE> <PLAN_REF> <DIFF> <ISSUE_BODY>" ;;
+    # <ISSUE_BODY>: 검증자가 sandbox 네트워크 없이 이슈 수용 기준을 판정하도록 메인
+    # 세션이 이슈 본문을 동봉하는 지점 — 지우면 원문 fetch 회귀(#54). diff 는 동봉하지
+    # 않는다 — #134 내장 리뷰어가 `--base` 범위를 이 프롬프트 지시로 워크트리에서
+    # 직접 읽는다(#207: 동봉 전제 문구와 SKILL 의 "동봉 안 함" 이 정면 충돌해 fail-open).
+    *verifier-prompt.md)    phs="<PR> <REPO> <BASE> <PLAN_REF> <ISSUE_BODY>" ;;
     *deploy-check-issue.md) phs="<PR> <SHA> <SUMMARY> <DEPLOY_CMD> <LIVE_CHECKS> <VERIFY_URL>" ;;
     *spinoff-issue.md)      phs="<BACKGROUND> <REASON> <PLAN> <TEST_PLAN> <RELATED>" ;;
   esac

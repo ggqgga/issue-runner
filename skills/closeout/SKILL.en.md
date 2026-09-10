@@ -279,8 +279,13 @@ no subagent spawn, polling, or `TaskStop` wiring:
    of **`.loop/lessons-verifier.md`** (the verdict casebook — injects past misjudgment patterns; fall back to
    `.loop/lessons.md`, `없음` if both are missing or empty. `lessons.md` is for the **implementing worker** — do not
    mix it in, it dilutes the misjudgment-prevention signal) under the path from `$SCRIPTS/repo-dir.sh <repo>`.
-   `<DIFF>` is not embedded — the built-in reviewer reads the worktree itself. The instructions state "judge only
-   whether this change meets the plan / issue AC; unmet or out-of-scope = `[P1]`, minor deviation = `[P2]`".
+   The diff is not embedded in the prompt — the template (`references/verifier-prompt.md`) states "your judgment
+   basis is the `--base` range above; read it directly in this worktree (local git reads allowed, only
+   gh/git fetch network commands are forbidden)", so the built-in reviewer reads the worktree itself (#207 — the
+   old wording claiming "the embedded diff is the sole SSOT, no git reads" directly contradicted this
+   not-embedded contract, so the reviewer saw nothing and reported zero findings — a CLEAN fail-open). The
+   instructions state "judge only whether this change meets the plan / issue AC; unmet or out-of-scope = `[P1]`,
+   minor deviation = `[P2]`".
 The helper has its own timeout (`CODEX_GATE_TIMEOUT`, default 900s = in step with `VERIFIER_TIMEOUT_MIN`). If either
 call returns **exit 2 (`verdict=NONE`) = no verdict** (codex missing · model error · timeout), only then use the
 `VERIFIER` fallback from ## Constants (general-purpose, with the diff, issue body, and lessons embedded in the prompt,
