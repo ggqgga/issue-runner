@@ -1549,6 +1549,16 @@ for f in references/worker-template.md references/worker-template.en.md; do
     grep -qF -- "$tok" "$f" || { echo "  ✗ $f 에 CI 큐 대기 규율 토큰 없음: $tok"; exit 1; }
   done
 done
+# 위 다섯 토큰은 언어불변(명령·로그 원문)이라 "bin/ci 직접호출 금지"(계획 항목 a)·
+# "CI 무관한 일 먼저"(계획 항목 d) 두 불릿이 지워져도 안 걸린다 — 언어별 문구를 따로 문다.
+grep -qF -- '`bin/ci` 를 직접 부르지 마라' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 'bin/ci 직접호출 금지' 불릿 없음"; exit 1; }
+grep -qF -- 'Do not call `bin/ci` directly' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 'Do not call bin/ci directly' 불릿 없음"; exit 1; }
+grep -qF -- 'CI 와 무관한 일' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 'CI 무관한 일 먼저' 불릿 없음"; exit 1; }
+grep -qF -- 'CI-independent work' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 'CI-independent work' 불릿 없음"; exit 1; }
 
 echo "[#185] 턴 종료 시 'CI 대기 중' 보고 형식 검사 — 워커 템플릿 한/영"
 # 조용한 종료를 막는 게 이 이슈의 핵심 — 대기열 번호·다음 할 일을 담은 정확한
