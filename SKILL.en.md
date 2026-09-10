@@ -358,7 +358,16 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       carries the marker `<!-- ladder-resume: N -->`, the issue was revived by ①'s resume
       sweep, and the number of such comments is which resume this is (the body has no marker —
       the sweep never touches it):
-      `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select(.body|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'` After the filled template, append ⓐ the ladder document's path
+      (quoted markers do not count — a marker inside inline backticks or a code fence is not
+      the signal but prose *about* the signal, so it is stripped first, with the **same
+      definition** as `JQ_UNQUOTE` in `resume-sweep.sh`. If the two drift apart, a second
+      invisible counter counts a different number — #197)
+
+      ````sh
+      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("```[\\s\\S]*?```"; " ") | gsub("`[^`\\n]*`"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+      ````
+
+      After the filled template, append ⓐ the ladder document's path
       `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (where the
       worker reads which rung is climbed with which command) and ⓑ **the previous attempt's
       failure output** — the body of the issue's last ladder-related comment:

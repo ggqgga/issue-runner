@@ -212,7 +212,10 @@ out=""
 ev()      { printf '%s' "$out" | jq -r 'select(.event=="'"$1"'")' 2>/dev/null; }
 has_ev()  { if [ -n "$(ev "$1")" ]; then echo ok; else echo no; fi; }
 no_ev()   { if [ -z "$(ev "$1")" ]; then echo ok; else echo no; fi; }
-counts()  { grep -c "$1" "$tmp/gh.log" 2>/dev/null || true; }
+# 패턴은 반드시 `-e` 로 넘기고 파일은 `--` 뒤에 둔다 — `-` 로 시작하는 패턴(`--body-file`)을
+# 맨몸으로 주면 grep 이 그것을 옵션으로 먹고 **파일 인자를 패턴으로** 삼아 stdin 을 읽는다.
+# 그러면 이 스위트가 stdin 이 EOF 가 아닌 환경(파이프·터미널)에서 조용히 매달린다(실측).
+counts()  { grep -c -e "$1" -- "$tmp/gh.log" 2>/dev/null || true; }
 none()    { if [ "$(counts "$1")" = 0 ]; then echo ok; else echo no; fi; }
 some()    { if [ "$(counts "$1")" != 0 ]; then echo ok; else echo no; fi; }
 hasl()    { case ",$(cat "$tmp/labels")," in *",$1,"*) echo ok ;; *) echo no ;; esac; }
@@ -242,7 +245,7 @@ check "마커 0: 코멘트 본문에 마커"        "$(grep -q 'issue comment .*
 check "마커 0: needs-human 해제"          "$(lacksl needs-human)"
 check "마커 0: hold:ladder 해제"          "$(lacksl hold:ladder)"
 check "마커 0: agent-ready 유지"          "$(hasl agent-ready)"
-check "본문은 건드리지 않는다(--body-file 부재)" "$(none -- '--body-file')"
+check "본문은 건드리지 않는다(--body-file 부재)" "$(none '--body-file')"
 check "기본 상한은 200 (env 미지정)"        "$(grep -q -- '--limit 200' "$tmp/gh.log" && echo ok || echo no)"
 check "비공허 실증: AND 쿼리로 목록을 뜬다" "$(grep -q 'issue list --repo owner/repo .*--label needs-human --label hold:ladder' "$tmp/gh.log" && echo ok || echo no)"
 
