@@ -28,6 +28,13 @@
 #   ⑫-d (#160) 마커 판정은 **지금 붙은 사유**를 가린다 — 홀드가 풀려도 코멘트는 남으므로,
 #      `hold:conflict` 인데 마커가 옛 `hold-note: policy` 뿐이면 `질문 없음` 이다(그 반대도).
 #      같은 사유의 마커는 종전대로 조용하고, 두 사유가 함께 붙은 홀드는 어느 쪽 마커든 질문이다.
+#   ⑬ (#177) 사망 의심 경과시간은 **가장 최근 `agent:claimed` 시각**(이슈 타임라인) 기준.
+#      PR `createdAt` 으로 재면 홀드 해제 뒤 재디스패치된 건에서 숫자가 통째로 부풀어
+#      (PR 은 4시간 전 · claim 은 5분 전 → 240분) 살아 있는 워커를 사망으로 신고한다.
+#      타임라인은 **`--paginate` 로 전량**을 읽고 마지막 것을 취한다 — 반송을 여러 번 돈
+#      이슈는 라벨 이벤트만으로도 첫 페이지 밖으로 밀려 최근 claim 을 놓친다.
+#      못 얻으면(조회 실패·claim 이벤트 부재) **숫자를 지어내지 않고** `경과 미상 — 확인
+#      필요` 로 바꾸되 warn 은 유지한다. 조회는 꼬리표가 붙는 후보에만(틱 비용).
 #
 # 기대 줄은 **손으로 적는다** — SUT 의 jq 를 베껴 기대값을 만들면 공허하게 통과한다
 # (transition.test.sh 의 관행).
@@ -96,6 +103,22 @@ if [ "${1:-}" = "api" ]; then
       printf 'dash-comment-patch %s %s\n' "$repo" "$cid" >> "$STUB_CALL_LOG"
       jq --arg id "$cid" --arg b "$body" 'map(if (.id|tostring)==$id then .body=$b else . end)' "$f.dash.comments.json" > "$f.dc.tmp" && mv "$f.dc.tmp" "$f.dash.comments.json"
       echo '{}'; exit 0 ;;
+    */issues/*/timeline*)
+      # 사망 의심 경과시간의 출처 (#177). 스텁은 **원본 이벤트 배열**을 들고 SUT 가 넘긴
+      # --jq 를 직접 적용한다 — 필터를 스텁이 대신 흉내 내면 SUT 의 필터가 틀려도 통과한다.
+      # 페이지는 파일로 나뉘어 있고 **2쪽은 --paginate 가 있을 때만** 준다(실제 gh 와 같다).
+      num=$(printf '%s' "$path" | sed -n 's|.*/issues/\([0-9][0-9]*\)/timeline.*|\1|p')
+      printf 'timeline %s %s\n' "$repo" "$num" >> "$STUB_CALL_LOG"
+      if [ -f "$f.timeline.$num.fail" ]; then echo "gh: HTTP 502 Bad Gateway" >&2; exit 1; fi
+      jqf=""; prev=""
+      for a in "$@"; do case "$prev" in --jq|-q) jqf="$a";; esac; prev="$a"; done
+      if [ -z "$jqf" ]; then echo "gh stub: timeline 은 --jq 로 불러야 한다: $args" >&2; exit 1; fi
+      if [ ! -f "$f.timeline.$num.p1.json" ]; then echo "gh stub: timeline 픽스처 없음: $repo #$num" >&2; exit 1; fi
+      jq -r "$jqf" "$f.timeline.$num.p1.json" || exit 1
+      if [ -f "$f.timeline.$num.p2.json" ]; then
+        case "$args" in *--paginate*) jq -r "$jqf" "$f.timeline.$num.p2.json" || exit 1 ;; esac
+      fi
+      exit 0 ;;
     */branches/release)
       if [ ! -f "$f.release" ]; then echo "gh: Branch not found (HTTP 404)" >&2; exit 1; fi
       echo '{"name":"release"}'; exit 0 ;;
@@ -169,6 +192,8 @@ tsm() {  # tsm <분 전> → RFC3339 UTC
 NOW=$(tsm 60)     # 창 안 · 인계 전 창(기본 90분) 안
 OLD=$(tsm 4320)   # 3일 전 — 창 밖
 AGO200=$(tsm 200) # 인계 전 창(기본 90분) 밖 — `--since 24h` 창에는 든다
+AGO240=$(tsm 240) # 재디스패치 픽스처의 PR 나이(4시간) — claim 과 갈라놓는 값 (#177)
+AGO5=$(tsm 5)     # 재디스패치 픽스처의 **가장 최근** claim (#177)
 
 # ── 픽스처: ggqgga/BodaT (bodat) — 버킷 7종 + warn 5종(미러는 양방향 2건) + 창 밖 대조군 ─
 sed "s/@NOW@/$NOW/g; s/@OLD@/$OLD/g" > "$tmp/fx/ggqgga_BodaT.issues.json" <<'FX'
@@ -252,6 +277,72 @@ cat > "$tmp/fx/ggqgga_BodaT.comments.4770.json" <<'FX'
 {"comments":[{"body":"이거 어떻게 할까요"}]}
 FX
 : > "$tmp/fx/ggqgga_BodaT.comments.4771.fail"
+
+# ── 타임라인 픽스처 (#177) — bodat #4701 은 정상 흐름(PR 과 claim 이 같은 시각대) ────
+# 이 건은 회귀 대조군이다: claim 기준으로 재도 종전과 같은 200분이 나와야 한다.
+sed "s/@AGO200@/$AGO200/g" > "$tmp/fx/ggqgga_BodaT.timeline.4701.p1.json" <<'FX'
+[
+ {"event":"labeled","label":{"name":"agent-ready"},"created_at":"@AGO200@"},
+ {"event":"labeled","label":{"name":"agent:claimed"},"created_at":"@AGO200@"},
+ {"event":"commented","created_at":"@AGO200@"}
+]
+FX
+
+# ── 픽스처: ggqgga/Reclaim (reclaim) — 재디스패치·조회 실패·이벤트 부재 (#177) ──
+# 셋 다 **구현중 버킷 + 인계 전 창 밖 PR**(4시간 전) 이라 사망 의심 꼬리표가 붙는 자리다.
+# 갈리는 건 claim 시각을 얻는 경로뿐이다.
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Reclaim.issues.json" <<'FX'
+[
+ {"number":31,"title":"홀드 해제 후 재claim — PR 은 4시간 전, claim 은 5분 전","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":32,"title":"타임라인 조회 실패","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":33,"title":"타임라인에 claim 이벤트가 없다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":34,"title":"claim 시각이 예상 밖 형식","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]}
+]
+FX
+sed "s/@AGO240@/$AGO240/g" > "$tmp/fx/ggqgga_Reclaim.pr_open.json" <<'FX'
+[
+ {"number":61,"headRefName":"agent/issue-31","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO240@",
+  "closingIssuesReferences":[{"number":31}],"labels":[]},
+ {"number":62,"headRefName":"agent/issue-32","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO240@",
+  "closingIssuesReferences":[{"number":32}],"labels":[]},
+ {"number":63,"headRefName":"agent/issue-33","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO240@",
+  "closingIssuesReferences":[{"number":33}],"labels":[]},
+ {"number":64,"headRefName":"agent/issue-34","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO240@",
+  "closingIssuesReferences":[{"number":34}],"labels":[]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_Reclaim.pr_closed.json"
+# #31 — 1쪽엔 **옛** claim(200분 전), 2쪽에 지금의 claim(5분 전). `--paginate` 를 빠뜨리면
+# 1쪽만 오므로 200분이 나온다 — 세 값(240/200/5)이 다 달라 무엇을 재고 있는지가 드러난다.
+sed "s/@AGO240@/$AGO240/g; s/@AGO200@/$AGO200/g" > "$tmp/fx/ggqgga_Reclaim.timeline.31.p1.json" <<'FX'
+[
+ {"event":"labeled","label":{"name":"agent-ready"},"created_at":"@AGO240@"},
+ {"event":"labeled","label":{"name":"agent:claimed"},"created_at":"@AGO200@"},
+ {"event":"unlabeled","label":{"name":"agent:claimed"},"created_at":"@AGO200@"},
+ {"event":"labeled","label":{"name":"needs-human"},"created_at":"@AGO200@"}
+]
+FX
+sed "s/@AGO5@/$AGO5/g" > "$tmp/fx/ggqgga_Reclaim.timeline.31.p2.json" <<'FX'
+[
+ {"event":"unlabeled","label":{"name":"needs-human"},"created_at":"@AGO5@"},
+ {"event":"labeled","label":{"name":"agent:claimed"},"created_at":"@AGO5@"}
+]
+FX
+: > "$tmp/fx/ggqgga_Reclaim.timeline.32.fail"
+# #33 — 조회는 되는데 claim 이벤트가 없다. "0분" 도 "PR 나이" 도 아닌 **모른다** 다.
+sed "s/@AGO240@/$AGO240/g" > "$tmp/fx/ggqgga_Reclaim.timeline.33.p1.json" <<'FX'
+[
+ {"event":"labeled","label":{"name":"agent-ready"},"created_at":"@AGO240@"},
+ {"event":"commented","created_at":"@AGO240@"}
+]
+FX
+# #34 — claim 이벤트는 있는데 시각이 jq 의 fromdateiso8601 이 못 읽는 형식(오프셋)이다.
+# 그대로 넘기면 **레포 블록 전체가 집계 실패**로 죽는다 — 한 건만 미상으로 접고 나머지는 낸다.
+cat > "$tmp/fx/ggqgga_Reclaim.timeline.34.p1.json" <<'FX'
+[
+ {"event":"labeled","label":{"name":"agent:claimed"},"created_at":"2026-09-10T12:06:22+09:00"}
+]
+FX
 
 # ── 픽스처: ggqgga/Capped (capped) — 코멘트 100건 상한 · HOLD_NOTE_MAX 전용 ──
 # 큰 bodat 픽스처를 더 부풀리지 않으려고 상한 두 축만 따로 세운다.
@@ -404,9 +495,9 @@ no_sub "무소속: needs-human 연결 PR #4835 은 warn 아님" "$tmp/out" "무�
 no_sub "무소속: PR 자체 needs-human(#4852) 은 warn 아님" "$tmp/out" "무소속 PR #4852"
 # 인계 전 창 — 창 안(#4854)은 warn 이 아니고, 창 밖(#4855)은 warn + 사망 의심 꼬리표
 no_sub "인계 전 창 안 PR #4854 는 warn 아님" "$tmp/out" "무소속 PR #4854"
-has_sub "인계 전 창 밖 PR #4855 는 무소속 warn" "$tmp/out" \
-  "    - 무소속 PR #4855(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4701 는 needs-human 아님(agent:claimed 인데 "
-has_sub "인계 전 창 밖: 워커 사망 의심 꼬리표" "$tmp/out" "분 경과 — 워커 사망 의심)"
+# 정상 흐름(PR 과 claim 이 같은 시각대)은 claim 기준으로 재도 종전과 같은 숫자다 (#177 무회귀).
+has_line "인계 전 창 밖 PR #4855 는 무소속 warn + 사망 의심(claim 기준 200분)" "$tmp/out" \
+  "    - 무소속 PR #4855(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4701 는 needs-human 아님(agent:claimed 인데 200분 경과 — 워커 사망 의심)"
 # 판정축은 `agent:claimed` **라벨**이 아니라 **구현중 버킷** — 라벨을 단 채 배포대기로 간
 # 이슈(#4790)의 라벨 없는 PR 은 warn 에서 빠지면 어디에도 안 그려져 거짓 깨끗함이 된다.
 # 정확히 이 줄이어야 한다(꼬리표가 붙으면 has_line 이 깨진다 — 인계 창과 무관한 건이다).
@@ -448,6 +539,19 @@ done
 check "코멘트 조회: 깨끗한 레포(runner)엔 0건" \
   "$(grep -q '^comments ggqgga/issue-runner ' "$STUB_CALL_LOG" && echo no || echo ok)"
 
+# ── ⑬ (#177) 타임라인 조회는 **꼬리표가 붙는 후보에만** — 전체 이슈에 걸면 틱이 느려진다 ──
+ck "타임라인 조회 대상은 정확히 1건" "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 1
+check "타임라인 조회: 꼬리표가 붙는 #4701 만 묻는다" \
+  "$(grep -qxF "timeline ggqgga/BodaT 4701" "$STUB_CALL_LOG" && echo ok || echo no)"
+# #4790 은 구현중 버킷 밖(배포대기가 이겼다) → 꼬리표가 없으니 조회도 없다.
+# #4803 은 인계 전 창 안이라 warn 자체가 아니다. 나머지는 무소속 warn 후보도 아니다.
+for n in 4790 4803 4832 4818 4826 4700; do
+  check "타임라인 조회: #$n 엔 안 묻는다" \
+    "$(grep -qxF "timeline ggqgga/BodaT $n" "$STUB_CALL_LOG" && echo no || echo ok)"
+done
+check "타임라인 조회: 깨끗한 레포(runner)엔 0건" \
+  "$(grep -q '^timeline ggqgga/issue-runner ' "$STUB_CALL_LOG" && echo no || echo ok)"
+
 
 # ③ 깨끗한 픽스처 + ④ 짧은 이름 특례
 has_line "runner 블록 헤더(issue-runner → runner)" "$tmp/out" \
@@ -476,6 +580,66 @@ STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" HANDOFF_GRACE_MIN=90분 \
 ck "HANDOFF_GRACE_MIN 형식 오류: exit 1" "$RC" 1
 has_sub "HANDOFF_GRACE_MIN 형식 오류: stdout 에도 사유" "$tmp/out" \
   "파이프라인 — 스냅샷 실패: HANDOFF_GRACE_MIN 형식 오류: 90분"
+
+# ── ⑬ (#177) 사망 의심 경과시간 = 가장 최근 agent:claimed 시각 ──────────────
+run --repo ggqgga/Reclaim --since 24h
+ck "reclaim: exit 0" "$RC" 0
+# (a) 재디스패치 — PR 은 240분 전, 1쪽의 옛 claim 은 200분 전, 지금 claim 은 5분 전.
+#     PR 나이(240)로 재면 살아 있는 워커를 사망으로 신고하고, `--paginate` 를 빠뜨리면
+#     1쪽의 옛 claim(200)이 나온다. 셋이 다 다른 값이라 무엇을 쟀는지가 드러난다.
+has_line "(a) 재claim 건은 claim 기준 5분" "$tmp/out" \
+  "    - 무소속 PR #61(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #31 는 needs-human 아님(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
+no_sub "(a) PR 나이(240분)로 재지 않는다" "$tmp/out" "240분 경과"
+no_sub "(a) 첫 페이지의 옛 claim(200분)을 취하지 않는다 — 전량을 읽는다" "$tmp/out" "200분 경과"
+# (b) 조회 실패·이벤트 부재는 숫자를 지어내지 않는다. warn 자체는 유지한다.
+has_line "(b) 타임라인 조회 실패 → 경과 미상(warn 은 유지)" "$tmp/out" \
+  "    - 무소속 PR #62(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #32 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+has_line "(b) claim 이벤트 부재 → 경과 미상(0분으로 접지 않는다)" "$tmp/out" \
+  "    - 무소속 PR #63(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #33 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+# 형식 밖 시각을 jq 에 그대로 넘기면 레포 블록이 통째로 죽는다 — 한 건만 미상으로 접는다.
+has_line "(b) 형식 밖 claim 시각 → 그 건만 경과 미상" "$tmp/out" \
+  "    - 무소속 PR #64(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #34 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+no_sub "(b) 형식 밖 시각이 레포 블록을 죽이지 않는다" "$tmp/out" "reclaim — 조회 실패"
+has_line "reclaim: warn 4건(넷 다 남는다)" "$tmp/out" "  warn      4"
+has_sub "(b) 조회 실패는 stderr 에도 사유가 남는다" "$tmp/err" \
+  "reclaim #32 agent:claimed 시각(타임라인) 조회 실패"
+has_sub "(b) 시각을 못 얻은 건도 stderr 한 줄" "$tmp/err" \
+  "reclaim #33 타임라인에서 agent:claimed 시각을 못 얻음"
+ck "reclaim: 타임라인 조회는 후보 4건뿐" "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 4
+
+run --repo ggqgga/Reclaim --since 24h --json
+ck "--json: 사망 의심 경과는 3상태(분 / null=미상)" \
+  "$(jq -c '[.repos[0].warns[] | select(.kind=="orphan_pr") | {p:.pr, m:.claimed_minutes}]' < "$tmp/out")" \
+  '[{"p":61,"m":5},{"p":62,"m":null},{"p":63,"m":null},{"p":64,"m":null}]'
+
+# 상한 — 넘는 후보는 조회하지 않고 `경과 미상`(거짓 숫자를 만들지 않는다). 상한이 없으면
+# 루프가 크게 어긋난 날 이 스크립트가 틱을 잡아먹는다.
+: > "$STUB_CALL_LOG"
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" CLAIM_TIME_MAX=1 \
+  "$SUT" --repo ggqgga/Reclaim --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "CLAIM_TIME_MAX=1: exit 0" "$RC" 0
+ck "CLAIM_TIME_MAX=1: 타임라인 조회 1건" "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 1
+has_sub "CLAIM_TIME_MAX=1: 상한 안의 #31 은 그대로 5분" "$tmp/out" \
+  "연결 이슈 #31 는 needs-human 아님(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
+has_sub "CLAIM_TIME_MAX=1: 상한 밖은 경과 미상" "$tmp/out" \
+  "연결 이슈 #32 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+has_sub "CLAIM_TIME_MAX=1: 상한 초과 사유가 stderr 에" "$tmp/err" \
+  "reclaim #32 claim 시각 조회 상한(1) 초과"
+has_line "CLAIM_TIME_MAX=1: warn 은 여전히 4건" "$tmp/out" "  warn      4"
+# 형식 오류는 조용한 기본값이 아니라 환경 실패(HANDOFF_GRACE_MIN·HOLD_NOTE_MAX 와 같은 규율)
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" CLAIM_TIME_MAX=스물 \
+  "$SUT" --repo ggqgga/Reclaim --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "CLAIM_TIME_MAX 형식 오류: exit 1" "$RC" 1
+has_sub "CLAIM_TIME_MAX 형식 오류: stdout 에도 사유" "$tmp/out" \
+  "파이프라인 — 스냅샷 실패: CLAIM_TIME_MAX 형식 오류: 스물"
+
+# 인계 전 창을 넓히면 셋 다 창 안 → warn 이 아니니 타임라인 조회도 0건(틱 비용).
+: > "$STUB_CALL_LOG"
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" HANDOFF_GRACE_MIN=300 \
+  "$SUT" --repo ggqgga/Reclaim --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "창 300분: exit 0" "$RC" 0
+has_line "창 300분: reclaim warn 0" "$tmp/out" "  warn      0"
+ck "창 300분: 타임라인 조회 0건" "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 0
 
 # ── ⑤ 레포 하나 조회 실패 → 그 블록만 실패 줄, 나머지 정상, exit 1 ──────────
 run --repo ggqgga/BodaT --repo ggqgga/BoDAC --repo ggqgga/issue-runner --since 24h

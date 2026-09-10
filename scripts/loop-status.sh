@@ -85,6 +85,17 @@
 #                      으로 나오되 `(agent:claimed 인데 <N>분 경과 — 워커 사망 의심)` 이
 #                      덧붙는다. 후보 집합 하나를 둘로 **분할**하므로 표시와 warn 은 항상
 #                      서로 배타다(두 조건을 따로 쓰면 드리프트한다).
+#                      그 `<N>분` 은 **가장 최근 `agent:claimed` labeled 이벤트**(이슈
+#                      타임라인) 기준이다 (#177) — PR `createdAt` 이 아니다. 창 분할은
+#                      종전대로 PR 나이로 한다(둘은 다른 질문이다: 창은 "PR 을 연 뒤 얼마나
+#                      됐나", 꼬리표는 "워커를 붙인 뒤 얼마나 됐나"). PR 나이로 재면 홀드
+#                      해제 뒤 **재디스패치**된 건에서 숫자가 통째로 부풀어(실측 #170/PR
+#                      #172: 231분 — 실제 claim 은 7분 전, 워커는 15분 뒤 인계까지 끝냈다)
+#                      살아 있는 워커를 사망으로 신고하고, 반송을 돌수록 숫자가 단조 증가해
+#                      신호가 죽는다. 반대로 재claim 직후 죽은 워커는 PR 이 방금 열렸으면
+#                      작게 나와 안 울린다. 시각을 못 얻으면(조회 실패·claim 이벤트 부재)
+#                      숫자를 지어내지 않고 `(agent:claimed 인데 경과 미상 — 확인 필요)` 로
+#                      바꾸되 **warn 자체는 유지**한다 — 0분으로 접으면 진짜 사망이 숨는다.
 #   · 질문 유무 미확인
 #                    — **사람대기 버킷**의 `hold:policy|conflict` 이슈인데 질문(hold-note)
 #                      코멘트의 유무를 못 봤다(조회 실패·응답 파싱 실패·코멘트 100건 상한·
@@ -120,6 +131,8 @@
 #   `HOLD_NOTE_MAX` — 레포당 질문(hold-note) 코멘트 조회 상한(기본 50, 0 이상 정수, #157).
 #   넘는 후보는 조회하지 않고 warn `질문 유무 미확인` 으로만 남는다. 형식이 틀리면 같은
 #   이유로 환경 실패.
+#   `CLAIM_TIME_MAX` — 레포당 `agent:claimed` 시각(타임라인) 조회 상한(기본 20, 0 이상 정수,
+#   #177). 넘는 후보는 조회하지 않고 `경과 미상` 으로 남는다. 형식 오류는 같은 환경 실패.
 #
 # ★환경 실패 처리★ 레포와 무관한 실패(창 시각 계산 불가·jq 부재·집계/렌더/직렬화 jq 실패)는
 #   **stdout 에도** `파이프라인 — 스냅샷 실패: <사유>` 한 줄을 남기고 exit 1 한다. 세 루프는
@@ -127,9 +140,12 @@
 #   "레포 하나 조회 실패"(부분 실패)와 구분되지 않는다.
 #
 # gh 호출 예산: 레포당 이슈 목록 1 + PR 목록(open/closed) 2 + release 확인 1 + 기본 브랜치 1
-# + compare 1 = 최대 6. **예외 하나**(#157): 사람대기 버킷에서 사유가 `policy`·`conflict` 인
+# + compare 1 = 최대 6. **예외 둘**. ①(#157) 사람대기 버킷에서 사유가 `policy`·`conflict` 인
 # 이슈에 한해 질문 코멘트 조회 `gh issue view --json comments` 를 1건씩 더 쓴다 — 라벨만으론
 # 질문 유무를 알 수 없고, 대상은 "지금 사람을 기다리는 건" 이라 목록 전체가 아니라 한 줌이다.
+# ②(#177) 무소속 warn 중 **사망 의심 꼬리표가 붙는 후보**에 한해 이슈 타임라인
+# (`gh api .../timeline --paginate`)을 1건씩 더 쓴다 — 그 시각은 목록 API 에 없다. 대상은
+# "인계 창을 넘긴 무소속 PR" 이라 정상적으로는 0건이고, 상한은 `CLAIM_TIME_MAX`(기본 20).
 # 그 밖의 이슈·PR **개별** `gh view` 는 여전히 금지(N+1). `gh search` / `gh issue list
 # --search` 도 금지 — 인덱스 지연 + 부정 라벨 오파싱(#21, eligible-issues.sh 주석 참조).
 # 라벨 필터는 전부 jq 로 한다. 목록은 `--limit 200` 상한 — `--since` 를 크게 잡으면
@@ -316,6 +332,16 @@ case "$hold_note_max" in
 esac
 HOLD_NOTE_MAX=$hold_note_max
 
+# ── claim 시각 조회 상한 — CLAIM_TIME_MAX (#177) ───────────────────────────
+# 레포당 이 개수까지만 `gh api .../timeline` 을 쓴다. 넘는 후보는 조회하지 않고 `경과 미상`
+# 으로 남는다(거짓 숫자를 만들지 않는다). 대상은 사망 의심 꼬리표가 붙는 무소속 warn 뿐이라
+# 평시엔 0건이지만, 루프가 크게 어긋난 날 상한이 없으면 이 스크립트가 틱을 잡아먹는다.
+claim_time_max=${CLAIM_TIME_MAX:-20}
+case "$claim_time_max" in
+  ""|*[!0-9]*) snapshot_abort "CLAIM_TIME_MAX 형식 오류: $claim_time_max (0 이상 정수만)" ;;
+esac
+CLAIM_TIME_MAX=$claim_time_max
+
 now_epoch=$(date -u +%s 2>/dev/null)
 case "$now_epoch" in
   ""|*[!0-9]*) snapshot_abort "현재 시각 계산 실패 (date -u +%s)" ;;
@@ -403,6 +429,12 @@ def linked($p):
   else null end;
 def epoch($t): if $t == null then null else ($t | fromdateiso8601) end;
 def mins_since($t): (($now - epoch($t)) / 60 | floor);
+# 이슈 번호 → 가장 최근 `agent:claimed` 부착 시각(ISO) 또는 null (#177).
+# 셸이 후보에만 타임라인을 물어 채워 주고, **못 얻은 것은 아예 안 들어온다** — 여기서
+# 없음은 "0분" 이 아니라 "모른다" 다(경과 미상 문구로 간다).
+def claim_at($n):
+  if $n == null then null
+  else ($claimtimes | map(select(.n == $n)) | if length > 0 then .[0].at else null end) end;
 def stage_labels_of($l): $l | map(select(. as $x | pr_stage_labels | index($x) != null));
 # `hold:*` 접미만 뽑는다 — 허용 목록(conflict·policy·ladder)으로 거르지 않는다.
 # 금지 사유(`hold:dup`·`hold:hardware`)는 라벨을 아예 안 만드는 것으로 막는 게 SSOT
@@ -509,14 +541,24 @@ def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | so
         # 사망 의심 꼬리표도 같은 축(구현중 버킷)으로 — 라벨로 걸면 인계 창과 무관한
         # 이슈(예 배포대기)의 갓 열린 PR 에 "0분 경과 · 워커 사망 의심" 이 붙는다.
         | map(. as $p | in_claimed_bucket($p.issue) as $claimed
+              # 경과는 **claim 시각** 기준 (#177). 없으면 숫자를 지어내지 않고 미상으로 —
+              # PR `createdAt` 으로 대신 재면(옛 동작) 재디스패치 건이 통째로 오탐이 된다.
+              | (if $claimed then claim_at($p.issue) else null end) as $cat
               | {kind: "orphan_pr", repo_short: $rs, pr: $p.number, issue: $p.issue,
-                 handoff_overdue: ($claimed and $p.createdAt != null),
+                 # 종전의 `$claimed and $p.createdAt != null` 에서 뒷조건을 뗐다 — 그건 PR
+                 # 나이로 재던 시절 "잴 값이 있나" 였다. 이제 재는 값은 claim 시각이라
+                 # PR `createdAt` 은 이 판정과 무관하고, 남겨 두면 createdAt 이 없는 PR 만
+                 # 꼬리표에서 조용히 빠진다(구현중 버킷인데 아무 말도 없는 상태).
+                 handoff_overdue: $claimed,
+                 # 3상태: 분(정수) · null=미확인. 기계 판독면도 미상을 0 으로 접지 않는다.
+                 claimed_minutes: (if $cat == null then null else mins_since($cat) end),
                  text: ("무소속 PR #\($p.number)(\($rs)) — 열린 agent PR 인데 단계 라벨 0 · "
                         + (if $p.issue == null then "연결 이슈 없음"
                            else "연결 이슈 #\($p.issue) 는 needs-human 아님" end)
-                        + (if $claimed and $p.createdAt != null
-                           then "(agent:claimed 인데 \(mins_since($p.createdAt))분 경과 — 워커 사망 의심)"
-                           else "" end))}))
+                        + (if $claimed | not then ""
+                           elif $cat == null then "(agent:claimed 인데 경과 미상 — 확인 필요)"
+                           else "(agent:claimed 인데 \(mins_since($cat))분 경과 — 워커 사망 의심)"
+                           end))}))
       # needs-human 인데 사유(hold:*)가 없다
       + ($iss | map(select(.bucket == "human_wait" and (.holds | length) == 0))
         | map({kind: "hold_no_reason", repo_short: $rs, issue: .number,
@@ -650,7 +692,7 @@ for repo in "${repos[@]}"; do
     fi
   fi
 
-  # build_snapshot <noteless 배열> <noteunknown 배열> <출력 파일>
+  # build_snapshot <noteless 배열> <noteunknown 배열> <claimtimes 배열> <출력 파일>
   #   — BUILD_JQ 한 패스(순수 · 부작용 없음).
   build_snapshot() {
     jq -n \
@@ -663,8 +705,9 @@ for repo in "${repos[@]}"; do
       --argjson ahead "$ahead" \
       --argjson noteless "$1" \
       --argjson noteunknown "$2" \
+      --argjson claimtimes "$3" \
       --arg repo "$repo" --arg rs "$short" --arg since "$since" \
-      "$BUILD_JQ" > "$3"
+      "$BUILD_JQ" > "$4"
   }
   build_fail() {
     exit_code=1
@@ -676,7 +719,9 @@ for repo in "${repos[@]}"; do
   # 버킷 조건을 여기 다시 적으면(needs-human 이면서 배포대기가 아닌 것) 언젠가 SSOT 와
   # 갈라진다. 그래서 같은 BUILD_JQ 를 `noteless=[]` 로 한 번 돌려 버킷을 얻고, 질문 조회가
   # 실제로 필요할 때만 두 번째 패스를 돈다(jq 는 로컬 · gh 호출 0).
-  if ! build_snapshot '[]' '[]' "$tmpdir/repo.pre.json"; then
+  # 같은 이유로 사망 의심 꼬리표의 claim 시각 후보(#177)도 이 패스의 warn 목록에서 뽑는다 —
+  # "꼬리표가 붙는 건" 의 정의는 BUILD_JQ 만이 안다.
+  if ! build_snapshot '[]' '[]' '[]' "$tmpdir/repo.pre.json"; then
     build_fail
     continue
   fi
@@ -763,15 +808,71 @@ for repo in "${repos[@]}"; do
     [ -z "$nu_body" ] || noteunknown="[$nu_body]"
   fi
 
-  if [ "$noteless" = "[]" ] && [ "$noteunknown" = "[]" ]; then
-    # 질문 없는 홀드도 미확인도 없으면 예비 패스의 결과가 곧 최종 결과다(재집계 불필요).
+  # ── 사망 의심 경과시간의 기준 시각 — 가장 최근 `agent:claimed` 부착 (#177) ──
+  # 종전엔 PR `createdAt` 으로 쟀다. 문구는 "agent:claimed 인데 N분" 인데 실제로 잰 건 PR
+  # 나이라, 홀드 해제 뒤 **재디스패치**된 건에서 숫자가 통째로 부풀어 살아 있는 워커를
+  # 사망으로 신고했다(실측 #170/PR #172 — 231분으로 신고, 실제 claim 은 7분 전).
+  # 조회 대상은 **예비 패스가 이미 고른 꼬리표 대상**(`handoff_overdue`)뿐 — 전체 이슈에
+  # 걸면 N+1 로 틱이 느려진다. 못 얻은 건은 목록에 넣지 않는다(= jq 가 `경과 미상` 으로).
+  claimtimes="[]"
+  ct_sep=""; ct_body=""
+  ct_err=$(jq -r '.warns[]
+                  | select(.kind == "orphan_pr" and .handoff_overdue == true and .issue != null)
+                  | .issue' "$tmpdir/repo.pre.json" 2>&1 > "$tmpdir/ccands")
+  # shellcheck disable=SC2181  # 위 대입의 종료코드를 봐야 한다(ct_err 은 stderr 만 담는다)
+  if [ $? -ne 0 ]; then
+    echo "$SELF: $short 사망 의심 경과시간 대상 추출 실패(jq) — 경과는 미상으로 남는다: $(printf '%s' "$ct_err" | tr '\n' ' ' | cut -c1-200)" >&2
+    : > "$tmpdir/ccands"
+  fi
+  if [ -s "$tmpdir/ccands" ]; then
+    cseen=0
+    # fd 3 으로 읽는다 — 루프 안에서 gh 를 부르므로 stdin 을 목록에 묶으면 안 된다.
+    while IFS= read -r cnum <&3; do
+      case "$cnum" in ""|*[!0-9]*) continue ;; esac
+      cseen=$((cseen + 1))
+      if [ "$cseen" -gt "$CLAIM_TIME_MAX" ]; then
+        echo "$SELF: $short #$cnum claim 시각 조회 상한($CLAIM_TIME_MAX) 초과 — 경과 미상" >&2
+        continue
+      fi
+      # `--paginate` 는 선택이 아니다: 반송·재디스패치를 여러 번 돈 이슈는 라벨 이벤트만으로도
+      # 첫 페이지 밖으로 밀려 **가장 최근** claim 을 놓친다 — 그러면 이 수정이 고치려던 오탐이
+      # 옛 claim 이라는 다른 얼굴로 되살아난다(다른 레포 실측: 9분 전 워커를 158분으로 오판).
+      # 부분 페이지네이션은 통째로 버린다(reconcile.sh:118 과 같은 규율) — `--paginate` 는
+      # 페이지마다 값을 한 줄씩 내므로 뒤 페이지가 실패하면 앞 페이지의 **옛 claim** 이
+      # 마지막 값이 된다. 그래서 `|| true` 로 파이프를 삼키지 않고 종료 상태를 먼저 본다.
+      if ! run_gh gh api "repos/$repo/issues/$cnum/timeline?per_page=100" --paginate \
+          --jq '[.[] | select(.event == "labeled" and .label.name == "agent:claimed") | .created_at] | last // empty'; then
+        echo "$SELF: $short #$cnum agent:claimed 시각(타임라인) 조회 실패: $GH_ERR" >&2
+        continue
+      fi
+      # 값을 JSON 에 끼우기 전 **형태를 화이트리스트로** 못 박는다 — `gh api -q` 는 실패
+      # 응답의 에러 JSON 도 stdout 으로 흘리고(claim-issue.sh 와 같은 함정), 자유 문자열이
+      # 그대로 들어가면 아래 리터럴 조립이 깨진다. 패턴이 GitHub 이 실제로 주는 형태
+      # (초 단위 UTC `Z`)로 좁은 이유: jq 의 `fromdateiso8601` 은 오프셋·소수초를 못 읽어
+      # **레포 블록 전체가 '집계 실패(jq)'** 로 죽는다. 어긋나면 값이 없는 것으로 본다
+      # (그 한 건만 `경과 미상` 으로 degrade — 나머지는 그대로 나온다).
+      claimed_at=$(printf '%s\n' "$GH_OUT" \
+        | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
+        | tail -n1)
+      if [ -z "$claimed_at" ]; then
+        echo "$SELF: $short #$cnum 타임라인에서 agent:claimed 시각을 못 얻음(이벤트 부재·형식 밖) — 경과 미상" >&2
+        continue
+      fi
+      ct_body="${ct_body}${ct_sep}{\"n\":$cnum,\"at\":\"$claimed_at\"}"; ct_sep=","
+    done 3< "$tmpdir/ccands"
+    [ -z "$ct_body" ] || claimtimes="[$ct_body]"
+  fi
+
+  if [ "$noteless" = "[]" ] && [ "$noteunknown" = "[]" ] && [ "$claimtimes" = "[]" ]; then
+    # 질문 없는 홀드도 미확인도 claim 시각도 없으면 예비 패스의 결과가 곧 최종 결과다
+    # (재집계 불필요 — 셋 다 빈 값으로 돈 패스라 결과가 같다).
     # mv 실패를 흘리면 바로 아래 jq 가 **직전 레포의** 스냅샷을 읽어 붙인다 — 부분 실패가
     # "성공(남의 데이터)" 으로 접히는 경로라 여기서 끊는다.
     if ! mv "$tmpdir/repo.pre.json" "$tmpdir/repo.json"; then
       build_fail
       continue
     fi
-  elif ! build_snapshot "$noteless" "$noteunknown" "$tmpdir/repo.json"; then
+  elif ! build_snapshot "$noteless" "$noteunknown" "$claimtimes" "$tmpdir/repo.json"; then
     build_fail
     continue
   fi
