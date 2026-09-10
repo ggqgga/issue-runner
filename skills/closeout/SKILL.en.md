@@ -197,9 +197,12 @@ separate freshness gate needed:
 (the labels are set outside this skill by the worker runtime — use as a supplement when
 present; judge by finish-classify alone when absent).
 
-**Re-dispatch idempotency marker (required)**: on a `stale_reverify` re-dispatch, leave
-`gh pr comment <pr> --repo <repo> --body "재디스패치: #<issue> — lost finish (died before verify) <!-- bodat:worker -->"`,
-and **if this marker already exists and there has been no new commit / verifier comment since,
+**Re-dispatch idempotency marker (required)**: on a `stale_reverify` re-dispatch, leave the
+comment with `$SCRIPTS/bounce-comment.sh redispatch <repo> <pr> <issue>` (do not hand-type the
+wording — a dropped colon or reordering lets the `bounce-state.sh` bounce safety net miss it,
+#212. The generated body is `재디스패치: #<issue> — 완결 유실(검증 전 사망) <!-- bodat:worker -->`
+— the marker word itself stays Korean across both skill languages, see bounce-state.sh).
+**if this marker already exists and there has been no new commit / verifier comment since,
 do not re-issue** (prevents /loop spam, isomorphic to the step-6 spinoff marker). Re-dispatch
 eligibility is `open + agent-ready + ¬agent:claimed` (eligible-issues.sh), and the
 `closeout-redispatch` transition sets both in one call (do not hand-run `gh issue edit`).

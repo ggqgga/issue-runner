@@ -176,8 +176,10 @@ CONFLICTING PR 도 그 라벨을 그대로 달고 있다 — 배제 조건으로
 결과만으로 판정).
 
 **재디스패치 멱등 마커 (필수)**: `stale_reverify` 재디스패치 시 PR 에
-`gh pr comment <pr> --repo <repo> --body "재디스패치: #<이슈> — 완결 유실(검증 전 사망) <!-- bodat:worker -->"`
-를 남기고, **이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지
+`$SCRIPTS/bounce-comment.sh redispatch <repo> <pr> <이슈>` 로 코멘트를 남긴다(문구를
+손으로 옮겨 적지 않는다 — 콜론·어순이 변형되면 `bounce-state.sh` 반송 안전망이 놓친다,
+#212. 생성되는 본문은 `재디스패치: #<이슈> — 완결 유실(검증 전 사망) <!-- bodat:worker -->`).
+**이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지
 않는다**(/loop 스팸 방지, 6단계 파생 마커 동형). 재디스패치 자격은 `open + agent-ready +
 ¬agent:claimed`(eligible-issues.sh)이라 `closeout-redispatch` 전이가 그 둘을 한 번에
 맞춘다(손으로 `gh issue edit` 하지 마라). 위 두 전이 모두 **exit 1(readback 불일치)·
