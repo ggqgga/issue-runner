@@ -396,7 +396,6 @@ while IFS= read -r repo; do
       [ -n "$row" ] || continue
       if ! printf '%s' "$row" \
            | jq -e '[.labels[].name | select(startswith("hold:"))] | length > 0' >/dev/null 2>&1; then
-        hnum=$(printf '%s' "$row" | jq -r '.number')
         # 배포 대기 이슈는 **사유 라벨 없이 needs-human 으로 쉬는 것이 정상**이다(머지 뒤 사람이
         # 배포할 때까지). 교정할 불변식 위반이 없는데 매 틱 warn 이면, 머지가 쌓일수록 그 줄들이
         # 진짜 "사람이 사유 없이 붙인 needs-human" 을 묻어 버린다 — warn 은 **루프가 교정 가능한
@@ -416,11 +415,18 @@ while IFS= read -r repo; do
         # 이 갈래(full-cycle)는 뗀다** — 원칙적 축으로 오해하지 마라. 그때까지의 대가는 `full-cycle`
         # 이 붙은 구현 이슈까지 note 로 내려간다는 것이고, 이는 의도된 트레이드오프다
         # (실측상 그런 이슈는 계정 전체에 0건 — 2026-09-11).
-        dwlabel=$(printf '%s' "$row" | jq -r '
+        # 번호와 축을 **한 번의 jq 로 함께** 뽑는다 — 이 루프는 레포의 needs-human 이슈 수만큼
+        # 도니 필드마다 프로세스를 띄우면 조회보다 파싱이 더 비싸진다(read_state 가 같은 이유로
+        # 같은 모양이다). jq 가 실패하면 둘 다 비고, 빈 축은 아래에서 warn 으로 떨어진다 —
+        # 강등이 조회 실패를 타고 번지지 않는 방향이다.
+        row_tsv=$(printf '%s' "$row" | jq -r '
           [.labels[].name] as $n
-          | if ($n | index("deploy-wait") != null) then "deploy-wait"
-            elif ($n | index("full-cycle") != null) then "full-cycle"
-            else "" end' 2>/dev/null) || dwlabel=""
+          | [(.number|tostring),
+             (if ($n | index("deploy-wait") != null) then "deploy-wait"
+              elif ($n | index("full-cycle") != null) then "full-cycle"
+              else "" end)] | @tsv' 2>/dev/null) || row_tsv=""
+        hnum=${row_tsv%%$'\t'*}
+        dwlabel=${row_tsv#*$'\t'}
         if [ -n "$dwlabel" ]; then
           emit_note "$repo" "$hnum" "배포 대기(라벨 $dwlabel) — needs-human 이 정상 상태라 warn 아님"
         else
