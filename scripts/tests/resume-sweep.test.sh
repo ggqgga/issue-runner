@@ -1065,6 +1065,76 @@ note "재심: 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker --
 run
 check "[bare] 맨몸 policy-review: 재심으로 센다(due 없음)" "$(no_ev policy_review_due)"
 
+# ── (#197 반송 attempt3) 가변 길이 펜스·백틱 런 경계 — 17건 격자 ───────────────
+# 마감 검증 BLOCKER: 인라인은 닫는 런의 **뒤만** 보고(앞쪽 최대런 여부를 안 물어) 더 긴
+# 런의 접미부를 짧은 스팬의 닫기로 오인했고, 펜스는 여는 문자·길이를 안 물고 닫는 줄 뒤에
+# 아무 텍스트나 허용해 조기 종료했다. 위 두 회차는 매번 지적된 한 사례만 닫아 같은 축에서
+# 반복됐다 — 이번엔 `unquoted` 정의를 스크립트에서 그대로 뽑아(손타이핑 대조 금지) CommonMark
+# 규칙 그대로의 17건을 **직접** 문다(세 판정 지점은 전부 이 정의 하나를 공유하므로 — 위
+# 동기화 검사로 이미 보장 — 여기서 한 번만 확인하면 충분하다).
+grid_unq=$(grep -o 'def unquoted:.*;' "$DIR/resume-sweep.sh" | head -1)
+check "격자: 스크립트에 인용 제거 정의(def unquoted)" "$([ -n "$grid_unq" ] && echo ok || echo no)"
+
+GRID_MARKER='<!-- ladder-resume: 1 -->'
+
+grid_check() {  # grid_check <label> <want:true|false> <text>
+  local label="$1" want="$2" text="$3" got
+  got=$(printf '%s' "$text" \
+    | jq -Rs "$grid_unq"' (unquoted | test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))')
+  check "[격자] $label (want=$want)" "$([ "$got" = "$want" ] && echo ok || echo no)"
+}
+
+grid_check "맨몸 마커" \
+  true "$(printf '그냥 텍스트 %s' "$GRID_MARKER")"
+
+grid_check "단일 백틱" \
+  false "$(printf '`%s`' "$GRID_MARKER")"
+
+grid_check "이중 백틱" \
+  false "$(printf '``%s``' "$GRID_MARKER")"
+
+grid_check "삼중 인라인" \
+  false "$(printf '```%s```' "$GRID_MARKER")"
+
+grid_check "이중런 안 삼중런" \
+  false "$(printf '``foo ```x``` %s bar``' "$GRID_MARKER")"
+
+grid_check "정상 삼중 펜스" \
+  false "$(printf '```\n%s\n```' "$GRID_MARKER")"
+
+grid_check "펜스 언어태그" \
+  false "$(printf '```bash\n%s\n```' "$GRID_MARKER")"
+
+grid_check "들여쓴 펜스" \
+  false "$(printf '  ```\n  %s\n  ```' "$GRID_MARKER")"
+
+grid_check "닫는펜스 아닌 줄" \
+  false "$(printf '```\n``` not-a-close\n%s\n```' "$GRID_MARKER")"
+
+grid_check "사중 펜스 안 삼중줄" \
+  false "$(printf '````\n```\n%s\n````' "$GRID_MARKER")"
+
+grid_check "혼재(인용+맨몸)" \
+  true "$(printf '메모: `%s` 를 남긴다. 실제로는 %s' "$GRID_MARKER" "$GRID_MARKER")"
+
+grid_check "닫히지 않은 백틱" \
+  true "$(printf '` 이건 안 닫힌 백틱입니다 %s' "$GRID_MARKER")"
+
+grid_check "펜스 둘 사이 맨몸" \
+  true "$(printf '```\ndecoy code\n```\n\n%s\n\n```\ndecoy2\n```' "$GRID_MARKER")"
+
+grid_check "물결 펜스" \
+  false "$(printf '~~~\n%s\n~~~' "$GRID_MARKER")"
+
+grid_check "닫는 펜스가 더 김" \
+  false "$(printf '```\n%s\n````' "$GRID_MARKER")"
+
+grid_check "펜스 미닫힘(문서 끝까지)" \
+  false "$(printf '```\n%s' "$GRID_MARKER")"
+
+grid_check "물결 펜스로 백틱 펜스 닫기 시도" \
+  false "$(printf '```\n%s\n~~~' "$GRID_MARKER")"
+
 # ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
 # 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는
 # 두 번째 계산기가 다른 수를 센다. **스크립트에서 뽑은 문자열**을 두 SKILL 에서 grep -F 로
