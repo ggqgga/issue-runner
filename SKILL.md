@@ -138,7 +138,13 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   사망이 아니다(#185) — **worktree 제거·claim 해제를 하지 말고** `SendMessage` 로
   그 태스크에 재개 메시지를 보내 워커를 깨워라(보고에 적힌 "다음 할 일"을 이어가게
   하라는 한 줄이면 된다). 재개했으면 ④ Report 의 `보수` 에 `#<num>(CI 대기 재개)`
-  로 적어라. 이 형식이 아니면(진짜 사망) 아래로 이어간다.
+  로 적어라 — 그리고 **재개에 성공했으면 이 이슈는 이번 틱에서 여기까지다. 아래 진짜
+  사망 경로도, 그 끝의 timebox 청소도 실행하지 말고 다음 이벤트로 넘어가라**(코드로
+  치면 여기서 `continue`). 방금 깨운 워커는 정의상 **살아있으므로** 그냥 아래로 읽어
+  내려가면 timebox 문단에 그대로 걸린다. 이 박스 CI 큐는 인큐→완료가 550~750초라
+  반송 회차가 겹치면 claim 경과가 쉽게 `ISSUE_TIMEBOX_HOURS` 를 넘고, 그러면
+  ⓐ `TaskStop` ⓑ worktree 제거 ⓒ claim 해제가 **막 재개한 워커를 즉시 죽인다.**
+  이 형식이 아니면(진짜 사망) 아래로 이어간다.
   **근거 — 턴이 끝난 백그라운드 서브에이전트도 `SendMessage` 로 깨어난다.** ⑴ Agent 툴
   계약문이 `SendMessage` 를
   "continue a previously spawned agent with its context intact"
@@ -167,9 +173,12 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   게이트가 `hold:` 접두도 보므로 한쪽만 떼면 후보로 안 돌아온다, #242. README
   '가드레일' 규약). BLOCKED 코멘트가 아니면 worktree 제거 후 claim 해제
   (재디스패치 가능 상태로 복귀).
-  **timebox (무진전 감지)**: 살아있어도 **진행이 있는지** 확인하라 — 판정 입력은 경과
-  시간이 아니라 진행 증거다(#200: 경과에는 워커가 통제할 수 없는 박스 전역 직렬 CI 큐
-  대기가 통째로 들어가, 실측 2건에서 진행 중인 워커를 죽일 뻔했다).
+  **timebox (무진전 감지)** — **이번 틱에 `SendMessage` 로 재개한 이슈는 면제다**
+  (위 재개 갈래에서 이 이슈 처리는 이미 끝났다: 그 워커는 무진전이 아니라 CI 큐를
+  기다린 것이라, 여기서 청소하면 방금 깨운 워커를 죽인다). 재개하지 않은 건이면
+  살아있어도 **진행이 있는지** 확인하라 — 판정 입력은 경과 시간이 아니라 진행
+  증거다(#200: 경과에는 워커가 통제할 수 없는 박스 전역 직렬 CI 큐 대기가 통째로
+  들어가, 실측 2건에서 진행 중인 워커를 죽일 뻔했다). claim 경과 시간을 확인하라 —
   `gh api repos/<repo>/issues/<num>/timeline --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed")] | last.created_at'`
   로 claim 시각을 구하고 (빈 응답이면 worktree 디렉토리 생성 시각으로 대체),
   `$SCRIPTS/timebox-check.sh <repo> <num> --claim-at <ISO8601>` 에 넘겨라 (`working` 은

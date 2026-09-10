@@ -1607,5 +1607,20 @@ grep -qF -- 'the same task-id may notify more than once' SKILL.en.md \
   || { echo "  ✗ SKILL.en.md 에 SendMessage 재개 근거(완료 알림 note 인용) 없음"; exit 1; }
 grep -qF -- 'dispatch a replacement worker' SKILL.en.md \
   || { echo "  ✗ SKILL.en.md 에 재개 실패 시 폴백(worktree 재사용 대체 디스패치) 없음"; exit 1; }
+# 재개 갈래는 아래로 흐르면 안 된다 — 방금 깨운 워커는 '살아있음'이라 그 아래 timebox
+# 문단(초과 시 TaskStop+worktree 제거+claim 해제)에 그대로 걸려 **막 재개한 워커를 죽인다**
+# (#189 리뷰 P1). 문서는 순서대로 읽는 LLM 이 소비하므로 ⑴ 재개 성공 시 이번 틱 종료와
+# ⑵ timebox 문단의 재개분 면제를 **양쪽 다** 명문화해야 한다 — 하나만 남으면 그 하나를
+# 놓친 디스패처가 청소 경로로 샌다.
+grep -qF -- '재개에 성공했으면 이 이슈는 이번 틱에서 여기까지다' SKILL.md \
+  || { echo "  ✗ SKILL.md 에 재개 성공 시 이번 틱 종료(아래 timebox 청소로 흐르지 마라) 명문화 없음"; exit 1; }
+grep -qF -- '재개한 이슈는 면제다' SKILL.md \
+  || { echo "  ✗ SKILL.md timebox 문단에 '이번 틱 재개분 면제' 명문화 없음"; exit 1; }
+grep -qF -- 'this issue is finished for this tick' SKILL.en.md \
+  || { echo "  ✗ SKILL.en.md 에 재개 성공 시 이번 틱 종료 명문화 없음"; exit 1; }
+grep -qF -- 'do not run the timebox cleanup at its end' SKILL.en.md \
+  || { echo "  ✗ SKILL.en.md 에 재개 성공 시 timebox 청소 금지 명문화 없음"; exit 1; }
+grep -qF -- 'tick is exempt' SKILL.en.md \
+  || { echo "  ✗ SKILL.en.md timebox 문단에 '이번 틱 재개분 면제' 명문화 없음"; exit 1; }
 
 echo "CI pass"

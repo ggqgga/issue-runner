@@ -137,7 +137,15 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   — it is not dead (#185). **Do not remove the worktree or release the claim** —
   wake the worker with `SendMessage` to that task, telling it to resume (pick up the
   "다음 할 일" / next step it reported). Once resumed, record it in ④ Report's
-  `maintained` line as `#<num>(resumed from CI wait)`. If the message is not in that
+  `maintained` line as `#<num>(resumed from CI wait)` — and **once the resume
+  succeeds, this issue is finished for this tick: do not run the genuine-death path
+  below, and do not run the timebox cleanup at its end; move on to the next event**
+  (in code terms, `continue` here). A worker you just woke is by definition *alive*,
+  so simply reading on would catch it in the timebox paragraph below. This box's CI
+  queue takes 550~750s from enqueue to finish, so a rework round easily pushes the
+  claim age past `ISSUE_TIMEBOX_HOURS`, and then ⓐ `TaskStop`, ⓑ worktree removal and
+  ⓒ claim release **immediately kill the worker you just resumed.**
+  If the message is not in that
   format (a genuine death), continue below.
   **Evidence — a background subagent whose turn has ended is still resumable with
   `SendMessage`.** (1) The Agent tool contract defines `SendMessage` as
@@ -174,11 +182,14 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   'guardrails' convention). If the latest comment is not
   a BLOCKED comment, remove the worktree and release the claim (returning the
   issue to a re-dispatchable state).
-  **Timebox (no-progress detection)**: even if it is alive, check whether it is **making
-  progress** — the decision input is progress evidence, not elapsed time (#200: the
-  elapsed time swallows the box-wide serial CI queue wait, which the worker does not
-  control; in two measured cases that nearly killed workers that were still working).
-  Get the claim timestamp with
+  **Timebox (no-progress detection)** — **an issue resumed via `SendMessage` in this
+  tick is exempt** (the resume branch above already finished handling it: that worker
+  was waiting in the CI queue, not stalled, so cleaning it up here would kill the
+  worker you just woke). For an issue you did not resume, check whether it is **making
+  progress** even if it is alive — the decision input is progress evidence, not elapsed
+  time (#200: the elapsed time swallows the box-wide serial CI queue wait, which the
+  worker does not control; in two measured cases that nearly killed workers that were
+  still working). Get the claim timestamp with
   `gh api repos/<repo>/issues/<num>/timeline --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed")] | last.created_at'`
   (if the response is empty, fall back to the worktree directory's creation time) and
   hand it to `$SCRIPTS/timebox-check.sh <repo> <num> --claim-at <ISO8601>` (`working` by
