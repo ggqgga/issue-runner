@@ -490,6 +490,39 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f 의 smoke-prompt 단락에 chrome-devtools·<VERIFY_URL> 구동 지시 없음"; exit 1; }
 done
 
+echo "[closeout] ①-c 보류 해제 방향 판정 배선 — 한/영 SKILL (#198)"
+# 사람이 needs-human·hold:* 를 뗄 때 그 해제가 **기각**(원안 그대로 머지)인지 **시정**
+# (코드를 고쳐라)인지는 라벨만 봐선 같은 모양이다. 시정 방향에는 안전망이 하나도 없다 —
+# 그 PR 의 `머지 판정: ✅` 는 보류 이전 코드에 대한 것이고 코드가 안 바뀌었으니 head 시각도
+# 그대로여서 #171 신선도 증명이 정상 통과하고, 반송 마커도 아직 없다. 그래서 사람이
+# "고쳐라" 라고 한 코드가 다음 틱에 그대로 머지된다(실측 bodat PR #4989 / 이슈 #4959).
+# 판정은 스크립트가 아니라 프로즈 한 자리(①-c)로만 서므로, 그 배선이 지워지는 **문서 회귀**를
+# 여기서 문다 — 토큰 하나하나가 그 절이 실제로 부르는 호출·마커다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -q '^## ①-c ' "$f" || { echo "  ✗ $f 에 ①-c 보류 해제 방향 판정 절 없음"; exit 1; }
+  # ①-c 헤더부터 다음 `## ` 헤더 직전까지 = 그 절의 본문.
+  sec=$(awk '/^## ①-c /{on=1} on && /^## / && !/^## ①-c /{exit} on' "$f")
+  [ -n "$sec" ] || { echo "  ✗ $f 의 ①-c 절 본문이 비었다"; exit 1; }
+  for tok in 'pr-comments.sh' 'pr-head-at.sh' 'policy-review: resumed' \
+             'closeout-redispatch' '재디스패치:' 'closeout-blocked' '--reason policy'; do
+    printf '%s' "$sec" | grep -qF -- "$tok" \
+      || { echo "  ✗ $f 의 ①-c 절에 '$tok' 배선 없음"; exit 1; }
+  done
+done
+
+echo "[closeout] ①-b active 행에 ①-c 시정 반송 갈래 유지 — 한/영 SKILL (#198)"
+# ①-c 의 결론은 finish-classify 표의 `active` 행에서도 읽혀야 한다("미해소 보류 + 시정
+# 방향이면 무접촉이 아니라 반송"). 이 행은 #196(CONFLICTING 반송 마커 게이트)도 같은
+# 회차에 손대는 자리다 — 두 조건은 AND 가 아니라 **서로 독립인 축**이라 충돌 해소가 한쪽
+# 문장을 통째로 버리면 조용히 fail-open 이 된다(이 레포 실측: 해소가 정의를 버리고 호출부만
+# 남긴 적이 있다). 그래서 각 축을 **따로** 문다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  row=$(grep -n '^| `active`' "$f" | head -1 | cut -d: -f1)
+  [ -n "$row" ] || { echo "  ✗ $f 에 finish-classify 표의 active 행 없음"; exit 1; }
+  sed -n "${row}p" "$f" | grep -qF '#198' \
+    || { echo "  ✗ $f 의 active 행에 #198(①-c 시정 반송) 갈래 없음"; exit 1; }
+done
+
 echo "[closeout] ci-gate --repo 분기 스모크 (positive + fail-closed)"
 # flag_repo 가 있으면 게이트가 cwd 가 아니라 그 레포 기준으로 SHA·캐시를 잡아야 한다 (#47).
 gate="$PWD/hooks/ci-gate-before-pr-merge.sh"
