@@ -145,6 +145,17 @@ Procedure:
      too.** `run-local-ci.sh` runs synchronously **including the queue wait** — a short
      timeout on that call kills the process whether it is still waiting in the queue or
      already running `bin/ci`. **Do not set a short bash timeout.**
+   - **유령 티켓 회수 (ghost-ticket reclaim, pid died) — the queue clears a ticket
+     whose waiting process died.** This too means it was never actually executed.
+
+   **Policy (#185 re-review): 폐기 (discard), 중단(INT/TERM) (abort), and 유령 티켓
+   회수 (ghost-ticket reclaim) are all not a CI failure — they are non-execution.** If
+   the foreground call was cut off and `<sha>.result` never appeared, do not dig through
+   the log guessing why — just check `queue.log`'s last line for the current SHA
+   (`tail -20 ~/.claude/.local-ci/queue.log`). If it is one of the three, no pass/fail
+   verdict was ever produced, so there is no code to fix — immediately
+   re-queue the same SHA (current HEAD) with `run-local-ci.sh` (the runner's own
+   queue policy and timeouts stay out of scope for this issue — do not touch them).
 
    **If you must end your turn, never end it silently.** If the above foreground call
    exceeds 10 minutes without finishing and you must end this turn without a result,
