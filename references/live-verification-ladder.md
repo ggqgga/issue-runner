@@ -36,14 +36,11 @@ Tailscale 주소 `100.65.53.51:3000` 과 루프백은 정상. 같은 크롬이 �
 프로덕션으로 오판하게 만든다(거짓 초록). 포트를 매번 뽑고, 포워딩 실패 시 ssh 가 죽게 하고,
 열자마자 찔러 본다:
 
-```bash
-PORT=$(( 39000 + RANDOM % 1000 ))
-ssh -f -N -o ExitOnForwardFailure=yes -L "127.0.0.1:$PORT:127.0.0.1:<원격포트>" <호스트별칭> \
-  && curl -fsS "http://127.0.0.1:$PORT/up" -o /dev/null && echo "tunnel ok on $PORT"
-# 끝나면: pkill -f "127.0.0.1:$PORT:127.0.0.1:"
-```
-
-`tunnel ok` 가 안 찍히면 도달 불가다. 정리는 그 포트로만(넓은 `pkill` 은 남의 터널을 끊는다).
+**레시피는 여기 베끼지 않는다 — 단일 출처는
+`skills/closeout/references/smoke-prompt.md` 의 터널 절이다.** 포트 충돌 재시도(바인드 실패는
+도달 불가가 아니다) · control socket 범위 정리(`pkill` 은 남의 터널을 끊는다) · 프로브 데드라인
+(`--connect-timeout 3 --max-time 10`) · **스모크가 끝난 뒤에 정리**(프로브 직후에 끊으면 정작
+볼 화면을 못 본다)까지 그 절차를 그대로 따른다. 사본을 두면 한쪽만 고쳐져 갈라진다.
 `<호스트별칭>`·`<원격포트>` 는 그 레포 배포 문서에서 찾고, 못 찾으면 지어내지 말고 그 사실을
 적는다. 배경·실측 표(그 맥북의 Chrome 기준)는 BoDAT `deploy-bodat` 5절.
 

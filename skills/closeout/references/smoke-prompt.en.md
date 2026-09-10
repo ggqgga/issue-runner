@@ -54,17 +54,28 @@ for _try in 1 2 3 4 5; do
   fi
   grep -qi 'bind\|address already in use' "$ERR" || break   # not a bind problem — retrying is pointless
 done
-if [ -n "$PORT" ] && curl -fsS "http://127.0.0.1:$PORT/up" -o /dev/null; then
-  echo "tunnel ok on $PORT"
+if [ -n "$PORT" ] && curl -fsS --connect-timeout 3 --max-time 10 \
+     "http://127.0.0.1:$PORT/up" -o /dev/null; then
+  echo "tunnel ok on $PORT"            # ← smoke URL is http://127.0.0.1:$PORT
 else
-  echo "tunnel unreachable"            # five collisions, or it bound but the remote never answered
+  echo "tunnel unreachable"            # five collisions · remote silent · response too slow (>10s)
+  ssh -S "$CTL" -O exit <ssh host alias> 2>/dev/null || true   # failure path: tear down now
 fi
-ssh -S "$CTL" -O exit <ssh host alias> 2>/dev/null || true   # clean up on **both** paths
 rm -f "$ERR"
 ```
 
+**On `tunnel ok`, leave the tunnel up and run the whole Chrome smoke through it** — tearing
+it down right after the probe means you never see the screen you came to check (all you
+verified is `/up`). Clean up after the smoke finishes, once, on **every** path — pass,
+fail, or abort:
+
+```bash
+ssh -S "$CTL" -O exit <ssh host alias> 2>/dev/null || true   # common cleanup after the smoke
+```
+
 Only `tunnel unreachable` means unreachable — the loop above already filtered out bind
-collisions. Clean up through the control socket (`-O exit`) only — a broad `pkill` on the
+collisions, and `--max-time` folds a silent or slow remote into the same verdict after 10s
+so closeout never hangs. Clean up through the control socket (`-O exit`) only — a broad `pkill` on the
 port string cuts other people's tunnels using that port. Find `<ssh host alias>`/`<remote port>` in that
 repo's deploy docs (BoDAT: `bodat-mini` on the office LAN, `bodat-remote` from outside,
 port 3000). If you cannot find them, do not invent them — report

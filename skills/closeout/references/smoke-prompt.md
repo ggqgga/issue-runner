@@ -49,16 +49,26 @@ for _try in 1 2 3 4 5; do
   fi
   grep -qi 'bind\|address already in use' "$ERR" || break   # 바인드 문제가 아니면 재시도 무의미
 done
-if [ -n "$PORT" ] && curl -fsS "http://127.0.0.1:$PORT/up" -o /dev/null; then
-  echo "tunnel ok on $PORT"
+if [ -n "$PORT" ] && curl -fsS --connect-timeout 3 --max-time 10 \
+     "http://127.0.0.1:$PORT/up" -o /dev/null; then
+  echo "tunnel ok on $PORT"            # ← 스모크 URL 은 http://127.0.0.1:$PORT
 else
-  echo "tunnel unreachable"            # 5회 다 충돌이거나, 열렸는데 원격이 응답 없음
+  echo "tunnel unreachable"            # 5회 다 충돌 · 원격 무응답 · 응답 지연(10초 초과)
+  ssh -S "$CTL" -O exit <호스트별칭> 2>/dev/null || true   # 실패 경로는 여기서 즉시 정리
 fi
-ssh -S "$CTL" -O exit <호스트별칭> 2>/dev/null || true   # 성공·실패 **양쪽 다** 정리
 rm -f "$ERR"
 ```
 
-`tunnel unreachable` 이 찍혔을 때만 도달 불가다 — 바인드 충돌은 위 루프가 이미 걸러냈다.
+**`tunnel ok` 면 터널을 열어 둔 채 크롬 스모크를 끝까지 밟는다** — 프로브 직후에 끊으면
+정작 확인하려던 화면을 못 본다(확인한 건 `/up` 뿐). 정리는 스모크가 끝난 뒤,
+**통과·실패·중단 어느 경로에서든** 한 번:
+
+```bash
+ssh -S "$CTL" -O exit <호스트별칭> 2>/dev/null || true   # 스모크 종료 후 공통 정리
+```
+
+`tunnel unreachable` 이 찍혔을 때만 도달 불가다 — 바인드 충돌은 위 루프가 이미 걸러냈고,
+무응답·지연은 `--max-time` 이 10초에서 끊어 같은 결론으로 모은다(closeout 이 매달리지 않게).
 정리는 control socket(`-O exit`)으로만 한다 — 포트 문자열로 넓게 `pkill` 하면 같은 포트를
 쓰던 남의 터널까지 끊는다. `<호스트별칭>`·`<원격포트>` 는 그 레포의 배포 절차 문서에서
 찾는다(BoDAT = `bodat-mini`(사무실 LAN)·`bodat-remote`(외부) · 3000). **통로를 못 찾으면
