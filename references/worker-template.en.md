@@ -107,9 +107,10 @@ Procedure:
      execution" rule at the top of this document already names `run-local-ci.sh`: raise
      the Bash tool's `timeout` to **up to 600000ms (10 minutes)**.
    - If it still has not finished and the tool call was cut off (the box-wide queue is
-     badly backed up), do not immediately re-issue it — first do a lightweight check
-     for whether the `<sha>.result` file already exists (another session working the
-     same SHA may have finished it first).
+     badly backed up), do not immediately re-issue it — first do a lightweight check for
+     whether the `<sha>.result` file (its path is printed by `run-local-ci.sh` itself —
+     `~/.claude/.local-ci/<repo slug>/<sha>.result`) already exists (another session
+     working the same SHA may have finished it first).
    - **Do not stack a second CI run** — before queuing one, check
      `ps -Ao pid,etime,command | grep '[b]in/ci'` for one already running (two in the
      same worktree share a test DB/fixtures and both die).

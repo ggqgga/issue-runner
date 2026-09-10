@@ -101,8 +101,9 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
      실행 금지" 규율이 이미 `run-local-ci.sh` 를 지목한다: Bash 툴 `timeout` 을
      **최대 600000ms(10분)까지 올려서** 돌려라.
    - 그래도 안 끝나 툴콜이 끊겼다면(박스 전체 큐가 심하게 밀린 것) 곧바로 다시
-     걸지 말고, 먼저 `<sha>.result` 파일이 이미 생겼는지 가볍게 확인하라(같은 SHA 를
-     동시에 처리 중이던 다른 세션이 먼저 끝냈을 수 있다).
+     걸지 말고, 먼저 `<sha>.result` 파일(경로는 `run-local-ci.sh` 자신의 출력에 찍힌다 —
+     `~/.claude/.local-ci/<레포 slug>/<sha>.result`)이 이미 생겼는지 가볍게 확인하라
+     (같은 SHA 를 동시에 처리 중이던 다른 세션이 먼저 끝냈을 수 있다).
    - **CI 를 겹쳐 걸지 마라** — 걸기 전 `ps -Ao pid,etime,command | grep '[b]in/ci'` 로
      이미 도는 게 없는지 확인하라(같은 worktree 에 두 개가 겹치면 테스트 DB·픽스처를
      공유해 양쪽 다 죽는다).
