@@ -117,7 +117,14 @@ if grep -q -E 'does not exist or you do not have access|not supported when using
   log "가용 모델 확인: codex debug models · config 의 model 은 유효 모델로(0.153 은 미설정 시 Astra 기본)"
   echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=$secs"; exit 2
 fi
-if grep -q -i -E 'unable to inspect|could not be inspected|execution tool was unavailable|tool (was|is) unavailable|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review|not a substantive' "$REVIEW" 2>/dev/null; then
+# 한국어 패턴(#207): 리뷰어가 "판정 근거로 지정된 diff가 메시지에 포함되어 있지 않아
+# ... 검증할 수 없습니다 ... 판정할 근거도 없습니다" 류의 산문만 남기면 [Pn] 항목이
+# 하나도 없어 옛 분류는 이걸 CLEAN 으로 읽었다(머지 게이트의 절반이 fail-open —
+# 실증: PR #195 closeout ③-1, 10초 만에 verdict=CLEAN). "diff가 없어 못 본다" ·
+# "검증/판정할 수 없다" · "근거가 없다" 류만 좁게 잡는다 — "판정" 만으로는 안 걸리게
+# 해서(예: "판정: CLEAN") 실제로 다 보고 결함 없다고 답한 정상 CLEAN 을 과잉 차단하지
+# 않는다(반대 방향 회귀 방지, 각각 픽스처로 검증: scripts/tests/codex-review-gate.test.sh).
+if grep -q -i -E 'unable to inspect|could not be inspected|execution tool was unavailable|tool (was|is) unavailable|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review|not a substantive|diff.{0,40}(포함되어 있지|누락)|(판정|검증).{0,10}(할 수 없|불가능|불가)|근거.{0,15}(없|부족)' "$REVIEW" 2>/dev/null; then
   log "리뷰어가 대상을 못 봤다고 답함 — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
   none "$secs"
 fi

@@ -87,6 +87,23 @@ mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub
 UNABLE="$TMP/unable.md" run --base base; assert_eq "볼드 [P1] BLOCKER" "$rc" 1; case "$last" in "verdict=BLOCKER p1=1 "*) ok ;; *) bad "볼드 P1 집계: $last" ;; esac
 mv "$TMP/stub/codex.real" "$TMP/stub/codex"
 
+echo "[gate] 4b-2) 한국어 '판정 근거 없음' 응답 → CLEAN 아니라 미산출(#207 — fail-open 게이트 재발)"
+# #207 실측 재현: diff 를 못 본 리뷰어가 항목([Pn]) 없이 "판정할 근거가 없다" 산문만 남기면
+# 옛 분류는 이걸 CLEAN 으로 읽었다(머지 게이트의 절반이 fail-open). 미산출(exit 2)이어야 한다.
+printf '판정 근거로 지정된 diff가 메시지에 포함되어 있지 않아 변경 내용과 수용 기준 충족 여부를 검증할 수 없습니다. 명시된 금지사항에 따라 로컬 git 명령으로 diff를 조회하지 않았으며, 따라서 CLEAN으로 판정할 근거도 없습니다.\n' > "$TMP/unable.md"
+mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
+UNABLE="$TMP/unable.md" run --base base; assert_eq "한국어 '판정 근거 없음' exit" "$rc" 2; case "$last" in "verdict=NONE "*) ok ;; *) bad "한국어 판정불가 verdict(CLEAN 으로 샘): $last" ;; esac
+mv "$TMP/stub/codex.real" "$TMP/stub/codex"
+
+echo "[gate] 4b-3) 한국어 진짜 CLEAN(항목 0·근거 있음)은 여전히 CLEAN — 과잉 차단 금지(#207)"
+# 4b-2 의 분류를 넓혀 잡다 "판정"·"검증" 같은 낱말만으로 걸면, 실제로 다 보고 결함이
+# 없다고 답한 정상 CLEAN 까지 미산출로 떨어뜨린다 — 그러면 이 이슈가 막으려던 fail-open
+# 을 반대편(과잉 fail-closed)에서 깨뜨린다.
+printf '이 변경 사항을 검토했습니다. 추가된 함수의 예외 처리와 테스트를 확인했으며 결함을 발견하지 못했습니다. 판정: CLEAN\n' > "$TMP/unable.md"
+mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
+UNABLE="$TMP/unable.md" run --base base; assert_eq "한국어 진짜 CLEAN 과잉차단 방지" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "한국어 진짜 CLEAN 오탐(미산출로 샘): $last" ;; esac
+mv "$TMP/stub/codex.real" "$TMP/stub/codex"
+
 echo "[gate] 4c) [P0] 도 BLOCKER · events 의 오류 문자열은 오탐 안 냄(codex stderr 만 본다, #137)"
 STUB_MODE=p0 run --base base; assert_eq "P0 exit" "$rc" 1; case "$last" in "verdict=BLOCKER p1=1 p2=0 p3=0 "*) ok ;; *) bad "P0 집계: $last" ;; esac
 STUB_MODE=selfref run --base base; assert_eq "events 자기참조 exit" "$rc" 0; case "$last" in "verdict=WARN p1=0 p2=1 "*) ok ;; *) bad "events 자기참조로 오탐: $last" ;; esac
