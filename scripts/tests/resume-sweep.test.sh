@@ -849,6 +849,83 @@ run
 check "잘못된 RESUME_LIST_LIMIT: exit 64"   "$([ "$RC" = 64 ] && echo ok || echo no)"
 check "잘못된 RESUME_LIST_LIMIT: gh 호출 0" "$([ ! -s "$tmp/gh.log" ] && echo ok || echo no)"
 
+# ── (#197) 인용된 마커는 제어 신호가 아니다 ────────────────────────────────
+# 마커는 루프끼리 주고받는 신호인데, 그 신호를 **설명하는 글**(백틱 인라인 코드·코드펜스)이
+# substring 매칭에 걸려 신호 자체로 읽히던 회귀. 실측(ggqgga/issue-runner#174)에서 재심
+# 코멘트가 본문에 hold-note 을 인용해 **자기 자신을 새 에피소드 경계**로 만들었고, 경계
+# 뒤(range($q+1; …))에는 재심 마커가 없어 판정이 매 틱 `due` 로 되돌아왔다(영구 반복).
+
+# ⓐ 인용된 hold-note + 같은 코멘트 안의 **진짜** 재심 마커 → reviewed (due 아님)
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+note '재심: 사람 몫 유지 — 이벤트마다 에피소드 경계(마지막 `` `<!-- hold-note: policy -->` ``)를 잡고 그 뒤를 본다 <!-- policy-review: kept --><!-- bodat:worker -->'
+run
+check "#174 인용 hold-note: 경계가 아니다(due 재발 없음)" "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+check "#174 인용 hold-note: warn 도 아니다"              "$(no_ev warn)"
+
+# 코드펜스로 인용한 hold-note 도 같다(같은 코멘트에 진짜 재심 마커가 맨몸으로 붙어 있다).
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+note '재심: 사람 몫 유지 — 예시는 아래와 같다
+```
+<!-- hold-note: policy -->
+```
+<!-- policy-review: kept --><!-- bodat:worker -->'
+run
+check "코드펜스 인용 hold-note: due 재발 없음" "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+
+# ⓑ 진짜 새 hold-note(맨몸 마커) 뒤에 재심 마커가 없으면 여전히 `due` — 인용 제거가
+#    진짜 질문까지 지워 버리면 이 단언이 빨개진다(과다 필터 방증).
+setup "needs-human,hold:policy,agent-ready" 200 0
+note '재심: 지난 홀드는 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->'
+note "사람 확인(policy): 이번엔 C인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "새 질문 뒤 마커 없음: 여전히 due" "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .number == 42' >/dev/null 2>&1 && echo ok || echo no)"
+
+# ⓒ 회귀 없음 — 블록쿼트(`>`) 안의 **맨몸** 마커는 정상 신호로 계속 센다. 블록쿼트로 남의
+#    코멘트를 통째 인용하는 일은 이 루프에 없고, 걸러 버리면 진짜 마커를 잃는다(#197 방향 A).
+setup "needs-human,hold:policy,agent-ready" 200 0
+note '> 사람 확인(policy): A인가 B인가
+> <!-- hold-note: policy --><!-- bodat:worker -->'
+run
+check "블록쿼트 맨몸 hold-note: 질문으로 센다(due)" "$(printf '%s' "$out" | grep -q policy_review_due && echo ok || echo no)"
+check "블록쿼트 맨몸 hold-note: no-note warn 아님"  "$(printf '%s' "$out" | grep -q '재심 불가' && echo no || echo ok)"
+
+# ⓓ 인용된 `ladder-resume` 은 재개 횟수를 올리지 않는다 — 아직 재개 여지가 있는 이슈가
+#    상한(2) 초과로 조기에 사람 대기(hold:policy)로 승격되던 둘째 축.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+note '디버깅 메모: 스윕은 `<!-- ladder-resume: 1 -->` 를 남긴다'
+note '인수인계 메모:
+```
+<!-- ladder-resume: 2 -->
+```'
+run
+check "인용 ladder-resume: 개수 0 → 첫 재개" "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 1' >/dev/null 2>&1 && echo ok || echo no)"
+check "인용 ladder-resume: 조기 승격 없음"    "$(no_ev escalated)"
+
+# 인용 2개 + 진짜 1개 → 진짜 1개만 세어 2번째 재개(상한 2 안쪽)
+setup "needs-human,hold:ladder,agent-ready" 200 1
+note '참고: `<!-- ladder-resume: 9 -->` 와 `<!-- ladder-resume: 8 -->` 는 인용일 뿐이다'
+run
+check "인용 2 + 진짜 1: attempt=2(승격 아님)" "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 2' >/dev/null 2>&1 && echo ok || echo no)"
+
+# 회귀: 코멘트 **끝에 맨몸으로** 붙은 정상 마커는 계속 세어진다(상한이 그대로 걸린다).
+setup "needs-human,hold:ladder,agent-ready" 200 2
+run
+check "맨몸 마커 2개: 상한 초과 승격(회귀 없음)" "$(has_ev escalated)"
+
+# ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
+# 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는
+# 두 번째 계산기가 다른 수를 센다. **스크립트에서 뽑은 문자열**을 두 SKILL 에서 grep -F 로
+# 대조한다(손타이핑 대조는 한글·백틱이 뭉개져 오탐을 낸다).
+root=$(cd "$DIR/.." && pwd)
+unq=$(grep -o 'def unquoted:.*;' "$DIR/resume-sweep.sh" | head -1)
+check "스크립트에 인용 제거 정의(def unquoted)" "$([ -n "$unq" ] && echo ok || echo no)"
+for f in SKILL.md SKILL.en.md; do
+  check "$f 의 재개 횟수 jq 가 같은 정의를 쓴다" \
+    "$([ -n "$unq" ] && grep -qF -- "$unq" "$root/$f" && echo ok || echo no)"
+done
+
 if [ "$skip" -gt 0 ]; then
   echo "resume-sweep: $pass passed, $fail failed, $skip skipped (python3 없음)"
 else
