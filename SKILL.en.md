@@ -36,7 +36,9 @@ maintenance must come before new work).
   single run plus slack for the box-wide serial CI queue (#127) — while a worker waits
   out one CI run it is normal for no new commit to appear, so that window must not be
   counted as stalling.
-- `MAX_TIMEBOX_GRACE = 3` — cap on **consecutive reprieves** within the same claim. Past
+- `MAX_TIMEBOX_GRACE = 3` — cap on **cumulative reprieves** within the same claim (an
+  `unknown` tick in between does not reset it — the counting window is everything after
+  the claim timestamp). Past
   it the worker is stopped by the rule even with progress evidence — an unbounded
   reprieve would never catch a real zombie, making the relaxation itself a new hole. At a
   15-minute tick that is at most ~45 extra minutes, which covers the measured shapes
@@ -131,7 +133,10 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   background agent is actually alive. If it is dead and there are pushed commits,
   treat it as a maintenance target for ②. If there are no commits at all, check
   the issue's latest comment **before** releasing the claim —
-  `gh issue view <num> --repo <repo> --json comments --jq '.comments | last.body'`.
+  `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body | test("<!--\\s*timebox-grace:")) | not)] | last.body'`
+  (timebox reprieve markers are skipped — if a marker takes the latest-comment slot it
+  hides the worker's `BLOCKED:` and the issue silently loses its claim instead of being
+  escalated to a human, #200).
   If it starts with `BLOCKED:`, the worker stopped because human intervention is
   needed (ambiguous spec / plan-reality mismatch / same failure repeating):
   instead of returning the issue to a re-dispatchable state, attach the

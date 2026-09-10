@@ -36,7 +36,8 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   이보다 오래됐을 때만 커밋 쪽 진행 증거가 죽는다. 근거: bodat `bin/ci` 1회 실측 상한
   ~570초(9.5분)에 박스 전역 직렬 CI 큐(#127) 대기 여유를 더한 값 — 워커가 CI 한 판을
   기다리는 동안 새 커밋이 없는 것은 정상이므로, 그 구간을 무진전으로 세면 안 된다.
-- `MAX_TIMEBOX_GRACE = 3` — 같은 claim 에서 허용하는 **연속 유예 횟수**. 넘으면 진행
+- `MAX_TIMEBOX_GRACE = 3` — 같은 claim 에서 허용하는 **누적 유예 횟수**(사이에 `unknown`
+  틱이 끼어도 리셋되지 않는다 — 세는 창은 claim 시각 이후 전부다). 넘으면 진행
   증거가 있어도 규칙대로 중단한다 — 유예가 무한이면 진짜 좀비를 못 잡아 이 완화 자체가
   새 구멍이 된다. 틱 간격 15분 기준 최대 ~45분의 추가 시간이라 실측(72분·64분) 형상을
   덮으면서도 상한이 남는다. 횟수는 상태 파일이 아니라 이슈 코멘트 마커
@@ -133,7 +134,9 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 - `working` — 워커 진행 중. TaskList 로 해당 백그라운드 에이전트가 실제 살아있는지
   확인. 죽었고 push 된 커밋이 있으면 ② 의 보수 대상으로. 커밋이 전혀 없으면
   claim 해제 **전에** 이슈 최신 코멘트를 확인하라 —
-  `gh issue view <num> --repo <repo> --json comments --jq '.comments | last.body'`
+  `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body | test("<!--\\s*timebox-grace:")) | not)] | last.body'`
+  (timebox 유예 마커 코멘트는 건너뛴다 — 마커가 최신 코멘트 자리를 차지하면 워커가 남긴
+  `BLOCKED:` 가 가려져 사람대기 승격 대신 조용한 claim 해제로 샌다, #200)
   가 `BLOCKED:` 로 시작하면 워커가 사람 개입이 필요해서 멈춘 것이다 (모호 스펙 /
   계획-현실 불일치 / 동일 실패 반복): 재디스패치 복귀 대신
   `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy --note "<사람이 답해야 할 질문 한 줄>"` 로 `needs-human`

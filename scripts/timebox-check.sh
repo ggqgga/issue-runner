@@ -12,7 +12,7 @@
 # **진행 증거**로 바꾸되, 무한 유예가 되지 않게 유예 횟수에 상한을 둔다.
 #
 # 출력(한 줄, 공백 구분 — 앞 두 토큰이 판정·사유, 나머지는 Report 용 필드):
-#   <verdict> <reason> elapsed=<분>m commit=<분>m|none|- queue=<state> grace=<쓴 횟수>/<상한>
+#   <verdict> <reason> elapsed=<분>m commit=<분>m|none|- queue=<state> grace=<이 claim 안의 누적 유예>/<상한>|-
 #
 #   ok      경과가 아직 ISSUE_TIMEBOX_HOURS 이내         (exit 0 — 손대지 마라)
 #   grace   경과는 넘었지만 진행 증거가 있어 이번 틱 유예 (exit 0 — 손대지 마라, 정보 줄로 Report)
@@ -89,14 +89,14 @@ iso_to_epoch() {
 emit() {  # emit <verdict> <reason> <exit>
   printf '%s %s elapsed=%sm commit=%s queue=%s grace=%s/%s\n' \
     "$1" "$2" "${elapsed_min:--}" "${commit_field:--}" "${queue_state:--}" \
-    "${grace_used:-0}" "$MAX_GRACE"
+    "${grace_used:--}" "$MAX_GRACE"
   exit "$3"
 }
 
 elapsed_min=""
 commit_field="-"
 queue_state="-"
-grace_used=0
+grace_used=""   # 아직 세지 않았다 — 세기 전에 나가는 갈래는 `-` 로 찍힌다
 
 # ── 경과 ────────────────────────────────────────────────────────────────
 now="${TB_NOW:-$(date -u +%s)}"
@@ -161,18 +161,34 @@ fi
 # none   = 그 SHA 줄이 아예 없음 · nolog = queue.log 부재(로컬 CI 미사용 박스) ·
 # logerr = 로그를 읽지 못함(부재와 구분해 남긴다 — 증거로는 쓰지 않는다).
 queue_alive() {  # queue_alive <sha> → stdout: queued|left|none|nolog|logerr
-  local sha="$1" short line msg rc=0
+  local sha="$1" short cand line msg last="" rc=0
   short="${sha:0:8}"
   [ -f "$QUEUE_LOG" ] || { printf 'nolog'; return 0; }
   # 패턴은 `-e` 로 넘긴다 — 맨몸으로 넘기면 `-` 로 시작하는 값이 옵션으로 먹혀 grep 이
   # stdin 을 읽고 호출자가 매달린다(PR#202 교훈, 실측 12분 행업).
-  line=$(grep -F -e "$short" -- "$QUEUE_LOG") || rc=$?
+  cand=$(grep -F -e "$short" -- "$QUEUE_LOG") || rc=$?
   if [ "$rc" -gt 1 ]; then printf 'logerr'; return 0; fi
-  [ -n "$line" ] || { printf 'none'; return 0; }
-  line=$(printf '%s\n' "$line" | tail -1)
-  # 로그 줄 = `<ts> pid=<pid> <msg>` — 앞 두 필드를 걷어낸다.
-  msg="${line#*pid=}"; msg="${msg#* }"
-  case "$msg" in
+  [ -n "$cand" ] || { printf 'none'; return 0; }
+  # **소유권 필터** — 그 SHA 를 본문에 언급만 하는 *남의 티켓* 줄을 걸러낸다. 폐기 줄 형식이
+  # `<티켓SHA> 폐기 — 실행 시점 HEAD 가 <다른SHA> ≠ <티켓SHA>` 라서, 워커가 새로 push 한
+  # 우리 SHA 는 **앞선 옛 티켓의 폐기 줄 본문**에 정상적으로 등장한다(새 push 가 자기 티켓을
+  # 낸 흔한 형상). 그 줄을 우리 줄로 세면 큐에서 CI 를 기다리는 살아있는 워커가 `left` 로
+  # 읽혀 죽는다 — 이 스크립트가 없애려는 바로 그 사고다.
+  # 우리 줄 = 메시지가 `<짧은SHA> ` 로 시작하는 줄(대기열·pass·fail·폐기·중단·이미 검사됨 …)
+  #          또는 회수 줄처럼 **티켓 이름**(`<epoch>.<pid>.<전체SHA>`)이 그 SHA 로 끝나는 줄.
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    # 로그 줄 = `<ts> pid=<pid> <msg>` — 앞 두 필드를 걷어낸다.
+    msg="${line#*pid=}"; msg="${msg#* }"
+    case "$msg" in
+      "$short "*)      last="$msg" ;;
+      *".$sha"|*".$sha "*) last="$msg" ;;
+    esac
+  done <<EOF
+$cand
+EOF
+  [ -n "$last" ] || { printf 'none'; return 0; }
+  case "$last" in
     "$short 대기열 "*) printf 'queued' ;;
     *) printf 'left' ;;
   esac
@@ -183,6 +199,9 @@ if [ "$head_sha" = none ] || [ -z "$head_sha" ]; then
 else
   queue_state=$(queue_alive "$head_sha")
 fi
+# 로그를 **읽지 못한 것**은 "큐에 없다" 가 아니다 — 브랜치 조회 실패와 같은 취급으로
+# 판정 불가다(부재 `nolog`·무매칭 `none` 과 구분해 여기서만 갈라낸다).
+[ "$queue_state" = logerr ] && emit unknown queue_log_read_failed 2
 
 if [ "$commit_recent" = 1 ]; then
   progress=recent_commit
@@ -203,6 +222,7 @@ else
     || emit unknown comments_lookup_failed 2
 fi
 # 빈 출력 = 마커 0개(정상). 위 분기가 실패를 따로 걸렀으므로 여기서 섞이지 않는다.
+grace_used=0
 if [ -n "$marker_times" ]; then
   while IFS= read -r t; do
     [ -n "$t" ] || continue

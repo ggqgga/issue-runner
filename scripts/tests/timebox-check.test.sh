@@ -28,6 +28,13 @@ case "${GH_MODE:-ok}" in
   missing_branch) echo "gh: No commit found for SHA: agent/issue-200 (HTTP 422)" >&2; exit 1 ;;
   # 레포 자체를 못 찾음 — 이건 부재가 아니라 조회 실패다(권한 상실·오타).
   repo_404)      echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+  fail_comments)
+    # 코멘트 **조회** 실패(게시 실패와 다른 갈래) — commits 는 정상 응답한다.
+    case "$*" in
+      *"/issues/"*"/comments"*) exit 1 ;;
+      *"repos/"*"/commits/"*) echo "cafe1234deadbeef 2026-09-11T04:55:00Z" ;;
+      *) : ;;
+    esac ;;
   fail_comment)
     case "$*" in
       *"issue comment"*) exit 1 ;;
@@ -123,7 +130,7 @@ echo "[timebox-check] 경과·경계"
 
 # 경과가 아직 타임박스 이내 → ok (진행 증거를 볼 필요조차 없다)
 out=$(run_raw TB_NOW="$NOW" TB_CLAIM_AT="2026-09-11T04:30:00Z" TB_NO_POST=1 \
-  TB_LAST_COMMIT_AT=none TB_HEAD_SHA=none TB_COMMENTS_JSON='[]')
+  TB_QUEUE_LOG="$TMP/none.log" TB_LAST_COMMIT_AT=none TB_HEAD_SHA=none TB_COMMENTS_JSON='[]')
 assert_verdict "경과 30분 → ok" ok within_timebox 0 "$out"
 
 # 커밋이 정확히 STALL_MIN(25분) 전 → 아직 '무진전' 이 아니다(경계 포함)
@@ -174,6 +181,24 @@ out=$(run "$QUEUED
   TB_LAST_COMMIT_AT="2026-09-11T03:30:00Z" TB_HEAD_SHA="$SHA" TB_COMMENTS_JSON='[]')
 assert_verdict "fail 이 마지막 → 중단" stop no_progress 1 "$out"
 
+# **소유권 필터** — 앞선 옛 티켓(aaaa1111)의 폐기 줄은 본문에 우리 SHA 를 담는다
+# (`… 폐기 — 실행 시점 HEAD 가 <우리SHA> ≠ aaaa1111`). 새 push 가 자기 티켓을 낸 흔한
+# 형상이라 이 줄을 우리 줄로 세면 큐에서 기다리는 살아있는 워커가 죽는다.
+out=$(run "$QUEUED
+2026-09-11T04:43:00 pid=66666 aaaa1111 폐기 — 실행 시점 HEAD 가 505c5f0e ≠ aaaa1111 (새 push 가 있었거나 로컬 HEAD 만 움직임)" \
+  TB_LAST_COMMIT_AT="2026-09-11T03:30:00Z" TB_HEAD_SHA="$SHA" TB_COMMENTS_JSON='[]')
+assert_verdict "남의 폐기 줄이 우리 SHA 를 언급 → 여전히 유예" grace ci_queued 0 "$out"
+
+# 우리 SHA 를 **언급만** 하는 남의 줄뿐이면 우리 티켓은 큐에 없던 것(left 가 아니라 none)
+out=$(run "2026-09-11T04:43:00 pid=66666 aaaa1111 폐기 — 실행 시점 HEAD 가 505c5f0e ≠ aaaa1111" \
+  TB_LAST_COMMIT_AT="2026-09-11T03:30:00Z" TB_HEAD_SHA="$SHA" TB_COMMENTS_JSON='[]')
+assert_verdict "남의 줄만 있음 → 중단" stop no_progress 1 "$out"
+case "$out" in *"queue=none"*) ok ;; *) bad "남의 줄만 있음 — 기대 queue=none, 실제: $out" ;; esac
+
+# 중단 갈래의 grace 필드는 **미집계**(-)여야 한다 — 0 으로 찍으면 "유예를 한 번도 안 썼다" 로
+# 읽히는데 실제로는 세기 전에 나간 것이다.
+case "$out" in *"grace=-/3"*) ok ;; *) bad "중단 시 grace 미집계 표기 — 기대 grace=-/3, 실제: $out" ;; esac
+
 # 다른 SHA 의 대기열 줄은 내 증거가 아니다(SHA 매칭)
 out=$(run "2026-09-11T04:32:00 pid=22222 ${OTHER:0:8} 대기열 1번째" \
   TB_LAST_COMMIT_AT="2026-09-11T03:30:00Z" TB_HEAD_SHA="$SHA" TB_COMMENTS_JSON='[]')
@@ -216,9 +241,9 @@ case "$out" in *"grace=2/3"*) ok ;; *) bad "마커 아닌 코멘트 제외 — �
 echo "[timebox-check] 조회 실패와 빈 결과를 구분한다(unknown)"
 
 # claim 시각이 없거나 형식 불량 → 판정 불가(exit 2). 절대 '중단' 으로 새지 않는다.
-out=$(run_raw TB_NOW="$NOW" TB_NO_POST=1)
+out=$(run_raw TB_NOW="$NOW" TB_NO_POST=1 TB_QUEUE_LOG="$TMP/none.log")
 assert_verdict "claim 시각 부재 → unknown" unknown claim_at_invalid 2 "$out"
-out=$(run_raw TB_NOW="$NOW" TB_CLAIM_AT="어제" TB_NO_POST=1)
+out=$(run_raw TB_NOW="$NOW" TB_CLAIM_AT="어제" TB_NO_POST=1 TB_QUEUE_LOG="$TMP/none.log")
 assert_verdict "claim 시각 형식 불량 → unknown" unknown claim_at_invalid 2 "$out"
 
 # 브랜치 조회가 **실패**(404 아님) → unknown. 살아있는 워커를 조회 실패로 죽이지 않는다.
@@ -236,6 +261,24 @@ assert_verdict "브랜치 422(부재) → 중단(unknown 아님)" stop no_progre
 out=$(run_raw TB_NOW="$NOW" TB_CLAIM_AT="$CLAIM" TB_QUEUE_LOG="$TMP/none.log" TB_NO_POST=1 \
   TB_COMMENTS_JSON='[]' GH_MODE=repo_404)
 assert_verdict "레포 404 → unknown(중단 아님)" unknown branch_lookup_failed 2 "$out"
+
+# queue.log 를 **읽지 못함**(권한) → "큐에 없다" 가 아니라 판정 불가. 읽기 실패를 증거
+# 없음으로 접으면 파일 하나 깨진 박스가 살아있는 워커를 전부 죽인다.
+unreadable="$TMP/unreadable.log"
+printf '%s\n' "$QUEUED" > "$unreadable"; chmod 000 "$unreadable"
+out=$(run_raw TB_NOW="$NOW" TB_CLAIM_AT="$CLAIM" TB_QUEUE_LOG="$unreadable" TB_NO_POST=1 \
+  TB_LAST_COMMIT_AT="2026-09-11T03:30:00Z" TB_HEAD_SHA="$SHA" TB_COMMENTS_JSON='[]')
+assert_verdict "queue.log 읽기 실패 → unknown" unknown queue_log_read_failed 2 "$out"
+chmod 644 "$unreadable"
+
+# 커밋 시각을 얻었는데 형식이 아님 → 판정 불가(그럴듯한 값으로 새지 않는다)
+out=$(run "-" TB_LAST_COMMIT_AT="어제" TB_HEAD_SHA="$SHA" TB_COMMENTS_JSON='[]')
+assert_verdict "커밋 시각 형식 불량 → unknown" unknown commit_at_invalid 2 "$out"
+
+# 코멘트 **조회** 실패 → unknown. 조회 실패를 "마커 0개" 로 읽으면 상한이 영영 안 걸린다.
+out=$(run_raw TB_NOW="$NOW" TB_CLAIM_AT="$CLAIM" TB_QUEUE_LOG="$TMP/none.log" TB_NO_POST=1 \
+  GH_MODE=fail_comments)
+assert_verdict "코멘트 조회 실패 → unknown" unknown comments_lookup_failed 2 "$out"
 
 echo "[timebox-check] 유예 마커는 실제로 append 된다(그래야 다음 틱이 셀 수 있다)"
 

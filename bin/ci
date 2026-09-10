@@ -911,6 +911,17 @@ for f in SKILL.md SKILL.en.md; do
       || { echo "  ✗ $f 에 $token 배선 없음"; exit 1; }
   done
 done
+# 값 드리프트 검사 — 스크립트 기본값과 프롬프트가 말하는 값이 갈리면 디스패처는 문서의 값을
+# 믿는데 실제 판정은 스크립트 값으로 난다. 존재만 grep 하면 이 어긋남을 못 잡는다.
+for pair in 'STALL_MIN:25' 'MAX_TIMEBOX_GRACE:3' 'ISSUE_TIMEBOX_HOURS:1'; do
+  name="${pair%%:*}"
+  want=$(sed -n "s/^[A-Z_]*=\"\${$name:-\([0-9][0-9]*\)}\".*/\1/p" scripts/timebox-check.sh | head -1)
+  [ -n "$want" ] || { echo "  ✗ scripts/timebox-check.sh 에서 $name 기본값을 읽지 못함"; exit 1; }
+  for f in SKILL.md SKILL.en.md; do
+    grep -qF "\`$name = $want\`" "$f" \
+      || { echo "  ✗ $f 의 $name 값이 스크립트 기본값($want)과 다르다"; exit 1; }
+  done
+done
 
 echo "[#109] repo-flag.sh repos.conf 플래그 파싱 스모크"
 # 3번째 이후 필드가 플래그. 주석 줄 무시, 경로 자리 `-` 는 기본 경로 폴백(repo-dir.sh).
