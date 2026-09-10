@@ -807,6 +807,9 @@ done
 echo "[test] finish-classify.sh 분류 픽스처 테스트 (#88)"
 bash scripts/tests/finish-classify.test.sh
 
+echo "[test] closeout-eligible.sh 후보 필터 — ✅ 를 head SHA 와 대조 (#171)"
+bash scripts/tests/closeout-eligible.test.sh
+
 echo "[test] release-labels.sh 라벨 해제 규칙 테스트 (#117)"
 bash scripts/tests/release-labels.test.sh
 

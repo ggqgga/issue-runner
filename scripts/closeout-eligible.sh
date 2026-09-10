@@ -48,6 +48,32 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
     | jq -e '[.comments[].body] | map(select(startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))) | length > 0' \
     >/dev/null || continue
 
+  # 결정론 재사용 — finish-classify.sh 의 head-SHA 대조 판정을 그대로 쓴다(#171 개발계획
+  # 2항: 로직 두 벌 금지). ✅ 존재만으로 후보 삼지 않는다 — 반송(재디스패치) 뒤 새
+  # 커밋이 올라왔는데 그 커밋 이전에 찍힌 ✅ 가 남아 있으면 finish-classify 가
+  # done_verdict 를 내지 않고(active) 여기서도 걸러진다.
+  # FC_COMMENTS_JSON 으로 이미 가져온 comments 를 그대로 넘겨 중복 gh 조회를 피한다
+  # (head 커밋 시각·failing 은 finish-classify 가 자체 실측 — 여기 meta 에 없다).
+  verdict=$(FC_COMMENTS_JSON="$(printf '%s' "$meta" | jq -c '.comments')" \
+    "$SCRIPT_DIR/finish-classify.sh" "$repo" "$pr" 2>/dev/null)
+  [ "$verdict" = "done_verdict" ] || continue
+
+  # 재디스패치 마커 안전망(#171 개발계획 3항) — 1·2 의 head-SHA 시각 비교가 못 잡는
+  # 창을 막는다: 반송 직후 워커가 아직 새 커밋을 안 올렸으면 head 커밋 시각이 그대로라
+  # finish-classify 도 done_verdict 를 낼 수 있다(코멘트 시각과 커밋 시각의 시계가
+  # 다를 수 있다는 전제). 최신 `재디스패치:` 코멘트가 최신 ✅ 코멘트보다 **뒤**면(그
+  # 사이 새 ✅ 가 안 찍혔으면) 후보에서 뺀다. createdAt 은 둘 다 ISO8601 UTC(...Z) 라
+  # 문자열 비교로 시간순이 보존된다(reconcile.sh:278 와 같은 관행).
+  redispatch_at=$(printf '%s' "$meta" | jq -r \
+    '[.comments[] | select(.body|startswith("재디스패치:"))] | last | .createdAt // empty')
+  if [ -n "$redispatch_at" ]; then
+    verdict_at=$(printf '%s' "$meta" | jq -r \
+      '[.comments[] | select((.body|startswith("머지 판정: ✅")) or (.body|startswith("Merge verdict: ✅")))] | last | .createdAt // empty')
+    if [ -z "$verdict_at" ] || [[ "$redispatch_at" > "$verdict_at" ]]; then
+      continue
+    fi
+  fi
+
   # 미해결(사람 리뷰) 코멘트 판정 — 머신 코멘트는 sentinel 마커 <!-- bodat:worker -->
   # (마지막 줄)로 식별한다(#72). 워커/closeout 이 남기는 모든 자기-문서화 코멘트엔
   # 이 마커가 박힌다(worker-template 한/영·closeout SKILL 한/영). 마커가 있으면 머신
