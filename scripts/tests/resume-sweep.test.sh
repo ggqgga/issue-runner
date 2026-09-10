@@ -507,6 +507,9 @@ check "제목은 조회조차 안 한다(라벨 축)"   "$(grep -q -- '--json [^
 # 배포 대기 라벨이 붙어 있어도 `hold:*` 가 있으면 ② 는 그 행을 아예 보지 않는다(무편집 통과)
 # — 판정을 가드 밖으로 끌어내는 리팩터가 이 단언 없이는 전건 통과한다. ③ 이 정상적으로
 # 집어 가는지(policy_review_due)까지 확인해 "흘러갔다" 를 실증한다.
+# 이 테스트가 그대로 #201 Test plan ⓒ(deploy-wait + hold:policy + 노트 **있음** → 종전대로
+# policy_review_due 창 판정)다 — #201 의 no-note 갈래 변경이 이 갈래(due)엔 손대지 않았다는
+# 회귀 증거로 겸한다(사전 리뷰 지적 대응 — 신규 diff 에는 없던 기존 테스트라 안 보였다).
 setup "needs-human,deploy-wait,hold:policy" 200 0
 jq --arg b "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->" \
   '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/c.tmp" && mv "$tmp/c.tmp" "$tmp/comments.json"
