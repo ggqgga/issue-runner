@@ -100,7 +100,10 @@ emit_warn_after_edit() {  # emit_warn_after_edit <repo> <num> <msg>
 # 조치할 것이 **없는** 정보 줄. warn 의 정의를 "루프가 교정 가능한 불변식 위반" 으로 좁히고
 # (형제 이슈 #188 이 loop-status.sh 에서 정한 정의) 거기서 빠지는 건을 여기로 내린다.
 # 그냥 빼지 않는 이유: 관측에서 통째로 사라지면 그 자체가 다른 사각지대가 된다.
-emit_note() {  # emit_note <repo> <num> <msg> — msg 는 이 파일이 쓰는 고정 문구(따옴표 없음)
+# msg 는 이 파일이 쓰는 고정 문구다 — 라벨 이름을 끼워 넣지만 그 값은 아래 ② 가 고르는
+# **jq 문자열 리터럴 두 개("deploy-wait"·"full-cycle") 중 하나**이지 GitHub 에서 온 텍스트가
+# 아니다. 따옴표·개행이 못 들어오므로 printf JSON 포맷 계약이 깨질 경로가 없다.
+emit_note() {  # emit_note <repo> <num> <msg>
   printf '{"event":"note","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$3"
 }
 

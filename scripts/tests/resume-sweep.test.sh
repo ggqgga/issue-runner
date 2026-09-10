@@ -501,7 +501,28 @@ setup "needs-human,full-cycle,agent-ready" 200 0
 run
 check "full-cycle 구현 이슈: 그래도 note" "$(has_ev note)"
 check "full-cycle 구현 이슈: warn 없음"   "$(no_ev warn)"
-check "제목은 조회조차 안 한다(라벨 축)"   "$(grep -q -- '--json number,labels,updatedAt' "$tmp/gh.log" && echo ok || echo no)"
+check "제목은 조회조차 안 한다(라벨 축)"   "$(grep -q -- '--json[^ ]*title' "$tmp/gh.log" && echo no || echo ok)"
+
+# ── ㉘ (#190) 강등은 `hold:*` 가드 **안쪽**이다 — 사유 라벨이 있으면 note 도 아니다 ──
+# 배포 대기 라벨이 붙어 있어도 `hold:*` 가 있으면 ② 는 그 행을 아예 보지 않는다(무편집 통과)
+# — 판정을 가드 밖으로 끌어내는 리팩터가 이 단언 없이는 전건 통과한다. ③ 이 정상적으로
+# 집어 가는지(policy_review_due)까지 확인해 "흘러갔다" 를 실증한다.
+setup "needs-human,deploy-wait,hold:policy" 200 0
+jq --arg b "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->" \
+  '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/c.tmp" && mv "$tmp/c.tmp" "$tmp/comments.json"
+run
+check "deploy-wait+hold:policy: note 아님"     "$(no_ev note)"
+check "deploy-wait+hold:policy: ② warn 도 아님" "$(printf '%s' "$out" | grep -q '사유 없음' && echo no || echo ok)"
+check "deploy-wait+hold:policy: ③ 으로 흐른다"  "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .number == 42' >/dev/null 2>&1 && echo ok || echo no)"
+check "deploy-wait+hold:policy: 편집 0회"      "$(none 'issue edit')"
+
+# ── ㉙ (#190) 두 축이 동존하면 정본 축(deploy-wait)이 문구에 남는다 ────────
+# 우선순위가 결정론적이어야 다음 사람이 "어느 라벨로 걸렀나" 를 되짚을 수 있다.
+setup "needs-human,deploy-wait,full-cycle" 200 0
+run
+check "두 축 동존: note 1건"                "$(has_ev note)"
+check "두 축 동존: 정본 축 deploy-wait 를 적는다" "$(printf '%s' "$out" | jq -e 'select(.event=="note") | (.msg | test("deploy-wait")) and (.msg | test("full-cycle") | not)' >/dev/null 2>&1 && echo ok || echo no)"
+check "두 축 동존: warn 없음"               "$(no_ev warn)"
 
 # ── policy 재심 due(#155) — 창 넘긴 hold:policy 에 재심 마커가 없으면 1회 이벤트, 무편집
 note() { jq --arg b "$1" '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/c.tmp" && mv "$tmp/c.tmp" "$tmp/comments.json"; }
