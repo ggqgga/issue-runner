@@ -88,7 +88,7 @@ resume):
 
 | Step | Marker | Resume judgment |
 |---|---|---|
-| 1 verify | PR comment `마감 검증:` | if present, skip step 1 |
+| 1 verify | PR comment `마감 검증:` | `✅` → skip step 1 · `⚠ 보류` → the re-entry rule before ③ step 1 (#174) |
 | 2 merge | PR `MERGED` | if MERGED, merge is done (includes post-merge worktree cleanup) |
 | 3 reconcile | plan-doc diff (merge commit) + epic comment | if in the merge, done |
 | 4 deploy | `배포 대기:` comment / `deployed:<sha>` | if present, do not re-request |
@@ -110,7 +110,7 @@ loaded onto issue-runner (role split, user decision 2026-07-06). Like the QUIET_
 **A ✅ must also answer "which SHA was it about?" (#171).** A bounced PR still carries the ✅
 that was written for the very code the bounce was about — leave that alone and closeout merges
 the code closeout itself blocked. So `closeout-eligible.sh` never promotes on the presence of a
-✅ alone; two layers guard it, both pointing the same way — **do not open unless proven**:
+✅ alone; three layers guard it, all pointing the same way — **do not open unless proven**:
 
 1. Reuse `finish-classify.sh` (never a second copy of the logic) — `done_verdict` only when
    **both** the ✅ comment time and the head commit time were obtained and the verdict is shown
@@ -123,8 +123,19 @@ the code closeout itself blocked. So `closeout-eligible.sh` never promotes on th
    and nowhere else. Ordering is decided by the **last matching index in the comment array**, not
    by `createdAt` — GitHub comment times are second-granular, so a ✅ and a marker written in the
    same second cannot be ordered by time.
+3. **Hold-release check (#174)** — when the latest ✅ is shadowed by a `마감 검증: ⚠ 보류`
+   comment written **after** it, the ✅ revives only once `pr-hold-released-at.sh` (timeline
+   `unlabeled` events, read in full with `--paginate`) **proves** a human removed
+   `needs-human`·`hold:*` later than that hold. Lookup failure, no release event, and same-second
+   ties all fall to `active` (leave it) — not `held`, because `held` tells the sweep to run
+   `closeout-blocked` (which **attaches** `needs-human`), i.e. the loop would re-apply a hold a
+   human just removed (#151). A hold that precedes the latest ✅ is already water under the
+   bridge and shadows nothing (so a normal re-completion after a bounce is not suppressed
+   forever). Human comments written **before** the release are answered by that release, so they
+   no longer count as "unresolved human comments" — that is the path that kept the operator's
+   decision from ever reaching the queue.
 
-Both layers rest on having seen **every** comment. `gh pr view --json comments` returns only the
+All three layers rest on having seen **every** comment. `gh pr view --json comments` returns only the
 **first 100**, with no pagination, so neither helper uses that path — both read through
 `pr-comments.sh` (`gh api .../issues/N/comments --paginate`), in **one place**. A PR that bounces
 several times piles up worker/verify/closeout comments, so 100 is not a distant number, and being
@@ -162,7 +173,7 @@ separate freshness gate needed:
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). |
 | `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
 | `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `needs-human` + `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the human signal survives even with no linked issue), closeout leaves it (no auto-progress). |
-| `active` | in progress · buffer not reached · not our shape, **or the ✅'s freshness could not be proven** (✅ predates the head commit, or either timestamp could not be obtained, #171) | **Leave it** (next tick). |
+| `active` | in progress · buffer not reached · not our shape, **or the ✅'s freshness could not be proven** (✅ predates the head commit, or either timestamp could not be obtained, #171), **or the ✅ is shadowed by a later `마감 검증: ⚠ 보류` whose human release could not be proven to postdate it** (#174) | **Leave it** (next tick). **Never run `closeout-blocked` here** — that would re-apply a hold a human just removed (#151). |
 
 **`flow:*` supplementary signal**: finish-classify judges by comments, but a stale PR with
 `flow:codex`/`flow:ci` and no `flow:ready` is itself evidence of "worker died during verify"
@@ -236,6 +247,39 @@ were actually climbed and the failure output cited.
 
 For the picked PR, perform the 6 steps below in order. At the end of each step, plant
 the marker command (① Reconcile marker table) so the next tick can resume idempotently.
+
+**Before step 1 — hold-release re-entry (#174).** If this PR already carries a
+`마감 검증: ⚠ 보류` comment and a human removed `needs-human`·`hold:*` **after** it — which is
+why the PR is a candidate again (`closeout-eligible.sh` → `pr-hold-released-at.sh` proved the
+release time is later than that hold comment) — **do not just re-run the gate.** The code did
+not change, so the same gate produces the same `[P1]` → hold again → the human unblocks again →
+an endless loop. There is a real case where the human **rejected the BLOCKER's premise as a
+factual error** (BoDAT PR #4922): re-running would only reproduce that misjudgment.
+
+Read the comments with `$SCRIPTS/pr-comments.sh <repo> <pr>` and use the **human comments around
+the release time** (the ones without the machine marker `<!-- bodat:worker -->` — the operator
+writes the decision and removes the labels right after) to pick one of three branches:
+
+- **The decision answers the question the prior `⚠ 보류` asked and is a "merge as-is" call** →
+  **do not re-judge that finding.** Skip the step-1 gate, record the grounds, and go to step 2:
+  `gh pr comment <pr> --repo <repo> --body "마감 검증: ✅ 사람 판정 <one-line gist> — 원안 그대로 머지 (<author>·<comment time>)
+  <!-- bodat:worker -->"`
+  — the PR must show that the authority behind this automatic merge is a **human decision**
+  (who decided what, and when). This is a false-BLOCKER reversal, so also append the lessons
+  line below.
+- **There are new commits after the release** → the human gave direction and **a worker is
+  fixing it** (the bounce lane — issue-runner #166 was this case). closeout must not merge.
+  Leave it alone and wait for the worker's new verdict. (`finish-classify`'s #171 head check
+  usually reports `active` for this shape so it never even becomes a candidate — but if it
+  does, stop here.)
+- **No decision found · a different topic · ambiguous** → **run the gate as before**
+  (fail-closed). Do not parse for a fixed prefix such as `사람 결정:` on the assumption the
+  operator always writes it — when they do not, you either skip the gate silently or never
+  read the decision at all. When in doubt, re-running is the default.
+
+**Never let the loop remove `hold:*` itself.** This rule is about **reading what a human
+removed** — a path where the loop lifts its own hold makes the human gate meaningless (the
+ladder's `hold:ladder` auto-resume is a separate axis; do not widen its scope).
 
 **Step 1 — plan-conformance verification — built-in reviewer.** Get `<issue>` from the PR body's
 `Closes #N` / `Refs #N` line (parse via `gh pr view <pr> --repo <repo> --json body`). Verification is

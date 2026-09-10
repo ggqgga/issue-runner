@@ -597,25 +597,28 @@ held_shape='[
 # 174a) 해제 > 보류 — 사람이 판정을 내리고 라벨을 뗐다 → 보류 해소, ✅ 가 살아난다.
 assert "해제>보류→done_verdict" done_verdict "$held_shape" "2026-07-05T09:05:00Z" "2026-07-05T10:30:00Z"
 
-# 174b) 해제 < 보류 — 사람이 풀었다가 **다시 걸었다**(해제가 보류보다 이르다) → held.
+# 174b) 해제 < 보류 — 사람이 풀었다가 **다시 걸었다**(해제가 보류보다 이르다) → active.
 #       (닫힌 게이트를 여는 방향은 "해제가 보류 뒤"임이 증명될 때뿐이다.)
-assert "해제<보류→held" held "$held_shape" "2026-07-05T09:05:00Z" "2026-07-05T08:00:00Z"
+#       판정이 `held` 가 아닌 이유: `held` 는 스윕에 closeout-blocked(= needs-human 부착)를
+#       시켜, 사람이 방금 뗀 보류를 루프가 다시 붙이는 경로가 된다(#151). `active` 는
+#       같은 방향(머지 안 함)이면서 부작용이 없다.
+assert "해제<보류→active" active "$held_shape" "2026-07-05T09:05:00Z" "2026-07-05T08:00:00Z"
 
 # 174c) 해제 뒤 **새 커밋** — 사람이 방향을 정해 주고 워커가 고치는 중(반송 레인).
 #       보류는 해소됐지만 #171 규칙이 이어 걸려 active 다(closeout 이 집지 않고
 #       워커의 새 판정을 기다린다). 두 규칙의 순서를 고정하는 케이스.
 assert "해제후새커밋→active(#171우선)" active "$held_shape" "2026-07-05T10:40:00Z" "2026-07-05T10:30:00Z"
 
-# 174d) **타임라인 조회 실패**(해제 시각을 못 얻음) → 종전 동작(보류 유지) 폴백 = held.
+# 174d) **타임라인 조회 실패**(해제 시각을 못 얻음) → 종전 동작(보류 유지) 폴백 = active.
 #       조회 실패를 "해제됨" 으로 읽으면 머지 게이트가 증명 없이 열린다(fail-closed).
-assert "해제시각못얻음→held(fail-closed)" held "$held_shape" "2026-07-05T09:05:00Z" ""
+assert "해제시각못얻음→active(fail-closed)" active "$held_shape" "2026-07-05T09:05:00Z" ""
 
-# 174e) 해제 시각 **파싱 실패**(쓰레기 값) → 역시 held. 빈 값만의 문제가 아니다
+# 174e) 해제 시각 **파싱 실패**(쓰레기 값) → 역시 통과 없음(active). 빈 값만의 문제가 아니다
 #       (GNU date 는 느슨한 표현을 받아 그럴듯한 epoch 를 만든다 — iso_to_epoch 형식검사).
-assert "해제시각파싱실패→held" held "$held_shape" "2026-07-05T09:05:00Z" "not-a-real-timestamp"
+assert "해제시각파싱실패→active" active "$held_shape" "2026-07-05T09:05:00Z" "not-a-real-timestamp"
 
-# 174f) 동초 경계 — 해제와 보류가 **같은 초**면 "뒤" 가 아니다 → held(fail-closed).
-assert "해제와보류동초→held(경계)" held "$held_shape" "2026-07-05T09:05:00Z" "2026-07-05T10:00:00Z"
+# 174f) 동초 경계 — 해제와 보류가 **같은 초**면 "뒤" 가 아니다 → active(fail-closed).
+assert "해제와보류동초→active(경계)" active "$held_shape" "2026-07-05T09:05:00Z" "2026-07-05T10:00:00Z"
 
 # 174g) **무회귀** — `마감 검증: ⚠ 보류` 가 최신 ✅ 보다 **앞**이면 그건 이미 지나간
 #       보류다(반송 후 재완결 형상). 해제 이벤트가 없어도 done_verdict 여야 한다.
@@ -633,7 +636,7 @@ assert "마감검증✅→done_verdict(무회귀)" done_verdict '[
 ]' "2026-07-05T09:05:00Z"
 
 # 174i) 영문 접두(Closeout verification) 도 같은 규칙 — 한/영 병행 루프 대비.
-assert "english-closeout-hold→held" held '[
+assert "english-closeout-hold→active" active '[
   {"body":"Merge verdict: ✅ mergeable\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:11:00Z"},
   {"body":"Closeout verification: ⚠ hold — BLOCKER 1\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:00:00Z"}
 ]' "2026-07-05T09:05:00Z" ""
