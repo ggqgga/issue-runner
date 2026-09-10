@@ -5,13 +5,18 @@
 # 다섯 중 하나로 stdout 에 분류한다 (SKILL ② Maintain 규칙4 가 이 결과로 4a/4b/4c
 # 를 분기한다 — SKILL prose 를 얇게 유지하고 결정적으로 테스트 가능하게).
 #
-#   done_verdict   최신 `머지 판정:` 이 ✅            → 4a 무접촉(closeout 픽업 대기)
+#   done_verdict   최신 `머지 판정:` 이 ✅ 이고, **두 시각(판정·head 커밋)을 모두 얻어**
+#                  그 판정이 head 커밋보다 늦음(또는 같음)을 증명함
+#                  → 4a 무접촉(closeout 픽업 대기)
 #   held           최신 `머지 판정:` 이 ⚠            → 4a 무접촉(워커 명시 보류·needs-human)
 #   stale_inline   🔄(최종 판정 없음) + 최신 검증자 CLEAN + 그 코멘트가 STALE_FINISH_MIN
 #                  초과            → 4b 인라인 최종 판정 대리 append(에이전트 없음)
 #   stale_reverify 🔄 + 검증자 부재 또는 미해결 BLOCKER + STALE_FINISH_MIN 초과
 #                  → 4c 완결 에이전트 재디스패치(검증자 재실행)
-#   active         위 어디에도 안 걸림(진행 중·시간버퍼 미도달·우리 형상 아님) → 무접촉
+#   active         위 어디에도 안 걸림(진행 중·시간버퍼 미도달·우리 형상 아님) 또는
+#                  최신 `머지 판정: ✅` 의 신선도를 **증명하지 못함**(head 커밋보다 이르거나,
+#                  두 시각 중 하나라도 못 얻음 — 반송 뒤 재디스패치된 새 커밋이 아직
+#                  검증 안 됨, #171) → 무접촉(새 판정을 기다림)
 #
 # 판별 근거: 살아있는 워커는 `검증자 리뷰:` 코멘트 직후 수초 내 최종 판정을 찍는다.
 # 최신 검증자가 CLEAN 인데 STALE_FINISH_MIN 넘게 최종 판정이 없으면 워커 사망 확실.
@@ -26,14 +31,25 @@
 # (재리뷰·재판정 대비). 한/영 병행 워커라 영문 접두(Merge verdict/Verifier review)도 본다.
 #
 # 테스트/재현용 env 오버라이드 (없으면 gh/date 로 실측):
-#   FC_COMMENTS_JSON  코멘트 배열 JSON([{body,createdAt},...]) — gh 대체
+#   FC_COMMENTS_FILE  코멘트 배열 JSON 이 담긴 **파일 경로** — 대용량 안전 경로(#171
+#                      반송 4회차 [P2]). 코멘트 전량을 환경변수 하나로 넘기면 exec 한계
+#                      (리눅스 MAX_ARG_STRLEN 128KB)를 넘는 순간 이 스크립트가 **시작조차
+#                      못 하고** 호출자의 판정이 비어 그 PR 이 매 스윕에서 조용히 빠진다.
+#                      FC_COMMENTS_JSON 보다 우선하며, 읽기 실패는 실조회로 **새지 않고**
+#                      빈 코멘트(=active, fail-closed)로 떨어진다.
+#   FC_COMMENTS_JSON  코멘트 배열 JSON([{body,createdAt},...]) — 실조회 대체(소용량 픽스처용).
+#                      둘 다 미지정 시 pr-comments.sh 로 **페이지네이션 전량** 조회한다
+#                      (`gh pr view --json comments` 의 첫 100건 상한 회피, #171).
 #   FC_FAILING        실패 체크 수(정수) — statusCheckRollup 대체
-#   FC_HEAD_AT        head 커밋 시각(ISO8601) — gh pr view --json commits 대체.
-#                      빈 값/파싱 불가면 epoch 0 취급(기존 판정에 영향 없음 — degrade,
-#                      fail-open 아님. #110).
+#   FC_HEAD_AT        head 커밋 시각(ISO8601) — pr-head-at.sh 실조회 대체.
+#                      빈 값/파싱 불가 = **못 얻음**. 🔄 계열 갈래(#110 스테일 클록)에선
+#                      종전대로 epoch 0 으로 degrade 하지만, `✅` 갈래(#171 머지 게이트)
+#                      에선 증명 실패이므로 done_verdict 를 내지 않고 active 다.
 #   FC_NOW            현재 epoch(초) — date 대체
 #   STALE_FINISH_MIN  시간버퍼(분, 기본 30)
 set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 repo=${1:?repo}
 pr=${2:?pr_num}
@@ -43,10 +59,27 @@ stale_sec=$((stale_min * 60))
 now=${FC_NOW:-$(date -u +%s)}
 
 # ── 입력 수집 (env 오버라이드 우선) ──
-if [ -n "${FC_COMMENTS_JSON:-}" ]; then
+if [ -n "${FC_COMMENTS_FILE:-}" ]; then
+  # 파일 경로 주입(#171 반송 4회차 [P2]) — 페이지네이션으로 상한이 사라진 코멘트 전량은
+  # 환경변수 하나에 담기엔 크다(exec 한계 128KB). 읽기 실패는 **실조회로 새지 않는다**:
+  # 호출자가 "이 파일이 곧 판정 입력" 이라고 계약한 이상, 그걸 못 읽었는데 다른 출처로
+  # 조용히 갈아타면 어떤 입력으로 판정했는지 알 수 없다 → 빈 코멘트(=active) 로 떨어뜨려
+  # 게이트를 닫는다.
+  comments=$(cat "$FC_COMMENTS_FILE" 2>/dev/null) || comments=''
+elif [ -n "${FC_COMMENTS_JSON:-}" ]; then
   comments="$FC_COMMENTS_JSON"
 else
-  comments=$(gh pr view "$pr" --repo "$repo" --json comments -q '.comments' 2>/dev/null)
+  # 코멘트는 **페이지네이션**해서 전량 읽는다(#171 반송 3회차 [P1-2]).
+  # `gh pr view --json comments` 는 첫 100건만 준다 — 반송을 여러 번 도는 PR 은
+  # 코멘트가 쉽게 그 상한을 넘고, 그러면 101번째 이후의 새 ✅ 를 못 봐 머지 가능한
+  # PR 이 영영 후보에 안 뜨거나(조용한 큐 사망) 101번째 이후의 반송 마커를 놓쳐
+  # 반송된 PR 이 통과한다. 조회 로직은 pr-comments.sh **한 자리**에 있다(사유·순서
+  # 계약은 그 파일 주석 참조).
+  #
+  # 조회 실패는 `[]` 로 떨어뜨린다 — 빈 코멘트에는 판정 코멘트가 없으므로 아래 모든
+  # 갈래가 active(게이트 닫힘)로 수렴한다. 부분 출력을 정상값으로 채택하지 않는 것이
+  # 핵심이다(PR#139 교훈: 빈 결과와 실패를 구분하고, 실패는 가드 분기로 보내라).
+  comments=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$pr" 2>/dev/null) || comments=''
 fi
 [ -n "$comments" ] || comments='[]'
 
@@ -62,13 +95,35 @@ fi
 if [ -n "${FC_HEAD_AT+x}" ]; then
   head_at="$FC_HEAD_AT"
 else
-  head_at=$(gh pr view "$pr" --repo "$repo" --json commits \
-    -q '.commits | last | .committedDate' 2>/dev/null)
+  # head 시각은 **커밋 목록을 세지 않고** 얻는다(#171 반송 4회차 [P1-1]).
+  # `gh pr view --json commits` 는 GraphQL commits(first:100) 이라 101번째부터 안 온다 —
+  # 그때 `last` 는 head 가 아니라 100번째 커밋이고, 그 이른 시각으로 비교하면 낡은 ✅ 가
+  # `head <= verdict` 를 만족해 done_verdict 가 난다(코멘트 100건 상한과 같은 함정).
+  # 조회 로직은 pr-head-at.sh **한 자리**에 있다(사유·계약은 그 파일 주석 참조).
+  # 조회 실패는 빈 값으로 떨어뜨린다 — 아래 ✅ 갈래가 "증명 실패 = active" 로 받는다.
+  head_at=$("$SCRIPT_DIR/pr-head-at.sh" "$repo" "$pr" 2>/dev/null) || head_at=''
 fi
 
 # ISO8601(...Z) → epoch. BSD(date -j -f) 우선, GNU(date -d) 폴백.
+#
+# **파싱 전에 형식을 검사한다**(#171 반송 3회차 [P1-1]). GNU 폴백이 있다는 것 자체가
+# GNU 박스를 지원 대상으로 삼았다는 뜻인데, 두 구현은 *잘못된 입력*에서 갈린다:
+#   BSD `date -j -f "%Y-%m-%dT%H:%M:%SZ" "" +%s` → `illegal time format`, 실패(빈 값)
+#   GNU `date -d "" +%s`                        → **실패하지 않고 "오늘 자정" epoch**
+# 그래서 형식 검사가 없으면 GNU 박스에서 head 조회가 비었는데도 head_epoch 가 비지
+# 않는다 — 자정 이후 찍힌 정상 ✅ 이면 `head <= verdict` 가 참이 돼 done_verdict 가
+# 나온다. 아래 ✅ 갈래가 없애려던 fail-open 이 GNU 에서만 되살아나는 것이다.
+# (GNU 는 `yesterday`·`now` 같은 느슨한 표현도 받는다 — 빈 문자열만의 문제가 아니다.)
+#
+# 게이트가 "빈 입력이 유효값으로 둔갑" 을 입구에서 막아야 한다는 게 PR#139 교훈의 3판:
+# 저기선 실패가 부분 출력으로, 여기선 **실패조차 안 하고** 그럴듯한 값으로 새어 든다.
+# 형식 검사를 앞에 두면 두 date 구현에서 결과가 같아진다(테스트는 GNU 스텁으로 재현).
 iso_to_epoch() {
-  local iso="$1"
+  local iso="${1:-}"
+  case "$iso" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+    *) return 1 ;;
+  esac
   date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null && return 0
   date -u -d "$iso" +%s 2>/dev/null
 }
@@ -83,10 +138,37 @@ last_matching() {
 }
 
 verdict_body=$(last_matching "머지 판정" "Merge verdict" body)
+verdict_at=$(last_matching "머지 판정" "Merge verdict" createdAt)
+head_epoch=$(iso_to_epoch "${head_at:-}")
+verdict_epoch=$(iso_to_epoch "$verdict_at")
 
 # ── 최종 판정이 이미 있는 경우(4a) ──
 case "$verdict_body" in
-  *✅*) echo done_verdict; exit 0 ;;
+  *✅*)
+    # #171: ✅ 를 head 커밋과 묶는다. 반송(재디스패치) 뒤 새 커밋이 올라왔는데 그
+    # 커밋 **이전**에 찍힌 ✅ 를 근거로 머지 후보 삼지 않는다.
+    #
+    # 게이트 방향 = **증명되지 않으면 열지 않는다.** 두 시각(판정·head 커밋)을 모두
+    # 얻어 `head <= verdict` 를 확인했을 때만 done_verdict 다. 하나라도 못 얻으면
+    # (빈 commits·gh 조회 실패·날짜 파싱 실패) 판정이 현재 head 이후임을 *증명하지
+    # 못한* 것이므로 active — 워커의 새 판정을 기다린다.
+    #
+    # 옛 구현은 못 얻은 시각을 `${head_epoch:-0}` 으로 뭉개 done_verdict 로 떨어뜨리고
+    # 이를 "degrade, fail-open 아님" 이라 적었다. 그건 틀렸다 — **머지 게이트에서
+    # 증명 실패를 통과로 처리하는 것이 곧 fail-open** 이다(PR#139 교훈: 빈 결과와
+    # 실패를 구분하라). 🔄 계열 갈래의 epoch-0 degrade 는 그대로 둔다: 거긴 게이트가
+    # 아니라 스테일 클록이라 0 이 "더 오래된 활동" 으로 안전하게 흡수된다.
+    #
+    # 정상 판정은 막지 않는다 — 판정이 head 보다 늦거나 같은 초면 종전대로
+    # done_verdict 다(새 보류 상태를 만드는 게 아니다).
+    if [ -n "$head_epoch" ] && [ -n "$verdict_epoch" ] \
+       && [ "$head_epoch" -le "$verdict_epoch" ] 2>/dev/null; then
+      echo done_verdict
+    else
+      echo active
+    fi
+    exit 0
+    ;;
   *⚠*) echo held; exit 0 ;;
 esac
 
@@ -101,7 +183,6 @@ if [ "${failing:-0}" -gt 0 ] 2>/dev/null; then
   echo active; exit 0
 fi
 
-verdict_at=$(last_matching "머지 판정" "Merge verdict" createdAt)
 verifier_body=$(last_matching "검증자 리뷰" "Verifier review" body)
 verifier_at=$(last_matching "검증자 리뷰" "Verifier review" createdAt)
 
@@ -134,9 +215,6 @@ max_epoch() {
   [ -n "$b" ] || b=0
   if [ "$a" -ge "$b" ]; then echo "$a"; else echo "$b"; fi
 }
-
-verdict_epoch=$(iso_to_epoch "$verdict_at")
-head_epoch=$(iso_to_epoch "${head_at:-}")
 
 if [ -z "$verifier_body" ]; then
   # 검증자 부재 → 10단계 후 11단계 전 사망 가능. 🔄 판정 코멘트 vs head 커밋 중

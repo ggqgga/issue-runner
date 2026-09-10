@@ -86,6 +86,36 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 (사용자 결정 2026-07-06). QUIET_TICKS 원칙과 같은 이유(gh 조회뿐·비용 0)로 stagnated
 여도 매 틱 돈다.
 
+**✅ 는 "어느 SHA 에 대한 판정인가" 까지 봐야 한다 (#171).** 반송된 PR 은 그 반송 사유가
+된 코드에 대해 이미 ✅ 를 갖고 있다 — 그대로 두면 closeout 이 BLOCKER 를 낸 코드를
+closeout 이 머지한다. 그래서 `closeout-eligible.sh` 는 ✅ 존재만으로 후보를 만들지 않고
+두 겹으로 막는다(둘 다 **증명되지 않으면 열지 않는다** 방향):
+
+1. `finish-classify.sh` 재사용(로직 두 벌 금지) — ✅ 판정 시각과 head 커밋 시각을 **둘 다
+   얻어** 판정이 head 이후임을 확인했을 때만 `done_verdict`. 조회·파싱 실패는 통과가 아니라
+   `active` 다(머지 게이트에서 증명 실패를 통과로 처리하면 그게 fail-open).
+2. **반송 마커 안전망** — 반송 직후 아직 새 커밋이 없어 head 시각이 그대로인 창을 덮는다.
+   마커 집합은 반송 채널 둘을 **한 자리**(`closeout-eligible.sh` 의 `BOUNCE_MARKERS`)에
+   묶는다: `재디스패치:`(이 스킬 ①-b) · `재검증 실패:`(verify-runner ④). 새 반송 어휘가
+   생기면 그 배열만 고친다. 선후는 `createdAt` 이 아니라 **코멘트 배열의 마지막 매칭
+   인덱스**로 잰다 — GitHub 코멘트 시각은 초 단위라 동초에 달린 ✅ 와 마커의 순서를
+   시각만으로는 가릴 수 없다.
+
+두 겹 모두 **코멘트를 전부 봤다**는 전제 위에 선다. `gh pr view --json comments` 는
+페이지네이션 없이 **첫 100건**만 주므로 두 헬퍼는 그 경로를 쓰지 않고 `pr-comments.sh`
+(= `gh api .../issues/N/comments --paginate`) **한 자리**로 읽는다. 반송을 여러 번 도는
+PR 은 워커·verify·closeout 코멘트가 겹겹이 쌓여 100건이 먼 숫자가 아니고, 상한에 갇히면
+양방향으로 조용히 틀린다 — 새 ✅ 가 101번째 이후면 머지 가능한 PR 이 영영 후보에 안 뜨고
+(조용한 큐 사망), 반송 마커가 101번째 이후면 반송된 PR 이 안전망을 통과한다.
+
+같은 상한이 **커밋 쪽에도** 있었다. `gh pr view --json commits` 는 GraphQL
+`commits(first: 100)` 이라 101번째부터 안 오고, 그때 `last` 는 head 가 아니라 100번째
+커밋이다 — 그 이른 시각으로 비교하면 낡은 ✅ 가 `head <= verdict` 를 만족해 통과한다.
+그래서 head 시각은 커밋 목록을 세지 않고 `pr-head-at.sh`(= `--json headRefOid` 로 head SHA
+를 받아 `gh api repos/<repo>/commits/<sha>` 하나만 조회) **한 자리**로 읽는다. 그리고 그
+조회는 **코멘트를 읽은 뒤**에 한다 — 먼저 뜨면 그 사이의 push 가 `head_at` 에 안 잡혀
+검증 안 된 head 가 후보로 나간다.
+
 **대상**: `me=$(gh api user -q .login)` 후 `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc`(FIFO)로 열린 PR 을 모으고,
 head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify` 미부착**이고 **`needs-human`
@@ -109,11 +139,11 @@ CONFLICTING 이면 → **입양(rebase 경로)** — ② Pick 후보로 넘기�
 
 | finish-classify 출력 | 뜻 | 조치 |
 |---|---|---|
-| `done_verdict` | 최신 `머지 판정: ✅` | eligible.sh 정상 경로가 처리 — 스윕은 skip |
+| `done_verdict` | 최신 `머지 판정: ✅` **이고 그 판정이 현재 head 커밋 이후임이 증명됨**(#171) | eligible.sh 정상 경로가 처리 — 스윕은 skip |
 | `stale_inline` | 🔄 + 검증자 CLEAN + 버퍼 초과 (검증까지 도달·최종판정만 유실, #970형) | **입양(머지)** — ② Pick 후보로. ③ 1단계가 **독립 재검증** 후 마감. **새 이슈 안 만듦**(완료된 일 재수행 금지). |
 | `stale_reverify` | 🔄 + 검증자 부재/미해결 BLOCKER + 버퍼 초과 (검증 전 사망·구현 미완 가능, #971형) | **재디스패치** — 미완 코드를 codex 재검증 하나로 자동 머지하지 않는다(사용자 결정). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (연결 이슈를 `agent-ready` 로 되돌리고 `agent:claimed`·단계 라벨을 뗀다) → 새 워커가 같은 브랜치서 검증자 재실행→체크박스→최종판정으로 완결. 멱등 마커(아래). — head 커밋이 신선하면(#110, 스테일 클록에 커밋 시각 합류) 코멘트가 낡았어도 `active` 로 떨어져 살아있는 attempt N+1 워커를 오분류하지 않는다. |
 | `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (PR 과 연결 이슈 **양쪽**에 `needs-human` + `hold:policy` 부착 + 단계 라벨 정리 — 연결 이슈가 없어도 PR 에 사람 신호가 남는다), closeout 무접촉(자동 진행 안 함). |
-| `active` | 진행 중·버퍼 미도달·우리 형상 아님 | **무접촉**(다음 틱). |
+| `active` | 진행 중·버퍼 미도달·우리 형상 아님, 또는 **✅ 의 신선도를 증명 못 함**(✅ 가 head 커밋보다 이르거나 두 시각 중 하나를 못 얻음, #171) | **무접촉**(다음 틱). |
 
 **flow:\* 보조 신호**: finish-classify 가 코멘트로 판정하지만, `flow:ready` 없이
 `flow:codex`/`flow:ci` 만 있고 오래된 PR 은 그 자체로 "검증 중 워커 사망"의 방증이다
