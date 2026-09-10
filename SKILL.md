@@ -132,7 +132,14 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 - `warn` — dirty/unpushed worktree. **건드리지 말고** Report에 그대로 올려 사람이 보게 하라.
 - `pr_open` — ② Maintain 의 입력.
 - `working` — 워커 진행 중. TaskList 로 해당 백그라운드 에이전트가 실제 살아있는지
-  확인. 죽었고 push 된 커밋이 있으면 ② 의 보수 대상으로. 커밋이 전혀 없으면
+  확인. **"죽어 보임"(TaskList 상 종료)을 바로 사망으로 단정하지 마라** — 그 태스크의
+  `TaskOutput(task_id)` 로 마지막 메시지를 먼저 읽어라. `CI 대기 중 — <SHA> 대기열
+  N번째, 다음 할 일: <...>` 형식이면 `run-local-ci.sh` 큐 대기 중 턴만 끝낸 것이지
+  사망이 아니다(#185) — **worktree 제거·claim 해제를 하지 말고** `SendMessage` 로
+  그 태스크에 재개 메시지를 보내 워커를 깨워라(보고에 적힌 "다음 할 일"을 이어가게
+  하라는 한 줄이면 된다). 재개했으면 ④ Report 의 `보수` 에 `#<num>(CI 대기 재개)`
+  로 적어라. 이 형식이 아니면(진짜 사망) 아래로 이어간다.
+  죽었고 push 된 커밋이 있으면 ② 의 보수 대상으로. 커밋이 전혀 없으면
   claim 해제 **전에** 이슈 최신 코멘트를 확인하라 —
   `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body | test("<!--\\s*timebox-grace:")) | not)] | last.body'`
   (timebox 유예 마커 코멘트는 건너뛴다 — 마커가 최신 코멘트 자리를 차지하면 워커가 남긴
