@@ -946,6 +946,9 @@ bash scripts/tests/closeout-eligible.test.sh
 echo "[test] bounce-state.sh 반송 판정 — ①-b CONFLICTING 입양 안전망 (#196)"
 bash scripts/tests/bounce-state.test.sh
 
+echo "[test] bounce-comment.sh 반송 코멘트 생성 — SKILL.md 문구와 바이트 동일 (#212)"
+bash scripts/tests/bounce-comment.test.sh
+
 echo "[test] release-labels.sh 라벨 해제 규칙 테스트 (#117)"
 bash scripts/tests/release-labels.test.sh
 
