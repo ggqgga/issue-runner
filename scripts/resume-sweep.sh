@@ -87,14 +87,33 @@ has_label() {  # has_label <콤마목록> <라벨>
   return 1
 }
 
+# `number` 는 따옴표 **밖**의 %s 라, 값이 비거나 정수가 아니면 `{…,"number":,…}` 가 나가
+# 줄 전체가 JSON 이 아니게 된다(#193). 그 줄은 관대한 파서에선 통째로 유실되고 엄격한
+# 파서에선 읽기를 멈춘다 — 어느 쪽이든 **경보가 조용히 사라지는** 방향이다. 그래서:
+#   · 줄은 **반드시 나간다** — 번호를 못 구했다고 경보를 버리면 고치려던 것을 그대로 재현한다.
+#   · 번호는 `0` 으로 낮춘다 — "특정 이슈가 아니다" 라는 뜻으로 레포 단위 경보가 이미 쓰는 값.
+#   · `0` 만으로는 그 레포 단위 경보와 구분이 안 되니, 못 구했다는 사실을 msg **끝에** 덧붙인다.
+#     기존 문구는 접두로 한 바이트도 안 바뀌어 남는다 — 디스패처 SKILL.md 가 문구로 분기한다.
+# 세 헬퍼가 **같은 규칙**을 따르도록 방출을 한 곳(_emit)으로 모은다 — 한 헬퍼만 고치면
+# 나머지 둘이 같은 모양으로 남는다.
+NUM_UNKNOWN_SUFFIX=' [이슈 번호 미상 — 목록 행 파싱 실패]'
+_emit() {  # _emit <event> <repo> <num> <msg>
+  local num="$3" msg="$4"
+  if ! _nonneg_int "$num"; then
+    msg="$msg$NUM_UNKNOWN_SUFFIX"
+    num=0
+  fi
+  printf '{"event":"%s","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$num" "$msg"
+}
+
 emit_warn() {  # emit_warn <repo> <num> <msg> — msg 는 이 파일이 쓰는 고정 문구(따옴표 없음)
-  printf '{"event":"warn","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$3"
+  _emit warn "$1" "$2" "$3"
 }
 
 # 쓰기가 이미 GitHub 에 반영된 뒤의 실패. warn 과 나누는 이유는 대응이 다르기 때문이다 —
 # warn 은 "그대로 두면 다음 틱이 다시 본다", 이건 "상태가 반쯤 바뀌었으니 사람이 본다".
 emit_warn_after_edit() {  # emit_warn_after_edit <repo> <num> <msg>
-  printf '{"event":"warn_after_edit","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$3"
+  _emit warn_after_edit "$1" "$2" "$3"
 }
 
 # 조치할 것이 **없는** 정보 줄. warn 의 정의를 "루프가 교정 가능한 불변식 위반" 으로 좁히고
@@ -104,7 +123,7 @@ emit_warn_after_edit() {  # emit_warn_after_edit <repo> <num> <msg>
 # **jq 문자열 리터럴 두 개("deploy-wait"·"full-cycle") 중 하나**이지 GitHub 에서 온 텍스트가
 # 아니다. 따옴표·개행이 못 들어오므로 printf JSON 포맷 계약이 깨질 경로가 없다.
 emit_note() {  # emit_note <repo> <num> <msg>
-  printf '{"event":"note","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$3"
+  _emit note "$1" "$2" "$3"
 }
 
 # ── GitHub 읽기 헬퍼 — 전부 **조회 실패는 rc 1** ──────────────────────────

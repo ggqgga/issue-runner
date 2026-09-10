@@ -554,5 +554,71 @@ setup "needs-human,hold:ladder,agent-ready" 200 2
 run
 check "승격 코멘트에 hold-note:policy" "$(grep -q 'hold-note: policy' "$tmp/gh.log" && echo ok || echo no)"
 
+# ── ㉚ (#193) 번호를 못 구한 줄도 **유효 JSON 으로** 나간다 ────────────────
+# 재현: `sweep_issue`·② 는 목록 행을 jq 로 파싱해 번호를 얻는데, 그 파싱이 깨지면
+# `num`(`hnum`)이 **빈 문자열**이 된다. 세 헬퍼의 `"number":%s` 는 따옴표 **밖**이라
+# 그대로 `{…,"number":,"msg":…}` 가 나가 줄 전체가 JSON 이 아니었다 — 관대한 파서에선
+# 그 줄이 통째로 유실되고 엄격한 파서에선 읽기가 멈춘다. 어느 쪽이든 **경보가 조용히
+# 사라지는** 방향이라, 요구는 셋이다: (a) 줄은 나간다(삼키지 않는다) (b) 유효 JSON 이다
+# (c) 번호를 못 구했다는 사실이 줄에서 읽힌다.
+# 픽스처는 number 를 JSON **문자열**로 박아 그 상태를 만든다(실경로인 jq 실패와 `num` 의
+# 모양이 같다 — 둘 다 빈 문자열). 세 헬퍼를 각각 그 경로로 몰아 따로 확인한다.
+bad_num_rows() {  # bad_num_rows <출력파일> <number 자리에 박을 값> <라벨csv> <updatedAt>
+  jq -n --arg n "$2" --arg l "$3" --arg u "$4" \
+    '[{number:$n, labels: ($l|split(",")|map(select(length>0)|{name:.})), updatedAt:$u}]' > "$1"
+}
+lines_all_json() {  # 출력의 **모든** 줄이 유효 JSON 인가 — 빈 출력(삼킴)도 실패
+  local line
+  [ -s "$tmp/out" ] || { echo no; return; }
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    printf '%s' "$line" | jq -e . >/dev/null 2>&1 || { echo no; return; }
+  done < "$tmp/out"
+  echo ok
+}
+evq() {  # evq <이벤트> <jq 식> — 깨진 줄이 섞이면 jq 가 실패해 no
+  jq -e "select(.event==\"$1\") | $2" "$tmp/out" >/dev/null 2>&1 && echo ok || echo no
+}
+nlines() { grep -c "$1" "$tmp/out" 2>/dev/null || true; }
+
+# (가) emit_warn — ① 이 updatedAt 을 못 읽은 줄. 번호도 함께 비어 있다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" ""
+echo '[]' > "$tmp/human.json"
+run
+check "빈 번호 warn: 모든 줄이 유효 JSON"     "$(lines_all_json)"
+check "빈 번호 warn: 줄을 삼키지 않는다"       "$([ "$(nlines '"event":"warn"')" = 1 ] && echo ok || echo no)"
+check "빈 번호 warn: number 는 0"             "$(evq warn '.number == 0')"
+check "빈 번호 warn: 기존 문구 그대로"         "$(evq warn '.msg | test("updatedAt 해석 불가")')"
+check "빈 번호 warn: 번호 미상이 줄에서 읽힌다" "$(evq warn '.msg | test("이슈 번호 미상")')"
+
+# (나) emit_note — ② 배포 대기(#190) 줄. hnum 이 비어도 note 는 나가야 한다.
+setup "needs-human,agent-ready" 200 0
+echo '[]' > "$tmp/ladder.json"
+bad_num_rows "$tmp/human.json" "" "needs-human,deploy-wait" "$(ts 200)"
+run
+check "빈 번호 note: 모든 줄이 유효 JSON"     "$(lines_all_json)"
+check "빈 번호 note: 줄을 삼키지 않는다"       "$([ "$(nlines '"event":"note"')" = 1 ] && echo ok || echo no)"
+check "빈 번호 note: number 는 0"             "$(evq note '.number == 0')"
+check "빈 번호 note: 기존 문구 그대로"         "$(evq note '.msg | test("배포 대기\\(라벨 deploy-wait\\)")')"
+check "빈 번호 note: 번호 미상이 줄에서 읽힌다" "$(evq note '.msg | test("이슈 번호 미상")')"
+
+# (다) emit_warn_after_edit — 쓰기 뒤 readback 조회가 실패한 줄.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/human.json"
+STUB_READBACK_LABELS="__FAIL__"
+run
+check "빈 번호 warn_after_edit: 모든 줄이 유효 JSON" "$(lines_all_json)"
+check "빈 번호 warn_after_edit: 줄을 삼키지 않는다"   "$([ "$(nlines '"event":"warn_after_edit"')" = 1 ] && echo ok || echo no)"
+check "빈 번호 warn_after_edit: number 는 0"         "$(evq warn_after_edit '.number == 0')"
+check "빈 번호 warn_after_edit: 기존 문구 그대로"     "$(evq warn_after_edit '.msg | test("재개 readback 조회 실패")')"
+check "빈 번호 warn_after_edit: 번호 미상이 읽힌다"   "$(evq warn_after_edit '.msg | test("이슈 번호 미상")')"
+
+# (라) 정상 경로 무회귀 — 번호가 있으면 표식이 붙지 않는다(문구가 한 바이트도 안 바뀐다).
+setup "needs-human,agent-ready" 200 0
+run
+check "정상 번호: number 유지·표식 없음" "$(evq warn '.number == 42 and (.msg | test("이슈 번호 미상") | not)')"
+
 echo "resume-sweep: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
