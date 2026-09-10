@@ -501,7 +501,7 @@ setup "needs-human,full-cycle,agent-ready" 200 0
 run
 check "full-cycle 구현 이슈: 그래도 note" "$(has_ev note)"
 check "full-cycle 구현 이슈: warn 없음"   "$(no_ev warn)"
-check "제목은 조회조차 안 한다(라벨 축)"   "$(grep -q -- '--json[^ ]*title' "$tmp/gh.log" && echo no || echo ok)"
+check "제목은 조회조차 안 한다(라벨 축)"   "$(grep -q -- '--json [^ ]*title' "$tmp/gh.log" && echo no || echo ok)"
 
 # ── ㉘ (#190) 강등은 `hold:*` 가드 **안쪽**이다 — 사유 라벨이 있으면 note 도 아니다 ──
 # 배포 대기 라벨이 붙어 있어도 `hold:*` 가 있으면 ② 는 그 행을 아예 보지 않는다(무편집 통과)
