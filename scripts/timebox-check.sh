@@ -56,7 +56,13 @@ if [ $# -ge 2 ]; then shift 2; else shift $#; fi
 claim_at="${TB_CLAIM_AT:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --claim-at) claim_at="${2:-}"; shift 2 ;;
+    # 값이 없으면 `shift 2` 가 실패하는데 `set -e` 가 꺼져 있어 인자 목록이 그대로 남는다
+    # → 같은 `--claim-at` 을 무한히 다시 읽는다. 무인 헬퍼라 그 매달림을 아무도 못 본다.
+    --claim-at)
+      if [ $# -lt 2 ]; then
+        echo "usage: timebox-check.sh <repo> <num> --claim-at <ISO8601>" >&2; exit 64
+      fi
+      claim_at="$2"; shift 2 ;;
     *) echo "usage: timebox-check.sh <repo> <num> --claim-at <ISO8601>" >&2; exit 64 ;;
   esac
 done

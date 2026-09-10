@@ -296,5 +296,26 @@ out=$(run_raw TB_NOW="$NOW" TB_CLAIM_AT="$CLAIM" TB_QUEUE_LOG="$TMP/none.log" \
   GH_MODE=fail_comment)
 assert_verdict "마커 게시 실패 → unknown" unknown grace_marker_post_failed 2 "$out"
 
+echo "[timebox-check] 인자 오사용은 매달리지 않고 usage 로 죽는다"
+
+# `--claim-at` 뒤에 값이 없으면 `shift 2` 가 실패하는데 set -e 가 꺼져 있어 인자 목록이
+# 안 줄고 같은 분기를 무한히 다시 읽었다(실측: 5초 한도에서 매달림). 무인 헬퍼라 그
+# 매달림은 틱을 통째로 얼린다. **테스트 자신이 매달리면 안 되므로** 배경 실행 + 한도 폴링으로
+# 잰다(이 레포에 `timeout` 이 없다 — macOS 기본).
+bad_args_rc() {  # bad_args_rc <추가 인자…> → stdout: 종료코드 또는 'HANG'
+  ( env TB_NO_POST=1 "$SUT" owner/repo 200 "$@" >/dev/null 2>&1; echo $? > "$TMP/badrc" ) &
+  local p=$! i=0
+  while kill -0 "$p" 2>/dev/null && [ "$i" -lt 50 ]; do i=$((i + 1)); sleep 0.1; done
+  if kill -0 "$p" 2>/dev/null; then kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null; printf 'HANG'; return 0; fi
+  wait "$p" 2>/dev/null
+  cat "$TMP/badrc"
+}
+
+got=$(bad_args_rc --claim-at)
+if [ "$got" = 64 ]; then ok; else bad "값 없는 --claim-at — 기대 rc=64, 실제 '$got'"; fi
+
+got=$(bad_args_rc --nope)
+if [ "$got" = 64 ]; then ok; else bad "모르는 플래그 — 기대 rc=64, 실제 '$got'"; fi
+
 echo "  timebox-check: $pass 통과 / $fail 실패"
 [ "$fail" = 0 ]
