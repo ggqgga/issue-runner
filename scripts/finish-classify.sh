@@ -5,13 +5,16 @@
 # 다섯 중 하나로 stdout 에 분류한다 (SKILL ② Maintain 규칙4 가 이 결과로 4a/4b/4c
 # 를 분기한다 — SKILL prose 를 얇게 유지하고 결정적으로 테스트 가능하게).
 #
-#   done_verdict   최신 `머지 판정:` 이 ✅            → 4a 무접촉(closeout 픽업 대기)
+#   done_verdict   최신 `머지 판정:` 이 ✅ 이고 그 판정 시각이 head 커밋보다 늦음(또는
+#                  같음)     → 4a 무접촉(closeout 픽업 대기)
 #   held           최신 `머지 판정:` 이 ⚠            → 4a 무접촉(워커 명시 보류·needs-human)
 #   stale_inline   🔄(최종 판정 없음) + 최신 검증자 CLEAN + 그 코멘트가 STALE_FINISH_MIN
 #                  초과            → 4b 인라인 최종 판정 대리 append(에이전트 없음)
 #   stale_reverify 🔄 + 검증자 부재 또는 미해결 BLOCKER + STALE_FINISH_MIN 초과
 #                  → 4c 완결 에이전트 재디스패치(검증자 재실행)
-#   active         위 어디에도 안 걸림(진행 중·시간버퍼 미도달·우리 형상 아님) → 무접촉
+#   active         위 어디에도 안 걸림(진행 중·시간버퍼 미도달·우리 형상 아님) 또는
+#                  최신 `머지 판정: ✅` 가 head 커밋보다 **이름**(반송 뒤 재디스패치된
+#                  새 커밋이 아직 검증 안 됨, #171) → 무접촉(새 판정을 기다림)
 #
 # 판별 근거: 살아있는 워커는 `검증자 리뷰:` 코멘트 직후 수초 내 최종 판정을 찍는다.
 # 최신 검증자가 CLEAN 인데 STALE_FINISH_MIN 넘게 최종 판정이 없으면 워커 사망 확실.
@@ -83,10 +86,29 @@ last_matching() {
 }
 
 verdict_body=$(last_matching "머지 판정" "Merge verdict" body)
+verdict_at=$(last_matching "머지 판정" "Merge verdict" createdAt)
+head_epoch=$(iso_to_epoch "${head_at:-}")
+verdict_epoch=$(iso_to_epoch "$verdict_at")
 
 # ── 최종 판정이 이미 있는 경우(4a) ──
 case "$verdict_body" in
-  *✅*) echo done_verdict; exit 0 ;;
+  *✅*)
+    # #171: ✅ 를 head SHA 와 묶는다. 반송(재디스패치) 뒤 새 커밋이 올라왔는데 그
+    # 커밋 **이전**에 찍힌 ✅ 를 근거로 머지 후보 삼지 않는다 — 판정이 head 보다
+    # 이르면(head_epoch > verdict_epoch) done_verdict 를 내지 않고 active 로
+    # 떨어뜨린다(워커가 새 판정을 찍을 때까지 대기). 같은 초(경계) 또는 판정이
+    # head 보다 늦으면 종전대로 done_verdict — 새 보류 상태를 만드는 게 아니라
+    # 시각 비교 하나만 더하는 것이다.
+    # head_epoch·verdict_epoch 파싱 실패/공란은 0 취급(FC_HEAD_AT 계약과 동일 —
+    # degrade, fail-open 아님: 기존 done_verdict 판정을 유지).
+    he="${head_epoch:-0}"; ve="${verdict_epoch:-0}"
+    if [ "$he" -gt "$ve" ] 2>/dev/null; then
+      echo active
+    else
+      echo done_verdict
+    fi
+    exit 0
+    ;;
   *⚠*) echo held; exit 0 ;;
 esac
 
@@ -101,7 +123,6 @@ if [ "${failing:-0}" -gt 0 ] 2>/dev/null; then
   echo active; exit 0
 fi
 
-verdict_at=$(last_matching "머지 판정" "Merge verdict" createdAt)
 verifier_body=$(last_matching "검증자 리뷰" "Verifier review" body)
 verifier_at=$(last_matching "검증자 리뷰" "Verifier review" createdAt)
 
@@ -134,9 +155,6 @@ max_epoch() {
   [ -n "$b" ] || b=0
   if [ "$a" -ge "$b" ]; then echo "$a"; else echo "$b"; fi
 }
-
-verdict_epoch=$(iso_to_epoch "$verdict_at")
-head_epoch=$(iso_to_epoch "${head_at:-}")
 
 if [ -z "$verifier_body" ]; then
   # 검증자 부재 → 10단계 후 11단계 전 사망 가능. 🔄 판정 코멘트 vs head 커밋 중

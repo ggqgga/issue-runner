@@ -36,6 +36,30 @@ assert "done_verdict" done_verdict '[
   {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:02:00Z"}
 ]'
 
+# ── #171: ✅ 를 head SHA 와 묶는다 ──────────────────────────────────────
+
+# 1b) ✅ 가 head 커밋보다 **이름** — 반송 뒤 재디스패치된 새 커밋(11:10)이 아직
+#     검증 안 된 채 그 이전(11:02)에 찍힌 ✅ 가 남아있는 형상 → active(무접촉,
+#     워커가 새 판정을 찍을 때까지 done_verdict 를 내지 않는다).
+assert "✅가head보다이름→active" active '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:01:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:02:00Z"}
+]' "2026-07-05T11:10:00Z"
+
+# 1c) ✅ 가 head 커밋보다 **늦음** — 정상 형상(커밋 뒤 판정) → done_verdict(무회귀).
+assert "✅가head보다늦음→done_verdict(무회귀)" done_verdict '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:01:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:02:00Z"}
+]' "2026-07-05T11:00:00Z"
+
+# 1d) 초인 경계 — 커밋 시각과 판정 시각이 정확히 같음 → "이르다"가 아니므로 done_verdict.
+assert "✅와head동일초→done_verdict(경계)" done_verdict '[
+  {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:02:00Z"}
+]' "2026-07-05T11:02:00Z"
+
 # 2) held — 최신 머지 판정이 ⚠ 보류
 assert "held" held '[
   {"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"},
