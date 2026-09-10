@@ -49,16 +49,52 @@ Tailscale 주소·루프백은 정상. DNS 도 권한도 아니다). 이때는 `
 스니펫과 "스모크가 끝난 뒤 정리" 스니펫은 **서로 다른 Bash 호출**이라 셸 변수(`CTL`)가
 둘 사이에 살아남지 않는다. 그래서 소켓 경로를 `mktemp` 무작위값이 아니라 **바인드에 성공한
 포트 번호로 고정 유도**한다(`/tmp/smoke-tun-<포트>.sock`) — 포트는 터널 스니펫 출력에
-그대로 찍히므로, 정리 스니펫이 그 숫자만으로 같은 경로를 재구성해 쓸 수 있다:
+그대로 찍히므로, 정리 스니펫이 그 숫자만으로 같은 경로를 재구성해 쓸 수 있다.
+
+⚠️ **경로가 포트로만 고정되므로, "바인드 성공"과 "이 소켓을 우리가 소유함"은 같은 말이
+아니다.** 앞 회차가 정리 전에 죽어 소켓 파일만 남았는데 그 포트가 풀렸거나, 다른 master 가
+그 경로를 이미 쥐고 있으면 — OpenSSH 는 `ControlSocket ... already exists, disabling
+multiplexing` 을 찍고 **비-multiplex 로 넘어가 포워딩 자체는 성공시킬 수 있다.** 이걸 그대로
+`PORT=$P; CTL=$C` 로 받으면 정리 단계의 `-O exit` 이 **남의 살아있는 master 를 끊고**, 정작
+이번에 연 터널은 CTL 을 못 들고 있어 누수된다(#170). 그래서 소켓 경로를 쓰기 전·쓴 직후 두
+지점에서 `-O check` 로 소유권을 확인한다:
+
+- **시작 전(잔재 소켓 처리):** 이번 포트의 경로가 이미 파일로 존재하면, 곧장 `ssh -M` 을
+  걸지 않고 먼저 `-O check` 한다 — 죽었으면(check 실패) 크래시 잔재이므로 지우고 이번
+  시도에서 계속 쓰고, 살아있으면(check 성공) **남의 master** 이므로 이 포트는 포기하고
+  다음 포트로 넘어간다(바인드를 시도조차 하지 않는다 — 건드리면 그게 곧 남의 연결에
+  손대는 것이다).
+- **바인드 직후(소유권 확인):** `ssh -M` 이 성공을 리턴해도 그걸 곧장 성공으로 받지 않고
+  같은 경로에 `-O check` 를 한 번 더 한다. 이게 성공해야 **우리가 방금 만든 살아있는
+  master** 라는 뜻이고, 그래야만 `PORT`/`CTL` 을 채택한다. 실패하면(위에서 말한 비-multiplex
+  폴백) 소유하지 못한 소켓을 CTL 로 들고 가지 않고 — 로컬 문제로 취급해 다음 포트로
+  재시도한다(5회 다 이 경로면 바인드 충돌과 같은 `tunnel port exhausted` 로 합류 — 아래
+  세 갈래 분류는 바뀌지 않는다).
 
 ```bash
 ERR=$(mktemp); PORT=""; CTL=""; ALL_BIND=1
 for _try in 1 2 3 4 5; do
   P=$(( 39000 + RANDOM % 1000 ))
   C="/tmp/smoke-tun-$P.sock"          # 소켓 경로 = 포트로 고정 유도(변수 전달에 안 기댐)
+  if [ -e "$C" ]; then
+    # 잔재 소켓 처리(크래시 재개 방어) — 이 포트를 시도하기 전에 먼저 소유권을 본다.
+    if ssh -S "$C" -O check <호스트별칭> >/dev/null 2>&1; then
+      continue                        # 살아있는 남의 master — 건드리지 않고 다음 포트로
+    else
+      rm -f "$C"                      # 죽은 잔재 — 지우고 이 포트에서 계속
+    fi
+  fi
   if ssh -f -N -M -S "$C" -o ExitOnForwardFailure=yes \
        -L "127.0.0.1:$P:127.0.0.1:<원격포트>" <호스트별칭> 2>"$ERR"; then
-    PORT=$P; CTL=$C; break            # 바인드 성공
+    # 바인드 성공을 곧장 믿지 않는다 — ControlPath 가 이미 살아있는(남의) master 를 물고
+    # 있으면 OpenSSH 는 "ControlSocket ... already exists, disabling multiplexing" 을
+    # 찍고 비-multiplex 로 넘어가 여기서도 성공을 리턴할 수 있다. 우리가 방금 만든 살아있는
+    # master 인지 -O check 로 확인한 뒤에만 채택한다.
+    if ssh -S "$C" -O check <호스트별칭> >/dev/null 2>&1; then
+      PORT=$P; CTL=$C; break          # 소유권 확인됨 — 진짜 성공
+    else
+      continue                        # 소유 못 한 소켓(비-multiplex 폴백) — CTL 로 들고 가지 않는다
+    fi
   fi
   # ExitOnForwardFailure=yes 가 바인드 실패 시 내는 stderr 는 "bind: Address already in
   # use" 류 — 이 grep 에 걸린다. 걸리지 않는(=비-바인드) 실패 예: "Could not resolve
@@ -67,7 +103,7 @@ for _try in 1 2 3 4 5; do
   grep -qi 'bind\|address already in use' "$ERR" || { ALL_BIND=0; break; }   # 원격/경로 문제
 done
 if [ -z "$PORT" ] && [ "$ALL_BIND" = 1 ]; then
-  echo "tunnel port exhausted"        # 5회 전부 바인드 충돌 — 로컬 문제, 도달 불가 아님
+  echo "tunnel port exhausted"        # 5회 전부 바인드 충돌(또는 소유권 미확인) — 로컬 문제, 도달 불가 아님
 elif [ -z "$PORT" ]; then
   echo "tunnel unreachable"           # 비-바인드 ssh 실패(호스트 다운·인증·DNS·라우팅) — 원격/경로 문제
 elif curl -fsS --connect-timeout 3 --max-time 10 \
@@ -80,8 +116,17 @@ fi
 rm -f "$ERR"
 ```
 
+위 루프의 `-O check` 는 **이번 호출이 소유한 살아있는 master 인지**만 판정한다 — 소켓이
+아예 없는 것(잔재 없음, 정상 진행) · check 자체 실행 실패(위 두 지점 모두 실패로 취급해
+안전 쪽으로 접는다: 시작 전이면 지우고 계속, 바인드 직후면 CTL 로 채택하지 않고 재시도) ·
+살아있는 남의 master(건드리지 않고 넘어간다) 는 각각 다른 의미이므로 종료코드를 뭉뚱그려
+`|| true` 로 삼키지 않는다.
+
 **`tunnel ok` 면 터널을 열어 둔 채 크롬 스모크를 끝까지 밟는다** — 프로브 직후에 끊으면
-정작 확인하려던 화면을 못 본다(확인한 건 `/up` 뿐). 정리는 스모크가 끝난 뒤,
+정작 확인하려던 화면을 못 본다(확인한 건 `/up` 뿐). `CTL` 은 위 루프가 이미 `-O check` 로
+소유를 확인한 뒤에만 채택한 값이므로, 정리 시점에 `-O exit` 을 걸어도 남의 master 를 끊을
+위험은 없다 — 다만 스모크가 오래 걸려 그 사이 master 가 죽었을 수는 있으니(정상 종료·크래시
+불문) 아래 `-S` 존재 확인은 그대로 남겨 둔다. 정리는 스모크가 끝난 뒤,
 **통과·실패·중단 어느 경로에서든** 한 번 — 위 출력에 찍힌 포트 번호로 같은 경로를
 재구성해서 쓴다(변수가 아니라 숫자를 옮겨 적는다):
 
