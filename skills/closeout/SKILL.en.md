@@ -236,7 +236,25 @@ exits 1, the state is **unproven** — do not let it through; go to *ambiguous* 
 - If `pr-head-at.sh` exits 1 (no output), do **not** read that as "no new commit" — it means the
   value **could not be obtained**. Resolution is unproven, so treat it as unresolved and go to 2)
   (fail-closed — same direction as ①-b).
-- Neither of the two → **unresolved hold** → 2).
+- Neither of the two → **unresolved hold**. But **do not bounce a correction that was already
+  redispatched, a second time (idempotent — #198 bounce round 3/P1).** If a comment starting with
+  `재디스패치: #<issue>` (the same marker the *correction* row in 3) below leaves) already exists
+  after this hold boundary, reuse the **same predicate** the `stale_reverify` row uses ("if the
+  head commit is fresh, it falls to `active` even with a stale comment, so a live attempt-N+1
+  worker is not misclassified") to judge "was there worker activity after that marker" — no new
+  helper: re-compare the `pr-head-at.sh` head-commit time already obtained above against that
+  marker's `createdAt`. If the head commit is **not later** than the marker (no new commit since
+  the marker), **leave this tick alone** — do not re-post the marker and do not re-call
+  `$SCRIPTS/transition.sh closeout-redispatch`. ①-b's idempotent-marker clause only says "if the
+  marker already exists and no new commit/verifier comment has landed since, do not repost the
+  **comment**" — it does **not** block re-calling the transition. Without this check, every tick
+  the ①-b sweep classifies the same unchanged-code PR as `done_verdict` and routes it back here,
+  and each re-call of `closeout-redispatch` strips `agent:claimed` from whatever live attempt-N+1
+  worker was dispatched in the meantime (measured on the verify lane — the whole window from
+  dispatch-wait through implementation time was a re-call window every tick). If the head commit
+  **is later** than the marker (a new commit landed), a new worker has already started, so follow
+  the same path as "Resolved?" ⑵ above — **resolved** → ② Pick. If no such marker exists at all
+  (first pass through this section) → go to 2).
 
 **2) Identify the release decision comment.** Among comments **after that source's own** hold
 boundary index (computed by 1)'s "per source" rule), a comment is a decision candidate if it is
@@ -293,7 +311,12 @@ as a correction merely costs one more worker tick.
 
 **Quote requirement.** All three actions must **quote one line of the decision verbatim** in their
 comment — being able to trace "why was this merged / why was this bounced" from history alone is the
-entire point of this section.
+entire point of this section. **Except: the ambiguous row's two sub-cases "no decision comment" and
+"comment query failed" are exempt from this quote requirement (#198 bounce round 3/P2)** — in those
+cases there is no sentence to quote at all, and forcing a quote leaves the unattended worker to
+either fabricate one or skip the hold. In those two sub-cases, write a diagnostic string in the
+quote's place instead: `결정문 없음` when there is no decision comment at all, or
+`코멘트 조회 실패: <one error line>` when the `pr-comments.sh` lookup exits 1.
 
 If a transition exits 1 (readback mismatch) or 2 (gh failure), do not change that PR's state; report
 `BLOCKED: 전이 실패 <transition> PR #<pr>(<repo_short>) — <one stderr line>` in ④ Report (isomorphic

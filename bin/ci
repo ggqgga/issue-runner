@@ -594,6 +594,46 @@ sec_en=$(awk '/^## ①-c /{on=1} on && /^## / && !/^## ①-c /{exit} on' skills/
 printf '%s' "$sec_en" | grep -qiF 'only one side has a decision' \
   || { echo "  ✗ SKILL.en.md ①-c 절에 sole-decision(one-side) 규칙 없음(#198 P2)"; exit 1; }
 
+echo "[closeout] ①-c 1) 이미 재디스패치된 시정을 다시 반송하지 않는다 — 한/영 SKILL (#198 attempt3-P1)"
+# 검증 레인 실측 P1: closeout-redispatch 가 성공한 뒤에도 옛 보류가 미해소로 남고 코드는
+# 안 바뀌니 head 시각도 그대로라, 다음 ①-b 스윕이 같은 PR 을 done_verdict 로 분류해 ①-c 를
+# 또 통과시킨다 — 워커가 첫 커밋을 push 할 때까지 매 틱 재디스패치가 재호출돼 그사이
+# 디스패치된 살아있는 attempt N+1 워커의 agent:claimed 를 또 뗀다. ①-b 의 멱등 마커 절은
+# 코멘트 재발행만 막지 전이 재호출은 안 막는다. 처방은 "stale_reverify 행과 같은 술어를
+# 재사용"이므로, 문구 존재만 묻지 않고(반증형) ①-c 1) 절 범위 안에서 넷을 함께 요구한다:
+# (a) 기존 '재디스패치:' 마커를 다시 스캔한다는 문구, (b) pr-head-at.sh 재사용(새 헬퍼 아님),
+# (c) stale_reverify 술어 재사용을 명시하는 문구, (d) transition.sh closeout-redispatch
+# 재호출 자체를 막는다는 문구(①-b 의 마커-전용 가드와 구별). 2) 절 범위로 새지 않도록
+# "1)" 과 "2)" 헤더 사이로 좁힌다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -q '^## ①-c ' "$f" || { echo "  ✗ $f 에 ①-c 절 없음"; exit 1; }
+  sec=$(awk '/^## ①-c /{on=1} on && /^## / && !/^## ①-c /{exit} on' "$f")
+  step1=$(printf '%s\n' "$sec" | awk '/^\*\*1\)/{on=1} on && /^\*\*2\)/{exit} on')
+  [ -n "$step1" ] || { echo "  ✗ $f 의 ①-c 1) 절을 못 찾음"; exit 1; }
+  printf '%s' "$step1" | grep -qF '재디스패치:' \
+    || { echo "  ✗ $f ①-c 1) 절이 기존 재디스패치 마커를 다시 스캔하지 않음(#198 attempt3-P1)"; exit 1; }
+  printf '%s' "$step1" | grep -qF 'pr-head-at.sh' \
+    || { echo "  ✗ $f ①-c 1) 절이 pr-head-at.sh 를 재사용하지 않음(새 헬퍼 의심, #198 attempt3-P1)"; exit 1; }
+  printf '%s' "$step1" | grep -qF 'stale_reverify' \
+    || { echo "  ✗ $f ①-c 1) 절이 stale_reverify 술어 재사용을 명시하지 않음(#198 attempt3-P1)"; exit 1; }
+  printf '%s' "$step1" | grep -qF 'closeout-redispatch' \
+    || { echo "  ✗ $f ①-c 1) 절이 transition.sh closeout-redispatch 재호출 자체를 막는다는 문구 없음(#198 attempt3-P1)"; exit 1; }
+done
+
+echo "[closeout] ①-c 인용 의무 — 결정 코멘트 부재·조회 실패는 면제 (반증형, #198 attempt3-P2)"
+# 검증 레인 실측 P2: 모호 행 신호에는 '결정 코멘트 부재'·'코멘트 조회 실패' 가 명시돼
+# 있는데, 바로 아래 인용 의무 문장은 세 조치 모두에 결정문 원문 한 줄 인용을 요구해 그
+# 두 갈래에서 인용할 문장이 없는 모순 지시가 된다. '코멘트 조회 실패' 라는 문구 자체는
+# 위 모호 행 신호 목록에 이미 있으므로(콜론 없이) 그 부분매칭에 속지 않도록, 새로
+# 추가돼야 할 콜론 붙은 진단 문구 형태(`코멘트 조회 실패:`)로 좁혀서 검사한다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  sec=$(awk '/^## ①-c /{on=1} on && /^## / && !/^## ①-c /{exit} on' "$f")
+  printf '%s' "$sec" | grep -qF '결정문 없음' \
+    || { echo "  ✗ $f ①-c 절에 결정 코멘트 부재용 진단 문구('결정문 없음') 없음(#198 attempt3-P2)"; exit 1; }
+  printf '%s' "$sec" | grep -qF '코멘트 조회 실패:' \
+    || { echo "  ✗ $f ①-c 절에 조회 실패용 진단 문구('코멘트 조회 실패:', 콜론 포함) 없음(#198 attempt3-P2)"; exit 1; }
+done
+
 echo "[closeout] ci-gate --repo 분기 스모크 (positive + fail-closed)"
 # flag_repo 가 있으면 게이트가 cwd 가 아니라 그 레포 기준으로 SHA·캐시를 잡아야 한다 (#47).
 gate="$PWD/hooks/ci-gate-before-pr-merge.sh"
