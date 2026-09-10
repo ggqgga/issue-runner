@@ -38,28 +38,52 @@ may already be held by a dev server or another tunnel; the smoke would score tha
 pass and closeout closes the deploy issue on it (false green). Pick a fresh port, make
 ssh die if forwarding fails, and probe it once:
 
-**A local port collision is not remote unreachability.** If the chosen port is already
-held, `ExitOnForwardFailure=yes` kills ssh — recording that as "unreachable" throws away
-a healthy route. Retry on another port when the bind fails, and clean up through **the
-control socket this invocation created**, never a broad `pkill` (which would cut someone
-else's tunnel on the same port).
+**A local port collision is not remote unreachability — the axis that splits them is not
+"how many failures" but "which side has the problem."** If the chosen port is already
+held (a bind collision), `ExitOnForwardFailure=yes` kills ssh — that's a **local
+problem**. Retry on another port when the bind fails, and if all five collide on a bind,
+report a dedicated string (below, `tunnel port exhausted` — **a local problem, not
+unreachable**). If instead ssh fails for a **non-bind reason** (host down, auth failure,
+DNS, routing), that's a **remote/path problem** — retrying is pointless, so report
+`tunnel unreachable` right away (don't invent a new string; it folds into the same verdict
+as "bound fine but the probe never answered / timed out," since both are remote-side
+problems). Clean up through **the control socket this invocation created**, never a
+broad `pkill` (which would cut someone else's tunnel on the same port).
+
+**The control socket path does not rely on variable handoff — derive it from the port,
+fixed.** The snippet that opens the tunnel and the "clean up after the smoke" snippet are
+**separate Bash calls**, so a shell variable (`CTL`) does not survive between them. So the
+socket path is derived, fixed, from the port that bound successfully
+(`/tmp/smoke-tun-<port>.sock`) instead of a random `mktemp` value — the port is printed
+verbatim in the tunnel snippet's output, so the cleanup snippet can reconstruct the same
+path from just that number:
 
 ```bash
-CTL=$(mktemp -u /tmp/smoke-tun-XXXXXX.sock); ERR=$(mktemp); PORT=""
+ERR=$(mktemp); PORT=""; CTL=""; ALL_BIND=1
 for _try in 1 2 3 4 5; do
   P=$(( 39000 + RANDOM % 1000 ))
-  if ssh -f -N -M -S "$CTL" -o ExitOnForwardFailure=yes \
+  C="/tmp/smoke-tun-$P.sock"          # socket path = derived fixed from port (no variable handoff)
+  if ssh -f -N -M -S "$C" -o ExitOnForwardFailure=yes \
        -L "127.0.0.1:$P:127.0.0.1:<remote port>" <ssh host alias> 2>"$ERR"; then
-    PORT=$P; break                      # bound successfully
+    PORT=$P; CTL=$C; break            # bound successfully
   fi
-  grep -qi 'bind\|address already in use' "$ERR" || break   # not a bind problem — retrying is pointless
+  # The stderr ExitOnForwardFailure=yes produces on a bind failure is "bind: Address
+  # already in use" (or similar) — that's what this grep matches. Non-bind failures it
+  # does NOT match: "Could not resolve hostname" (DNS) · "Connection refused"/"No route
+  # to host" (host down, routing) · "Permission denied" (auth failure). Those are
+  # pointless to retry on another port, so break immediately.
+  grep -qi 'bind\|address already in use' "$ERR" || { ALL_BIND=0; break; }   # remote/path problem
 done
-if [ -n "$PORT" ] && curl -fsS --connect-timeout 3 --max-time 10 \
+if [ -z "$PORT" ] && [ "$ALL_BIND" = 1 ]; then
+  echo "tunnel port exhausted"        # five bind collisions — a local problem, not unreachable
+elif [ -z "$PORT" ]; then
+  echo "tunnel unreachable"           # non-bind ssh failure (host down/auth/DNS/routing) — remote/path problem
+elif curl -fsS --connect-timeout 3 --max-time 10 \
      "http://127.0.0.1:$PORT/up" -o /dev/null; then
-  echo "tunnel ok on $PORT"            # ← smoke URL is http://127.0.0.1:$PORT
+  echo "tunnel ok on $PORT, control socket $CTL"   # ← smoke URL is http://127.0.0.1:$PORT
 else
-  echo "tunnel unreachable"            # five collisions · remote silent · response too slow (>10s)
-  ssh -S "$CTL" -O exit <ssh host alias> 2>/dev/null || true   # failure path: tear down now
+  echo "tunnel unreachable"           # bound fine, but remote silent · response too slow (>10s)
+  ssh -S "$CTL" -O exit <ssh host alias> 2>/dev/null || echo "control socket teardown failed: $CTL"
 fi
 rm -f "$ERR"
 ```
@@ -67,19 +91,29 @@ rm -f "$ERR"
 **On `tunnel ok`, leave the tunnel up and run the whole Chrome smoke through it** — tearing
 it down right after the probe means you never see the screen you came to check (all you
 verified is `/up`). Clean up after the smoke finishes, once, on **every** path — pass,
-fail, or abort:
+fail, or abort — by reconstructing the same path from the port number printed above
+(carry over the digits, not a variable):
 
 ```bash
-ssh -S "$CTL" -O exit <ssh host alias> 2>/dev/null || true   # common cleanup after the smoke
+CTL="/tmp/smoke-tun-<PORT>.sock"   # <PORT> = the port number from the tunnel snippet's output (e.g. "tunnel ok on 39441" → 39441)
+if [ -S "$CTL" ]; then
+  ssh -S "$CTL" -O exit <ssh host alias> 2>/dev/null || echo "control socket teardown failed: $CTL"
+else
+  echo "control socket not found (path mismatch or already cleaned up): $CTL"   # never swallow this silently
+fi
 ```
 
-Only `tunnel unreachable` means unreachable — the loop above already filtered out bind
-collisions, and `--max-time` folds a silent or slow remote into the same verdict after 10s
-so closeout never hangs. Clean up through the control socket (`-O exit`) only — a broad `pkill` on the
-port string cuts other people's tunnels using that port. Find `<ssh host alias>`/`<remote port>` in that
-repo's deploy docs (BoDAT: `bodat-mini` on the office LAN, `bodat-remote` from outside,
-port 3000). If you cannot find them, do not invent them — report
-`스모크 skip: tunnel route unknown (<repo>)`.
+Only `tunnel unreachable` means unreachable — the loop above already filtered five bind
+collisions into their own `tunnel port exhausted` verdict (classified as a local problem —
+a skip reason, not counted toward unreachable), and the other two failure paths — ① ssh
+failing for a non-bind reason, ② bound fine but the remote is silent or too slow
+(`--max-time` cuts it off after 10s so closeout never hangs) — both fold into the same
+string, since both are remote/path problems. Clean up through the
+control socket (`-O exit`) only — a broad `pkill` on the port string cuts other people's
+tunnels using that port. If the socket can't be found (`-S` fails), don't swallow it with
+`|| true` — say so. Find `<ssh host alias>`/`<remote port>` in that repo's deploy docs
+(BoDAT: `bodat-mini` on the office LAN, `bodat-remote` from outside, port 3000). If you
+cannot find them, do not invent them — report `스모크 skip: tunnel route unknown (<repo>)`.
 
 **Output contract.** One line per check item with `pass`/`fail`/`skip` and a rationale,
 then a final summary `스모크: <passed>/<total> 통과` (or `스모크 skip: <reason>`).
