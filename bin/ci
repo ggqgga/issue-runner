@@ -183,9 +183,19 @@ echo "[closeout] ①-b CONFLICTING 입양의 반송 게이트 배선 — 한/영
 # CONFLICTING 은 finish-classify 를 건너뛰므로, 반송 안전망은 프로즈가 bounce-state.sh 를
 # 직접 부르는 배선 하나로만 선다. 그 호출이 사라지면 #196 사고(살아있는 워커의 PR 입양·
 # rebase)가 그대로 되살아난다 — 문서 회귀를 여기서 문다.
+# 존재만 보면 문서 아무 데나 적혀 있어도 통과한다(사전 리뷰 NIT) — **1) CONFLICTING 절
+# 안**에 있는지까지 본다. 헤더 문구는 번역되므로 언어 불변 앵커를 쓴다: 호출 줄
+# (`$SCRIPTS/bounce-state.sh`)이 2) 절의 첫 줄(`$SCRIPTS/finish-classify.sh`)보다 **앞**이어야
+# 1) 안이다.
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
-  grep -qF 'bounce-state.sh' "$f" \
-    || { echo "  ✗ $f 에 ①-b CONFLICTING 반송 게이트(bounce-state.sh) 배선 없음"; exit 1; }
+  b_line=$(grep -nF '$SCRIPTS/bounce-state.sh' "$f" | head -1 | cut -d: -f1)
+  fc_line=$(grep -nF '$SCRIPTS/finish-classify.sh' "$f" | head -1 | cut -d: -f1)
+  [ -n "$b_line" ] \
+    || { echo "  ✗ $f 에 ①-b CONFLICTING 반송 게이트(\$SCRIPTS/bounce-state.sh) 호출 없음"; exit 1; }
+  [ -n "$fc_line" ] \
+    || { echo "  ✗ $f 에 \$SCRIPTS/finish-classify.sh 앵커 없음 — 가드가 의미를 잃었다"; exit 1; }
+  [ "$b_line" -lt "$fc_line" ] \
+    || { echo "  ✗ $f: bounce-state 호출(줄 $b_line)이 2) finish-classify 절(줄 $fc_line) 뒤다 — 1) CONFLICTING 절 안이어야 한다"; exit 1; }
 done
 
 echo "[closeout] ci-pass 로컬 CI 분기 세 결과 구분 스모크 (#70 — pass=0/fail=1/부재=2)"
