@@ -1338,10 +1338,20 @@ echo "[#185] 워커 템플릿 CI 큐 대기 규율 문서화 검사 — 한/영 
 # (#185 배경). 직접호출 금지·중복실행 금지 규율과, 큐가 실제로 내는 두 실패 모드
 # (폐기=HEAD 불일치·중단=짧은 타임아웃)가 워커 템플릿 9단계 한/영 양쪽에 있어야 한다.
 for f in references/worker-template.md references/worker-template.en.md; do
-  for tok in 'ps -Ao pid,etime,command' 'queue.log' '폐기' '중단(INT/TERM)' 'CI 대기 중'; do
+  for tok in 'ci-queue.sh status' 'queue.log' '폐기' '중단(INT/TERM)' 'CI 대기 중'; do
     grep -qF -- "$tok" "$f" || { echo "  ✗ $f 에 CI 큐 대기 규율 토큰 없음: $tok"; exit 1; }
   done
+  # 겹침 자가검사 회귀 가드 — `ps … | grep '[b]in/ci'` 는 다른 worktree·다른 레포의 CI 까지
+  # 잡아 이 워커가 직렬 큐에 줄서는 것조차 막는다(#189 리뷰 P2). 되살아나면 실패.
+  if grep -nF -- 'ps -Ao pid,etime,command' "$f"; then
+    echo "  ✗ $f: 전역 bin/ci 자가검사가 되살아남 — 겹침은 ci-queue.sh 직렬화에 맡겨라"
+    exit 1
+  fi
 done
+grep -qF -- '겹침은 네가 막지 마라' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 '겹침 자가검사 금지' 불릿 없음"; exit 1; }
+grep -qF -- 'Do not police overlap yourself' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 'Do not police overlap yourself' 불릿 없음"; exit 1; }
 # 위 다섯 토큰은 언어불변(명령·로그 원문)이라 "bin/ci 직접호출 금지"(계획 항목 a)·
 # "CI 무관한 일 먼저"(계획 항목 d) 두 불릿이 지워져도 안 걸린다 — 언어별 문구를 따로 문다.
 grep -qF -- '`bin/ci` 를 직접 부르지 마라' references/worker-template.md \
@@ -1375,5 +1385,20 @@ grep -qF -- 'CI 대기 중' SKILL.en.md || { echo "  ✗ SKILL.en.md working 항
 grep -qF -- 'SendMessage' SKILL.en.md || { echo "  ✗ SKILL.en.md 에 SendMessage 재개 지시 없음"; exit 1; }
 grep -qF -- 'Do not remove the worktree or release the claim' SKILL.en.md \
   || { echo "  ✗ SKILL.en.md 에 CI 대기 재개 갈래의 worktree 제거·claim 해제 금지 명문화 없음"; exit 1; }
+# 재개 경로는 실패 모드가 크다(claim·worktree 무한 정체) — 근거 없이 지시만 남으면
+# 다음 디스패처가 못 믿고 사망 처리로 샌다(#189 리뷰 P1). 근거(계약문 인용·운영 실측)와
+# 재개 실패 시 폴백(worktree·브랜치 재사용 대체 디스패치)이 같은 자리에 있어야 한다.
+grep -qF -- 'continue a previously spawned agent with its context intact' SKILL.md \
+  || { echo "  ✗ SKILL.md 에 SendMessage 재개 근거(Agent 툴 계약문 인용) 없음"; exit 1; }
+grep -qF -- 'the same task-id may notify more than once' SKILL.md \
+  || { echo "  ✗ SKILL.md 에 SendMessage 재개 근거(완료 알림 note 인용) 없음"; exit 1; }
+grep -qF -- '기존 worktree·브랜치를 그대로 재사용해 대체 워커를 디스패치' SKILL.md \
+  || { echo "  ✗ SKILL.md 에 재개 실패 시 폴백(worktree 재사용 대체 디스패치) 없음"; exit 1; }
+grep -qF -- 'continue a previously spawned agent with its context intact' SKILL.en.md \
+  || { echo "  ✗ SKILL.en.md 에 SendMessage 재개 근거(Agent 툴 계약문 인용) 없음"; exit 1; }
+grep -qF -- 'the same task-id may notify more than once' SKILL.en.md \
+  || { echo "  ✗ SKILL.en.md 에 SendMessage 재개 근거(완료 알림 note 인용) 없음"; exit 1; }
+grep -qF -- 'dispatch a replacement worker' SKILL.en.md \
+  || { echo "  ✗ SKILL.en.md 에 재개 실패 시 폴백(worktree 재사용 대체 디스패치) 없음"; exit 1; }
 
 echo "CI pass"

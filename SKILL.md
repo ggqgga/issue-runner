@@ -128,6 +128,20 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   그 태스크에 재개 메시지를 보내 워커를 깨워라(보고에 적힌 "다음 할 일"을 이어가게
   하라는 한 줄이면 된다). 재개했으면 ④ Report 의 `보수` 에 `#<num>(CI 대기 재개)`
   로 적어라. 이 형식이 아니면(진짜 사망) 아래로 이어간다.
+  **근거 — 턴이 끝난 백그라운드 서브에이전트도 `SendMessage` 로 깨어난다.** ⑴ Agent 툴
+  계약문이 `SendMessage` 를
+  "continue a previously spawned agent with its context intact"
+  로 규정한다(스폰이 끝난 뒤를 전제한 문장이다). ⑵ 백그라운드 태스크의 완료
+  알림(task-notification) note 도 "The user can send it another message and resume it,
+  so the same task-id may notify more than once" 라고 못박는다 — **완료 알림은 "턴이
+  끝났다"이지 "태스크가 소멸했다"가 아니다.** ⑶ 운영 실측: 2026-09-10~11 하루에 5건
+  (bodat #4959·#4927·#4957·#4971 · runner #188)을 이 경로로 깨워 **전부 재개돼 작업을
+  마쳤다**(같은 task-id 로 완료 알림이 두 번 왔다).
+  **폴백 — 재개 메시지에도 응답이 없으면**(태스크가 정말 회수된 드문 경우) claim 을 풀지
+  말고 **기존 worktree·브랜치를 그대로 재사용해 대체 워커를 디스패치**하라 —
+  `make-worktree.sh` 가 기존 트리를 `exists:` 로 재사용하고, push 된 커밋이 자산이다.
+  **새 claim 도, 새 PR 도 만들지 않는다**(열린 PR 이 있으면 그걸 이어 쓰게 하라). 이
+  폴백까지 실패하면 그때 아래 진짜 사망 경로로 내려간다.
   죽었고 push 된 커밋이 있으면 ② 의 보수 대상으로. 커밋이 전혀 없으면
   claim 해제 **전에** 이슈 최신 코멘트를 확인하라 —
   `gh issue view <num> --repo <repo> --json comments --jq '.comments | last.body'`
