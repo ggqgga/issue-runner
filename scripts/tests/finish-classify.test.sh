@@ -766,6 +766,55 @@ esac
 STUB
 check_h "helper: 재심 마커 없는 해제는 종전대로 사람 신호→rc0·시각" 0 "2026-07-05T10:30:00Z"
 
+# h5c) **핵심 회귀 가드 (#174 재작업 attempt 3 — 반송 P1)** — `<!-- policy-review: kept -->`
+#      는 "사람 몫 유지 — 라벨은 안 뗀다" 는 뜻이다(SKILL.md 재심 절차: `kept` 는 라벨을
+#      건드리지 않는다). 그러니 hold-note 이후에 `kept` 마커가 있고 그 **뒤에** 오는
+#      `unlabeled(hold:policy)` 는 재심이 뗀 게 아니라 **사람이 뗀 것일 수밖에 없다** —
+#      `resumed`(기계가 직접 뗀다)와 정반대다. `kept` 를 `resumed` 와 같은 필터에 넣으면
+#      이 해제가 영구 억제된다(사람이 풀어도 새 hold-note 가 안 찍혀 에피소드 경계가
+#      전진하지 않으므로 다음 틱도, 그 다음 틱도 계속 걸린다). → rc0·**시각이 나와야 한다**.
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[
+      {"body":"사람 확인(policy): 질문 한 줄\n<!-- hold-note: policy --><!-- bodat:worker -->","created_at":"2026-07-05T09:00:00Z"},
+      {"body":"재심: 사람 몫 유지 — 판단 근거 부족\n<!-- policy-review: kept --><!-- bodat:worker -->","created_at":"2026-07-05T09:30:00Z"}
+    ]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+check_h "helper: kept 뒤 사람이 뗀 해제는 여전히 사람 신호→rc0·시각" 0 "2026-07-05T10:30:00Z"
+
+# h5d) **짝 — 무회귀** — `resumed` 마커(기계가 직접 뗀다)는 여전히 걸러져야 한다. h5 와
+#      같은 형이지만 h5c 와 나란히 두어 kept/resumed 가 한 쌍으로 갈리는지 못 박는다.
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[
+      {"body":"사람 확인(policy): 질문 한 줄\n<!-- hold-note: policy --><!-- bodat:worker -->","created_at":"2026-07-05T09:00:00Z"},
+      {"body":"재심: 플랜에서 답을 찾음 — 그대로 진행\n<!-- policy-review: resumed --><!-- bodat:worker -->","created_at":"2026-07-05T10:29:50Z"}
+    ]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+check_h "helper: resumed 뒤 기계 해제는 여전히 걸러짐→rc0·무출력(짝)" 0 ""
+
 # ── 실조회 배선 — FC_HOLD_RELEASED_AT 미지정 시 finish-classify 가 헬퍼를 실제로 부른다 ──
 # 위 h1~h4 는 헬퍼 **단독** 계약이고, 아래 둘은 finish-classify → 헬퍼 **배선**을 문다.
 # 이 배선이 끊기면(경로 오타·실행 비트 누락 → exit 126) 프로덕션에선 해제 시각이 항상

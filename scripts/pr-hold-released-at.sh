@@ -56,13 +56,22 @@
 # 그래서 `hold:policy` 의 `unlabeled` 이벤트마다 **기계 재심 여부**를 코멘트로 대조한다
 # (`resume-sweep.sh:396-417` 이 이미 쓰는 관용구 — 에피소드 경계는 마지막
 # `<!-- hold-note: policy -->` 코멘트). 이 이벤트 이전(이하)의 가장 최근 hold-note 를
-# 찾고, 그 hold-note 이후·이 이벤트 이전(이하)에 `<!-- policy-review: resumed -->` 또는
-# `<!-- policy-review: kept -->` 마커 코멘트가 있으면 — 기계가 이미 답했다는 뜻이므로 —
-# 그 해제는 **후보에서 뺀다**(사람 해제로 세지 않는다). hold-note 를 못 찾으면(레거시·
-# 손으로 붙인 홀드) 종전대로 후보로 남긴다 — 증거가 없을 때 과잉 배제하지 않는다.
+# 찾고, 그 hold-note 이후·이 이벤트 이전(이하)에 `<!-- policy-review: resumed -->` 마커
+# 코멘트가 있으면 — 기계가 스스로 답하고 라벨을 뗀 것이므로 — 그 해제는 **후보에서
+# 뺀다**(사람 해제로 세지 않는다). hold-note 를 못 찾으면(레거시·손으로 붙인 홀드)
+# 종전대로 후보로 남긴다 — 증거가 없을 때 과잉 배제하지 않는다.
 # `hold:conflict` 는 이런 자동 재심 경로가 없으므로(SKILL.md 어디에도 없다) 거르지
 # 않는다 — 과잉 억제 방지.
 #
+# ★왜 `resumed` 만이고 `kept` 는 아닌가★ (#174 재작업 attempt 3 — 반송 P1) — 재심
+# 절차의 두 마커는 라벨에 대해 정반대로 움직인다: `resumed` 는 루프가 스스로
+# `transition.sh verify-redispatch` 로 `hold:policy` 를 **뗀다**(그 unlabeled 가 기계
+# 소행). `kept` 는 "사람 몫 유지 — 이유 한 줄" 코멘트만 남기고 **라벨을 안 건드린다**.
+# 그러니 `kept` 마커 뒤에 오는 `unlabeled(hold:policy)` 는 재심이 아니라 **사람이 뗀
+# 것일 수밖에 없다** — 그런데 `kept` 를 이 필터에 넣으면 그 진짜 사람 해제까지
+# "기계가 이미 답했다" 로 버려진다. 사람이 풀어 끝난 홀드엔 새 hold-note 가 안 찍혀
+# 에피소드 경계가 전진하지 않으므로 이 억제는 **영구적**이다(#174 가 없애려던 정체가
+# `kept` 를 거친 건에서 그대로 재현됨 — 실측: BodaT PR #4922·#4917·#4921 계열).
 # 마커 코멘트는 이슈·PR **양쪽에 미러**되는 것을 전제로 한다(issue-runner SKILL.md
 # `policy_review_due` 절이 그렇게 적혀 있다 — hold-note 가 이미 `transition.sh` 로
 # PR·이슈 양쪽에 미러되는 것과 같은 결). 이 헬퍼는 PR 코멘트만 본다(`pr-comments.sh`
@@ -117,7 +126,7 @@ comments=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$pr" 2>/dev/null) || exit 1
 
 at=$(printf '%s' "$events" | jq -r --argjson comments "$comments" '
   def notes: [$comments[] | select(.body | test("<!--\\s*hold-note:\\s*policy\\s*-->")) | .createdAt];
-  def marks: [$comments[] | select(.body | test("<!--\\s*policy-review:\\s*(resumed|kept)\\s*-->")) | .createdAt];
+  def marks: [$comments[] | select(.body | test("<!--\\s*policy-review:\\s*resumed\\s*-->")) | .createdAt];
   (notes) as $n | (marks) as $m
   | [ .[] | . as $e | $e.at as $t
       | if $e.label != "hold:policy" then $t
