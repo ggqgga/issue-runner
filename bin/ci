@@ -765,6 +765,68 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f 의 active 행에 #198 축의 결론(closeout-redispatch = 반송) 없음"; exit 1; }
 done
 
+echo "[closeout] ①-c 시정 행 — 마커가 전이보다 먼저 + 코멘트 실패 시 fail-closed (#198 반송1)"
+# 반송 지시: '전이 성공 + 마커 코멘트 실패' 창에서 배제 마커(BOUNCE_MARKERS) 없이 낡은
+# `머지 판정: ✅` 만 남아, 다음 틱 closeout-eligible.sh 가 그 PR 을 후보로 올릴 수 있었다.
+# 마커를 transition.sh 호출보다 앞에 쓰고, 마커 posting 실패 시 전이를 부르지 않는
+# fail-closed 문장이 시정 행에 있어야 한다. 순서는 실제 호출 문자열의 등장 위치로 잰다
+# (프로즈만 보고 "먼저 쓴다" 라고 주장해도 코드 스니펫 순서가 안 바뀌면 회귀 — 그래서
+# 문장이 아니라 두 리터럴 호출의 인덱스를 비교한다).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  row=$(grep -n '^| \*\*시정\*\*\|^| \*\*Correction\*\*' "$f" | head -1 | cut -d: -f1)
+  [ -n "$row" ] || { echo "  ✗ $f 에 시정/Correction 행 없음"; exit 1; }
+  line=$(sed -n "${row}p" "$f")
+  cpos=$(awk -v s="$line" 'BEGIN{print index(s,"gh pr comment")}')
+  tpos=$(awk -v s="$line" 'BEGIN{print index(s,"transition.sh closeout-redispatch")}')
+  [ "$cpos" -gt 0 ] || { echo "  ✗ $f 시정 행에 gh pr comment(마커) 호출 없음"; exit 1; }
+  [ "$tpos" -gt 0 ] || { echo "  ✗ $f 시정 행에 transition.sh closeout-redispatch 호출 없음"; exit 1; }
+  [ "$cpos" -lt "$tpos" ] \
+    || { echo "  ✗ $f 시정 행 — gh pr comment(마커)가 transition.sh closeout-redispatch 보다 뒤에 온다(순서 뒤집힘, #198 반송1)"; exit 1; }
+  printf '%s' "$line" | grep -qF 'BLOCKED: 전이 실패 재디스패치-마커' \
+    || { echo "  ✗ $f 시정 행에 마커 코멘트 실패 시 전이를 부르지 않는 fail-closed 문장 없음(#198 반송1)"; exit 1; }
+done
+
+echo "[closeout] 재개표 1단계 마커 — ✅ 접두만 매칭, ⚠ 보류는 매칭 안 함 (반증형, #198 반송2)"
+# 반송 지시: '마감 검증:' 접두만 쓰면 낡은 '마감 검증: ⚠ 보류' 도 매칭돼 1단계(③-1)가
+# 건너뛰어진다 — 보류 뒤 새 커밋이 재검증 없이 머지 게이트로 샌다. 문서가 선언한 접두를
+# 그대로 뽑아 실제 두 문자열(성공 마커 vs 낡은 보류 마커)에 셸 패턴매칭으로 대조한다
+# (프로즈에 "매칭 안 함" 이라고만 적혀 있어도 접두 자체가 여전히 넓으면 이 검사가 잡는다).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) label='1 verify' ;;
+    *) label='1 검증' ;;
+  esac
+  row=$(grep -n "^| $label |" "$f" | head -1 | cut -d: -f1)
+  [ -n "$row" ] || { echo "  ✗ $f 에 재개표 '$label' 행 없음"; exit 1; }
+  line=$(sed -n "${row}p" "$f")
+  prefix=$(printf '%s\n' "$line" | grep -oE '`마감 검증: [^`]*`' | head -1 | tr -d '`')
+  [ -n "$prefix" ] || { echo "  ✗ $f 재개표 1단계 행에서 '마감 검증:' 접두 마커를 못 뽑음"; exit 1; }
+  success_sample="마감 검증: ✅ CLEAN"
+  hold_sample="마감 검증: ⚠ 보류 — 사유"
+  case "$success_sample" in
+    "$prefix"*) : ;;
+    *) echo "  ✗ $f 접두 '$prefix' 가 성공 마커(✅)를 매칭하지 않는다"; exit 1 ;;
+  esac
+  case "$hold_sample" in
+    "$prefix"*) echo "  ✗ $f 접두 '$prefix' 가 낡은 보류 마커(⚠ 보류)까지 과매칭한다(#198 반송2 회귀)"; exit 1 ;;
+    *) : ;;
+  esac
+done
+
+echo "[closeout] ①-c 2) 한쪽에만 결정문이 있는 경우 규칙 — 한/영 SKILL (#198 반송3/P2)"
+# 코덱스 P2: 연결 이슈가 있고 PR·이슈 어느 한쪽에만 결정문이 있으면(이 PR 의 실측 픽스처
+# 형상) "하나도 없음(모호)" 과 헷갈릴 수 있다. 있는 쪽의 방향을 채택한다는 문장이 ①-c
+# 절에 명시돼야 한다.
+grep -q '^## ①-c ' skills/closeout/SKILL.md || { echo "  ✗ SKILL.md 에 ①-c 절 없음"; exit 1; }
+sec_ko=$(awk '/^## ①-c /{on=1} on && /^## / && !/^## ①-c /{exit} on' skills/closeout/SKILL.md)
+printf '%s' "$sec_ko" | grep -qF '한쪽에만 결정문이 있으면' \
+  || { echo "  ✗ SKILL.md ①-c 절에 '한쪽에만 결정문이 있으면' 규칙 없음(#198 P2)"; exit 1; }
+
+grep -q '^## ①-c ' skills/closeout/SKILL.en.md || { echo "  ✗ SKILL.en.md 에 ①-c 절 없음"; exit 1; }
+sec_en=$(awk '/^## ①-c /{on=1} on && /^## / && !/^## ①-c /{exit} on' skills/closeout/SKILL.en.md)
+printf '%s' "$sec_en" | grep -qiF 'only one side has a decision' \
+  || { echo "  ✗ SKILL.en.md ①-c 절에 sole-decision(one-side) 규칙 없음(#198 P2)"; exit 1; }
+
 echo "[closeout] ci-gate --repo 분기 스모크 (positive + fail-closed)"
 # flag_repo 가 있으면 게이트가 cwd 가 아니라 그 레포 기준으로 SHA·캐시를 잡아야 한다 (#47).
 gate="$PWD/hooks/ci-gate-before-pr-merge.sh"

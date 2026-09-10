@@ -96,7 +96,7 @@ resume):
 
 | Step | Marker | Resume judgment |
 |---|---|---|
-| 1 verify | PR comment `마감 검증:` | if present, skip step 1 |
+| 1 verify | PR comment `마감 검증: ✅`(prefix — `마감 검증: ✅ 기각 승계` also matches this prefix) | if present, skip step 1. **`마감 검증: ⚠ 보류` does NOT match** — a PR carrying only a stale hold marker re-runs step 1 (③-1) (#198: a bare `마감 검증:` prefix also caught the hold marker, letting a post-hold commit reach the merge gate without re-verification) |
 | 2 merge | PR `MERGED` | if MERGED, merge is done (includes post-merge worktree cleanup) |
 | 3 reconcile | plan-doc diff (merge commit) + epic comment | if in the merge, done |
 | 4 deploy | `배포 대기:` comment / `deployed:<sha>` | if present, do not re-request |
@@ -301,7 +301,13 @@ Do this for the **PR and the linked issue separately**. `pr-comments.sh` reads
 or only for marker-less comments, finds **no** decision at all and drops every case into ambiguous.
 
 - If the two sides read the **same** direction, that is the direction.
-- If they **differ**, it is **ambiguous** (do not tie-break by timestamp — second granularity).
+- **If only one side has a decision** (the other side has no candidate), **that one side's
+  direction wins.** A linked issue can still carry the decision on only one of the two sources
+  (#198's measured fixture is exactly this shape — the decision lived only on the issue, the PR
+  had no comment). This is different from "neither exists" below — do not fall into ambiguous
+  just because the other side is empty; **read the side that has it.**
+- If **both** sides have a decision and they **differ**, it is **ambiguous** (do not tie-break by
+  timestamp — second granularity).
 - If **neither** exists (the human removed labels with no comment), it is **ambiguous**.
 - **If there is no linked issue**, judge from the PR side alone (no issue-side candidate). If that
   reads *correction*, there is no lane to bounce to — send it down the **same path as ambiguous**
@@ -319,7 +325,7 @@ bad merge) but nobody picks it up: a **silent stall**. That is why the ①-b swe
 
 | Direction | Signal | Action |
 |---|---|---|
-| **Correction** | "the gate is right" · "narrow it / fix it / change it" · implementation instructions · a demand for more tests — **any sentence telling you to change the code** | `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` + on the PR `gh pr comment <pr> --repo <repo> --body "재디스패치: #<issue> — 사람 재심이 시정 방향(<one quoted line from the decision>)`⏎`<!-- bodat:worker -->"`. That marker is in `BOUNCE_MARKERS`, so later ticks' `closeout-eligible.sh` excludes it automatically. **Do not ② Pick.** — **With no linked issue** this transition cannot be called (`closeout-redispatch` requires an issue number: there is no `agent-ready` to return to). There is no lane to bounce to, so take the **same action as the ambiguous row** below and put `시정 방향인데 연결 이슈가 없어 반송 불가` in `--note`. |
+| **Correction** | "the gate is right" · "narrow it / fix it / change it" · implementation instructions · a demand for more tests — **any sentence telling you to change the code** | **Order is fixed — the marker comes before the transition.** First post on the PR `gh pr comment <pr> --repo <repo> --body "재디스패치: #<issue> — 사람 재심이 시정 방향(<one quoted line from the decision>)`⏎`<!-- bodat:worker -->"`, and only **after that posting succeeds** call `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`. That marker is in `BOUNCE_MARKERS`, so later ticks' `closeout-eligible.sh` excludes it automatically — writing the marker first closes the window where "the transition succeeded but the marker comment failed", leaving a stale `머지 판정: ✅` with no exclusion marker (#198 bounce round 1: in that window the next tick behaves as if the direction judgment never ran). **If the marker comment fails to post, do not call the transition** — instead, isomorphic to ①-c's other transition failures, report `BLOCKED: 전이 실패 재디스패치-마커 PR #<pr>(<repo_short>) — <one gh-failure line>` in ④ Report (leave that PR's state untouched and retry next tick — the unresolved `마감 검증: ⚠ 보류` is still on the PR, so `active`/`done_verdict` routes it back to this section again next tick, #198). **Do not ② Pick.** — **With no linked issue** this transition cannot be called (`closeout-redispatch` requires an issue number: there is no `agent-ready` to return to). There is no lane to bounce to, so take the **same action as the ambiguous row** below and put `시정 방향인데 연결 이슈가 없어 반송 불가` in `--note`. |
 | **Rejected** | the conclusion **explicitly** says "the verdict was wrong / a false positive" · "merge as-is" · "no code change needed", and **none** of the correction signals above are present | **② Pick it.** But **do not re-run ③-1** — the code is unchanged, so the same `[P1]` comes back and the PR loops hold↔release forever (the "infinite loop" clause #174 nailed down). Leave `마감 검증: ✅ 기각 승계 — 사람이 판정을 기각(<one quoted line>), ③-1 재실행 안 함`⏎`<!-- bodat:worker -->` on the PR as the **step-1 completion marker** and start ③ **from step 2 (merge)**; the existing `머지 판정: ✅` joins the step-2 merge gate as-is. |
 | **Ambiguous** | questions only, conditional, both mixed, no decision comment, or the comment query failed | `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<one line: is the release's conclusion a rejection or a correction?>"` — hand it back to the human (fail-closed — do not open what is not proven). **Do not ② Pick.** — That transition leaves a fresh `<!-- hold-note: policy -->`, which advances the hold boundary, so this does not spin every tick (the re-attached label also drops it from eligible). But if the human **again** removes the labels with no comment, the same ambiguity repeats — on the **second ambiguous verdict for the same PR**, write `--note` as a **choice** rather than a question (`기각(원안 머지) / 시정(코드 수정) 중 하나로 답해 주세요`) and add `방향 미판정 반복: PR #<pr>(<repo_short>)` to ④ Report's item line so the human sees the repetition. |
 
