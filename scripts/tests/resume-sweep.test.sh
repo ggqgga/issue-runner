@@ -507,6 +507,9 @@ check "제목은 조회조차 안 한다(라벨 축)"   "$(grep -q -- '--json [^
 # 배포 대기 라벨이 붙어 있어도 `hold:*` 가 있으면 ② 는 그 행을 아예 보지 않는다(무편집 통과)
 # — 판정을 가드 밖으로 끌어내는 리팩터가 이 단언 없이는 전건 통과한다. ③ 이 정상적으로
 # 집어 가는지(policy_review_due)까지 확인해 "흘러갔다" 를 실증한다.
+# 이 테스트가 그대로 #201 Test plan ⓒ(deploy-wait + hold:policy + 노트 **있음** → 종전대로
+# policy_review_due 창 판정)다 — #201 의 no-note 갈래 변경이 이 갈래(due)엔 손대지 않았다는
+# 회귀 증거로 겸한다(사전 리뷰 지적 대응 — 신규 diff 에는 없던 기존 테스트라 안 보였다).
 setup "needs-human,deploy-wait,hold:policy" 200 0
 jq --arg b "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->" \
   '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/c.tmp" && mv "$tmp/c.tmp" "$tmp/comments.json"
@@ -526,10 +529,32 @@ check "두 축 동존: warn 없음"               "$(no_ev warn)"
 
 # ── policy 재심 due(#155) — 창 넘긴 hold:policy 에 재심 마커가 없으면 1회 이벤트, 무편집
 note() { jq --arg b "$1" '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/c.tmp" && mv "$tmp/c.tmp" "$tmp/comments.json"; }
+# ⓑ(#201) 회귀 방지 — 배포 대기가 **아닌** no-note 는 계속 warn 이다(진짜 규약 위반).
 setup "needs-human,hold:policy,agent-ready" 200 0
 run
 check "policy 재심 질문 없음: warn(no-note)" "$(printf '%s' "$out" | grep -q 'hold-note' && echo ok || echo no)"
 check "policy 재심 질문 없음: due 안 냄" "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+check "policy 재심 질문 없음(배포 대기 아님): note 없음" "$(no_ev note)"
+
+# ── ⓐ(#201) 배포 대기 + hold:policy + no-note → warn 아니라 note(조치 불가 반복 억제) ──
+# ②(사유 없는 needs-human)와 같은 deploy_wait_row 공유 술어를 쓴다. 실측 근거는
+# ggqgga/BodaT#5013 — 배포 레인이 transition.sh 를 거치지 않고 라벨을 직접 붙여 사람이
+# 답할 질문이 코멘트 산문에 있었는데도 `<!-- hold-note: policy -->` 마커가 없었다.
+setup "needs-human,deploy-wait,hold:policy" 200 0
+run
+check "배포대기 policy no-note: note"          "$(has_ev note)"
+check "배포대기 policy no-note: warn 아님"      "$(no_ev warn)"
+check "배포대기 policy no-note: due 안 냄"      "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+check "배포대기 policy no-note: 문구에 deploy-wait·hold:policy" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("deploy-wait")) and (.msg | test("hold:policy"))' >/dev/null 2>&1 && echo ok || echo no)"
+check "배포대기 policy no-note: 편집 0회"       "$(none 'issue edit')"
+
+# ── ⓐ'(#201) full-cycle 과도기 축도 같은 술어를 공유한다(②와 동일 트레이드오프) ──
+setup "needs-human,full-cycle,hold:policy" 200 0
+run
+check "full-cycle policy no-note: note"        "$(has_ev note)"
+check "full-cycle policy no-note: warn 아님"    "$(no_ev warn)"
+
 setup "needs-human,hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 run

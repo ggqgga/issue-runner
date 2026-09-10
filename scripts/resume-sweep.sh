@@ -15,7 +15,8 @@
 #               warn 과 섞으면 "손대지 않았다" 가 거짓이 되어, 보고를 읽는 쪽이 GitHub 상태를
 #               되짚어야 할 때(사람 확인)와 그냥 다음 틱을 기다리면 될 때를 못 가른다.
 #   note      — **아무것도 안 건드린** 정보 줄. warn 과 달리 조치할 것이 **없는** 정상 상태다
-#               (배포 대기 이슈의 사유 없는 needs-human). 버리지 않고 남기는 이유는 emit_note 주석.
+#               (배포 대기 이슈의 사유 없는 needs-human · #201: 배포 대기 이슈의 질문 없는
+#               hold:policy). 버리지 않고 남기는 이유는 emit_note 주석.
 #
 # 상태 파일 없음 — 재개 횟수는 **이슈 코멘트에 붙은 마커**(`<!-- ladder-resume: N -->`)의
 # 개수가 SSOT 다. 재개 코멘트가 자기 마커를 품으므로 카운터와 알림이 한 번의 append 로 끝나고,
@@ -100,11 +101,30 @@ emit_warn_after_edit() {  # emit_warn_after_edit <repo> <num> <msg>
 # 조치할 것이 **없는** 정보 줄. warn 의 정의를 "루프가 교정 가능한 불변식 위반" 으로 좁히고
 # (형제 이슈 #188 이 loop-status.sh 에서 정한 정의) 거기서 빠지는 건을 여기로 내린다.
 # 그냥 빼지 않는 이유: 관측에서 통째로 사라지면 그 자체가 다른 사각지대가 된다.
-# msg 는 이 파일이 쓰는 고정 문구다 — 라벨 이름을 끼워 넣지만 그 값은 아래 ② 가 고르는
-# **jq 문자열 리터럴 두 개("deploy-wait"·"full-cycle") 중 하나**이지 GitHub 에서 온 텍스트가
-# 아니다. 따옴표·개행이 못 들어오므로 printf JSON 포맷 계약이 깨질 경로가 없다.
+# msg 는 이 파일이 쓰는 고정 문구다 — 라벨 이름을 끼워 넣지만 그 값은 아래 deploy_wait_row 가
+# 고르는 **jq 문자열 리터럴 두 개("deploy-wait"·"full-cycle") 중 하나**이지 GitHub 에서 온
+# 텍스트가 아니다. 따옴표·개행이 못 들어오므로 printf JSON 포맷 계약이 깨질 경로가 없다.
 emit_note() {  # emit_note <repo> <num> <msg>
   printf '{"event":"note","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$3"
+}
+
+# 배포 대기 축 판정 — ②(사유 없는 needs-human)·③(policy 재심 no-note, #201) 이 공유하는
+# **한 벌** 술어다. 복제하면 두 벌이 나중에 갈라진다(#201 이 막으려는 것 자체).
+# 라벨만 본다 — 제목은 사람이 자유롭게 쓰므로 판별 축이 될 수 없다(그래서 이 스크립트는
+# title 을 조회조차 하지 않는다). `deploy-wait` 가 정본 축이다(closeout 이 배포 대기 이슈에
+# 붙인다) — 그래서 둘 다 있으면 이쪽을 문구에 남긴다. `full-cycle` 은 **과도기 축**이다:
+# 사람 세션 스킬 full-cycle §7 이 배포 대기 이슈에 `needs-human`+`full-cycle` 만 붙이고
+# `deploy-wait` 를 빠뜨려서 생긴 구멍인데, 그 스킬은 이 레포 밖이라 여기서 못 고친다.
+# **그쪽이 `deploy-wait` 를 붙이는 날 이 갈래(full-cycle)는 뗀다** — 원칙적 축으로 오해하지
+# 마라. 번호와 축을 **한 번의 jq 로 함께** 뽑는다 — 호출부(② 는 needs-human 이슈 수만큼,
+# ③ 은 hold:policy 이슈 수만큼) 마다 필드별 프로세스를 띄우면 조회보다 파싱이 더 비싸진다.
+deploy_wait_row() {  # deploy_wait_row <row-json> — stdout: "<number>\t<axis>"(axis: deploy-wait|full-cycle|""). jq 실패 시 둘 다 빈 값 — 빈 축은 호출부에서 "해당 없음" 으로 떨어진다(강등이 조회 실패를 타고 번지지 않는 방향).
+  printf '%s' "$1" | jq -r '
+    [.labels[].name] as $n
+    | [(.number|tostring),
+       (if ($n | index("deploy-wait") != null) then "deploy-wait"
+        elif ($n | index("full-cycle") != null) then "full-cycle"
+        else "" end)] | @tsv' 2>/dev/null
 }
 
 # ── GitHub 읽기 헬퍼 — 전부 **조회 실패는 rc 1** ──────────────────────────
@@ -402,29 +422,11 @@ while IFS= read -r repo; do
         # 불변식 위반일 때만**(형제 이슈 #188 이 loop-status.sh 에서 정한 정의). 그래서 note 로
         # 강등한다. 조용히 버리지 않는 이유는 emit_note 주석 참고.
         #
-        # 축은 **라벨만** 본다 — 제목은 사람이 자유롭게 쓰므로 판별 축이 될 수 없다(그래서 이
-        # 스크립트는 title 을 조회조차 하지 않는다). 제외 판정도 **같은 row 에 대한 jq 테스트**로만
-        # 한다: 별도 `gh issue list --label deploy-wait` 로 제외 집합을 만들면 그 조회의 실패가
-        # "배포 대기 이슈 없음" 으로 위장돼 전부 다시 warn 이 된다(조회 실패를 '해당 없음' 으로
-        # 삼키지 않는다는 이 파일의 규율).
-        #
-        # `deploy-wait` 가 정본 축이다(closeout 이 배포 대기 이슈에 붙인다) — 그래서 둘 다 있으면
-        # 이쪽을 문구에 남긴다. `full-cycle` 은 **과도기 축**이다: 사람 세션 스킬 full-cycle §7 이
-        # 배포 대기 이슈에 `needs-human`+`full-cycle` 만 붙이고 `deploy-wait` 를 빠뜨려서 생긴
-        # 구멍인데, 그 스킬은 이 레포 밖이라 여기서 못 고친다. **그쪽이 `deploy-wait` 를 붙이는 날
-        # 이 갈래(full-cycle)는 뗀다** — 원칙적 축으로 오해하지 마라. 그때까지의 대가는 `full-cycle`
-        # 이 붙은 구현 이슈까지 note 로 내려간다는 것이고, 이는 의도된 트레이드오프다
-        # (실측상 그런 이슈는 계정 전체에 0건 — 2026-09-11).
-        # 번호와 축을 **한 번의 jq 로 함께** 뽑는다 — 이 루프는 레포의 needs-human 이슈 수만큼
-        # 도니 필드마다 프로세스를 띄우면 조회보다 파싱이 더 비싸진다(read_state 가 같은 이유로
-        # 같은 모양이다). jq 가 실패하면 둘 다 비고, 빈 축은 아래에서 warn 으로 떨어진다 —
-        # 강등이 조회 실패를 타고 번지지 않는 방향이다.
-        row_tsv=$(printf '%s' "$row" | jq -r '
-          [.labels[].name] as $n
-          | [(.number|tostring),
-             (if ($n | index("deploy-wait") != null) then "deploy-wait"
-              elif ($n | index("full-cycle") != null) then "full-cycle"
-              else "" end)] | @tsv' 2>/dev/null) || row_tsv=""
+        # 제외 판정도 **같은 row 에 대한 jq 테스트**로만 한다: 별도 `gh issue list --label
+        # deploy-wait` 로 제외 집합을 만들면 그 조회의 실패가 "배포 대기 이슈 없음" 으로
+        # 위장돼 전부 다시 warn 이 된다(조회 실패를 '해당 없음' 으로 삼키지 않는다는 이 파일의
+        # 규율). 축 판정 자체는 deploy_wait_row 공유 술어(위 정의, #201) — 두 벌 금지.
+        row_tsv=$(deploy_wait_row "$row") || row_tsv=""
         hnum=${row_tsv%%$'\t'*}
         dwlabel=${row_tsv#*$'\t'}
         if [ -n "$dwlabel" ]; then
@@ -465,7 +467,21 @@ while IFS= read -r repo; do
                | if $r > 0 then "reviewed" else "due" end end' 2>/dev/null || echo "parse-fail")
       case "$pstate" in
         reviewed) continue ;;   # 이번 홀드는 이미 1회 재심됨 — 사람이 라벨을 뗄 때까지 다시 안 묻는다
-        no-note)  emit_warn "$repo" "$pnum" "hold:policy 인데 질문(hold-note) 코멘트가 없다 — 재심 불가, --note 로 다시 걸거나 사람이 처리"; continue ;;
+        no-note)
+          # 배포 대기 이슈는 배포 레인이 transition.sh 를 거치지 않고 라벨·코멘트를 직접
+          # 붙인다(실측 #201: ggqgga/BodaT#5013 — 사람이 답할 질문이 코멘트 산문에 있었는데도
+          # `<!-- hold-note: policy -->` 마커가 없었다). 그 레인은 이 레포 밖이라 마커 규약을
+          # 강제할 수 없으므로, 여기서는 "배포 게이트 표시"로 보고 note 로 내린다(②와 같은 축,
+          # 같은 이유 — 두 벌 금지 #201). 배포 대기가 **아닌** no-note 는 여전히 규약 위반이라
+          # warn 유지(회귀 없음).
+          dw_row=$(deploy_wait_row "$row") || dw_row=""
+          dwlabel=${dw_row#*$'\t'}
+          if [ -n "$dwlabel" ]; then
+            emit_note "$repo" "$pnum" "배포 대기(라벨 $dwlabel) — hold:policy 이지만 질문(hold-note) 없이 부착돼 재심 대상 아님"
+          else
+            emit_warn "$repo" "$pnum" "hold:policy 인데 질문(hold-note) 코멘트가 없다 — 재심 불가, --note 로 다시 걸거나 사람이 처리"
+          fi
+          continue ;;
         due) ;;
         *) emit_warn "$repo" "$pnum" "재심 마커 해석 실패 — 이번 틱은 건너뛴다"; continue ;;
       esac
