@@ -139,6 +139,21 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   "다음 할 일" / next step it reported). Once resumed, record it in ④ Report's
   `maintained` line as `#<num>(resumed from CI wait)`. If the message is not in that
   format (a genuine death), continue below.
+  **Evidence — a background subagent whose turn has ended is still resumable with
+  `SendMessage`.** (1) The Agent tool contract defines `SendMessage` as
+  "continue a previously spawned agent with its context intact"
+  (a sentence premised on the spawn being over). (2) The note on a background task's completion notification
+  (task-notification) states: "The user can send it another message and resume it, so
+  the same task-id may notify more than once" — **a completion notification means "the
+  turn ended", not "the task is gone".** (3) Observed in operation: over 2026-09-10~11,
+  five workers (bodat #4959·#4927·#4957·#4971 · runner #188) were woken this way and
+  **all of them resumed and finished their work** (the same task-id notified twice).
+  **Fallback — if the resume message also gets no response** (the rare case where the
+  task really is gone), do not release the claim: **dispatch a replacement worker
+  reusing the existing worktree and branch** — `make-worktree.sh` reuses an existing
+  tree via `exists:`, and the pushed commits are the asset. **Do not create a new claim
+  and do not open a new PR** (if a PR is already open, have it continue that one). Only
+  if this fallback also fails do you fall through to the genuine-death path below.
   If it is dead and there are pushed commits,
   treat it as a maintenance target for ②. If there are no commits at all, check
   the issue's latest comment **before** releasing the claim —

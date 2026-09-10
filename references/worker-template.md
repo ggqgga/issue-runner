@@ -104,9 +104,15 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
      걸지 말고, 먼저 `<sha>.result` 파일(경로는 `run-local-ci.sh` 자신의 출력에 찍힌다 —
      `~/.claude/.local-ci/<레포 slug>/<sha>.result`)이 이미 생겼는지 가볍게 확인하라
      (같은 SHA 를 동시에 처리 중이던 다른 세션이 먼저 끝냈을 수 있다).
-   - **CI 를 겹쳐 걸지 마라** — 걸기 전 `ps -Ao pid,etime,command | grep '[b]in/ci'` 로
-     이미 도는 게 없는지 확인하라(같은 worktree 에 두 개가 겹치면 테스트 DB·픽스처를
-     공유해 양쪽 다 죽는다).
+   - **겹침은 네가 막지 마라 — 큐가 막는다.** 다른 CI 가 도는지 `ps` 로 살펴 "돌고
+     있으니 걸지 말자"고 판단하지 마라: 그 검사는 **다른 worktree·다른 레포**의
+     `bin/ci` 까지 잡아 네가 **줄서는 것조차** 막는다 — 직렬 큐가 해주는 대기를 스스로
+     없애는 셈이다. `ci-queue.sh` 가 박스 전체에서 `bin/ci` 를 한 번에 하나만 돌리고
+     (티켓 FIFO) 같은 SHA 는 결과를 재사용하니(dedup), **그냥 걸고 기다려라.** 내
+     SHA 가 큐 어디쯤인지 알고 싶으면 `scripts/ci-queue.sh status <SHA>` 로 물어라
+     (`running` / `queued <n>` / `none`). 겹침 방지는 "직접 호출 금지"(위 첫 불릿)로
+     이미 충분하다 — 큐를 거치지 않고 부른 `bin/ci` 만이 테스트 DB·픽스처를 공유해
+     양쪽 다 죽인다.
    - 대기가 길 것 같으면(다른 워커 CI 가 앞서 있으면) CI 와 무관한 일(PR 본문 초안·
      9-b 사전 리뷰 준비)을 **먼저 끝내둔 뒤에** 호출하라 — 그 호출 하나가 이번 턴의
      남은 시간을 다 써도 아깝지 않게.

@@ -111,9 +111,16 @@ Procedure:
      whether the `<sha>.result` file (its path is printed by `run-local-ci.sh` itself —
      `~/.claude/.local-ci/<repo slug>/<sha>.result`) already exists (another session
      working the same SHA may have finished it first).
-   - **Do not stack a second CI run** — before queuing one, check
-     `ps -Ao pid,etime,command | grep '[b]in/ci'` for one already running (two in the
-     same worktree share a test DB/fixtures and both die).
+   - **Do not police overlap yourself — the queue does it.** Never scan with `ps` for
+     another running CI and conclude "one is running, so I should not queue": that check
+     also matches `bin/ci` in **another worktree or another repo**, so it stops you from
+     even **getting in line** — it removes the very wait the serial queue exists to give
+     you. `ci-queue.sh` runs `bin/ci` one at a time box-wide (ticket FIFO) and reuses the
+     result for an identical SHA (dedup), so **just queue it and wait.** To see where
+     your SHA sits, ask `scripts/ci-queue.sh status <SHA>` (`running` / `queued <n>` /
+     `none`). Overlap is already prevented by "do not call it directly" (first bullet) —
+     only a `bin/ci` invoked outside the queue can share a test DB/fixtures and kill both
+     runs.
    - If the wait looks likely to be long (another worker's CI is ahead), **finish**
      CI-independent work first (drafting the PR body, preparing 9-b) **before** making
      the call — so that if the single call eats the rest of this turn's time, it is not
