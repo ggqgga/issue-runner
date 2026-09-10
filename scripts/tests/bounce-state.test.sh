@@ -121,6 +121,39 @@ run_case "재디스패치 채널도 잡는다→bounced" bounced '[
   {"body":"재디스패치: #166 — 완결 유실(검증 전 사망) <!-- bodat:worker -->","createdAt":"2026-09-10T07:30:00Z"}
 ]'
 
+# ── #212: 콜론 리터럴 매칭이 문구 변형을 놓친다 ──────────────────────────
+# 마커 판정을 콜론 리터럴 startswith 에서 **접두(단어) 매칭**으로 넓힌다 — 코멘트
+# 첫 줄이 `재디스패치`/`재검증 실패` 로 **시작**하면 뒤에 무엇이 오든(`:`·` attempt N`·
+# `(round 2)`) 반송으로 센다. 실사고(PR #202): 콜론 없는 `재디스패치 attempt 3 — …`
+# 를 옛 구현이 못 잡아 closeout-eligible.sh 가 반송된 PR 을 다시 후보로 올렸다.
+
+# 5-b) 콜론 없는 `attempt N` 변형(closeout 채널) → bounced. 사고 재현 형태 그대로.
+run_case "#212 콜론 없는 attempt 변형→bounced" bounced '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-09-11T07:00:00Z"},
+  {"body":"재디스패치 attempt 3 — 마감 검증 BLOCKER(코드 회귀) <!-- bodat:worker -->","createdAt":"2026-09-11T07:30:00Z"}
+]'
+
+# 5-c) 콜론 있는 기존 형태도 **여전히** bounced — 접두 매칭으로 넓혀도 무회귀.
+run_case "#212 콜론 있는 기존 형태도 무회귀→bounced" bounced '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-09-11T07:00:00Z"},
+  {"body":"재디스패치: #193 — 마감 검증 BLOCKER(코드 회귀) <!-- bodat:worker -->","createdAt":"2026-09-11T07:30:00Z"}
+]'
+
+# 5-d) verify-runner 채널의 콜론 없는 변형(`(round 2)`) → bounced. 두 채널 모두
+#      같은 규칙을 적용한다는 계약(BOUNCE_MARKERS 한 자리).
+run_case "#212 재검증 실패 콜론 없는 (round 2) 변형→bounced" bounced '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-09-11T07:00:00Z"},
+  {"body":"재검증 실패 (round 2) — E2E 실패 <!-- bodat:worker -->","createdAt":"2026-09-11T07:30:00Z"}
+]'
+
+# 5-e) **과잉 매칭 금지**: 본문 중간에 `재디스패치` 를 언급만 하는 설명 코멘트(이 이슈
+#      본문과 같은 실제 형태 — 결함을 서술하며 마커 단어를 인용)는 반송으로 세면 안
+#      된다. 첫 줄이 그 단어로 **시작하지 않으므로** ok 로 남아야 한다(#197 이 고치는
+#      "인용된 마커가 제어 신호로 읽히는" 축과 같은 자리 — 여기서는 판정 쪽을 좁혀 막는다).
+run_case "#212 본문 중간 언급만·시작 아님→ok(과잉매칭 금지)" ok '[
+  {"body":"이 PR 은 #212(반송 마커가 콜론 리터럴이라 「재디스패치 attempt N」 이 안전망을 통과하는 결함)를 고친다. BOUNCE_MARKERS 매칭을 접두 검사로 바꿨다.\n<!-- bodat:worker -->","createdAt":"2026-09-11T07:00:00Z"}
+]'
+
 # 6) **동초** 반송 마커 후행 → bounced. GitHub 코멘트 시각은 초 단위라 createdAt 비교로는
 #    거짓이 된다 — 선후는 **코멘트 배열의 마지막 매칭 인덱스**로 잰다는 계약의 고정핀.
 run_case "동초·반송마커 후행→bounced" bounced '[
