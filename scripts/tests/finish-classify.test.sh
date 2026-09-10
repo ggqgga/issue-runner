@@ -14,13 +14,15 @@ NOW=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "2026-07-05T12:00:00Z" +%s 2>/dev/null 
 
 pass=0
 fail=0
-# assert <name> <expected> <comments-json> [head_at]
+# assert <name> <expected> <comments-json> [head_at] [hold_released_at]
 # head_at 미지정 시 FC_HEAD_AT="" 로 명시 고정 — 실호출(gh) 경로로 새지 않게(네트워크 무접속 유지).
+# hold_released_at 도 같은 이유로 항상 명시한다(미지정 = 해제 이벤트 못 얻음, #174).
 assert() {
-  local name="$1" expect="$2" comments="$3" head_at="${4:-}"
+  local name="$1" expect="$2" comments="$3" head_at="${4:-}" hold_at="${5:-}"
   local got
   got=$(FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
-    FC_COMMENTS_JSON="$comments" FC_HEAD_AT="$head_at" "$SUT" owner/repo 1 2>/dev/null)
+    FC_COMMENTS_JSON="$comments" FC_HEAD_AT="$head_at" \
+    FC_HOLD_RELEASED_AT="$hold_at" "$SUT" owner/repo 1 2>/dev/null)
   if [ "$got" = "$expect" ]; then
     pass=$((pass + 1))
   else
@@ -576,6 +578,124 @@ got=$(FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
   "$SUT" owner/repo 1 2>/dev/null)
 check_hc "FC_COMMENTS_FILE대용량→done_verdict" done_verdict "$got"
 rm -rf "$cf"
+
+# ── #174: 사람이 보류를 풀면 낡은 `마감 검증: ⚠ 보류` 를 최신 판정으로 세지 않는다 ──
+#
+# 형상(실측 BodaT PR #4922): `머지 판정: ✅` → `마감 검증: ⚠ 보류` → 사람이
+# `needs-human`·`hold:*` 를 뗌. 그 해제 시각이 보류 코멘트보다 **뒤**면 보류는 해소된
+# 것이고, 그 앞의 ✅ 가 살아나 종전 경로(#171 head SHA 대조)로 이어진다.
+#
+# 두 규칙의 **순서**가 계약이다: (1) 보류 해소 판정 → (2) #171 head 대조.
+# 1 이 통과해도 2 가 막으면 active 다(아래 174c).
+held_shape='[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:00:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:10:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:11:00Z"},
+  {"body":"마감 검증: ⚠ 보류 — 계획 부합 게이트 BLOCKER(P1 1건)\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:00:00Z"}
+]'
+
+# 174a) 해제 > 보류 — 사람이 판정을 내리고 라벨을 뗐다 → 보류 해소, ✅ 가 살아난다.
+assert "해제>보류→done_verdict" done_verdict "$held_shape" "2026-07-05T09:05:00Z" "2026-07-05T10:30:00Z"
+
+# 174b) 해제 < 보류 — 사람이 풀었다가 **다시 걸었다**(해제가 보류보다 이르다) → held.
+#       (닫힌 게이트를 여는 방향은 "해제가 보류 뒤"임이 증명될 때뿐이다.)
+assert "해제<보류→held" held "$held_shape" "2026-07-05T09:05:00Z" "2026-07-05T08:00:00Z"
+
+# 174c) 해제 뒤 **새 커밋** — 사람이 방향을 정해 주고 워커가 고치는 중(반송 레인).
+#       보류는 해소됐지만 #171 규칙이 이어 걸려 active 다(closeout 이 집지 않고
+#       워커의 새 판정을 기다린다). 두 규칙의 순서를 고정하는 케이스.
+assert "해제후새커밋→active(#171우선)" active "$held_shape" "2026-07-05T10:40:00Z" "2026-07-05T10:30:00Z"
+
+# 174d) **타임라인 조회 실패**(해제 시각을 못 얻음) → 종전 동작(보류 유지) 폴백 = held.
+#       조회 실패를 "해제됨" 으로 읽으면 머지 게이트가 증명 없이 열린다(fail-closed).
+assert "해제시각못얻음→held(fail-closed)" held "$held_shape" "2026-07-05T09:05:00Z" ""
+
+# 174e) 해제 시각 **파싱 실패**(쓰레기 값) → 역시 held. 빈 값만의 문제가 아니다
+#       (GNU date 는 느슨한 표현을 받아 그럴듯한 epoch 를 만든다 — iso_to_epoch 형식검사).
+assert "해제시각파싱실패→held" held "$held_shape" "2026-07-05T09:05:00Z" "not-a-real-timestamp"
+
+# 174f) 동초 경계 — 해제와 보류가 **같은 초**면 "뒤" 가 아니다 → held(fail-closed).
+assert "해제와보류동초→held(경계)" held "$held_shape" "2026-07-05T09:05:00Z" "2026-07-05T10:00:00Z"
+
+# 174g) **무회귀** — `마감 검증: ⚠ 보류` 가 최신 ✅ 보다 **앞**이면 그건 이미 지나간
+#       보류다(반송 후 재완결 형상). 해제 이벤트가 없어도 done_verdict 여야 한다.
+#       이 케이스가 없으면 "⚠ 가 있기만 하면 보류" 로 과잉 억제해 정상 재완결이 막힌다.
+assert "보류가✅보다앞→done_verdict(무회귀)" done_verdict '[
+  {"body":"마감 검증: ⚠ 보류 — BLOCKER 2건\n<!-- bodat:worker -->","createdAt":"2026-07-05T06:34:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T07:50:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능(재검증)\n<!-- bodat:worker -->","createdAt":"2026-07-05T07:55:00Z"}
+]' "2026-07-05T07:45:00Z"
+
+# 174h) **무회귀** — 최신 `마감 검증` 이 ✅ 면 보류가 아니다(해제 이벤트 없이 done_verdict).
+assert "마감검증✅→done_verdict(무회귀)" done_verdict '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:11:00Z"},
+  {"body":"마감 검증: ✅ CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:00:00Z"}
+]' "2026-07-05T09:05:00Z"
+
+# 174i) 영문 접두(Closeout verification) 도 같은 규칙 — 한/영 병행 루프 대비.
+assert "english-closeout-hold→held" held '[
+  {"body":"Merge verdict: ✅ mergeable\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:11:00Z"},
+  {"body":"Closeout verification: ⚠ hold — BLOCKER 1\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:00:00Z"}
+]' "2026-07-05T09:05:00Z" ""
+
+# ── pr-hold-released-at.sh 계약 — 빈 결과와 실패를 구분한다 ──────────────────
+# 이 헬퍼가 "실패했는데 빈 값" 을 내면 상류(finish-classify)가 그걸 '해제 이벤트 없음'
+# 과 구분 못 한다. 둘 다 fail-closed(보류 유지)로 수렴하지만, 종료코드가 사유를 담아야
+# 상류가 나중에 갈래를 나눌 수 있다(PR#168 교훈: 센티널 하나로 사유를 단정하지 마라).
+HELPER="$DIR/pr-hold-released-at.sh"
+hb=$(mktemp -d)
+mk_gh() { cat > "$hb/gh"; chmod +x "$hb/gh"; }
+run_helper() { PATH="$hb:$PATH" "$HELPER" owner/repo 1 2>/dev/null; }
+check_h() {
+  local name="$1" want_rc="$2" want_out="$3" got_rc=0 got_out
+  got_out=$(run_helper) || got_rc=$?
+  if [ "$got_rc" = "$want_rc" ] && [ "$got_out" = "$want_out" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "  ✗ $name — 기대 rc=$want_rc out='$want_out' / 실제 rc=$got_rc out='$got_out'"
+  fi
+}
+
+# h1) gh 실패 → 아무것도 안 내고 exit 1 (부분 출력을 정상값으로 채택하지 않는다).
+mk_gh <<'STUB'
+#!/bin/sh
+exit 1
+STUB
+check_h "helper: gh실패→rc1·무출력" 1 ""
+
+# h2) 해제 이벤트 없음 → **정상**(exit 0) + 빈 출력. 실패와 구분된다.
+mk_gh <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+check_h "helper: 해제이벤트없음→rc0·무출력" 0 ""
+
+# h3) `unlabeled needs-human` 과 `unlabeled hold:*` 중 **가장 최근** 시각을 낸다.
+#     (라벨 이벤트는 페이지네이션 대상이라 --paginate 로 전량을 읽어야 한다.)
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+printf '%s' '[
+  {"event":"labeled","label":{"name":"needs-human"},"created_at":"2026-07-05T07:00:00Z"},
+  {"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"},
+  {"event":"unlabeled","label":{"name":"needs-human"},"created_at":"2026-07-05T10:29:00Z"},
+  {"event":"unlabeled","label":{"name":"flow:verify"},"created_at":"2026-07-05T23:00:00Z"},
+  {"event":"closed","created_at":"2026-07-05T23:30:00Z"}
+]' | jq -r "$jqf"
+STUB
+check_h "helper: 최신 해제 시각(hold:*·needs-human 만)" 0 "2026-07-05T10:30:00Z"
+
+# h4) 형식이 깨진 시각만 온다 → 유효한 해제 시각을 못 얻은 것 = exit 1(빈 출력).
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+printf '%s' '[{"event":"unlabeled","label":{"name":"needs-human"},"created_at":"garbage"}]' | jq -r "$jqf"
+STUB
+check_h "helper: 시각형식깨짐→rc1·무출력" 1 ""
+rm -rf "$hb"
 
 echo "finish-classify.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]

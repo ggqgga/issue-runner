@@ -48,6 +48,15 @@ for a in "$@"; do
   [ "$a" = "--paginate" ] && paginate=1
   prev="$a"
 done
+# 타임라인(#174) — 코멘트와 **다른** 엔드포인트다. 코멘트 갈래보다 먼저 가른다
+# (둘 다 --paginate 라 순서를 뒤집으면 타임라인 조회가 코멘트 배열을 받는다).
+# STUB_TIMELINE=fail → gh 비정상 종료(조회 실패 재현).
+case "$*" in
+  */timeline*)
+    [ "${STUB_TIMELINE:-[]}" = "fail" ] && exit 1
+    printf '%s' "${STUB_TIMELINE:-[]}" | jq -r "$jqf"
+    exit 0 ;;
+esac
 if [ "$paginate" = 1 ]; then
   # 픽스처는 GraphQL 형상(createdAt)이라 REST 형상(created_at)으로 되돌린 뒤
   # 실 gh 처럼 --jq 를 적용한다.
@@ -104,7 +113,7 @@ run_case() {
     STUB_PRS='[{"repo":"owner/repo","pr":5}]' \
     STUB_META="$meta" STUB_COMMENTS="$comments" STUB_HEAD_AT="$head_at" \
     STUB_CAPPED_AT="$capped_at" STUB_HEAD_SHA="${STUB_HEAD_SHA:-feed0070ab}" \
-    STUB_CAPTURE="${STUB_CAPTURE:-}" \
+    STUB_CAPTURE="${STUB_CAPTURE:-}" STUB_TIMELINE="${STUB_TIMELINE:-[]}" \
     STUB_ROLLUP="$stub_rollup" \
     bash "$SUT" 2>/dev/null)
   n=$(printf '%s' "$out" | grep -c . || true)
@@ -266,6 +275,72 @@ else
   sed 's/^/      /' "$STUB_CAPTURE"
 fi
 STUB_CAPTURE=""
+
+# ── #174: 사람이 보류를 풀면 다시 후보로 뜬다 ─────────────────────────────
+# 실측 형상(BodaT PR #4922): `머지 판정: ✅` 뒤에 `마감 검증: ⚠ 보류` 가 달리고
+# closeout-blocked 가 `needs-human`+`hold:policy` 를 붙였다. 운영자가 결정문을 코멘트로
+# 남기고(머신 마커 없음) 5초 뒤 두 라벨을 뗐다. 그 뒤 이 PR 은 **양쪽 큐 어디에도**
+# 안 떴다 — 라벨은 풀렸는데 (a) 낡은 `⚠ 보류` 가 최신 판정 형식 코멘트로 남아 있고
+# (b) 운영자 결정문이 "미해결 사람 코멘트" 로 집계됐기 때문이다.
+#
+# **뮤테이션 표적**: finish-classify 의 해제 시각 비교(`해제 > 보류`)를 되돌리면
+# 아래 첫 케이스가 후보에서 빠져 빨개진다.
+held_then_released='[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T05:52:21Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T06:16:01Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T06:16:02Z"},
+  {"body":"마감 검증: ⚠ 보류 — 계획 부합 게이트 BLOCKER(P1 1건)\n<!-- bodat:worker -->","createdAt":"2026-07-05T07:00:21Z"},
+  {"body":"사람 확인(policy): 빈 uid fail-closed 가드가 없다\n<!-- bodat:worker -->","createdAt":"2026-07-05T07:00:24Z"},
+  {"body":"사람 결정(운영자): **P1 기각 — 원안 그대로 머지.**","createdAt":"2026-07-05T08:18:51Z"}
+]'
+released_timeline='[
+  {"event":"labeled","label":{"name":"needs-human"},"created_at":"2026-07-05T07:00:26Z"},
+  {"event":"labeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T07:00:26Z"},
+  {"event":"unlabeled","label":{"name":"needs-human"},"created_at":"2026-07-05T08:18:56Z"},
+  {"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T08:18:56Z"}
+]'
+
+# 16) 보류 해제됨(해제 > 보류) + 결정문이 해제 **이전** → 후보로 뜬다.
+STUB_TIMELINE="$released_timeline"
+run_case "보류해제→후보로뜬다(#174)" yes "$held_then_released" "2026-07-05T05:00:00Z"
+
+# 17) 해제 이벤트 없음(사람이 아직 안 풀었다) → 후보 아님. `needs-human` 라벨이 이미
+#     떨어진 뒤에도 낡은 `⚠ 보류` 하나로 게이트가 닫혀 있어야 한다(라벨 편집만으로는
+#     열리지 않는 두 번째 자물쇠 — 해제 **시각**이 증명돼야 열린다).
+STUB_TIMELINE='[]'
+run_case "해제이벤트없음→후보아님" no "$held_then_released" "2026-07-05T05:00:00Z"
+
+# 18) 타임라인 조회 실패 → 후보 아님(fail-closed). 조회 실패가 머지 게이트를 여는
+#     방향으로 작동하면 안 된다.
+STUB_TIMELINE="fail"
+run_case "타임라인조회실패→후보아님" no "$held_then_released" "2026-07-05T05:00:00Z"
+
+# 19) 해제 **뒤에** 달린 사람 코멘트는 여전히 미해결이다 → 후보 아님.
+#     해제로 답해진 것은 해제 시점까지의 사람 코멘트뿐이다(#72 보호를 해제 이후로는
+#     그대로 유지한다 — 사람이 새 질문을 던졌는데 자동 머지가 지나가면 안 된다).
+after_release_comment='[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T06:16:02Z"},
+  {"body":"마감 검증: ⚠ 보류 — P1 1건\n<!-- bodat:worker -->","createdAt":"2026-07-05T07:00:21Z"},
+  {"body":"사람 결정(운영자): P1 기각 — 원안 그대로 머지.","createdAt":"2026-07-05T08:18:51Z"},
+  {"body":"잠깐, 이 부분은 다시 봐야 할 것 같다.","createdAt":"2026-07-05T09:30:00Z"}
+]'
+STUB_TIMELINE="$released_timeline"
+run_case "해제이후사람코멘트→후보아님" no "$after_release_comment" "2026-07-05T05:00:00Z"
+
+# 20) 해제 후 **새 커밋** — 사람이 방향을 정해 주고 워커가 고치는 중(반송 레인) →
+#     후보 아님. #171 규칙이 이어 걸린다(두 규칙의 순서 계약).
+STUB_TIMELINE="$released_timeline"
+run_case "해제후새커밋→후보아님(#171우선)" no "$held_then_released" "2026-07-05T09:00:00Z"
+
+# 21) **무회귀** — 보류·사람 코멘트가 전혀 없는 평범한 PR 은 타임라인을 아예 조회하지
+#     않는다(조회하면 gh 스텁이 fail 로 답해 후보에서 빠진다 = 여기서 빨개진다).
+#     해제 시각이 필요 없는 흔한 경로에 페이지네이션 호출을 얹지 않는다는 계약.
+STUB_TIMELINE="fail"
+run_case "평범한PR→타임라인미조회(무회귀)" yes '[
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:10:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"}
+]' "2026-07-05T04:10:00Z"
+STUB_TIMELINE='[]'
 
 # 12) 코멘트 조회 자체가 실패(gh 비정상 종료) → 후보 아님.
 #     반송되지 않았음을 **증명하지 못한** 상태를 통과로 처리하지 않는다(fail-closed).

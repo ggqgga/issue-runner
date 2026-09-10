@@ -100,6 +100,37 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 떨어뜨리고 판정은 finish-classify 한 곳에서만 한다(증명 실패 → active → 후보 제외).
   head_at=$("$SCRIPT_DIR/pr-head-at.sh" "$repo" "$pr" 2>/dev/null) || head_at=''
 
+  # 사람(비머신) 코멘트를 **한 번만** 뽑아 두 곳이 함께 쓴다 — 아래 해제 시각 조회
+  # 필요 여부 판단과 미해결 판정. 머신 코멘트 식별 규칙은 아래 unresolved 주석 참조.
+  # jq 실패(빈 출력)면 사람 코멘트 유무를 **증명 못 한** 것이므로 후보에서 뺀다(fail-closed).
+  human_comments=$(printf '%s' "$comments" | jq -c '[.[]
+    | select((.body | (contains("<!-- bodat:worker -->")
+              or startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증"))) | not)]' \
+    2>/dev/null)
+  [ -n "$human_comments" ] || continue
+
+  # ── 보류 해제 시각 (#174) ────────────────────────────────────────────────
+  # 사람이 `needs-human`·`hold:*` 를 뗀 시각. 두 곳이 쓴다:
+  #   · finish-classify 의 `마감 검증: ⚠ 보류` 해소 판정(FC_HOLD_RELEASED_AT)
+  #   · 아래 미해결 사람 코멘트 판정 — 해제 **이전**의 사람 코멘트는 그 해제로 답해진 것
+  # 타임라인은 페이지네이션이라 비싸므로 **필요할 때만** 조회한다. 트리거는 판정의
+  # 상위집합이다(가릴 수 있는 `마감 검증: ⚠` 가 하나라도 있거나 · 사람 코멘트가 있거나) —
+  # 트리거가 안 걸리는 PR 은 해제 시각을 써도 답이 안 바뀌므로 조회를 생략해도 안전하다.
+  # 판정 자체는 여기서 베끼지 않는다(로직 두 벌 금지) — finish-classify 한 자리다.
+  #
+  # 조회는 **코멘트·head 를 읽은 뒤**에 한다. 그 사이 사람이 보류를 새로 걸었다면 이
+  # 스냅샷엔 안 잡히지만, 그건 라벨 조회(더 앞)와 같은 창이고 다음 틱이 잡는다. 반대로
+  # 먼저 뜨면 그 사이의 **해제**를 놓쳐 사람이 푼 건이 또 한 틱을 기다린다.
+  hold_released_at=''
+  need_hold=$(printf '%s' "$comments" | jq -r '
+    if ([.[] | select(.body | startswith("마감 검증") or startswith("Closeout verification"))
+              | select(.body | contains("⚠"))] | length) > 0 then "yes" else "no" end' 2>/dev/null)
+  if [ "$need_hold" = yes ] || [ "$(printf '%s' "$human_comments" | jq 'length' 2>/dev/null)" != 0 ]; then
+    # 조회 실패(exit 1)·해제 이벤트 없음(exit 0·빈 출력) 모두 빈 값으로 떨어진다 —
+    # 둘 다 "보류가 해소됐음을 증명 못 함" 이라 하류가 게이트를 닫는다(fail-closed).
+    hold_released_at=$("$SCRIPT_DIR/pr-hold-released-at.sh" "$repo" "$pr" 2>/dev/null) || hold_released_at=''
+  fi
+
   # 이미 가져온 comments 를 **파일로** 넘겨 중복 gh 조회를 피한다(사전 리뷰 WARN).
   # 환경변수가 아니라 파일인 이유는 위 fc_comments_file 주석 참조([P2] — exec 한계).
   # 쓰기 실패면 판정 입력을 못 넘긴 것이므로 후보에서 뺀다(fail-closed).
@@ -111,7 +142,7 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 아니라 **쓰이지 않는 입력의 조회만** 생략하는 것이다.
   printf '%s' "$comments" > "$fc_comments_file" || continue
   verdict=$(FC_COMMENTS_FILE="$fc_comments_file" \
-    FC_HEAD_AT="$head_at" FC_FAILING=0 \
+    FC_HEAD_AT="$head_at" FC_HOLD_RELEASED_AT="$hold_released_at" FC_FAILING=0 \
     "$SCRIPT_DIR/finish-classify.sh" "$repo" "$pr" 2>/dev/null)
   [ "$verdict" = "done_verdict" ] || continue
 
@@ -158,9 +189,18 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 제약일 뿐(마커가 "머지 판정: ✅" 앞에 오면 startswith 가 깨진다) 이 필터의
   # 요구사항이 아니다. 마지막-줄을 jq 로 강제하면 마커 오배치가 사람 코멘트로
   # 오인돼 #72 false-positive 가 재발하므로 그렇게 바꾸지 마라.
-  unresolved=$(printf '%s' "$comments" | jq '[.[].body
-    | select((contains("<!-- bodat:worker -->")
-              or startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
+  #
+  # **해제 이전의 사람 코멘트는 미해결이 아니다 (#174).** 사람이 `needs-human`·`hold:*`
+  # 를 뗀 행위가 곧 "내 몫은 끝났다" 는 신호다 — 운영자는 결정문을 코멘트로 남기고
+  # 그 직후 라벨을 뗀다(실측 BodaT #4922: 결정문 08:18:51 → 라벨 제거 08:18:56).
+  # 그 결정문을 미해결로 세면 사람이 답을 준 PR 이 영영 후보에 안 뜬다(이 이슈의 실측).
+  # 해제 **이후**에 달린 사람 코멘트는 종전대로 미해결이다 — 사람이 새 질문을 던졌는데
+  # 자동 머지가 지나가면 안 된다. 해제 시각을 못 얻었으면($rel 빈 값) 아무것도 면제하지
+  # 않는다(fail-closed — 종전 동작 그대로).
+  # 결정문의 *내용*이 "원안 그대로 머지" 인지, 아니면 게이트를 다시 돌려야 하는지는
+  # closeout SKILL ③-1 재진입 규칙이 판정한다(스크립트는 후보에 올리는 데까지만).
+  unresolved=$(printf '%s' "$human_comments" | jq --arg rel "$hold_released_at" '[.[]
+    | select(($rel == "") or ((.createdAt // "") == "") or ((.createdAt // "") > $rel))]
     | length')
   [ "${unresolved:-0}" -gt 0 ] && continue
 
