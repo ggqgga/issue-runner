@@ -117,7 +117,7 @@ Procedure:
      even **getting in line** — it removes the very wait the serial queue exists to give
      you. `ci-queue.sh` runs `bin/ci` one at a time box-wide (ticket FIFO) and reuses the
      result for an identical SHA (dedup), so **just queue it and wait.** To see where
-     your SHA sits, ask `scripts/ci-queue.sh status <SHA>` (`running` / `queued <n>` /
+     your SHA sits, ask `~/.claude/skills/issue-runner/scripts/ci-queue.sh status <SHA>` (`running` / `queued <n>` /
      `none`). Overlap is already prevented by "do not call it directly" (first bullet) —
      only a `bin/ci` invoked outside the queue can share a test DB/fixtures and kill both
      runs.

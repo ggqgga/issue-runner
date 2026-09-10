@@ -109,7 +109,7 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
      `bin/ci` 까지 잡아 네가 **줄서는 것조차** 막는다 — 직렬 큐가 해주는 대기를 스스로
      없애는 셈이다. `ci-queue.sh` 가 박스 전체에서 `bin/ci` 를 한 번에 하나만 돌리고
      (티켓 FIFO) 같은 SHA 는 결과를 재사용하니(dedup), **그냥 걸고 기다려라.** 내
-     SHA 가 큐 어디쯤인지 알고 싶으면 `scripts/ci-queue.sh status <SHA>` 로 물어라
+     SHA 가 큐 어디쯤인지 알고 싶으면 `~/.claude/skills/issue-runner/scripts/ci-queue.sh status <SHA>` 로 물어라
      (`running` / `queued <n>` / `none`). 겹침 방지는 "직접 호출 금지"(위 첫 불릿)로
      이미 충분하다 — 큐를 거치지 않고 부른 `bin/ci` 만이 테스트 DB·픽스처를 공유해
      양쪽 다 죽인다.
