@@ -24,10 +24,16 @@ trap 'rm -rf "$tmp"' EXIT
 
 pass=0
 fail=0
+skip=0
 check() {
   local name="$1" cond="$2"
   if [ "$cond" = "ok" ]; then
     pass=$((pass + 1))
+  elif [ "$cond" = "skip" ]; then
+    # 부재를 실패로 접지 않는다(#193 closeout 재재심 BLOCKER) — 조용한 no 대신 눈에 보이는
+    # skip 줄을 남긴다. pass/fail 어느 쪽에도 안 셈해 "빠졌다"는 사실이 합계에서 안 숨는다.
+    skip=$((skip + 1))
+    echo "  ⇢ skip: $name"
   else
     fail=$((fail + 1))
     echo "  ✗ $name"
@@ -579,5 +585,273 @@ setup "needs-human,hold:ladder,agent-ready" 200 2
 run
 check "승격 코멘트에 hold-note:policy" "$(grep -q 'hold-note: policy' "$tmp/gh.log" && echo ok || echo no)"
 
-echo "resume-sweep: $pass passed, $fail failed"
+# ── ㉚ (#193) 번호를 못 구한 줄도 **유효 JSON 으로** 나간다 ────────────────
+# 재현: `sweep_issue`·② 는 목록 행을 jq 로 파싱해 번호를 얻는데, 그 파싱이 깨지면
+# `num`(`hnum`)이 **빈 문자열**이 된다. 세 헬퍼의 `"number":%s` 는 따옴표 **밖**이라
+# 그대로 `{…,"number":,"msg":…}` 가 나가 줄 전체가 JSON 이 아니었다 — 관대한 파서에선
+# 그 줄이 통째로 유실되고 엄격한 파서에선 읽기가 멈춘다. 어느 쪽이든 **경보가 조용히
+# 사라지는** 방향이라, 요구는 셋이다: (a) 줄은 나간다(삼키지 않는다) (b) 유효 JSON 이다
+# (c) 번호를 못 구했다는 사실이 줄에서 읽힌다.
+# 픽스처는 number 를 JSON **문자열**로 박아 그 상태를 만든다(실경로인 jq 실패와 `num` 의
+# 모양이 같다 — 둘 다 빈 문자열). 세 헬퍼를 각각 그 경로로 몰아 따로 확인한다.
+bad_num_rows() {  # bad_num_rows <출력파일> <number 자리에 박을 값> <라벨csv> <updatedAt>
+  jq -n --arg n "$2" --arg l "$3" --arg u "$4" \
+    '[{number:$n, labels: ($l|split(",")|map(select(length>0)|{name:.})), updatedAt:$u}]' > "$1"
+}
+lines_all_json() {  # 출력의 **모든** 줄이 유효 JSON 인가 — 빈 출력(삼킴)도 실패
+  local line
+  [ -s "$tmp/out" ] || { echo no; return; }
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    printf '%s' "$line" | jq -e . >/dev/null 2>&1 || { echo no; return; }
+  done < "$tmp/out"
+  echo ok
+}
+evq() {  # evq <이벤트> <jq 식> — 깨진 줄이 섞이면 jq 가 실패해 no
+  jq -e "select(.event==\"$1\") | $2" "$tmp/out" >/dev/null 2>&1 && echo ok || echo no
+}
+# 패턴은 `-e` 로 넘기고 파일은 `--` 뒤에 — `-` 로 시작하는 패턴을 맨몸으로 주면 grep 이
+# 그것을 옵션으로 먹고 파일 인자를 패턴 삼아 stdin 을 읽는다(스위트가 조용히 매달린다).
+nlines() { grep -c -e "$1" -- "$tmp/out" 2>/dev/null || true; }
+# 미상 표식은 **앞머리**에 원본 토큰을 인용해 붙는다 — `번호 파싱 실패('<토큰>') — `.
+# 뒤에 오는 기존 문구는 한 바이트도 안 바뀐다(디스패처 SKILL.md 가 문구로 분기한다).
+# jq 문자열 안의 `'` 은 작은따옴표 — 셸 작은따옴표 안이라 맨몸으로 못 쓴다.
+unknown_prefix() {  # unknown_prefix <이벤트> <원본 토큰>
+  jq -e --arg t "$2" \
+    "select(.event==\"$1\") | .msg | startswith(\"번호 파싱 실패(\\u0027\" + \$t + \"\\u0027) — \")" \
+    "$tmp/out" >/dev/null 2>&1 && echo ok || echo no
+}
+
+# (가) emit_warn — ① 이 updatedAt 을 못 읽은 줄. 번호도 함께 비어 있다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" ""
+echo '[]' > "$tmp/human.json"
+run
+check "빈 번호 warn: 모든 줄이 유효 JSON"     "$(lines_all_json)"
+check "빈 번호 warn: 줄을 삼키지 않는다"       "$([ "$(nlines '"event":"warn"')" = 1 ] && echo ok || echo no)"
+check "빈 번호 warn: number 는 0"             "$(evq warn '.number == 0')"
+check "빈 번호 warn: 기존 문구 그대로"         "$(evq warn '.msg | test("updatedAt 해석 불가")')"
+check "빈 번호 warn: 번호 미상·원본 토큰이 앞머리에" "$(unknown_prefix warn '')"
+
+# (나) emit_note — ② 배포 대기(#190) 줄. hnum 이 비어도 note 는 나가야 한다.
+setup "needs-human,agent-ready" 200 0
+echo '[]' > "$tmp/ladder.json"
+bad_num_rows "$tmp/human.json" "" "needs-human,deploy-wait" "$(ts 200)"
+run
+check "빈 번호 note: 모든 줄이 유효 JSON"     "$(lines_all_json)"
+check "빈 번호 note: 줄을 삼키지 않는다"       "$([ "$(nlines '"event":"note"')" = 1 ] && echo ok || echo no)"
+check "빈 번호 note: number 는 0"             "$(evq note '.number == 0')"
+check "빈 번호 note: 기존 문구 그대로"         "$(evq note '.msg | test("배포 대기\\(라벨 deploy-wait\\)")')"
+check "빈 번호 note: 번호 미상·원본 토큰이 앞머리에" "$(unknown_prefix note '')"
+
+# (다) emit_warn_after_edit — 쓰기 뒤 readback 조회가 실패한 줄.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/human.json"
+STUB_READBACK_LABELS="__FAIL__"
+run
+check "빈 번호 warn_after_edit: 모든 줄이 유효 JSON" "$(lines_all_json)"
+check "빈 번호 warn_after_edit: 줄을 삼키지 않는다"   "$([ "$(nlines '"event":"warn_after_edit"')" = 1 ] && echo ok || echo no)"
+check "빈 번호 warn_after_edit: number 는 0"         "$(evq warn_after_edit '.number == 0')"
+check "빈 번호 warn_after_edit: 기존 문구 그대로"     "$(evq warn_after_edit '.msg | test("재개 readback 조회 실패")')"
+check "빈 번호 warn_after_edit: 번호 미상·토큰 앞머리" "$(unknown_prefix warn_after_edit '')"
+
+# (라) 정상 경로 무회귀 — 번호가 있으면 표식이 붙지 않는다(문구가 한 바이트도 안 바뀐다).
+setup "needs-human,agent-ready" 200 0
+run
+check "정상 번호: number 유지·표식 없음" "$(evq warn '.number == 42 and (.msg | test("번호 파싱 실패") | not)')"
+
+# ── ㉛ (#193) `msg` 없는 이벤트 넷도 같은 자리를 안전하게 — waiting·escalated·resumed·
+#    policy_review_due. 이쪽은 사실을 적을 `msg` 칸이 없어 **형식 안전만** 취한다(번호 0).
+#    방출 조건은 안 바뀐다 — 특히 waiting 은 원래 조용히 넘기는 이벤트라 줄 수가 늘면 안 된다.
+#    이슈 본문 `## 범위 — 한 자리가 아니라 파일 전역이다` 가 요구한 넓히기.
+setup "needs-human,hold:ladder,agent-ready" 10 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 10)"
+echo '[]' > "$tmp/human.json"
+run
+check "빈 번호 waiting(창 전): 유효 JSON"    "$(lines_all_json)"
+check "빈 번호 waiting(창 전): 1줄만"        "$([ "$(nlines '"event":"waiting"')" = 1 ] && echo ok || echo no)"
+check "빈 번호 waiting(창 전): number 는 0"  "$(evq waiting '.number == 0')"
+check "빈 번호 waiting(창 전): minutes 유지"  "$(evq waiting '.minutes >= 9 and .minutes <= 11')"
+
+# 창 재판정 경로(목록 스냅샷 뒤 사람이 건드려 live updatedAt 이 새 기준이 된 경우)의 waiting.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/human.json"
+printf '%s' "$(ts 5)" > "$tmp/updated.livefile"
+STUB_UPDATED_LIVE="$tmp/updated.livefile"
+run
+check "빈 번호 waiting(창 재판정): 유효 JSON"   "$(lines_all_json)"
+check "빈 번호 waiting(창 재판정): number 는 0" "$(evq waiting '.number == 0')"
+check "빈 번호 waiting(창 재판정): 무편집"      "$(none 'issue edit')"
+
+# 재개(resumed) — 번호가 비어도 줄은 유효 JSON 이어야 한다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/human.json"
+run
+check "빈 번호 resumed: 유효 JSON"      "$(lines_all_json)"
+check "빈 번호 resumed: number 는 0"    "$(evq resumed '.number == 0')"
+check "빈 번호 resumed: attempt 유지"   "$(evq resumed '.attempt == 1')"
+
+# 승격(escalated) — 마커 2개로 상한 초과.
+setup "needs-human,hold:ladder,agent-ready" 200 2
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/human.json"
+run
+check "빈 번호 escalated: 유효 JSON"        "$(lines_all_json)"
+check "빈 번호 escalated: number 는 0"      "$(evq escalated '.number == 0')"
+check "빈 번호 escalated: attempt·limit 유지" "$(evq escalated '.attempt == 2 and .limit == 2')"
+
+# policy 재심 due — ③ 의 pnum 이 빈 경우.
+setup "needs-human,hold:policy,agent-ready" 200 0
+bad_num_rows "$tmp/policy.json" "" "needs-human,hold:policy,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/ladder.json"
+echo '[]' > "$tmp/human.json"
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "빈 번호 policy_review_due: 유효 JSON"   "$(lines_all_json)"
+check "빈 번호 policy_review_due: number 는 0" "$(evq policy_review_due '.number == 0')"
+check "빈 번호 policy_review_due: 무편집"      "$(none 'issue edit')"
+
+# 정상 번호(42)일 때 넷 다 번호를 그대로 싣는다 — 바이트 무회귀 가드.
+setup "needs-human,hold:ladder,agent-ready" 10 0
+run
+check "정상 번호 waiting: number 42 유지" "$(evq waiting '.number == 42')"
+setup "needs-human,hold:ladder,agent-ready" 200 0
+run
+check "정상 번호 resumed: number 42 유지" "$(evq resumed '.number == 42')"
+setup "needs-human,hold:ladder,agent-ready" 200 2
+run
+check "정상 번호 escalated: number 42 유지" "$(evq escalated '.number == 42')"
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "정상 번호 policy_review_due: number 42 유지" "$(evq policy_review_due '.number == 42')"
+
+# ── ㉜ (#193 재심) 번호 검증은 **정규 JSON 정수 형태**로 — `01` 은 미상 처리 ──────
+# 사람 게이트 재심(#193 코멘트 `<!-- policy-review: resumed -->`)의 판정: 선행 0 토큰은
+# 정상 번호의 특이 표기가 **아니다**. `num` 의 출처는 `jq -r '.number|tostring'` 하나뿐이고
+# jq 는 `1` 을 `"1"` 로 낸다 — `01` 을 낼 경로가 없으니 그건 **파싱이 어긋났다는 증거**다.
+# 그래서 `01 → 1` 정규화는 채택하지 않는다(출처가 말하지 않은 번호를 지어내는 것 —
+# 틀린 번호를 단 경보는 번호 없는 경보보다 나쁘다: 읽는 사람이 무고한 이슈를 연다).
+# `_nonneg_int()`(모든 문자가 숫자인가)로는 `01`·`007` 이 통과해 `"number":01` 이 나가고,
+# RFC 8259 는 선행 0 을 금지하므로 그 줄은 **여전히 깨진 JSON** 이었다.
+# `jq` 는 관대해서 `{"number":01}` 을 **조용히 `1` 로 읽는다**(실측 jq-1.7.1-apple).
+# 즉 `01` 이 나가면 엄격한 파서(python json)는 줄을 **거절**하고, 관대한 파서는 **없는
+# 이슈 #1** 로 읽는다 — 이 이슈가 막으려던 두 실패(조용한 유실 · 틀린 번호)가 정확히 그 둘이다.
+# 그래서 계약 단언은 `jq` 만으로 두지 않고 **엄격 파서**로도 한 번 더 문다(jq 로만 재면
+# `01` 회귀가 초록으로 통과한다 — 실측으로 확인한 공허 단언 경로).
+# closeout 재재심(#193 2회차 반송) — README 가 선언한 요구사항은 `gh`·`jq`·bash 뿐이라
+# python3 는 이 스위트가 트리에 처음 들여온 의존성이다. 없는 박스에서 엄격 파서 단언이
+# 전부 `no` 로 접히면 `bin/ci` 가 필수 게이트에서 통째로 빨개진다(재현: python3 를 exit 127
+# 스텁으로 가리면 237 passed / 15 failed) — 그래서 두 갈래로 나눈다:
+#   ① `number_token_json_int` — 파서 없이 **방출된 바이트**를 `case`/`grep -E` 로 직접 문다.
+#      01·007 회귀는 이 단언 하나로 어느 박스에서나 잡힌다(주 단언).
+#   ② `strict_json_all` — python3 가 있으면 엄격 파서로 한 번 더 물어 보조 확증한다. 없으면
+#      **skip** 을 눈에 보이게 돌려준다(조용한 no 금지) — check() 가 skip 을 실패로 안 센다.
+number_token_json_int() {  # number_token_json_int <이벤트> — 그 줄의 number 토큰이 정규 JSON 정수 리터럴(0|[1-9][0-9]*)인가
+  local line n
+  line=$(grep -m1 "\"event\":\"$1\"" "$tmp/out") || { echo no; return; }
+  n=$(printf '%s' "$line" | grep -oE '"number":[^,}]*')
+  n=${n#'"number":'}
+  case "$n" in
+    0) echo ok ;;
+    [1-9]) echo ok ;;
+    [1-9][0-9]*) echo ok ;;
+    *) echo no ;;
+  esac
+}
+strict_json_all() {  # 출력의 모든 줄이 RFC 8259 로 파싱되는가 (빈 출력 = 삼킴 = 실패 · python3 없으면/못 돌면 skip)
+  [ -s "$tmp/out" ] || { echo no; return; }
+  local rc
+  python3 -c 'import json, sys
+n = 0
+for line in open(sys.argv[1], encoding="utf-8"):
+    line = line.strip()
+    if not line:
+        continue
+    json.loads(line)
+    n += 1
+sys.exit(0 if n else 1)' "$tmp/out" >/dev/null 2>&1
+  rc=$?
+  # 127 = "명령을 못 찾음"(PATH 부재의 표준 셸 종료값 — python3 를 exit 127 스텁으로 가려
+  # 재현한 closeout 시나리오도 같은 값을 낸다). command -v 로 미리 가리면 이 스텁을 못 잡는다
+  # (스텁은 PATH 상엔 실존 파일이라 command -v 는 통과하고, 실행 시점에야 127 을 낸다) — 그래서
+  # 실행 결과의 종료값으로 판정한다.
+  if [ "$rc" -eq 127 ]; then
+    echo skip
+    return
+  fi
+  [ "$rc" -eq 0 ] && echo ok || echo no
+}
+emit_line_for() {  # emit_line_for <number 자리에 박을 토큰> — warn 줄 하나로 몬다
+  setup "needs-human,hold:ladder,agent-ready" 200 0
+  bad_num_rows "$tmp/ladder.json" "$1" "needs-human,hold:ladder,agent-ready" ""
+  echo '[]' > "$tmp/human.json"
+  run
+}
+check_accept() {  # check_accept <정규 토큰>
+  emit_line_for "$1"
+  check "정규 '$1': 모든 줄이 유효 JSON"      "$(lines_all_json)"
+  check "정규 '$1': number 토큰이 정규 JSON 정수 리터럴(바이트 단언)" "$(number_token_json_int warn)"
+  check "정규 '$1': 엄격 파서로도 파싱된다"    "$(strict_json_all)"
+  check "정규 '$1': number 를 그대로 싣는다"   "$(jq -e --argjson n "$1" 'select(.event=="warn") | .number == $n' "$tmp/out" >/dev/null 2>&1 && echo ok || echo no)"
+  check "정규 '$1': 미상 표식 없음(문구 무변)" "$(evq warn '.msg | test("번호 파싱 실패") | not')"
+}
+check_reject() {  # check_reject <비정규 토큰>
+  emit_line_for "$1"
+  check "비정규 '$1': 모든 줄이 유효 JSON"      "$(lines_all_json)"
+  check "비정규 '$1': number 토큰이 정규 JSON 정수 리터럴(바이트 단언, 0 으로 낮춘 값)" "$(number_token_json_int warn)"
+  check "비정규 '$1': 엄격 파서로도 파싱된다"    "$(strict_json_all)"
+  check "비정규 '$1': 줄을 삼키지 않는다"        "$([ "$(nlines '"event":"warn"')" = 1 ] && echo ok || echo no)"
+  check "비정규 '$1': number 는 0"              "$(evq warn '.number == 0')"
+  check "비정규 '$1': 원본 토큰을 앞머리에 인용"  "$(unknown_prefix warn "$1")"
+  check "비정규 '$1': 기존 문구가 뒤에 그대로"    "$(evq warn '.msg | test("updatedAt 해석 불가")')"
+}
+
+# 통과시켜야 할 것 — `0` 단독도 정규다("특정 이슈가 아니다" 로 이미 쓰는 값).
+for t in 0 1 42 1234; do check_accept "$t"; done
+# 걸러야 할 것 — 선행 0·부호·소수점·지수·빈 값·공백. 전부 JSON 정수 리터럴이 아니다.
+for t in 01 007 +1 1.0 1e3 '' ' ' '1 2'; do check_reject "$t"; done
+
+# 이 이슈의 계약은 "정수처럼 생겼나" 가 아니라 **"JSON 으로 읽히나"** 다 — 토큰에 따옴표·
+# 역슬래시가 섞여 들어와도 줄은 파싱돼야 한다(인용을 맨몸으로 박으면 원래 버그의 재현이다).
+for t in '1"2' '1\2' 'a"b\c'; do
+  emit_line_for "$t"
+  check "따옴표 섞인 토큰 '$t': 줄이 jq . 로 파싱된다"   "$(lines_all_json)"
+  check "따옴표 섞인 토큰 '$t': number 토큰이 정규 JSON 정수 리터럴(바이트 단언)" "$(number_token_json_int warn)"
+  check "따옴표 섞인 토큰 '$t': 엄격 파서로도 파싱된다"  "$(strict_json_all)"
+  check "따옴표 섞인 토큰 '$t': number 는 0"           "$(evq warn '.number == 0')"
+  check "따옴표 섞인 토큰 '$t': 줄을 삼키지 않는다"     "$([ "$(nlines '"event":"warn"')" = 1 ] && echo ok || echo no)"
+done
+
+# ── ㉝ (#193 재심) `_nonneg_int()` 는 안 바꿨다 — env exit 64 게이트 3건 무회귀 ────
+# 방출용 술어를 별도 이름으로 세운 이유가 이것이다: 저 헬퍼까지 정규형으로 좁히면
+# 사람이 `RESUME_AFTER_MIN=060` 으로 써 온 환경이 갑자기 죽는다(이 이슈의 범위 밖).
+setup "needs-human,hold:ladder,agent-ready" 200 0
+RA='060'
+run
+check "RESUME_AFTER_MIN=060: exit 64 아님(관대함 유지)" "$([ "$RC" != 64 ] && echo ok || echo no)"
+check "RESUME_AFTER_MIN=060: 60분으로 읽혀 재개된다"     "$(has_ev resumed)"
+setup "needs-human,hold:ladder,agent-ready" 200 0
+RL='02'
+run
+check "LADDER_RESUME_LIMIT=02: exit 64 아님" "$([ "$RC" != 64 ] && echo ok || echo no)"
+setup "needs-human,hold:ladder,agent-ready" 200 0
+LL='0200'
+run
+check "RESUME_LIST_LIMIT=0200: exit 64 아님" "$([ "$RC" != 64 ] && echo ok || echo no)"
+# 진짜 비정수는 여전히 exit 64 (세 게이트 모두).
+setup "needs-human,hold:ladder,agent-ready" 200 0
+LL='1000x'
+run
+check "잘못된 RESUME_LIST_LIMIT: exit 64"   "$([ "$RC" = 64 ] && echo ok || echo no)"
+check "잘못된 RESUME_LIST_LIMIT: gh 호출 0" "$([ ! -s "$tmp/gh.log" ] && echo ok || echo no)"
+
+if [ "$skip" -gt 0 ]; then
+  echo "resume-sweep: $pass passed, $fail failed, $skip skipped (python3 없음)"
+else
+  echo "resume-sweep: $pass passed, $fail failed"
+fi
 [ "$fail" -eq 0 ]
