@@ -24,10 +24,16 @@ trap 'rm -rf "$tmp"' EXIT
 
 pass=0
 fail=0
+skip=0
 check() {
   local name="$1" cond="$2"
   if [ "$cond" = "ok" ]; then
     pass=$((pass + 1))
+  elif [ "$cond" = "skip" ]; then
+    # 부재를 실패로 접지 않는다(#193 closeout 재재심 BLOCKER) — 조용한 no 대신 눈에 보이는
+    # skip 줄을 남긴다. pass/fail 어느 쪽에도 안 셈해 "빠졌다"는 사실이 합계에서 안 숨는다.
+    skip=$((skip + 1))
+    echo "  ⇢ skip: $name"
   else
     fail=$((fail + 1))
     echo "  ✗ $name"
@@ -711,9 +717,29 @@ check "정상 번호 policy_review_due: number 42 유지" "$(evq policy_review_d
 # 이슈 #1** 로 읽는다 — 이 이슈가 막으려던 두 실패(조용한 유실 · 틀린 번호)가 정확히 그 둘이다.
 # 그래서 계약 단언은 `jq` 만으로 두지 않고 **엄격 파서**로도 한 번 더 문다(jq 로만 재면
 # `01` 회귀가 초록으로 통과한다 — 실측으로 확인한 공허 단언 경로).
-strict_json_all() {  # 출력의 모든 줄이 RFC 8259 로 파싱되는가 (빈 출력 = 삼킴 = 실패)
-  command -v python3 >/dev/null 2>&1 || { echo no; return; }
+# closeout 재재심(#193 2회차 반송) — README 가 선언한 요구사항은 `gh`·`jq`·bash 뿐이라
+# python3 는 이 스위트가 트리에 처음 들여온 의존성이다. 없는 박스에서 엄격 파서 단언이
+# 전부 `no` 로 접히면 `bin/ci` 가 필수 게이트에서 통째로 빨개진다(재현: python3 를 exit 127
+# 스텁으로 가리면 237 passed / 15 failed) — 그래서 두 갈래로 나눈다:
+#   ① `number_token_json_int` — 파서 없이 **방출된 바이트**를 `case`/`grep -E` 로 직접 문다.
+#      01·007 회귀는 이 단언 하나로 어느 박스에서나 잡힌다(주 단언).
+#   ② `strict_json_all` — python3 가 있으면 엄격 파서로 한 번 더 물어 보조 확증한다. 없으면
+#      **skip** 을 눈에 보이게 돌려준다(조용한 no 금지) — check() 가 skip 을 실패로 안 센다.
+number_token_json_int() {  # number_token_json_int <이벤트> — 그 줄의 number 토큰이 정규 JSON 정수 리터럴(0|[1-9][0-9]*)인가
+  local line n
+  line=$(grep -m1 "\"event\":\"$1\"" "$tmp/out") || { echo no; return; }
+  n=$(printf '%s' "$line" | grep -oE '"number":[^,}]*')
+  n=${n#'"number":'}
+  case "$n" in
+    0) echo ok ;;
+    [1-9]) echo ok ;;
+    [1-9][0-9]*) echo ok ;;
+    *) echo no ;;
+  esac
+}
+strict_json_all() {  # 출력의 모든 줄이 RFC 8259 로 파싱되는가 (빈 출력 = 삼킴 = 실패 · python3 없으면/못 돌면 skip)
   [ -s "$tmp/out" ] || { echo no; return; }
+  local rc
   python3 -c 'import json, sys
 n = 0
 for line in open(sys.argv[1], encoding="utf-8"):
@@ -722,7 +748,17 @@ for line in open(sys.argv[1], encoding="utf-8"):
         continue
     json.loads(line)
     n += 1
-sys.exit(0 if n else 1)' "$tmp/out" >/dev/null 2>&1 && echo ok || echo no
+sys.exit(0 if n else 1)' "$tmp/out" >/dev/null 2>&1
+  rc=$?
+  # 127 = "명령을 못 찾음"(PATH 부재의 표준 셸 종료값 — python3 를 exit 127 스텁으로 가려
+  # 재현한 closeout 시나리오도 같은 값을 낸다). command -v 로 미리 가리면 이 스텁을 못 잡는다
+  # (스텁은 PATH 상엔 실존 파일이라 command -v 는 통과하고, 실행 시점에야 127 을 낸다) — 그래서
+  # 실행 결과의 종료값으로 판정한다.
+  if [ "$rc" -eq 127 ]; then
+    echo skip
+    return
+  fi
+  [ "$rc" -eq 0 ] && echo ok || echo no
 }
 emit_line_for() {  # emit_line_for <number 자리에 박을 토큰> — warn 줄 하나로 몬다
   setup "needs-human,hold:ladder,agent-ready" 200 0
@@ -733,6 +769,7 @@ emit_line_for() {  # emit_line_for <number 자리에 박을 토큰> — warn 줄
 check_accept() {  # check_accept <정규 토큰>
   emit_line_for "$1"
   check "정규 '$1': 모든 줄이 유효 JSON"      "$(lines_all_json)"
+  check "정규 '$1': number 토큰이 정규 JSON 정수 리터럴(바이트 단언)" "$(number_token_json_int warn)"
   check "정규 '$1': 엄격 파서로도 파싱된다"    "$(strict_json_all)"
   check "정규 '$1': number 를 그대로 싣는다"   "$(jq -e --argjson n "$1" 'select(.event=="warn") | .number == $n' "$tmp/out" >/dev/null 2>&1 && echo ok || echo no)"
   check "정규 '$1': 미상 표식 없음(문구 무변)" "$(evq warn '.msg | test("번호 파싱 실패") | not')"
@@ -740,6 +777,7 @@ check_accept() {  # check_accept <정규 토큰>
 check_reject() {  # check_reject <비정규 토큰>
   emit_line_for "$1"
   check "비정규 '$1': 모든 줄이 유효 JSON"      "$(lines_all_json)"
+  check "비정규 '$1': number 토큰이 정규 JSON 정수 리터럴(바이트 단언, 0 으로 낮춘 값)" "$(number_token_json_int warn)"
   check "비정규 '$1': 엄격 파서로도 파싱된다"    "$(strict_json_all)"
   check "비정규 '$1': 줄을 삼키지 않는다"        "$([ "$(nlines '"event":"warn"')" = 1 ] && echo ok || echo no)"
   check "비정규 '$1': number 는 0"              "$(evq warn '.number == 0')"
@@ -757,6 +795,7 @@ for t in 01 007 +1 1.0 1e3 '' ' ' '1 2'; do check_reject "$t"; done
 for t in '1"2' '1\2' 'a"b\c'; do
   emit_line_for "$t"
   check "따옴표 섞인 토큰 '$t': 줄이 jq . 로 파싱된다"   "$(lines_all_json)"
+  check "따옴표 섞인 토큰 '$t': number 토큰이 정규 JSON 정수 리터럴(바이트 단언)" "$(number_token_json_int warn)"
   check "따옴표 섞인 토큰 '$t': 엄격 파서로도 파싱된다"  "$(strict_json_all)"
   check "따옴표 섞인 토큰 '$t': number 는 0"           "$(evq warn '.number == 0')"
   check "따옴표 섞인 토큰 '$t': 줄을 삼키지 않는다"     "$([ "$(nlines '"event":"warn"')" = 1 ] && echo ok || echo no)"
@@ -785,5 +824,9 @@ run
 check "잘못된 RESUME_LIST_LIMIT: exit 64"   "$([ "$RC" = 64 ] && echo ok || echo no)"
 check "잘못된 RESUME_LIST_LIMIT: gh 호출 0" "$([ ! -s "$tmp/gh.log" ] && echo ok || echo no)"
 
-echo "resume-sweep: $pass passed, $fail failed"
+if [ "$skip" -gt 0 ]; then
+  echo "resume-sweep: $pass passed, $fail failed, $skip skipped (python3 없음)"
+else
+  echo "resume-sweep: $pass passed, $fail failed"
+fi
 [ "$fail" -eq 0 ]
