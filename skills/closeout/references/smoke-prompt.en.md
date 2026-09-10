@@ -56,16 +56,54 @@ fixed.** The snippet that opens the tunnel and the "clean up after the smoke" sn
 socket path is derived, fixed, from the port that bound successfully
 (`/tmp/smoke-tun-<port>.sock`) instead of a random `mktemp` value — the port is printed
 verbatim in the tunnel snippet's output, so the cleanup snippet can reconstruct the same
-path from just that number:
+path from just that number.
+
+⚠️ **Because the path is derived from the port alone, "the bind succeeded" and "we own
+this socket" are not the same thing.** If a prior tick died before cleanup and left the
+socket file behind while its port was freed, or another live master already holds that
+same path — OpenSSH can print `ControlSocket ... already exists, disabling multiplexing`
+and still succeed at the forwarding itself, non-multiplexed. Taking that as `PORT=$P;
+CTL=$C` means the cleanup step's `-O exit` **kills someone else's live master**, while the
+tunnel we actually just opened has no `CTL` to hold onto and leaks (#170). So we verify
+ownership with `-O check` at two points, before and right after using the path:
+
+- **Before use (stale-socket handling):** if this port's path already exists as a file,
+  don't jump straight to `ssh -M` — `-O check` it first. If it's dead (check fails), it's
+  crash leftover — remove it and keep using this port. If it's alive (check succeeds),
+  it's **someone else's master** — abandon this port and move to the next one (don't even
+  attempt the bind; touching it at all means touching someone else's connection).
+- **Right after binding (ownership confirmation):** even when `ssh -M` reports success,
+  don't take that at face value — `-O check` the same path once more. Only if that
+  succeeds is it **the live master we just created**, and only then do we adopt
+  `PORT`/`CTL`. If it fails (the non-multiplex fallback above), don't carry an unowned
+  socket as `CTL` — treat it as a local problem and retry the next port (if all five tries
+  hit this, it folds into the same `tunnel port exhausted` as bind collisions — the
+  three-way verdict below is unchanged).
 
 ```bash
 ERR=$(mktemp); PORT=""; CTL=""; ALL_BIND=1
 for _try in 1 2 3 4 5; do
   P=$(( 39000 + RANDOM % 1000 ))
   C="/tmp/smoke-tun-$P.sock"          # socket path = derived fixed from port (no variable handoff)
+  if [ -e "$C" ]; then
+    # Stale-socket handling (crash-resume defense) — check ownership before trying this port.
+    if ssh -S "$C" -O check <ssh host alias> >/dev/null 2>&1; then
+      continue                        # someone else's live master — leave it, try next port
+    else
+      rm -f "$C"                      # dead leftover — remove it and keep using this port
+    fi
+  fi
   if ssh -f -N -M -S "$C" -o ExitOnForwardFailure=yes \
        -L "127.0.0.1:$P:127.0.0.1:<remote port>" <ssh host alias> 2>"$ERR"; then
-    PORT=$P; CTL=$C; break            # bound successfully
+    # Don't trust a reported bind success at face value — if ControlPath already holds a
+    # live (someone else's) master, OpenSSH can print "ControlSocket ... already exists,
+    # disabling multiplexing" and still return success here, non-multiplexed. Adopt it
+    # only after -O check confirms it's the live master we just created.
+    if ssh -S "$C" -O check <ssh host alias> >/dev/null 2>&1; then
+      PORT=$P; CTL=$C; break          # ownership confirmed — genuine success
+    else
+      continue                        # unowned socket (non-multiplex fallback) — don't carry it as CTL
+    fi
   fi
   # The stderr ExitOnForwardFailure=yes produces on a bind failure is "bind: Address
   # already in use" (or similar) — that's what this grep matches. Non-bind failures it
@@ -75,7 +113,7 @@ for _try in 1 2 3 4 5; do
   grep -qi 'bind\|address already in use' "$ERR" || { ALL_BIND=0; break; }   # remote/path problem
 done
 if [ -z "$PORT" ] && [ "$ALL_BIND" = 1 ]; then
-  echo "tunnel port exhausted"        # five bind collisions — a local problem, not unreachable
+  echo "tunnel port exhausted"        # five bind collisions (or unconfirmed ownership) — a local problem, not unreachable
 elif [ -z "$PORT" ]; then
   echo "tunnel unreachable"           # non-bind ssh failure (host down/auth/DNS/routing) — remote/path problem
 elif curl -fsS --connect-timeout 3 --max-time 10 \
@@ -88,9 +126,20 @@ fi
 rm -f "$ERR"
 ```
 
+The `-O check` calls above judge only **whether this invocation owns a live master** —
+no socket at all (no leftover, proceed normally), the check itself failing to run (treat
+both spots as failure and fold to the safe side: before use, remove and continue; right
+after binding, don't adopt as `CTL` and retry), and a live master owned by someone else
+(leave it alone and move on) are three distinct meanings, so their exit codes are never
+collapsed into a single `|| true`.
+
 **On `tunnel ok`, leave the tunnel up and run the whole Chrome smoke through it** — tearing
 it down right after the probe means you never see the screen you came to check (all you
-verified is `/up`). Clean up after the smoke finishes, once, on **every** path — pass,
+verified is `/up`). `CTL` is only ever adopted above after the loop's own `-O check`
+confirmed ownership, so firing `-O exit` at cleanup time carries no risk of cutting
+someone else's master — though the master could still have died in the meantime (normal
+exit or crash) while the smoke ran long, so the `-S` existence check below stays in place.
+Clean up after the smoke finishes, once, on **every** path — pass,
 fail, or abort — by reconstructing the same path from the port number printed above
 (carry over the digits, not a variable):
 
