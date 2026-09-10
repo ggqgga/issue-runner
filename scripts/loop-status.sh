@@ -70,10 +70,18 @@
 #      체크아웃에 의존하지 않는다.)
 #
 # ★warn 정의 — 불변식 위반. **보고만 하고 교정하지 않는다**★
-#   · 무소속 PR      — 열린 PR + (head `agent/issue-*` 또는 연결 이슈 있음) + PR 라벨에
-#                      flow:ci·flow:codex·flow:verify·flow:ready·harvesting 이 하나도 없고
-#                      연결 이슈가 needs-human 이 아님 → 어느 루프도 안 문다.
-#                      **인계 전 창(플랜 §5)**: 그 후보 중 연결 이슈가 **구현중 버킷**이고
+#   warn 은 **루프가 교정 가능한** 불변식 위반만이다 — 루프가 집을 수 없는 후보는 warn 이
+#   아니다. 조치 불가능한 warn 은 신호를 죽인다(#188). 왜 그런지는 아래 `orphan_base` 옆
+#   근거 주석에 한 벌만 둔다(여기는 정의, 거기는 근거).
+#   · 무소속 PR      — 열린 PR + head 가 `agent/issue-*`(연결 이슈는 있어도 없어도 된다) +
+#                      PR 라벨에 flow:ci·flow:codex·flow:verify·flow:ready·harvesting 이
+#                      하나도 없고 PR 도 연결 이슈도 needs-human 이 아님 → 어느 루프도 안 문다.
+#                      head 가 `agent/issue-*` 가 **아닌** 후보(사람 세션이 판 `feat/*` 등)는
+#                      warn 이 아니라 아래 **note `사람 세션 PR`** 줄로 강등한다 — 관측에서
+#                      사라진 게 아니라 warn 이 아닌 자리로 간 것이다. 왜 그렇게 가르는지는
+#                      `orphan_base`/`$ohuman` 정의 옆 주석에 한 벌만 둔다(여기는 정의,
+#                      거기는 근거 — 같은 문장을 두 벌로 두면 드리프트한다).
+#                      **인계 전 창(플랜 §5)**: 그(=agent 헤드) 후보 중 연결 이슈가 **구현중 버킷**이고
 #                      (=`agent:claimed` 이 이긴 이슈. 라벨이 아니라 버킷으로 본다 — 라벨로
 #                      걸면 `agent:claimed` 을 단 채 배포대기·flow:*·harvesting 으로 간
 #                      이슈의 PR 이 warn 에서만 빠지고 구현중 줄엔 안 그려져 아무 표시도
@@ -120,6 +128,11 @@
 #                      (연결 이슈의 OPEN 여부는 이미 받은 열린 이슈 목록의 멤버십으로 본다 —
 #                       이슈마다 `gh issue view` 를 치지 않는다. 목록 상한 200 밖의 열린
 #                       이슈는 CLOSED 로 오인될 수 있다.)
+#
+# ★note 정의 — 불변식 위반이 **아닌** 사실. 루프가 집을 수 없으니 warn 이 아니다★
+#   · 사람 세션 PR   — 무소속 PR 의 나머지 조건은 다 맞는데 head 가 `agent/issue-*` 가 아닌
+#                      열린 PR(사람 세션이 판 `feat/*` 등). warn 에서 빼되 존재는 남긴다 —
+#                      `note N` 줄 아래 한 줄씩(#188).
 #
 # ★조회 실패 처리★ 이슈/PR 목록 조회가 실패한 레포는 블록 대신
 #   `파이프라인 <short> — 조회 실패: <사유>` 한 줄만 찍고 다음 레포로 계속하며, 최종 exit 는
@@ -478,11 +491,22 @@ def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | so
 | def in_claimed_bucket($n): (($iss | map(select(.number == $n and .bucket == "claimed")) | length) > 0);
 # 무소속 PR **후보** — 여기서 한 번만 정하고 아래에서 둘로 쪼갠다(인계 전 / warn).
 # 표시와 warn 을 각각 별도 조건으로 쓰면 언젠가 둘 다에 나오거나 둘 다에서 사라진다.
-  ($po | map(select(
-      ((.headRefName | test("^agent/issue-")) or (.issue != null))
-      and ((stage_labels_of(.ln) | length) == 0)
-      and (has(.ln; "needs-human") | not)
-      and ((.issue as $n | $iss | map(select(.number == $n and has(.ln; "needs-human"))) | length) == 0)))) as $ocand
+# 여기는 파일 상단 ★warn 정의★ 의 **근거**다(정의 문장은 거기 한 벌만 둔다 — head 가
+# `agent/issue-*` 인 것만 warn, 나머지는 note). 왜 그렇게 좁히는가: head 가 `agent/issue-*`
+# 가 아닌 PR(사람 세션이 연 브랜치)은 closeout 스윕 대상도 아니고 루프가 애초에
+# 집을 방법이 없다. 조치 불가능한 후보를 warn 에 얹으면 그 줄이 상시 잡음이 되어
+# 진짜 무소속 agent PR 의 신호를 죽인다(사람 브랜치는 결국 사람이 머지·종료한다).
+# 그래서 공통 판정은 `orphan_base` 하나로 적고, head 로만 갈라 $ocand(agent 후보)와
+# $ohuman(사람 세션 후보)을 나눈다 — 판정을 두 번 따로 적으면 언젠가 드리프트한다.
+# 제외된 $ohuman 은 조용히 버리지 않는다 — warn 대신 note 로 강등해 존재를 남긴다.
+def orphan_base:
+  select(((stage_labels_of(.ln) | length) == 0)
+    and (has(.ln; "needs-human") | not)
+    and ((.issue as $n | $iss | map(select(.number == $n and has(.ln; "needs-human"))) | length) == 0)
+    and ((.headRefName | test("^agent/issue-")) or (.issue != null)));
+  ($po | map(orphan_base)) as $ocand_all
+| ($ocand_all | map(select(.headRefName | test("^agent/issue-")))) as $ocand
+| ($ocand_all | map(select((.headRefName | test("^agent/issue-")) | not))) as $ohuman
 | ($ocand | map(. as $p | select(
       $p.issue != null
       and in_claimed_bucket($p.issue)
@@ -614,6 +638,16 @@ def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | so
       + ($po | map(select(. as $p | $p.issue != null and (($onums | index($p.issue)) == null)))
         | map({kind: "closed_issue_open_pr", repo_short: $rs, pr: .number, issue: .issue,
                text: "연결 이슈 종료 PR #\(.number)(\($rs)) — 연결 이슈 #\(.issue) 가 CLOSED(Refs 부분착지면 정상)"}))
+    ),
+    # 사람 세션 PR — $ohuman(무소속 후보 중 head 가 `agent/issue-*` 아닌 것). warn 이 아니라
+    # note 로 강등한다: 루프가 못 집는 후보를 warn 에 얹으면 조치 불가능한 잡음이 상시화되고
+    # (이 이슈의 실측 원인), 그렇다고 그냥 빼면 그 PR 의 존재 자체가 관측에서 사라진다.
+    notes: (
+      ($ohuman | map({kind: "human_session_pr", repo_short: $rs, pr: .number, issue: .issue,
+        text: ("사람 세션 PR #\(.number)(\($rs)) — head " + .headRefName
+               + " (agent/issue-* 아님) · "
+               + (if .issue == null then "연결 이슈 없음" else "연결 이슈 #\(.issue)" end)
+               + " · 루프가 못 집어 warn 아님")}))
     )
   }
 | . + {open_total: ([.buckets.waiting, .buckets.claimed, .buckets.verify, .buckets.ready,
@@ -642,7 +676,9 @@ else
      row("human_wait"), row("deploy_wait"), row("failed"), row("dup_closed"), row("spinoff"),
      "  승격 대기 " + (if .promotion_ahead == null then "—" else "\(.promotion_ahead)커밋" end),
      "  warn      \(.warns | length)" ]
-   + (.warns | map("    - " + .text)))
+   + (.warns | map("    - " + .text))
+   + [ "  note      \((.notes // []) | length)" ]
+   + ((.notes // []) | map("    - " + .text)))
   | join("\n")
 end
 JQ

@@ -218,7 +218,9 @@ sed "s/@NOW@/$NOW/g; s/@OLD@/$OLD/g" > "$tmp/fx/ggqgga_BodaT.issues.json" <<'FX'
  {"number":4838,"title":"라벨로 배포대기","createdAt":"@NOW@","labels":[{"name":"deploy-wait"}]},
  {"number":4796,"title":"배포 대기: PR #4700 — 제목 폴백","createdAt":"@NOW@","labels":[]},
  {"number":4848,"title":"배포 검증: 화력 작전 — 제목 폴백 2형식","createdAt":"@NOW@","labels":[{"name":"needs-human"}]},
- {"number":4900,"title":"루프 밖 이슈","createdAt":"@NOW@","labels":[{"name":"enhancement"}]}
+ {"number":4900,"title":"루프 밖 이슈","createdAt":"@NOW@","labels":[{"name":"enhancement"}]},
+ {"number":4963,"title":"사람 세션이 직접 붙인 이슈","createdAt":"@NOW@","labels":[]},
+ {"number":4964,"title":"무소속 회귀 대조 — agent 헤드는 종전대로 warn","createdAt":"@NOW@","labels":[]}
 ]
 FX
 
@@ -245,7 +247,13 @@ sed "s/@NOW@/$NOW/g; s/@AGO200@/$AGO200/g" > "$tmp/fx/ggqgga_BodaT.pr_open.json"
  {"number":4851,"headRefName":"agent/issue-4899","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
   "closingIssuesReferences":[{"number":4899}],"labels":[{"name":"flow:verify"}]},
  {"number":4860,"headRefName":"agent/issue-4600","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
-  "closingIssuesReferences":[{"number":4600}],"labels":[{"name":"flow:ready"}]}
+  "closingIssuesReferences":[{"number":4600}],"labels":[{"name":"flow:ready"}]},
+ {"number":4987,"headRefName":"feat/adspower-swr-4963","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":4963}],"labels":[]},
+ {"number":4991,"headRefName":"agent/issue-4964","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":4964}],"labels":[]},
+ {"number":4992,"headRefName":"feat/사람이-연-이슈없는-브랜치","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[],"labels":[]}
 ]
 FX
 
@@ -479,8 +487,8 @@ has_line "승격 대기 — release 없는 레포" "$tmp/out" \
 # 루프 밖 이슈는 어디에도 안 센다
 no_sub "루프 밖 이슈 #4900 미집계" "$tmp/out" "#4900"
 
-# ③ warn 5종 + 사유 없음 + 인계 지연
-has_line "warn 10건(질문 유무 미확인 1 포함)" "$tmp/out" "  warn      10"
+# ③ warn 5종 + 사유 없음 + 인계 지연(+ #188 회귀 대조 PR #4991 1건 추가)
+has_line "warn 11건(질문 유무 미확인 1 포함 + #188 회귀 대조 #4991)" "$tmp/out" "  warn      11"
 has_sub "warn 무소속 PR" "$tmp/out" \
   "    - 무소속 PR #4850(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4832 는 needs-human 아님"
 has_sub "warn 단계 라벨 중복" "$tmp/out" \
@@ -508,6 +516,26 @@ has_line "인계 전 창 밖 PR #4855 는 무소속 warn + 사망 의심(claim �
 has_line "구현중 버킷 밖의 agent:claimed PR 은 무소속 warn(꼬리표 없이)" "$tmp/out" \
   "    - 무소속 PR #4856(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4790 는 needs-human 아님"
 no_sub "구현중 버킷 밖 PR 은 '인계 전' 으로도 안 그려진다" "$tmp/out" "PR #4856(인계 전)"
+
+# ── (#188) 무소속 PR warn 이 사람 세션 브랜치(head 가 agent/issue-* 아님)에도 울리던
+# 문제 — warn 은 "루프가 교정 가능한 불변식 위반" 으로 좁히고, 제외된 후보는 note 로
+# 강등한다(존재 자체는 남긴다). 실측 원천(bodat PR #4987/#4963)과 같은 모양으로 픽스처.
+# 케이스1: head feat/* + 연결 이슈 있음 + 단계 라벨 0 → 무소속 warn 은 0, note 로 강등.
+no_sub "(#188) 케이스1: 사람 세션 PR #4987 는 무소속 warn 아님" "$tmp/out" "무소속 PR #4987"
+has_line "(#188) note 1건 — 사람 세션 PR 만 강등된다(에이전트 헤드·이슈 미연결은 안 섞인다)" \
+  "$tmp/out" "  note      1"
+has_line "(#188) 케이스1: 사람 세션 PR #4987 는 note 로 강등된다" "$tmp/out" \
+  "    - 사람 세션 PR #4987(bodat) — head feat/adspower-swr-4963 (agent/issue-* 아님) · 연결 이슈 #4963 · 루프가 못 집어 warn 아님"
+# 케이스2(회귀 방지): head agent/issue-* + 단계 라벨 0 + 연결 이슈 needs-human 아님
+# → 종전대로 무소속 warn 1건. note 로는 내려가지 않는다.
+has_line "(#188) 케이스2: agent 헤드는 종전대로 무소속 warn" "$tmp/out" \
+  "    - 무소속 PR #4991(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4964 는 needs-human 아님"
+no_sub "(#188) 케이스2: agent 헤드는 note 로 강등되지 않는다" "$tmp/out" "사람 세션 PR #4991"
+# 케이스3: head feat/* + 연결 이슈 없음 → 애초에 후보가 아니다(종전 동작 유지) —
+# 무소속 warn 에도 note 에도 나타나지 않는다(존재를 지키는 대상 자체가 아니라서).
+no_sub "(#188) 케이스3: 연결 이슈 없는 사람 브랜치는 무소속 warn 에 없다" "$tmp/out" "PR #4992"
+no_sub "(#188) 케이스3: 연결 이슈 없는 사람 브랜치는 note 에도 없다" "$tmp/out" "사람 세션 PR #4992"
+
 # 사유 없는 needs-human 만 warn — hold:* 가 붙은 셋은 조용하다
 has_sub "warn needs-human 사유 없음" "$tmp/out" \
   "    - needs-human 사유 없음 #4826(bodat) — hold:* 라벨 없음"
