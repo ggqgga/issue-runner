@@ -31,11 +31,17 @@
 # (재리뷰·재판정 대비). 한/영 병행 워커라 영문 접두(Merge verdict/Verifier review)도 본다.
 #
 # 테스트/재현용 env 오버라이드 (없으면 gh/date 로 실측):
-#   FC_COMMENTS_JSON  코멘트 배열 JSON([{body,createdAt},...]) — 실조회 대체.
-#                      미지정 시 pr-comments.sh 로 **페이지네이션 전량** 조회한다
+#   FC_COMMENTS_FILE  코멘트 배열 JSON 이 담긴 **파일 경로** — 대용량 안전 경로(#171
+#                      반송 4회차 [P2]). 코멘트 전량을 환경변수 하나로 넘기면 exec 한계
+#                      (리눅스 MAX_ARG_STRLEN 128KB)를 넘는 순간 이 스크립트가 **시작조차
+#                      못 하고** 호출자의 판정이 비어 그 PR 이 매 스윕에서 조용히 빠진다.
+#                      FC_COMMENTS_JSON 보다 우선하며, 읽기 실패는 실조회로 **새지 않고**
+#                      빈 코멘트(=active, fail-closed)로 떨어진다.
+#   FC_COMMENTS_JSON  코멘트 배열 JSON([{body,createdAt},...]) — 실조회 대체(소용량 픽스처용).
+#                      둘 다 미지정 시 pr-comments.sh 로 **페이지네이션 전량** 조회한다
 #                      (`gh pr view --json comments` 의 첫 100건 상한 회피, #171).
 #   FC_FAILING        실패 체크 수(정수) — statusCheckRollup 대체
-#   FC_HEAD_AT        head 커밋 시각(ISO8601) — gh pr view --json commits 대체.
+#   FC_HEAD_AT        head 커밋 시각(ISO8601) — pr-head-at.sh 실조회 대체.
 #                      빈 값/파싱 불가 = **못 얻음**. 🔄 계열 갈래(#110 스테일 클록)에선
 #                      종전대로 epoch 0 으로 degrade 하지만, `✅` 갈래(#171 머지 게이트)
 #                      에선 증명 실패이므로 done_verdict 를 내지 않고 active 다.
@@ -53,7 +59,14 @@ stale_sec=$((stale_min * 60))
 now=${FC_NOW:-$(date -u +%s)}
 
 # ── 입력 수집 (env 오버라이드 우선) ──
-if [ -n "${FC_COMMENTS_JSON:-}" ]; then
+if [ -n "${FC_COMMENTS_FILE:-}" ]; then
+  # 파일 경로 주입(#171 반송 4회차 [P2]) — 페이지네이션으로 상한이 사라진 코멘트 전량은
+  # 환경변수 하나에 담기엔 크다(exec 한계 128KB). 읽기 실패는 **실조회로 새지 않는다**:
+  # 호출자가 "이 파일이 곧 판정 입력" 이라고 계약한 이상, 그걸 못 읽었는데 다른 출처로
+  # 조용히 갈아타면 어떤 입력으로 판정했는지 알 수 없다 → 빈 코멘트(=active) 로 떨어뜨려
+  # 게이트를 닫는다.
+  comments=$(cat "$FC_COMMENTS_FILE" 2>/dev/null) || comments=''
+elif [ -n "${FC_COMMENTS_JSON:-}" ]; then
   comments="$FC_COMMENTS_JSON"
 else
   # 코멘트는 **페이지네이션**해서 전량 읽는다(#171 반송 3회차 [P1-2]).
@@ -82,8 +95,13 @@ fi
 if [ -n "${FC_HEAD_AT+x}" ]; then
   head_at="$FC_HEAD_AT"
 else
-  head_at=$(gh pr view "$pr" --repo "$repo" --json commits \
-    -q '.commits | last | .committedDate' 2>/dev/null)
+  # head 시각은 **커밋 목록을 세지 않고** 얻는다(#171 반송 4회차 [P1-1]).
+  # `gh pr view --json commits` 는 GraphQL commits(first:100) 이라 101번째부터 안 온다 —
+  # 그때 `last` 는 head 가 아니라 100번째 커밋이고, 그 이른 시각으로 비교하면 낡은 ✅ 가
+  # `head <= verdict` 를 만족해 done_verdict 가 난다(코멘트 100건 상한과 같은 함정).
+  # 조회 로직은 pr-head-at.sh **한 자리**에 있다(사유·계약은 그 파일 주석 참조).
+  # 조회 실패는 빈 값으로 떨어뜨린다 — 아래 ✅ 갈래가 "증명 실패 = active" 로 받는다.
+  head_at=$("$SCRIPT_DIR/pr-head-at.sh" "$repo" "$pr" 2>/dev/null) || head_at=''
 fi
 
 # ISO8601(...Z) → epoch. BSD(date -j -f) 우선, GNU(date -d) 폴백.

@@ -16,6 +16,15 @@ me=$(gh api user -q .login 2>/dev/null); [ -n "$me" ] || exit 0
 # 변종이 생기면 여기에 함께 넣는다.
 BOUNCE_MARKERS='["재디스패치:","재검증 실패:"]'
 
+# 코멘트 전량을 finish-classify 에 넘기는 통로 (#171 반송 4회차 [P2]).
+# 환경변수 하나로 넘기면 페이지네이션으로 상한이 사라진 코멘트가 exec 한계(리눅스
+# MAX_ARG_STRLEN 128KB)를 넘는 순간 finish-classify 가 **시작조차 못 하고** verdict 가
+# 비어 그 PR 이 매 스윕에서 조용히 빠진다(검증자·마감 코멘트는 건당 수 KB — 반송을 여러
+# 번 도는 PR 이면 닿는 크기다). 파일로 넘기면 크기와 무관해진다.
+# 파일을 못 만들면 판정 입력을 넘길 방법이 없으므로 후보를 내지 않고 끝낸다(fail-closed).
+fc_comments_file=$(mktemp "${TMPDIR:-/tmp}/closeout-eligible-comments.XXXXXX") || exit 0
+trap 'rm -f "$fc_comments_file"' EXIT
+
 scope_file="$PWD/.loop/repos"
 in_scope() {
   [ -f "$scope_file" ] || return 0
@@ -35,8 +44,11 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   pr=$(printf '%s'  "$row" | jq -r '.pr')
   in_scope "$repo" || continue
 
+  # commits 는 **일부러 안 싣는다**(#171 반송 4회차 [P1-1]) — GraphQL commits(first:100)
+  # 이라 101번째부터 안 오고, 그때 `last` 는 head 가 아니라 100번째 커밋이다. head 시각은
+  # 아래에서 pr-head-at.sh(headRefOid + 그 커밋 조회)로 상한 없이 받는다.
   meta=$(gh pr view "$pr" --repo "$repo" \
-    --json headRefName,mergeable,labels,closingIssuesReferences,commits 2>/dev/null)
+    --json headRefName,mergeable,labels,closingIssuesReferences 2>/dev/null)
   [ -n "$meta" ] || continue
 
   head=$(printf '%s' "$meta" | jq -r '.headRefName')
@@ -77,17 +89,28 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 2항: 로직 두 벌 금지). ✅ 존재만으로 후보 삼지 않는다 — 반송(재디스패치) 뒤 새
   # 커밋이 올라왔는데 그 커밋 이전에 찍힌 ✅ 가 남아 있으면 finish-classify 가
   # done_verdict 를 내지 않고(active) 여기서도 걸러진다.
-  # FC_COMMENTS_JSON·FC_HEAD_AT 으로 이미 가져온 comments·commits 를 그대로 넘겨
-  # 중복 gh 조회를 피한다(사전 리뷰 WARN — ✅ 후보마다 별도 gh 왕복이 나던 것을
-  # 여기 meta 에 commits 를 추가로 얹어 없앤다).
+  # head 시각은 **코멘트를 읽은 뒤** 뜬다(#171 반송 4회차 [P1-2]). 순서가 반대면 그 사이
+  # 워커가 push 했을 때 head_at 이 **이전 커밋**을 가리키고, 기존 ✅ 가 그보다 늦어 보여
+  # **검증 안 된 head 가 후보로 나간다**(뒤의 CI 확인은 판정 신선도를 다시 보지 않는다).
+  # 나중에 뜬 head 는 그 사이 push 를 포함하므로 ✅ 보다 늦어져 active = 다음 틱 재시도다
+  # (창을 완전히 없애는 것 — "이 판정이 바로 이 OID 에 대한 것" — 은 #175 몫이라, 여기서는
+  # 읽는 **순서**만 fail-closed 쪽으로 맞춘다. 순서가 곧 계약이다).
+  #
+  # 조회 로직은 pr-head-at.sh 한 자리(상한 100 회피 — 그 파일 주석 참조). 실패는 빈 값으로
+  # 떨어뜨리고 판정은 finish-classify 한 곳에서만 한다(증명 실패 → active → 후보 제외).
+  head_at=$("$SCRIPT_DIR/pr-head-at.sh" "$repo" "$pr" 2>/dev/null) || head_at=''
+
+  # 이미 가져온 comments 를 **파일로** 넘겨 중복 gh 조회를 피한다(사전 리뷰 WARN).
+  # 환경변수가 아니라 파일인 이유는 위 fc_comments_file 주석 참조([P2] — exec 한계).
+  # 쓰기 실패면 판정 입력을 못 넘긴 것이므로 후보에서 뺀다(fail-closed).
   #
   # FC_FAILING=0 도 넘긴다: finish-classify 의 CI 실패 가드는 `🔄` 갈래에만 걸리는데
   # 여기서 받는 판정은 `✅` 갈래(done_verdict) 하나뿐이라 그 값이 쓰이지 않는다. 안
   # 넘기면 후보마다 statusCheckRollup 을 헛조회한다(실 CI 게이트는 아래
   # closeout-ci-pass.sh 가 로컬 CI 캐시로 따로 본다). 판정 로직을 여기서 베끼는 게
   # 아니라 **쓰이지 않는 입력의 조회만** 생략하는 것이다.
-  head_at=$(printf '%s' "$meta" | jq -r '(.commits // [])[-1].committedDate // empty')
-  verdict=$(FC_COMMENTS_JSON="$comments" \
+  printf '%s' "$comments" > "$fc_comments_file" || continue
+  verdict=$(FC_COMMENTS_FILE="$fc_comments_file" \
     FC_HEAD_AT="$head_at" FC_FAILING=0 \
     "$SCRIPT_DIR/finish-classify.sh" "$repo" "$pr" 2>/dev/null)
   [ "$verdict" = "done_verdict" ] || continue

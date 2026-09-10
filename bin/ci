@@ -129,6 +129,31 @@ rc=0; PATH="$tmp/stub:$PATH" bash scripts/closeout-ci-pass.sh owner/r 123 >/dev/
 [ "$rc" = 1 ] || { echo "  ✗ ci-pass: gh 실패 시 exit $rc (기대 1)"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] pr-head-at 헬퍼 fail-closed·실행비트 스모크 (#171)"
+# head 시각을 못 얻으면 **아무것도 안 내고 exit 1** 이어야 한다 — 빈 결과를 유효값으로
+# 둔갑시키면 머지 게이트(finish-classify 의 ✅ 갈래)가 증명 없이 열린다.
+# 소비자가 `"$SCRIPT_DIR/pr-head-at.sh"` 로 직접 exec 하므로 실행 비트도 여기서 함께 문다
+# (비트가 빠지면 조용히 exit 126 → head 시각이 항상 빈 값으로 degrade 된다).
+[ -x scripts/pr-head-at.sh ] || { echo "  ✗ pr-head-at.sh 실행 비트 없음"; exit 1; }
+tmp=$(mktemp -d); mkdir "$tmp/stub"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/stub/gh"; chmod +x "$tmp/stub/gh"
+rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/pr-head-at.sh owner/r 123 2>/dev/null) || rc=$?
+[ "$rc" = 1 ] && [ -z "$out" ] \
+  || { echo "  ✗ pr-head-at: gh 실패 시 rc=$rc out='$out' (기대 rc=1·무출력)"; rm -rf "$tmp"; exit 1; }
+# headRefOid 는 얻었는데 그 커밋 조회가 빈 값 → 역시 exit 1 (부분 성공을 통과로 안 본다).
+cat > "$tmp/stub/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *"--json headRefOid"*) echo '{"headRefOid":"feed0070ab"}' ;;
+  *) echo '' ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/pr-head-at.sh owner/r 123 2>/dev/null) || rc=$?
+[ "$rc" = 1 ] && [ -z "$out" ] \
+  || { echo "  ✗ pr-head-at: 커밋 조회 빈값 rc=$rc out='$out' (기대 rc=1·무출력)"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
 echo "[closeout] ci-pass 로컬 CI 분기 세 결과 구분 스모크 (#70 — pass=0/fail=1/부재=2)"
 # 로컬 CI 옵트인 레포(root 에 실행가능 bin/ci) → head SHA 캐시 결과로 0/1/2 구분.
 # rebase 로 HEAD 가 바뀐 PR 은 새 SHA 결과파일이 부재 → exit 2(재검증 필요)여야 한다.
@@ -236,8 +261,11 @@ case "$*" in
   *"api user"*) echo "tester" ;;
   *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
   *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
+  # #171 반송 4회차 [P1-1]: head 시각은 커밋 목록(상한 100)이 아니라 head SHA 의
+  # 커밋 하나를 조회해 얻는다(scripts/pr-head-at.sh).
+  *"commits/feed0070ab"*) echo '{"commit":{"committer":{"date":"2026-01-01T00:00:00Z"}}}' ;;
   *"pr view"*headRefName*)
-    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"closingIssuesReferences":[{"number":5}],"commits":[{"committedDate":"2026-01-01T00:00:00Z"}]}' ;;
+    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"closingIssuesReferences":[{"number":5}]}' ;;
   *) echo '' ;;
 esac
 STUB
@@ -294,8 +322,11 @@ case "\$*" in
   *"api user"*) echo "tester" ;;
   *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
   *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
+  # #171 반송 4회차 [P1-1]: head 시각은 커밋 목록(상한 100)이 아니라 head SHA 의
+  # 커밋 하나를 조회해 얻는다(scripts/pr-head-at.sh).
+  *"commits/feed0070ab"*) echo '{"commit":{"committer":{"date":"2026-01-01T00:00:00Z"}}}' ;;
   *"pr view"*headRefName*)
-    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"closingIssuesReferences":[{"number":5}],"commits":[{"committedDate":"2026-01-01T00:00:00Z"}]}' ;;
+    echo '{"headRefName":"agent/issue-5","mergeable":"MERGEABLE","labels":[],"closingIssuesReferences":[{"number":5}]}' ;;
   *) echo '' ;;
 esac
 STUB
@@ -349,8 +380,11 @@ case "\$*" in
   *"api user"*) echo "tester" ;;
   *"search/issues"*) echo '[{"repo":"o/r","pr":5}]' ;;
   *"pr view"*headRefOid*) echo '{"headRefOid":"feed0070ab"}' ;;
+  # #171 반송 4회차 [P1-1]: head 시각은 커밋 목록(상한 100)이 아니라 head SHA 의
+  # 커밋 하나를 조회해 얻는다(scripts/pr-head-at.sh).
+  *"commits/feed0070ab"*) echo '{"commit":{"committer":{"date":"2026-01-01T00:00:00Z"}}}' ;;
   *"pr view"*headRefName*)
-    echo '{"headRefName":"agent/issue-5","mergeable":"$2","labels":$1,"closingIssuesReferences":[{"number":5}],"commits":[{"committedDate":"2026-01-01T00:00:00Z"}]}' ;;
+    echo '{"headRefName":"agent/issue-5","mergeable":"$2","labels":$1,"closingIssuesReferences":[{"number":5}]}' ;;
   *) echo '' ;;
 esac
 STUB

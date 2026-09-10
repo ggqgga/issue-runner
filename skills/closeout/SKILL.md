@@ -108,6 +108,14 @@ PR 은 워커·verify·closeout 코멘트가 겹겹이 쌓여 100건이 먼 숫�
 양방향으로 조용히 틀린다 — 새 ✅ 가 101번째 이후면 머지 가능한 PR 이 영영 후보에 안 뜨고
 (조용한 큐 사망), 반송 마커가 101번째 이후면 반송된 PR 이 안전망을 통과한다.
 
+같은 상한이 **커밋 쪽에도** 있었다. `gh pr view --json commits` 는 GraphQL
+`commits(first: 100)` 이라 101번째부터 안 오고, 그때 `last` 는 head 가 아니라 100번째
+커밋이다 — 그 이른 시각으로 비교하면 낡은 ✅ 가 `head <= verdict` 를 만족해 통과한다.
+그래서 head 시각은 커밋 목록을 세지 않고 `pr-head-at.sh`(= `--json headRefOid` 로 head SHA
+를 받아 `gh api repos/<repo>/commits/<sha>` 하나만 조회) **한 자리**로 읽는다. 그리고 그
+조회는 **코멘트를 읽은 뒤**에 한다 — 먼저 뜨면 그 사이의 push 가 `head_at` 에 안 잡혀
+검증 안 된 head 가 후보로 나간다.
+
 **대상**: `me=$(gh api user -q .login)` 후 `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc`(FIFO)로 열린 PR 을 모으고,
 head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify` 미부착**이고 **`needs-human`

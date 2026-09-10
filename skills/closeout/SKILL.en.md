@@ -131,6 +131,14 @@ several times piles up worker/verify/closeout comments, so 100 is not a distant 
 capped is silently wrong in both directions: a new ✅ past #100 means a mergeable PR never surfaces
 as a candidate (a queue that dies quietly), and a bounce marker past #100 slips through the net.
 
+The same cap existed **on the commit side**. `gh pr view --json commits` is GraphQL
+`commits(first: 100)`, so commit #101 onward never arrives and `last` is the 100th commit rather
+than the head — comparing against that earlier time lets a stale ✅ satisfy `head <= verdict` and
+pass. So the head time is read without counting commits at all, through `pr-head-at.sh` in **one
+place** (`--json headRefOid` for the head SHA, then a single `gh api repos/<repo>/commits/<sha>`).
+That lookup runs **after** the comments are read — taken first, a push landing in between would be
+missing from `head_at` and an unverified head would surface as a candidate.
+
 **Targets**: `me=$(gh api user -q .login)`, then `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc` (FIFO). For each PR whose head is
 `agent/issue-*` and that is **not labeled `harvesting`**, **not labeled `flow:verify`**, and **not
