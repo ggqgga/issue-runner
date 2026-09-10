@@ -133,6 +133,18 @@ after binding, don't adopt as `CTL` and retry), and a live master owned by someo
 (leave it alone and move on) are three distinct meanings, so their exit codes are never
 collapsed into a single `|| true`.
 
+**Left out of scope — the already-backgrounded, non-multiplex forwarding process itself
+when ownership is unconfirmed right after binding.** The before-use stale-socket check
+narrows the window, but a very tight race (TOCTOU) between that check and the actual
+`ssh -M` call can in theory still trigger the non-multiplex fallback. When that happens,
+failing the `-O check` keeps us from adopting `CTL`, which prevents **killing someone
+else's master** and **falsely reporting success** — but the local forwarding process that
+already forked to the background at that instant has no control socket, so it can't be
+stopped via `-O exit`, and `pkill` is forbidden (see above). This is rare (needs a crash
+leftover plus a race window to coincide) and its blast radius is a single occupied local
+port. This issue is scoped to **socket ownership** only (see "Do not filter out" above) —
+tracking the child's PID to also kill this residual process is left out of scope.
+
 **On `tunnel ok`, leave the tunnel up and run the whole Chrome smoke through it** — tearing
 it down right after the probe means you never see the screen you came to check (all you
 verified is `/up`). `CTL` is only ever adopted above after the loop's own `-O check`
