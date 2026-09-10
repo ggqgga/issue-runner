@@ -95,19 +95,28 @@ Procedure:
    a `BLOCKED:` comment on the issue with the reason and stop (a human enables
    link-secrets or narrows the test scope). Never bypass the cache or fake a green.
 
-   **CI queue-wait discipline (#185).** `run-local-ci.sh` returns immediately, but the
-   run itself passes through a box-wide **serial queue** — if another worker's CI is
-   already ahead of yours it can be delayed several minutes, and mishandling that wait
-   makes the worker quietly end its turn, which the dispatcher **misreads as death**
-   (an observed incident).
-   - **Do not call `bin/ci` directly** — use only `run-local-ci.sh` above. A direct
-     call does not return immediately and hits the tool-call timeout.
-   - Check results with **one poll per tool call** on the `<sha>.result` file. Do not
-     hold the turn with `sleep`.
+   **CI queue-wait discipline (#185).** `run-local-ci.sh` is a **synchronous call** —
+   it puts your SHA on the box-wide **serial queue** and does not return until the wait
+   plus the run both finish. If another worker's CI is already ahead of yours, that one
+   call can take several minutes, and mishandling that wait makes the worker quietly
+   end its turn, which the dispatcher **misreads as death** (an observed incident).
+   - **Do not call `bin/ci` directly** — use only `run-local-ci.sh` above. Skipping the
+     queue can overlap with another CI run on the same box and both die sharing a test
+     DB/fixtures.
+   - **Always call it in the foreground with a long timeout** — the "no background
+     execution" rule at the top of this document already names `run-local-ci.sh`: raise
+     the Bash tool's `timeout` to **up to 600000ms (10 minutes)**.
+   - If it still has not finished and the tool call was cut off (the box-wide queue is
+     badly backed up), do not immediately re-issue it — first do a lightweight check
+     for whether the `<sha>.result` file already exists (another session working the
+     same SHA may have finished it first).
    - **Do not stack a second CI run** — before queuing one, check
      `ps -Ao pid,etime,command | grep '[b]in/ci'` for one already running (two in the
      same worktree share a test DB/fixtures and both die).
-   - While waiting, do CI-independent work first (drafting the PR body, preparing 9-b).
+   - If the wait looks likely to be long (another worker's CI is ahead), **finish**
+     CI-independent work first (drafting the PR body, preparing 9-b) **before** making
+     the call — so that if the single call eats the rest of this turn's time, it is not
+     wasted.
 
    Queue state is observed at `~/.claude/.local-ci/queue.log`. It produces four
    outcomes:
@@ -117,23 +126,24 @@ Procedure:
    23:19:57 pid=34001 b4885ba9 폐기 — 실행 시점 HEAD 가 15c6e96e ≠ b4885ba9 (새 push 가 있었거나 로컬 HEAD 만 움직임)
    23:31:12 pid=86456 75979c9c 중단(INT/TERM)
    ```
-   - **queued / result (pass·fail)** — normal progress. Wait for the `.result` file
-     to appear.
+   - **queued / result (pass·fail)** — normal progress. Take the result the call
+     returns with.
    - **폐기 (discard) — HEAD mismatch.** The queue discards a SHA when the HEAD at
      run time differs from the SHA it was queued with. **The SHA you wait on must
-     always be "HEAD right now"** — if you pushed a new commit, queue the new SHA and
-     watch its result. Do not hold your turn waiting for the result of an old SHA
-     that will never exist.
-   - **중단(INT/TERM) (abort) — a short timeout kills the waiting process too.**
-     `run-local-ci.sh` itself returns immediately, but a short timeout on the Bash
-     call that follows it kills the process still waiting in the queue along with it.
-     **Do not set a short bash timeout.**
+     always be "HEAD right now"** — if you pushed a new commit, queue the new SHA
+     instead. Do not hold your turn waiting for the result of an old SHA that will
+     never exist.
+   - **중단(INT/TERM) (abort) — a short timeout kills the waiting/running process
+     too.** `run-local-ci.sh` runs synchronously **including the queue wait** — a short
+     timeout on that call kills the process whether it is still waiting in the queue or
+     already running `bin/ci`. **Do not set a short bash timeout.**
 
-   **If you must end your turn, never end it silently.** If the queue wait runs long
-   and you must finish this turn without the result, your final message must read
-   exactly `CI 대기 중 — <current HEAD SHA> 대기열 N번째, 다음 할 일: <one line>`. A
-   silent finish makes the dispatcher misread you as dead and reclaim the worktree —
-   this one line is the only signal that tells it "resume me, I am not dead."
+   **If you must end your turn, never end it silently.** If the above foreground call
+   exceeds 10 minutes without finishing and you must end this turn without a result,
+   your final message must read exactly
+   `CI 대기 중 — <current HEAD SHA> 대기열 N번째, 다음 할 일: <one line>`. A silent
+   finish makes the dispatcher misread you as dead and reclaim the worktree — this one
+   line is the only signal that tells it "resume me, I am not dead."
 9-b. **Pre-PR review — once, non-gating.** After local CI passes and before opening the
    PR, nest a fresh-context reviewer via the Agent tool — `subagent_type: "general-purpose"`
    (**no codex-family types** — the verification gate is owned by verify-runner and a codex
