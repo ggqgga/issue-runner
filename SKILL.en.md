@@ -341,7 +341,7 @@ state **"soft budget exceeded — recommend escalating to needs-human"** on that
 If every count is 0, output the single line "quiet".
 
 **Pipeline snapshot (required every tick).** After the lines above, run
-`$SCRIPTS/loop-status.sh --post issue-runner --delta "<this tick's one-line summary>"` (it also overwrites the per-repo pinned dashboard issue `루프 현황` — label `loop-dashboard` — so GitHub alone shows who holds what and when each loop last ticked, #162) and paste its output **verbatim** — the counters only say "what
+`$SCRIPTS/loop-status.sh --post issue-runner --delta "<this tick's one-line summary>"` (it also overwrites the per-repo pinned dashboard issue `루프 현황` — label `loop-dashboard` — so GitHub alone shows who holds what and when each loop last ticked, #163) and paste its output **verbatim** — the counters only say "what
 this tick did"; what is piled up is visible only in this block. Call it with no `cd` (the
 scope auto-applies from the loop session cwd's `.loop/repos`). **Paste it even on a quiet
 tick where every count is 0** — the snapshot is the only window onto what is idling.

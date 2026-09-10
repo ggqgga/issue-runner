@@ -611,7 +611,7 @@ ck "stale marker: --json note_missing 도 사유를 가린다" \
   '[{"n":24,"h":["conflict"],"m":true},{"n":23,"h":["conflict"],"m":false},{"n":22,"h":["policy"],"m":false},{"n":21,"h":["conflict","policy"],"m":false},{"n":20,"h":["policy"],"m":true}]'
 ck "stale marker: warn 0(사유 있는 홀드뿐)" "$(grep -c '질문 유무 미확인' "$tmp/out")" 0
 
-# ── --post 대시보드(#162) ──────────────────────────────────────────────────
+# ── --post 대시보드(#163) ──────────────────────────────────────────────────
 fx="$tmp/fx/ggqgga_issue-runner"
 rm -f "$fx.dash.num" "$fx.dash.body"
 run --repo ggqgga/issue-runner --post issue-runner --delta "정리 1 · 보수 0 · 신규 2 · 대기(사람 리뷰) 0 · warn 1"

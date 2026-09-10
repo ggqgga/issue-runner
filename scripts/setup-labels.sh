@@ -41,7 +41,7 @@ gh label create "spinoff" --repo "$repo" --color BFDADC \
   --description "closeout 6단계 파생 이슈 (부모 PR/이슈에서 갈라짐)" --force
 gh label create "deploy-wait" --repo "$repo" --color 1D76DB \
   --description "closeout 4단계 배포 대기 이슈 (needs-human 과 병행 — 사람대기와 구분용)" --force
-# 루프 현황 고정 이슈(#162) — loop-status.sh --post 가 이 라벨로 찾아 본문을 덮어쓴다(레포당 1개).
+# 루프 현황 고정 이슈(#163) — loop-status.sh --post 가 이 라벨로 찾아 본문을 덮어쓴다(레포당 1개).
 gh label create "loop-dashboard" --repo "$repo" --color 0052CC --force \
   --description "루프 현황 고정 이슈 — 세 루프가 매 틱 본문을 덮어쓴다(직접 편집 금지)"
 
