@@ -335,7 +335,14 @@ N 도 디스패치당 1만 올린다.
       **재개된 이슈면 프롬프트에 두 가지를 더 인라인하라.** 마커(`<!-- ladder-resume: N -->`)를
       품은 **코멘트**가 하나라도 있으면 ① 의 재개 스윕이 되살린 건이고, 그 개수가 몇 번째
       재개인지다(본문에는 마커가 없다 — 스윕은 본문을 건드리지 않는다):
-      `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select(.body|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'`
+      (인용은 세지 않는다 — 백틱 인라인 코드·코드펜스 안의 마커는 신호가 아니라 신호를
+      *설명하는 글*이라, `resume-sweep.sh` 의 `JQ_UNQUOTE` 와 **같은 정의**로 먼저 걷어낸다.
+      두 곳이 갈라지면 사람 눈에 안 보이는 두 번째 계산기가 다른 수를 센다 — #197)
+
+      ````sh
+      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("```[\\s\\S]*?```"; " ") | gsub("`[^`\\n]*`"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+      ````
+
       채운 템플릿 뒤에 ⓐ 사다리 문서 경로
       `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (어느 칸을 어떤
       명령으로 올라가는지 워커가 읽을 곳) 와 ⓑ **직전 시도의 실패 출력** — 이슈의 마지막

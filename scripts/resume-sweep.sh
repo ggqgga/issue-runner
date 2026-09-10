@@ -60,6 +60,27 @@ if ! _nonneg_int "$LIST_LIMIT" || [ "$LIST_LIMIT" -lt 1 ]; then
   exit 64
 fi
 
+# ── 인용된 마커는 제어 신호가 아니다 (#197) ───────────────────────────────
+# 마커(`<!-- hold-note: … -->`·`<!-- policy-review: … -->`·`<!-- ladder-resume: N -->`)는
+# 루프끼리 주고받는 **제어 신호**다. 그런데 substring 매칭은 그 신호를 *설명하는 글*까지
+# 신호로 읽는다 — 실측(#174): 재심 코멘트가 본문에 hold-note 을 인용해 **자기 자신을**
+# 이번 홀드의 질문(에피소드 경계)으로 만들었고, 경계 뒤에는 재심 마커가 없어 판정이 매 틱
+# `due` 로 되돌아왔다(사람이 라벨을 뗄 때까지 영구 반복). 같은 취약점이 재개 횟수에도 있어
+# `<!-- ladder-resume: 1 -->` 를 인용만 해도 소진 횟수가 부풀고 조기 승격(사람 대기)됐다.
+#
+# 그래서 매칭 **전에** 인용 구간을 걷어낸다. 걷어내는 것: 코드펜스(``` … ```)와 백틱 인라인
+# 코드. 걷어내지 **않는** 것: 코멘트 끝에 맨몸으로 붙는 정상 마커와, 블록쿼트(`>`)·따옴표
+# 안의 맨몸 마커(블록쿼트로 남의 코멘트를 통째 인용하는 일은 이 루프에 없고, 걸러 버리면
+# 진짜 마커를 잃는다).
+#
+# 순서가 계약이다 — 펜스를 **먼저** 지운 뒤 인라인을 지운다. `` `<!-- … -->` `` 같은 이중
+# 백틱 인라인은 인라인 패스가 백틱 쌍을 왼쪽부터 소진하며 전부 지우지만, 펜스를 나중에
+# 돌리면 이미 조각난 백틱과 짝이 어긋난다. 인라인은 **한 줄 안**으로 제한한다(`[^`\n]*`) —
+# 줄을 넘게 두면 앞줄의 홀백틱이 뒷줄 백틱과 짝지어 그 사이의 진짜 마커를 삼킨다.
+# 이 정의는 SKILL.md·SKILL.en.md ③-4d 의 재개 횟수 jq 와 **같은 문자열**이어야 한다
+# (프롬프트와 스크립트가 다른 수를 세면 안 된다 — 동기화는 테스트가 grep -F 로 문다).
+JQ_UNQUOTE='def unquoted: gsub("```[\\s\\S]*?```"; " ") | gsub("`[^`\\n]*`"; " ");'
+
 # 사용자 확인은 공유 헬퍼(gh-login.sh) — REST /user 503 폴백·형식 검증·재시도는 그 안.
 # 오염된 me 로 빈 스코프를 위장하지 않는다(fail-loud).
 me=$("$SCRIPT_DIR/gh-login.sh") || me=""
@@ -213,7 +234,7 @@ count_markers() {  # count_markers <repo> <num>
   out=$(gh issue view "$2" --repo "$1" --json comments 2>/dev/null) || return 1
   printf '%s' "$out" | jq -e 'type=="object"' >/dev/null 2>&1 || return 1
   printf '%s' "$out" \
-    | jq '[.comments[]? | select(.body | test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+    | jq "$JQ_UNQUOTE"'[.comments[]? | select(.body | unquoted | test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
 }
 
 # 연결된 **열린** PR 들 — "<번호><TAB><라벨 콤마목록>" 줄. 없으면 빈 출력(정상).
@@ -519,8 +540,8 @@ while IFS= read -r repo; do
       # 에피소드 단위: 마지막 `hold-note: policy` 코멘트(=이번 홀드의 질문) **이후**에 재심 마커가
       # 있어야 "이번 홀드는 재심됨" 이다. 옛 홀드의 마커가 새 홀드의 재심을 막지 않게.
       # 질문(hold-note) 자체가 없으면 재심할 대상이 없다 — warn 으로만(레거시·손으로 붙인 홀드).
-      pstate=$(printf '%s' "$pout" | jq -r '
-        [.comments[]? | .body] as $b
+      pstate=$(printf '%s' "$pout" | jq -r "$JQ_UNQUOTE"'
+        [.comments[]? | .body | unquoted] as $b
         | ([range(0; $b|length)] | map(select($b[.] | test("<!--\\s*hold-note:\\s*policy"))) | last) as $q
         | if $q == null then "no-note"
           else ([range($q+1; $b|length)] | map(select($b[.] | test("<!--\\s*policy-review:"))) | length) as $r
