@@ -86,6 +86,16 @@ if [ "${1:-}" = "api" ]; then
   f="$STUB_DIR/$(slug "$repo")"
   if [ -f "$f.fail" ]; then echo "gh: connection refused" >&2; exit 1; fi
   case "$path" in
+    */issues/*/comments*)
+      if [ "${3:-}" = "-X" ] || [ "${3:-}" = "--method" ]; then :; fi
+      printf 'dash-comments-get %s\n' "$repo" >> "$STUB_CALL_LOG"
+      if [ -f "$f.dash.comments.json" ]; then cat "$f.dash.comments.json"; else echo '[]'; fi; exit 0 ;;
+    */issues/comments/*)
+      cid=$(printf '%s' "$path" | sed 's|.*/comments/||'); body=""
+      prev=""; for a in "$@"; do case "$prev" in -f) body="${a#body=}";; esac; prev="$a"; done
+      printf 'dash-comment-patch %s %s\n' "$repo" "$cid" >> "$STUB_CALL_LOG"
+      jq --arg id "$cid" --arg b "$body" 'map(if (.id|tostring)==$id then .body=$b else . end)' "$f.dash.comments.json" > "$f.dc.tmp" && mv "$f.dc.tmp" "$f.dash.comments.json"
+      echo '{}'; exit 0 ;;
     */branches/release)
       if [ ! -f "$f.release" ]; then echo "gh: Branch not found (HTTP 404)" >&2; exit 1; fi
       echo '{"name":"release"}'; exit 0 ;;
@@ -129,6 +139,13 @@ case "${1:-} ${2:-}" in
     echo 900 > "$f.dash.num"; cp "$STUB_DIR/marker.body" "$f.dash.body" 2>/dev/null || printf '<!-- loop-dashboard -->\n' > "$f.dash.body"
     echo "https://github.com/$repo/issues/900"; exit 0 ;;
   "issue pin") printf 'dash-pin %s %s\n' "$repo" "${3:-}" >> "$STUB_CALL_LOG"; exit 0 ;;
+  "issue comment")
+    body=""; prev=""; for a in "$@"; do case "$prev" in --body) body="$a";; esac; prev="$a"; done
+    printf 'dash-comment-create %s\n' "$repo" >> "$STUB_CALL_LOG"
+    [ -f "$f.dash.comments.json" ] || echo '[]' > "$f.dash.comments.json"
+    n=$(jq 'length' "$f.dash.comments.json"); jq --argjson id "$((1000+n))" --arg b "$body" '. + [{id:$id, body:$b}]' "$f.dash.comments.json" > "$f.dc.tmp" && mv "$f.dc.tmp" "$f.dash.comments.json"
+    exit 0 ;;
+  "issue close") printf 'dash-close %s %s\n' "$repo" "${3:-}" >> "$STUB_CALL_LOG"; exit 0 ;;
   "issue edit")
     printf 'dash-edit %s %s\n' "$repo" "${3:-}" >> "$STUB_CALL_LOG"
     bf=$(printf '%s\n' "$args" | sed -n 's/.*--body-file \([^ ]*\).*/\1/p'); cp "$bf" "$f.dash.body"; exit 0 ;;
@@ -613,20 +630,24 @@ ck "stale marker: warn 0(사유 있는 홀드뿐)" "$(grep -c '질문 유무 미
 
 # ── --post 대시보드(#163) ──────────────────────────────────────────────────
 fx="$tmp/fx/ggqgga_issue-runner"
-rm -f "$fx.dash.num" "$fx.dash.body"
+rm -f "$fx.dash.num" "$fx.dash.body" "$fx.dash.comments.json"
 run --repo ggqgga/issue-runner --post issue-runner --delta "정리 1 · 보수 0 · 신규 2 · 대기(사람 리뷰) 0 · warn 1"
 check "post: exit 0" "$([ "$RC" = 0 ] && echo ok || echo no)"
 check "post: 없으면 생성+pin" "$(grep -q 'dash-create' "$STUB_CALL_LOG" && grep -q 'dash-pin ggqgga/issue-runner 900' "$STUB_CALL_LOG" && echo ok || echo no)"
 check "post: 본문 마커 첫 줄" "$(head -1 "$fx.dash.body" | grep -q '<!-- loop-dashboard -->' && echo ok || echo no)"
-check "post: 자기 루프 줄+델타" "$(grep -q '^- issue-runner: 20[0-9-]* [0-9:]* KST — 정리 1 · 보수 0' "$fx.dash.body" && echo ok || echo no)"
-check "post: 다른 루프 줄은 —" "$(grep -q '^- verify-runner: —$' "$fx.dash.body" && grep -q '^- closeout: —$' "$fx.dash.body" && echo ok || echo no)"
+check "post: 본문엔 루프별 틱 줄 없음(코멘트로 이동)" "$(grep -q '^- issue-runner:' "$fx.dash.body" && echo no || echo ok)"
 check "post: 스냅샷 블록 포함" "$(grep -q '^파이프라인 runner' "$fx.dash.body" && echo ok || echo no)"
+check "post: 틱 코멘트 생성(마커+델타)" "$(jq -e '.[] | select(.body | contains("<!-- loop-tick: issue-runner -->") and contains("정리 1 · 보수 0"))' "$fx.dash.comments.json" >/dev/null && echo ok || echo no)"
 check "post: stdout 에도 블록" "$(grep -q '^파이프라인 runner' "$tmp/out" && grep -q '^대시보드: runner #900' "$tmp/out" && echo ok || echo no)"
-# 두 번째 루프가 게시하면 첫 루프 줄은 보존
-run --repo ggqgga/issue-runner --post verify-runner --delta "검증통과 1 · 재디스패치 0"
+# 같은 루프 2회차 → 자기 코멘트 PATCH(새 코멘트 없음)
+run --repo ggqgga/issue-runner --post issue-runner --delta "정리 0 · 보수 1"
 check "post 2회차: 생성 안 함" "$(grep -q 'dash-create' "$STUB_CALL_LOG" && echo no || echo ok)"
-check "post 2회차: issue-runner 줄 보존" "$(grep -q '^- issue-runner: .* — 정리 1 · 보수 0' "$fx.dash.body" && echo ok || echo no)"
-check "post 2회차: verify-runner 줄 갱신" "$(grep -q '^- verify-runner: .* — 검증통과 1' "$fx.dash.body" && echo ok || echo no)"
+check "post 2회차: 코멘트 PATCH" "$(grep -q 'dash-comment-patch ggqgga/issue-runner 1000' "$STUB_CALL_LOG" && ! grep -q 'dash-comment-create' "$STUB_CALL_LOG" && echo ok || echo no)"
+check "post 2회차: 코멘트 1개 유지·델타 갱신" "$([ "$(jq 'length' "$fx.dash.comments.json")" = 1 ] && jq -e '.[0].body | contains("정리 0 · 보수 1")' "$fx.dash.comments.json" >/dev/null && echo ok || echo no)"
+# 다른 루프 → 자기 코멘트 새로 생성, issue-runner 코멘트는 그대로
+run --repo ggqgga/issue-runner --post verify-runner --delta "검증통과 1 · 재디스패치 0"
+check "post 타 루프: 코멘트 2개" "$([ "$(jq 'length' "$fx.dash.comments.json")" = 2 ] && echo ok || echo no)"
+check "post 타 루프: issue-runner 코멘트 보존" "$(jq -e '.[0].body | contains("loop-tick: issue-runner") and contains("정리 0 · 보수 1")' "$fx.dash.comments.json" >/dev/null && echo ok || echo no)"
 # 마커 없는 본문은 덮어쓰지 않는다(사람 이슈 보호)
 printf '사람이 쓴 이슈\n' > "$fx.dash.body"
 run --repo ggqgga/issue-runner --post closeout
@@ -637,7 +658,7 @@ check "post 마커 없음: 본문 그대로" "$(grep -q '^사람이 쓴 이슈' 
 run --repo ggqgga/issue-runner --post bogus;            check "post 잘못된 루프명: 64" "$([ "$RC" = 64 ] && echo ok || echo no)"
 run --repo ggqgga/issue-runner --post closeout --json;  check "post+json: 64" "$([ "$RC" = 64 ] && echo ok || echo no)"
 run --repo ggqgga/issue-runner --delta "x";             check "delta 만: 64" "$([ "$RC" = 64 ] && echo ok || echo no)"
-rm -f "$fx.dash.num" "$fx.dash.body"
+rm -f "$fx.dash.num" "$fx.dash.body" "$fx.dash.comments.json"
 
 echo "loop-status: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

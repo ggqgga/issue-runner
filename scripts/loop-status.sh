@@ -169,20 +169,37 @@ snapshot_abort() { snapshot_fail_line "$1"; exit 1; }
 # 지우지 않게). 세 루프 줄(마지막 틱·델타)은 자기 것만 갱신하고 나머지는 이전 본문에서 보존.
 DASH_MARK="<!-- loop-dashboard -->"
 post_dashboard() {  # post_dashboard <owner/repo> <short> <블록 텍스트>
-  local repo="$1" short="$2" block="$3" num body now line l other tmpb
+  local repo="$1" short="$2" block="$3" num mine body now tmpb ctext ids out
   now=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST')
-  num=$(gh issue list --repo "$repo" --state open --label loop-dashboard --limit 1 \
-          --json number -q '.[0].number // empty' 2>/dev/null) || {
-    echo "$SELF: $short 대시보드 이슈 조회 실패 — 게시 생략" >&2; return 1; }
+  # 정본 = 라벨 붙은 열린 이슈 중 **번호가 가장 작은 것**. 두 루프가 동시에 처음 게시해 둘을
+  # 만들어도 같은 정본으로 수렴하고, 내가 만든 게 정본이 아니면 내 것을 닫는다.
+  dash_find() {
+    gh issue list --repo "$repo" --state open --label loop-dashboard --limit 5 \
+      --json number -q '[.[].number] | min // empty' 2>/dev/null
+  }
+  num=$(dash_find) || { echo "$SELF: $short 대시보드 이슈 조회 실패 — 게시 생략" >&2; return 1; }
   if [ -z "$num" ]; then
     tmpb="$tmpdir/dash.create"
     printf '%s\n루프 현황 이슈 — 세 루프가 매 틱 본문을 덮어쓴다. 직접 편집하지 마라.\n' "$DASH_MARK" > "$tmpb"
-    if ! num=$(gh issue create --repo "$repo" --title "루프 현황 — $short (loop dashboard)" \
-                 --label loop-dashboard --body-file "$tmpb" 2>&1 | grep -oE '[0-9]+$'); then
-      echo "$SELF: $short 대시보드 이슈 생성 실패(라벨 loop-dashboard 는 setup-labels.sh) — 게시 생략" >&2
-      return 1
+    dash_create() {
+      gh issue create --repo "$repo" --title "루프 현황 — $short (loop dashboard)" \
+        --label loop-dashboard --body-file "$tmpb" 2>&1
+    }
+    out=$(dash_create)
+    case "$out" in
+      *"' not found"*|*"could not add label"*|*[Ll]abel*"not found"*)
+        # 기존 옵트인 레포엔 loop-dashboard 가 없다 — transition.sh 와 같은 규율: 보강 1회 + 재시도 1회
+        "$(dirname "$0")/setup-labels.sh" "$repo" >/dev/null 2>&1 || true
+        out=$(dash_create) ;;
+    esac
+    mine=$(printf '%s\n' "$out" | grep -oE '[0-9]+$' | tail -1)
+    [ -n "$mine" ] || { echo "$SELF: $short 대시보드 이슈 생성 실패 — $out" >&2; return 1; }
+    num=$(dash_find) || num=""
+    [ -n "$num" ] || num=$mine
+    if [ "$num" != "$mine" ]; then
+      # 경합으로 둘이 생겼다 — 정본(작은 번호)만 남기고 내 것은 닫는다
+      gh issue close "$mine" --repo "$repo" --comment "중복 대시보드 — 정본은 #$num" >/dev/null 2>&1 || true
     fi
-    [ -n "$num" ] || { echo "$SELF: $short 대시보드 이슈 번호를 못 읽음 — 게시 생략" >&2; return 1; }
     gh issue pin "$num" --repo "$repo" >/dev/null 2>&1 || true
   fi
   body=$(gh issue view "$num" --repo "$repo" --json body -q '.body' 2>/dev/null) || {
@@ -191,25 +208,33 @@ post_dashboard() {  # post_dashboard <owner/repo> <short> <블록 텍스트>
     echo "$SELF: $short #$num 은 대시보드 마커가 없다 — 덮어쓰지 않는다(라벨 loop-dashboard 를 떼라)" >&2
     return 1 ;;
   esac
+  # ① 본문 = 스냅샷만(어느 루프가 마지막에 써도 같은 GitHub 상태를 그린다 — 덮어써도 잃는 게 없다).
+  #    루프별 "마지막 틱" 은 본문에 두지 않는다 — 두 루프가 같은 본문을 읽고 쓰면 상대 줄이 지워진다.
   tmpb="$tmpdir/dash.$short.md"
   {
     printf '%s\n' "$DASH_MARK"
     printf '# 루프 현황 — %s\n\n' "$short"
     printf '세 루프가 매 틱 이 본문을 덮어쓴다(직접 편집하지 마라). 읽는 법: 이슈 라벨 `agent-ready` 는 자격(사다리 내내 유지),\n'
     printf '단계 라벨(`agent:claimed`→`flow:verify`→`flow:ready`→`harvesting`)이 "지금 누가 들고 있나", `needs-human`+`hold:*` 는 사람(사유·질문은 코멘트).\n\n'
-    printf '## 마지막 틱 (KST)\n\n'
-    for l in issue-runner verify-runner closeout; do
-      if [ "$l" = "$post_loop" ]; then
-        printf -- '- %s: %s — %s\n' "$l" "$now" "${delta_line:-(델타 없음)}"
-      else
-        other=$(printf '%s\n' "$body" | grep -m1 "^- $l: " || true)
-        printf '%s\n' "${other:-- $l: —}"
-      fi
-    done
-    printf '\n## 스냅샷 (%s 가 %s 에 게시)\n\n```\n%s\n```\n' "$post_loop" "$now" "$block"
+    printf '**각 루프의 마지막 틱·델타는 아래 코멘트**(루프당 1개, 자기 것만 편집)에 있다.\n\n'
+    printf '## 스냅샷 (%s 가 %s 에 게시)\n\n```\n%s\n```\n' "$post_loop" "$now" "$block"
   } > "$tmpb"
   if ! gh issue edit "$num" --repo "$repo" --body-file "$tmpb" >/dev/null 2>&1; then
     echo "$SELF: $short 대시보드 #$num 본문 갱신 실패" >&2; return 1
+  fi
+  # ② 루프별 틱 코멘트 — 마커 `<!-- loop-tick: <loop> -->` 가 있는 자기 코멘트를 PATCH(없으면 생성).
+  #    루프마다 독립 쓰기라 동시에 게시해도 서로를 지우지 않는다.
+  ctext=$(printf '**%s** 마지막 틱: %s — %s\n<!-- loop-tick: %s -->' "$post_loop" "$now" "${delta_line:-(델타 없음)}" "$post_loop")
+  ids=$(gh api "repos/$repo/issues/$num/comments?per_page=100" 2>/dev/null \
+        | jq -r --arg m "<!-- loop-tick: $post_loop -->" '.[]? | select(.body | contains($m)) | .id' 2>/dev/null | head -1) || ids=""
+  if [ -n "$ids" ]; then
+    if ! gh api "repos/$repo/issues/comments/$ids" -X PATCH -f body="$ctext" >/dev/null 2>&1; then
+      echo "$SELF: $short 대시보드 #$num 틱 코멘트 갱신 실패" >&2; return 1
+    fi
+  else
+    if ! gh issue comment "$num" --repo "$repo" --body "$ctext" >/dev/null 2>&1; then
+      echo "$SELF: $short 대시보드 #$num 틱 코멘트 생성 실패" >&2; return 1
+    fi
   fi
   echo "대시보드: $short #$num 갱신($post_loop $now)"
 }
