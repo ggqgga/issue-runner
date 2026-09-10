@@ -343,7 +343,7 @@ N 도 디스패치당 1만 올린다.
       두 곳이 갈라지면 사람 눈에 안 보이는 두 번째 계산기가 다른 수를 센다 — #197)
 
       ````sh
-      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("```[\\s\\S]*?```"; " ") | gsub("`[^`\\n]*`"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("(^|\\n) {0,3}```[\\s\\S]*?\\n {0,3}```[^\\n]*"; " ") | gsub("`[^`\\n]*`"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
       ````
 
       채운 템플릿 뒤에 ⓐ 사다리 문서 경로
