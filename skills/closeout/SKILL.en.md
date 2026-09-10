@@ -509,7 +509,11 @@ structure/empty-state confirmation from real-data render confirmation in the res
 - **Degrade — no silent skip.** If the chrome-devtools MCP is absent from the session
   (headless/cron — interactive-auth MCP may be missing) or `<VERIFY_URL>` is blank or
   unreachable, skip the smoke and fall back to the existing human-report path, but leave
-  a `스모크 skip: <reason>` comment on the deploy issue (no hiding the gap). **Since no
+  a `스모크 skip: <reason>` comment on the deploy issue (no hiding the gap).
+  But **"unreachable" is the last word, not the first** (#153): some addresses open only
+  outside Chrome, so before writing the skip, walk the retry ladder in smoke-prompt —
+  ① the repo's remote-access address ② an SSH tunnel. Only when **both** fail is it
+  unreachable. **Since no
   browser was started at all, there is nothing to clean up — the browser cleanup below
   is a no-op (not a leak).**
 - **green (all pass)** → a `✅ 스모크: <n>/<n> 통과` comment on the deploy issue + the

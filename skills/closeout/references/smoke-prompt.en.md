@@ -38,15 +38,34 @@ may already be held by a dev server or another tunnel; the smoke would score tha
 pass and closeout closes the deploy issue on it (false green). Pick a fresh port, make
 ssh die if forwarding fails, and probe it once:
 
+**A local port collision is not remote unreachability.** If the chosen port is already
+held, `ExitOnForwardFailure=yes` kills ssh — recording that as "unreachable" throws away
+a healthy route. Retry on another port when the bind fails, and clean up through **the
+control socket this invocation created**, never a broad `pkill` (which would cut someone
+else's tunnel on the same port).
+
 ```bash
-PORT=$(( 39000 + RANDOM % 1000 ))
-ssh -f -N -o ExitOnForwardFailure=yes -L "127.0.0.1:$PORT:127.0.0.1:<remote port>" <ssh host alias> \
-  && curl -fsS "http://127.0.0.1:$PORT/up" -o /dev/null && echo "tunnel ok on $PORT"
-# when done: pkill -f "127.0.0.1:$PORT:127.0.0.1:"
+CTL=$(mktemp -u /tmp/smoke-tun-XXXXXX.sock); ERR=$(mktemp); PORT=""
+for _try in 1 2 3 4 5; do
+  P=$(( 39000 + RANDOM % 1000 ))
+  if ssh -f -N -M -S "$CTL" -o ExitOnForwardFailure=yes \
+       -L "127.0.0.1:$P:127.0.0.1:<remote port>" <ssh host alias> 2>"$ERR"; then
+    PORT=$P; break                      # bound successfully
+  fi
+  grep -qi 'bind\|address already in use' "$ERR" || break   # not a bind problem — retrying is pointless
+done
+if [ -n "$PORT" ] && curl -fsS "http://127.0.0.1:$PORT/up" -o /dev/null; then
+  echo "tunnel ok on $PORT"
+else
+  echo "tunnel unreachable"            # five collisions, or it bound but the remote never answered
+fi
+ssh -S "$CTL" -O exit <ssh host alias> 2>/dev/null || true   # clean up on **both** paths
+rm -f "$ERR"
 ```
 
-No `tunnel ok` means unreachable, not a tunnel. Clean up by that port only — a broad
-`pkill` cuts other people's tunnels. Find `<ssh host alias>`/`<remote port>` in that
+Only `tunnel unreachable` means unreachable — the loop above already filtered out bind
+collisions. Clean up through the control socket (`-O exit`) only — a broad `pkill` on the
+port string cuts other people's tunnels using that port. Find `<ssh host alias>`/`<remote port>` in that
 repo's deploy docs (BoDAT: `bodat-mini` on the office LAN, `bodat-remote` from outside,
 port 3000). If you cannot find them, do not invent them — report
 `스모크 skip: tunnel route unknown (<repo>)`.

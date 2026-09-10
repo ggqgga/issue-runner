@@ -34,15 +34,33 @@ Tailscale 주소·루프백은 정상. DNS 도 권한도 아니다). 이때는 `
 **포트를 매번 새로 뽑고**, `ExitOnForwardFailure=yes` 로 포워딩 실패 시 ssh 가 죽게 하고,
 열자마자 한 번 찔러 확인한다:
 
+**로컬 포트 충돌과 원격 도달 불가는 다른 것이다.** 뽑은 포트를 이미 누가 물고 있으면
+`ExitOnForwardFailure=yes` 덕에 ssh 가 죽는데, 그걸 "도달 불가" 로 적으면 멀쩡한 경로를
+버리게 된다 — 바인드 실패면 **다른 포트로 재시도**하고, 정리는 `pkill` 이 아니라 **이
+호출이 만든 control socket** 으로만 한다(같은 포트를 쓰는 남의 터널을 끊지 않게).
+
 ```bash
-PORT=$(( 39000 + RANDOM % 1000 ))
-ssh -f -N -o ExitOnForwardFailure=yes -L "127.0.0.1:$PORT:127.0.0.1:<원격포트>" <호스트별칭> \
-  && curl -fsS "http://127.0.0.1:$PORT/up" -o /dev/null && echo "tunnel ok on $PORT"
-# 끝나면: pkill -f "127.0.0.1:$PORT:127.0.0.1:"
+CTL=$(mktemp -u /tmp/smoke-tun-XXXXXX.sock); ERR=$(mktemp); PORT=""
+for _try in 1 2 3 4 5; do
+  P=$(( 39000 + RANDOM % 1000 ))
+  if ssh -f -N -M -S "$CTL" -o ExitOnForwardFailure=yes \
+       -L "127.0.0.1:$P:127.0.0.1:<원격포트>" <호스트별칭> 2>"$ERR"; then
+    PORT=$P; break                      # 바인드 성공
+  fi
+  grep -qi 'bind\|address already in use' "$ERR" || break   # 바인드 문제가 아니면 재시도 무의미
+done
+if [ -n "$PORT" ] && curl -fsS "http://127.0.0.1:$PORT/up" -o /dev/null; then
+  echo "tunnel ok on $PORT"
+else
+  echo "tunnel unreachable"            # 5회 다 충돌이거나, 열렸는데 원격이 응답 없음
+fi
+ssh -S "$CTL" -O exit <호스트별칭> 2>/dev/null || true   # 성공·실패 **양쪽 다** 정리
+rm -f "$ERR"
 ```
 
-`tunnel ok` 가 안 찍히면 터널이 아니라 **도달 불가**다. 정리도 그 포트로만 한다 — 넓은
-`pkill` 은 남의 터널까지 끊는다. `<호스트별칭>`·`<원격포트>` 는 그 레포의 배포 절차 문서에서
+`tunnel unreachable` 이 찍혔을 때만 도달 불가다 — 바인드 충돌은 위 루프가 이미 걸러냈다.
+정리는 control socket(`-O exit`)으로만 한다 — 포트 문자열로 넓게 `pkill` 하면 같은 포트를
+쓰던 남의 터널까지 끊는다. `<호스트별칭>`·`<원격포트>` 는 그 레포의 배포 절차 문서에서
 찾는다(BoDAT = `bodat-mini`(사무실 LAN)·`bodat-remote`(외부) · 3000). **통로를 못 찾으면
 지어내지 말고** `스모크 skip: 터널 통로 미상(<레포>)` 로 보고한다.
 
