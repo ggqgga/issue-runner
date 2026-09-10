@@ -863,7 +863,7 @@ setup "needs-human,hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 note '재심: 사람 몫 유지 — 이벤트마다 에피소드 경계(마지막 `` `<!-- hold-note: policy -->` ``)를 잡고 그 뒤를 본다 <!-- policy-review: kept --><!-- bodat:worker -->'
 run
-check "#174 인용 hold-note: 경계가 아니다(due 재발 없음)" "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+check "#174 인용 hold-note: 경계가 아니다(due 재발 없음)" "$(no_ev policy_review_due)"
 check "#174 인용 hold-note: warn 도 아니다"              "$(no_ev warn)"
 
 # 코드펜스로 인용한 hold-note 도 같다(같은 코멘트에 진짜 재심 마커가 맨몸으로 붙어 있다).
@@ -875,7 +875,7 @@ note '재심: 사람 몫 유지 — 예시는 아래와 같다
 ```
 <!-- policy-review: kept --><!-- bodat:worker -->'
 run
-check "코드펜스 인용 hold-note: due 재발 없음" "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+check "코드펜스 인용 hold-note: due 재발 없음" "$(no_ev policy_review_due)"
 
 # ⓑ 진짜 새 hold-note(맨몸 마커) 뒤에 재심 마커가 없으면 여전히 `due` — 인용 제거가
 #    진짜 질문까지 지워 버리면 이 단언이 빨개진다(과다 필터 방증).
@@ -891,8 +891,8 @@ setup "needs-human,hold:policy,agent-ready" 200 0
 note '> 사람 확인(policy): A인가 B인가
 > <!-- hold-note: policy --><!-- bodat:worker -->'
 run
-check "블록쿼트 맨몸 hold-note: 질문으로 센다(due)" "$(printf '%s' "$out" | grep -q policy_review_due && echo ok || echo no)"
-check "블록쿼트 맨몸 hold-note: no-note warn 아님"  "$(printf '%s' "$out" | grep -q '재심 불가' && echo no || echo ok)"
+check "블록쿼트 맨몸 hold-note: 질문으로 센다(due)" "$(has_ev policy_review_due)"
+check "블록쿼트 맨몸 hold-note: warn 없음(no-note 로 안 샌다)" "$(no_ev warn)"
 
 # ⓓ 인용된 `ladder-resume` 은 재개 횟수를 올리지 않는다 — 아직 재개 여지가 있는 이슈가
 #    상한(2) 초과로 조기에 사람 대기(hold:policy)로 승격되던 둘째 축.
@@ -916,6 +916,26 @@ check "인용 2 + 진짜 1: attempt=2(승격 아님)" "$(printf '%s' "$out" | jq
 setup "needs-human,hold:ladder,agent-ready" 200 2
 run
 check "맨몸 마커 2개: 상한 초과 승격(회귀 없음)" "$(has_ev escalated)"
+
+# ⓔ 과다 필터 방증 — 산문이 한 줄 안에서 백틱 세 개를 **언급**해도(펜스를 여는 게 아니다)
+#    그 사이의 맨몸 마커는 살아남는다. 펜스에 줄 앵커가 없으면 두 언급 사이가 통째로 지워져
+#    재개 횟수가 **과소집계**되고, 상한이 영영 안 걸려 무한 재개가 된다(원래 버그보다 나쁘다).
+setup "needs-human,hold:ladder,agent-ready" 200 0
+note '펜스는 ``` 로 연다
+재개 1/2: 사다리 재시도 — <!-- ladder-resume: 1 --><!-- bodat:worker -->
+닫을 때도 ``` 를 쓴다'
+run
+check "줄 중간 백틱셋 언급 사이의 맨몸 마커: 그대로 센다(attempt=2)" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 2' >/dev/null 2>&1 && echo ok || echo no)"
+
+# ⓕ 세 번째 지점 — `policy-review` 를 **인용만** 한 코멘트는 재심으로 세지 않는다.
+#    이 방향의 오탐이 셋 중 가장 위험하다: 거짓 `reviewed` 는 사람 정책 게이트를 실제 재심
+#    없이 통과시키고, 그 이슈는 아무도 다시 묻지 않는다(조용한 유실).
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+note '메모: 재심 코멘트는 `<!-- policy-review: kept -->` 마커를 남긴다(아직 안 남겼다)'
+run
+check "인용 policy-review: 재심으로 안 센다(due 유지)" "$(has_ev policy_review_due)"
 
 # ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
 # 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는
