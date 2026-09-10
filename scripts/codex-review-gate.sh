@@ -121,10 +121,13 @@ fi
 # ... 검증할 수 없습니다 ... 판정할 근거도 없습니다" 류의 산문만 남기면 [Pn] 항목이
 # 하나도 없어 옛 분류는 이걸 CLEAN 으로 읽었다(머지 게이트의 절반이 fail-open —
 # 실증: PR #195 closeout ③-1, 10초 만에 verdict=CLEAN). "diff가 없어 못 본다" ·
-# "검증/판정할 수 없다" · "근거가 없다" 류만 좁게 잡는다 — "판정" 만으로는 안 걸리게
-# 해서(예: "판정: CLEAN") 실제로 다 보고 결함 없다고 답한 정상 CLEAN 을 과잉 차단하지
-# 않는다(반대 방향 회귀 방지, 각각 픽스처로 검증: scripts/tests/codex-review-gate.test.sh).
-if grep -q -i -E 'unable to inspect|could not be inspected|execution tool was unavailable|tool (was|is) unavailable|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review|not a substantive|diff.{0,40}(포함되어 있지|누락)|(판정|검증).{0,10}(할 수 없|불가능|불가)|근거.{0,15}(없|부족)' "$REVIEW" 2>/dev/null; then
+# "검증/판정할 수 없다"(동사 바로 뒤에 붙는 "할 수 없" 만, "불가능"·"불가"는 뺐다 —
+# "판정 불가능할 정도로 미미합니다" 처럼 정도를 서술하는 정상 CLEAN 과 겹친다) ·
+# "(판정/검증/확인) ↔ 근거 ... 없다" 가 한 문장 안에서 같이 나올 때만(근거 단독으로는
+# 안 걸리게 — "근거 없는 폴백은 없습니다" 같은 정상 리뷰 서술과 겹친다, #207 사전
+# 리뷰 WARN) 좁게 잡는다. 실제로 다 보고 결함 없다고 답한 정상 CLEAN 을 과잉 차단
+# 하지 않는지 각각 픽스처로 검증: scripts/tests/codex-review-gate.test.sh.
+if grep -q -i -E 'unable to inspect|could not be inspected|execution tool was unavailable|tool (was|is) unavailable|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review|not a substantive|diff.{0,40}(포함되어 있지|누락)|(판정|검증)할 수 없|(판정|검증|확인).{0,20}근거.{0,15}(없|부족)|근거.{0,15}(없|부족).{0,20}(판정|검증|확인)' "$REVIEW" 2>/dev/null; then
   log "리뷰어가 대상을 못 봤다고 답함 — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
   none "$secs"
 fi

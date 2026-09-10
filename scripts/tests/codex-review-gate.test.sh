@@ -104,6 +104,27 @@ mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub
 UNABLE="$TMP/unable.md" run --base base; assert_eq "한국어 진짜 CLEAN 과잉차단 방지" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "한국어 진짜 CLEAN 오탐(미산출로 샘): $last" ;; esac
 mv "$TMP/stub/codex.real" "$TMP/stub/codex"
 
+echo "[gate] 4b-4) 사전 리뷰 WARN 반증(#207): '근거 없는 폴백은 없습니다' 류의 정상 CLEAN 은 과잉 차단되지 않는다"
+# 4b-2 의 정규식을 "근거...없" 만으로 넓게 잡으면, 이 레포 리뷰 기준(silent-failure-hunter:
+# 근거 없는 폴백 지적)을 정상적으로 통과한 CLEAN 리뷰가 "근거 없는 폴백은 없습니다" 같은
+# 문장을 남길 때 오탐한다(사전 리뷰가 실측 WARN). 판정 동사(판정/검증/확인)가 근처에 없는
+# "근거...없" 는 걸리지 않아야 한다.
+printf '이 diff 는 근거 없는 폴백을 추가하지 않았습니다. 결함을 발견하지 못했습니다. CLEAN
+' > "$TMP/unable.md"
+mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
+UNABLE="$TMP/unable.md" run --base base; assert_eq "'근거 없는 폴백은 없습니다' 과잉차단 방지" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "'근거 없는 폴백' 정상 서술 오탐: $last" ;; esac
+mv "$TMP/stub/codex.real" "$TMP/stub/codex"
+
+echo "[gate] 4b-5) 사전 리뷰 WARN 반증(#207): '판정 불가능할 정도로 미미합니다' 류의 정도 서술은 과잉 차단되지 않는다"
+# "(판정|검증) 불가능/불가" 를 허용하면 "부작용은 판정 불가능할 정도로 미미합니다" 처럼
+# 정도를 서술하는 정상 CLEAN 까지 미산출로 떨어진다(사전 리뷰가 실측 WARN) — "할 수 없"
+# 처럼 판정 동사에 직접 붙는 형태만 잡아야 한다.
+printf '이 변경의 부작용은 판정 불가능할 정도로 미미합니다. 결함을 발견하지 못했습니다. CLEAN
+' > "$TMP/unable.md"
+mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
+UNABLE="$TMP/unable.md" run --base base; assert_eq "'판정 불가능할 정도로' 과잉차단 방지" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "'판정 불가능할 정도로' 정상 서술 오탐: $last" ;; esac
+mv "$TMP/stub/codex.real" "$TMP/stub/codex"
+
 echo "[gate] 4c) [P0] 도 BLOCKER · events 의 오류 문자열은 오탐 안 냄(codex stderr 만 본다, #137)"
 STUB_MODE=p0 run --base base; assert_eq "P0 exit" "$rc" 1; case "$last" in "verdict=BLOCKER p1=1 p2=0 p3=0 "*) ok ;; *) bad "P0 집계: $last" ;; esac
 STUB_MODE=selfref run --base base; assert_eq "events 자기참조 exit" "$rc" 0; case "$last" in "verdict=WARN p1=0 p2=1 "*) ok ;; *) bad "events 자기참조로 오탐: $last" ;; esac
