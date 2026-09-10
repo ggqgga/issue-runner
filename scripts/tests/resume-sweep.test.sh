@@ -937,6 +937,71 @@ note '메모: 재심 코멘트는 `<!-- policy-review: kept -->` 마커를 남�
 run
 check "인용 policy-review: 재심으로 안 센다(due 유지)" "$(has_ev policy_review_due)"
 
+# ── (#197 반송) 백틱 구분자 **길이 맞춤** — 다섯 형태 × 세 판정 지점 ────────
+# 첫 회차의 인라인 패스는 백틱을 **하나씩** 짝지었다. 그러면 짝수 길이 구분자(백틱 2개로
+# 여는 스팬)가 "빈 스팬 두 개" 로 갈려 **알맹이(마커)만 맨몸으로 남는다** — 인용인데 신호로
+# 세진다(마감 검증 실측: 네 형태 중 이중 백틱만 `마커로 셈=true`). CommonMark 의 코드 스팬은
+# 여는 백틱 런과 **같은 길이**의 닫는 런까지가 한 스팬이므로 그 규칙으로 맞춘다.
+# 아래는 다섯 형태(단일·이중·삼중 백틱 인용 · 펜스 · 맨몸)를 **세 판정 지점 모두**
+# (ladder-resume 개수 · hold-note 경계 · policy-review 재심)에서 무는 격자다.
+# 되돌리면(백틱 하나씩 짝짓기) `[double]` 줄만 빨개진다 — 뮤테이션 방증은 PR 본문에.
+
+quoted_note() {  # quoted_note <형태> <마커> → 그 마커를 <형태>로 인용한 코멘트 본문
+  case "$1" in
+    single) printf '메모: `%s` 를 남긴다' "$2" ;;
+    double) printf '메모: ``%s`` 를 남긴다' "$2" ;;
+    triple) printf '메모: ```%s``` 를 남긴다' "$2" ;;
+    fence)  printf '메모: 아래 형태로 남긴다\n```\n%s\n```' "$2" ;;
+    *)      echo "quoted_note: 알 수 없는 형태 $1" >&2; return 1 ;;
+  esac
+}
+
+for form in single double triple fence; do
+  # ① ladder-resume 개수 — 인용은 재개 횟수를 올리지 않는다(조기 승격 금지)
+  setup "needs-human,hold:ladder,agent-ready" 200 0
+  note "$(quoted_note "$form" '<!-- ladder-resume: 1 -->')"
+  run
+  check "[$form] 인용 ladder-resume: 안 센다(attempt=1)" \
+    "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 1' >/dev/null 2>&1 && echo ok || echo no)"
+  check "[$form] 인용 ladder-resume: 조기 승격 없음" "$(no_ev escalated)"
+
+  # ② hold-note 경계 — 인용은 새 에피소드 경계가 아니다
+  #    (#174 형태: 인용된 hold-note 과 **진짜** 재심 마커가 한 코멘트 안에 공존)
+  setup "needs-human,hold:policy,agent-ready" 200 0
+  note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+  note "$(quoted_note "$form" '<!-- hold-note: policy -->')
+<!-- policy-review: kept --><!-- bodat:worker -->"
+  run
+  check "[$form] 인용 hold-note: 경계 아님(due 재발 없음)" "$(no_ev policy_review_due)"
+
+  # ③ policy-review — 인용만 한 코멘트는 재심이 아니다(거짓 reviewed = 조용한 유실)
+  setup "needs-human,hold:policy,agent-ready" 200 0
+  note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+  note "$(quoted_note "$form" '<!-- policy-review: kept -->')"
+  run
+  check "[$form] 인용 policy-review: 재심으로 안 센다(due 유지)" "$(has_ev policy_review_due)"
+done
+
+# 다섯째 형태 = **맨몸**(대조군). 세 지점 모두 반대 방향으로 나와야 한다 — 인용 제거가
+# **더** 지우는 쪽으로 틀리면(맨몸 마커 유실) 상한이 안 걸려 원래 버그보다 나쁘다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+note "재개 1/2: 사다리 재시도 <!-- ladder-resume: 1 --><!-- bodat:worker -->"
+run
+check "[bare] 맨몸 ladder-resume: 센다(attempt=2)" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 2' >/dev/null 2>&1 && echo ok || echo no)"
+
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "재심: 지난 홀드는 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->"
+note "사람 확인(policy): 이번엔 C인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "[bare] 맨몸 hold-note: 새 경계로 센다(due)" "$(has_ev policy_review_due)"
+
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+note "재심: 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->"
+run
+check "[bare] 맨몸 policy-review: 재심으로 센다(due 없음)" "$(no_ev policy_review_due)"
+
 # ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
 # 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는
 # 두 번째 계산기가 다른 수를 센다. **스크립트에서 뽑은 문자열**을 두 SKILL 에서 grep -F 로
