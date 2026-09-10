@@ -46,14 +46,17 @@ chmod +x "$tmp/bin/gh"
 
 stub_rollup='{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}'
 
-# build_meta <comments-json> → 전체 PR meta JSON(comments 를 끼워 넣는다)
+# build_meta <comments-json> <head_at> → 전체 PR meta JSON(comments·commits 를
+# 끼워 넣는다 — closeout-eligible.sh 가 이제 commits 도 meta 로 함께 받아 FC_HEAD_AT
+# 로 넘긴다, 사전 리뷰 WARN 반영: 후보마다 별도 gh 조회 없이 재사용).
 build_meta() {
-  jq -n --argjson comments "$1" '{
+  jq -n --argjson comments "$1" --arg head_at "$2" '{
     headRefName: "agent/issue-166",
     mergeable: "MERGEABLE",
     labels: [],
     comments: $comments,
-    closingIssuesReferences: [{number: 166}]
+    closingIssuesReferences: [{number: 166}],
+    commits: (if $head_at == "" then [] else [{committedDate: $head_at}] end)
   }'
 }
 
@@ -61,7 +64,7 @@ build_meta() {
 run_case() {
   local name="$1" expect="$2" comments="$3" head_at="$4"
   local meta out n verdict
-  meta=$(build_meta "$comments")
+  meta=$(build_meta "$comments" "$head_at")
   out=$(cd "$cwd" && PATH="$tmp/bin:$PATH" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" \
     STUB_PRS='[{"repo":"owner/repo","pr":5}]' \
     STUB_META="$meta" STUB_COMMENTS="$comments" STUB_HEAD_AT="$head_at" \

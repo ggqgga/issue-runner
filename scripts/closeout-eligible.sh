@@ -24,7 +24,7 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   in_scope "$repo" || continue
 
   meta=$(gh pr view "$pr" --repo "$repo" \
-    --json headRefName,mergeable,labels,comments,closingIssuesReferences 2>/dev/null)
+    --json headRefName,mergeable,labels,comments,closingIssuesReferences,commits 2>/dev/null)
   [ -n "$meta" ] || continue
 
   head=$(printf '%s' "$meta" | jq -r '.headRefName')
@@ -52,9 +52,14 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 2항: 로직 두 벌 금지). ✅ 존재만으로 후보 삼지 않는다 — 반송(재디스패치) 뒤 새
   # 커밋이 올라왔는데 그 커밋 이전에 찍힌 ✅ 가 남아 있으면 finish-classify 가
   # done_verdict 를 내지 않고(active) 여기서도 걸러진다.
-  # FC_COMMENTS_JSON 으로 이미 가져온 comments 를 그대로 넘겨 중복 gh 조회를 피한다
-  # (head 커밋 시각·failing 은 finish-classify 가 자체 실측 — 여기 meta 에 없다).
+  # FC_COMMENTS_JSON·FC_HEAD_AT 으로 이미 가져온 comments·commits 를 그대로 넘겨
+  # 중복 gh 조회를 피한다(사전 리뷰 WARN — ✅ 후보마다 별도 gh 왕복이 나던 것을
+  # 여기 meta 에 commits 를 추가로 얹어 없앤다). failing(CI 실패 카운트)만 finish-classify
+  # 가 자체 실측한다 — 그 판정 로직(statusCheckRollup jq 필터)을 여기서 다시 베끼지
+  # 않는다(같은 이유로 로직 두 벌 금지).
+  head_at=$(printf '%s' "$meta" | jq -r '(.commits // [])[-1].committedDate // empty')
   verdict=$(FC_COMMENTS_JSON="$(printf '%s' "$meta" | jq -c '.comments')" \
+    FC_HEAD_AT="$head_at" \
     "$SCRIPT_DIR/finish-classify.sh" "$repo" "$pr" 2>/dev/null)
   [ "$verdict" = "done_verdict" ] || continue
 
