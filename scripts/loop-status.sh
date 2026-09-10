@@ -141,10 +141,14 @@ SELF=$(basename "$0")
 usage() {
   {
     echo "usage: $SELF [--repos-file <경로>] [--repo <owner/repo>]... [--since <N>h|<N>d] [--json]"
+    echo "                   [--post <issue-runner|verify-runner|closeout> [--delta \"<이 틱 한 줄 요약>\"]]"
     echo "  스코프: --repo 가 있으면 그것들, 없으면 --repos-file (기본 \$PWD/.loop/repos)."
     echo "          둘 다 없으면 이 도움말(exit 64)."
     echo "  --since: 실패·파생 창. <N>h 또는 <N>d 만 (기본 24h)."
     echo "  --json : 사람용 블록 대신 JSON 한 덩어리."
+    echo "  --post : 레포마다 고정 이슈 '루프 현황'(라벨 loop-dashboard) 본문을 이 스냅샷으로 덮어쓴다 —"
+    echo "           깃헙만 보고 '누가 들고 있고 루프가 마지막으로 언제 돌았나' 를 알게(#162). 자기 루프의"
+    echo "           마지막 틱 시각·--delta 만 갱신하고 다른 두 루프 줄은 보존. --json 과 함께 못 쓴다."
     echo "  env HANDOFF_GRACE_MIN: 인계 전 창(분, 기본 90). 그 안의 agent:claimed PR 은"
     echo "          무소속 warn 대신 구현중 줄에 '← PR #n(인계 전)'."
   } >&2
@@ -159,11 +163,64 @@ snapshot_fail_line() {
 }
 snapshot_abort() { snapshot_fail_line "$1"; exit 1; }
 
+# ── 루프 현황 고정 이슈 (#162) ─────────────────────────────────────────────
+# 레포마다 라벨 `loop-dashboard` 가 붙은 열린 이슈 하나가 대시보드다(없으면 만들고 pin).
+# 본문은 **덮어쓴다** — 단 첫 줄 마커 `<!-- loop-dashboard -->` 가 있을 때만(사람 이슈를
+# 지우지 않게). 세 루프 줄(마지막 틱·델타)은 자기 것만 갱신하고 나머지는 이전 본문에서 보존.
+DASH_MARK="<!-- loop-dashboard -->"
+post_dashboard() {  # post_dashboard <owner/repo> <short> <블록 텍스트>
+  local repo="$1" short="$2" block="$3" num body now line l other tmpb
+  now=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST')
+  num=$(gh issue list --repo "$repo" --state open --label loop-dashboard --limit 1 \
+          --json number -q '.[0].number // empty' 2>/dev/null) || {
+    echo "$SELF: $short 대시보드 이슈 조회 실패 — 게시 생략" >&2; return 1; }
+  if [ -z "$num" ]; then
+    tmpb="$tmpdir/dash.create"
+    printf '%s\n루프 현황 이슈 — 세 루프가 매 틱 본문을 덮어쓴다. 직접 편집하지 마라.\n' "$DASH_MARK" > "$tmpb"
+    if ! num=$(gh issue create --repo "$repo" --title "루프 현황 — $short (loop dashboard)" \
+                 --label loop-dashboard --body-file "$tmpb" 2>&1 | grep -oE '[0-9]+$'); then
+      echo "$SELF: $short 대시보드 이슈 생성 실패(라벨 loop-dashboard 는 setup-labels.sh) — 게시 생략" >&2
+      return 1
+    fi
+    [ -n "$num" ] || { echo "$SELF: $short 대시보드 이슈 번호를 못 읽음 — 게시 생략" >&2; return 1; }
+    gh issue pin "$num" --repo "$repo" >/dev/null 2>&1 || true
+  fi
+  body=$(gh issue view "$num" --repo "$repo" --json body -q '.body' 2>/dev/null) || {
+    echo "$SELF: $short 대시보드 #$num 본문 조회 실패 — 게시 생략" >&2; return 1; }
+  case "$body" in "$DASH_MARK"*) ;; *)
+    echo "$SELF: $short #$num 은 대시보드 마커가 없다 — 덮어쓰지 않는다(라벨 loop-dashboard 를 떼라)" >&2
+    return 1 ;;
+  esac
+  tmpb="$tmpdir/dash.$short.md"
+  {
+    printf '%s\n' "$DASH_MARK"
+    printf '# 루프 현황 — %s\n\n' "$short"
+    printf '세 루프가 매 틱 이 본문을 덮어쓴다(직접 편집하지 마라). 읽는 법: 이슈 라벨 `agent-ready` 는 자격(사다리 내내 유지),\n'
+    printf '단계 라벨(`agent:claimed`→`flow:verify`→`flow:ready`→`harvesting`)이 "지금 누가 들고 있나", `needs-human`+`hold:*` 는 사람(사유·질문은 코멘트).\n\n'
+    printf '## 마지막 틱 (KST)\n\n'
+    for l in issue-runner verify-runner closeout; do
+      if [ "$l" = "$post_loop" ]; then
+        printf -- '- %s: %s — %s\n' "$l" "$now" "${delta_line:-(델타 없음)}"
+      else
+        other=$(printf '%s\n' "$body" | grep -m1 "^- $l: " || true)
+        printf '%s\n' "${other:-- $l: —}"
+      fi
+    done
+    printf '\n## 스냅샷 (%s 가 %s 에 게시)\n\n```\n%s\n```\n' "$post_loop" "$now" "$block"
+  } > "$tmpb"
+  if ! gh issue edit "$num" --repo "$repo" --body-file "$tmpb" >/dev/null 2>&1; then
+    echo "$SELF: $short 대시보드 #$num 본문 갱신 실패" >&2; return 1
+  fi
+  echo "대시보드: $short #$num 갱신($post_loop $now)"
+}
+
 repos=()
 repos_file=""
 repos_file_given=0
 since="24h"
 json_mode=0
+post_loop=""
+delta_line=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -178,11 +235,19 @@ while [ $# -gt 0 ]; do
       shift; [ $# -gt 0 ] || usage
       since="$1" ;;
     --json) json_mode=1 ;;
+    --post)
+      shift; [ $# -gt 0 ] || usage
+      case "$1" in issue-runner|verify-runner|closeout) post_loop="$1" ;; *) usage ;; esac ;;
+    --delta)
+      shift; [ $# -gt 0 ] || usage
+      delta_line="$1" ;;
     -h|--help) usage ;;
     *) usage ;;
   esac
   shift
 done
+[ "$json_mode" = 1 ] && [ -n "$post_loop" ] && usage
+[ -n "$delta_line" ] && [ -z "$post_loop" ] && usage
 
 # ── --since → 창 시작 epoch ────────────────────────────────────────────────
 # `<N>h`·`<N>d` 만 받는다. 느슨하게 받으면 오타가 창 0(= 실패·파생 항상 0)으로 조용히
@@ -703,9 +768,15 @@ else
     [ -n "$line" ] || continue
     [ "$first" = 1 ] || echo
     first=0
-    if ! printf '%s\n' "$line" | jq -r --arg scope "$scope_shorts" "$RENDER_JQ"; then
+    if ! block=$(printf '%s\n' "$line" | jq -r --arg scope "$scope_shorts" "$RENDER_JQ"); then
       exit_code=1
       snapshot_fail_line "블록 렌더 실패(jq)"
+      continue
+    fi
+    printf '%s\n' "$block"
+    if [ -n "$post_loop" ]; then
+      rrepo=$(printf '%s' "$line" | jq -r '.repo // empty'); rshort=$(printf '%s' "$line" | jq -r '.repo_short // empty')
+      if [ -n "$rrepo" ] && ! post_dashboard "$rrepo" "$rshort" "$block"; then exit_code=1; fi
     fi
   done < "$tmpdir/repos.jsonl"
 fi

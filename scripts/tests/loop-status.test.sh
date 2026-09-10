@@ -111,11 +111,27 @@ case "${1:-} ${2:-}" in
   # 호출 자체를 로그에 남긴다 — "사람대기 버킷에만 묻는다" 를 실측으로 못 박기 위해서.
   "issue view")
     num="${3:-}"
+    case "$args" in *"--json body"*) cat "$f.dash.body"; exit 0 ;; esac
     printf 'comments %s %s\n' "$repo" "$num" >> "$STUB_CALL_LOG"
     if [ -f "$f.comments.$num.fail" ]; then echo "gh: HTTP 502 Bad Gateway" >&2; exit 1; fi
     if [ -f "$f.comments.$num.json" ]; then cat "$f.comments.$num.json"; else echo '{"comments":[]}'; fi
     exit 0 ;;
-  "issue list") cat "$f.issues.json"; exit 0 ;;
+  "issue list")
+    case "$args" in *loop-dashboard*)
+      printf 'dash-list %s\n' "$repo" >> "$STUB_CALL_LOG"
+      # SUT 는 -q '.[0].number // empty' 로 읽는다 — 스텁은 jq 를 안 거치므로 그 결과를 흉내 낸다
+      if [ -f "$f.dash.num" ]; then cat "$f.dash.num"; fi
+      exit 0 ;;
+    esac
+    cat "$f.issues.json"; exit 0 ;;
+  "issue create")
+    printf 'dash-create %s\n' "$repo" >> "$STUB_CALL_LOG"
+    echo 900 > "$f.dash.num"; cp "$STUB_DIR/marker.body" "$f.dash.body" 2>/dev/null || printf '<!-- loop-dashboard -->\n' > "$f.dash.body"
+    echo "https://github.com/$repo/issues/900"; exit 0 ;;
+  "issue pin") printf 'dash-pin %s %s\n' "$repo" "${3:-}" >> "$STUB_CALL_LOG"; exit 0 ;;
+  "issue edit")
+    printf 'dash-edit %s %s\n' "$repo" "${3:-}" >> "$STUB_CALL_LOG"
+    bf=$(printf '%s\n' "$args" | sed -n 's/.*--body-file \([^ ]*\).*/\1/p'); cp "$bf" "$f.dash.body"; exit 0 ;;
   "pr list")
     case "$args" in
       *"--state closed"*) cat "$f.pr_closed.json"; exit 0 ;;
@@ -594,6 +610,34 @@ ck "stale marker: --json note_missing 도 사유를 가린다" \
      | jq -c '[.repos[0].buckets.human_wait[] | {n:.number, h:.holds, m:.note_missing}]')" \
   '[{"n":24,"h":["conflict"],"m":true},{"n":23,"h":["conflict"],"m":false},{"n":22,"h":["policy"],"m":false},{"n":21,"h":["conflict","policy"],"m":false},{"n":20,"h":["policy"],"m":true}]'
 ck "stale marker: warn 0(사유 있는 홀드뿐)" "$(grep -c '질문 유무 미확인' "$tmp/out")" 0
+
+# ── --post 대시보드(#162) ──────────────────────────────────────────────────
+fx="$tmp/fx/ggqgga_issue-runner"
+rm -f "$fx.dash.num" "$fx.dash.body"
+run --repo ggqgga/issue-runner --post issue-runner --delta "정리 1 · 보수 0 · 신규 2 · 대기(사람 리뷰) 0 · warn 1"
+check "post: exit 0" "$([ "$RC" = 0 ] && echo ok || echo no)"
+check "post: 없으면 생성+pin" "$(grep -q 'dash-create' "$STUB_CALL_LOG" && grep -q 'dash-pin ggqgga/issue-runner 900' "$STUB_CALL_LOG" && echo ok || echo no)"
+check "post: 본문 마커 첫 줄" "$(head -1 "$fx.dash.body" | grep -q '<!-- loop-dashboard -->' && echo ok || echo no)"
+check "post: 자기 루프 줄+델타" "$(grep -q '^- issue-runner: 20[0-9-]* [0-9:]* KST — 정리 1 · 보수 0' "$fx.dash.body" && echo ok || echo no)"
+check "post: 다른 루프 줄은 —" "$(grep -q '^- verify-runner: —$' "$fx.dash.body" && grep -q '^- closeout: —$' "$fx.dash.body" && echo ok || echo no)"
+check "post: 스냅샷 블록 포함" "$(grep -q '^파이프라인 runner' "$fx.dash.body" && echo ok || echo no)"
+check "post: stdout 에도 블록" "$(grep -q '^파이프라인 runner' "$tmp/out" && grep -q '^대시보드: runner #900' "$tmp/out" && echo ok || echo no)"
+# 두 번째 루프가 게시하면 첫 루프 줄은 보존
+run --repo ggqgga/issue-runner --post verify-runner --delta "검증통과 1 · 재디스패치 0"
+check "post 2회차: 생성 안 함" "$(grep -q 'dash-create' "$STUB_CALL_LOG" && echo no || echo ok)"
+check "post 2회차: issue-runner 줄 보존" "$(grep -q '^- issue-runner: .* — 정리 1 · 보수 0' "$fx.dash.body" && echo ok || echo no)"
+check "post 2회차: verify-runner 줄 갱신" "$(grep -q '^- verify-runner: .* — 검증통과 1' "$fx.dash.body" && echo ok || echo no)"
+# 마커 없는 본문은 덮어쓰지 않는다(사람 이슈 보호)
+printf '사람이 쓴 이슈\n' > "$fx.dash.body"
+run --repo ggqgga/issue-runner --post closeout
+check "post 마커 없음: exit 1" "$([ "$RC" = 1 ] && echo ok || echo no)"
+check "post 마커 없음: edit 안 함" "$(grep -q 'dash-edit' "$STUB_CALL_LOG" && echo no || echo ok)"
+check "post 마커 없음: 본문 그대로" "$(grep -q '^사람이 쓴 이슈' "$fx.dash.body" && echo ok || echo no)"
+# 인자 검증
+run --repo ggqgga/issue-runner --post bogus;            check "post 잘못된 루프명: 64" "$([ "$RC" = 64 ] && echo ok || echo no)"
+run --repo ggqgga/issue-runner --post closeout --json;  check "post+json: 64" "$([ "$RC" = 64 ] && echo ok || echo no)"
+run --repo ggqgga/issue-runner --delta "x";             check "delta 만: 64" "$([ "$RC" = 64 ] && echo ok || echo no)"
+rm -f "$fx.dash.num" "$fx.dash.body"
 
 echo "loop-status: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
