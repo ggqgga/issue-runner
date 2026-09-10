@@ -200,7 +200,7 @@ separate freshness gate needed:
 
 | finish-classify output | Meaning | Action |
 |---|---|---|
-| `done_verdict` | latest `머지 판정: ✅` **and it is proven to postdate the current head commit** (#171) | eligible.sh's normal path handles it — sweep skips. That normal path must still clear **①-c's direction judgment** before ② Pick takes it (#198 — a hold a human released with "fix it" is not a merge candidate even when the ✅ looks fresh) |
+| `done_verdict` | latest `머지 판정: ✅` **and it is proven to postdate the current head commit** (#171) | eligible.sh's normal path handles it — sweep skips. That normal path must still clear **①-c's direction judgment** before ② Pick takes it (#198 — a hold a human released with "fix it" is not a merge candidate even when the ✅ looks fresh). And **if an unresolved `마감 검증: ⚠ 보류` is present, do not skip — hand it to ①-c**: when a human writes the decision on the PR without the marker, eligible's `unresolved` gate (#72) drops that PR from the list, so ①-c never runs at all (a silent stall) |
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). |
 | `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
 | `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `needs-human` + `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the human signal survives even with no linked issue), closeout leaves it (no auto-progress). |
@@ -251,25 +251,41 @@ So ② Pick must run a candidate through this section **before** picking it. It 
 `closeout-eligible.sh` normal candidates and ①-b adopt candidates.
 
 **1) Is there an unresolved hold?** Read comments through `$SCRIPTS/pr-comments.sh <repo> <pr>` in
-**one place** (`--paginate` — no second copy of the query logic, and it avoids the first-100 cap;
-same reason as ①-b). If that call exits 1, the state is **unproven** — do not let it through; go to
-*ambiguous* in 3) below.
+**one place** (no second copy of the query logic, and it avoids the first-100 cap; same reason as
+①-b — `--paginate` lives **inside** that helper, do not pass it as an argument). If that call
+exits 1, the state is **unproven** — do not let it through; go to *ambiguous* in 3) below.
 
 - **Hold boundary** = the **last matching index** among comments that either start with
   `마감 검증: ⚠ 보류` or contain `<!-- hold-note: `. Measure by **comment array index**, not
   `createdAt` — GitHub comment timestamps are second-granular and cannot order two comments made in
   the same second (the same idiom `closeout-eligible.sh`'s bounce-marker net uses).
-- If no such comment exists → there was no hold → go straight to ② Pick.
-- **Resolved?** After that index, if ⑴ a comment starting with `마감 검증: ✅` exists, or ⑵ the head
-  commit time from `$SCRIPTS/pr-head-at.sh <repo> <pr>` is **later** than that hold comment's
-  `createdAt` (i.e. a new commit landed after the hold) → resolved → go to ② Pick (③-1 runs normally).
+- **Compute the boundary per source, in that source's own array.** An index only means something
+  inside its own array, so a PR-array index cannot be applied to the issue array — since 2) below
+  also reads the linked issue, recompute the issue-side boundary in the **issue's comment array**
+  by the same rule. **If the issue side has no boundary comment at all, the issue side yields no
+  decision candidate** (do not scan the whole issue array — a stale comment from *before* the hold
+  could be misread as the decision, and read as a rejection that is a straight bad merge).
+  `closeout-blocked` writes `<!-- hold-note: <reason> -->` to **both** the PR and the issue, so in
+  the normal shape both sides have a boundary.
+- If no such comment exists (on the PR) → there was no hold → go straight to ② Pick.
+- **Resolved?** In the PR array, after that index, if ⑴ a comment starting with `마감 검증: ✅`
+  exists, or ⑵ the head commit time from `$SCRIPTS/pr-head-at.sh <repo> <pr>` is **later** than that
+  hold comment's `createdAt` (i.e. a new commit landed after the hold) → resolved → go to ② Pick
+  (③-1 runs normally).
+- **Exception to ⑴ — `마감 검증: ✅ 기각 승계`.** If that ✅ is the succession marker left by the
+  *rejected* branch in 3), treat the hold as resolved but **still start ③ from step 2 (merge)**. The
+  code is still unchanged, so if the merge failed or was interrupted and the PR survives into the
+  next tick, re-running ③-1 **reproduces the same `[P1]`** and the hold↔release loop this section
+  exists to stop runs one more lap. The succession marker *is* the step-1 completion marker
+  (isomorphic to ① Reconcile's marker table).
 - If `pr-head-at.sh` exits 1 (no output), do **not** read that as "no new commit" — it means the
   value **could not be obtained**. Resolution is unproven, so treat it as unresolved and go to 2)
   (fail-closed — same direction as ①-b).
 - Neither of the two → **unresolved hold** → 2).
 
-**2) Identify the release decision comment.** Among comments **after** the hold boundary index, a
-comment is a decision candidate if it is either of the following; take the **last matching index**:
+**2) Identify the release decision comment.** Among comments **after that source's own** hold
+boundary index (computed by 1)'s "per source" rule), a comment is a decision candidate if it is
+either of the following; take the **last matching index**:
 
 - a comment **without** the `<!-- bodat:worker -->` marker (written by a human directly), or
 - a comment carrying `<!-- policy-review: resumed -->` — that is where the re-review procedure
@@ -287,14 +303,25 @@ or only for marker-less comments, finds **no** decision at all and drops every c
 - If the two sides read the **same** direction, that is the direction.
 - If they **differ**, it is **ambiguous** (do not tie-break by timestamp — second granularity).
 - If **neither** exists (the human removed labels with no comment), it is **ambiguous**.
+- **If there is no linked issue**, judge from the PR side alone (no issue-side candidate). If that
+  reads *correction*, there is no lane to bounce to — send it down the **same path as ambiguous**
+  in 3) (see the correction row).
+
+**Careful — a marker-less decision written on the PR stops this section from running at all.**
+`closeout-eligible.sh`'s `unresolved` gate drops a PR from the candidate list as soon as one comment
+lacks `<!-- bodat:worker -->` (#72). If a human writes the decision **on the PR** directly, that PR
+never appears in eligible, so ①-c never gets a chance to run — the direction stays fail-closed (no
+bad merge) but nobody picks it up: a **silent stall**. That is why the ①-b sweep must **not** skip a
+`done_verdict` PR that still has an unresolved hold — it hands it to this section instead (see the
+`done_verdict` row above). Catching the shape eligible cannot emit is the whole point of that wiring.
 
 **3) Split the direction.** Read the *conclusion* of the decision comment and end in one of three ways:
 
 | Direction | Signal | Action |
 |---|---|---|
-| **Correction** | "the gate is right" · "narrow it / fix it / change it" · implementation instructions · a demand for more tests — **any sentence telling you to change the code** | `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` + on the PR `gh pr comment <pr> --repo <repo> --body "재디스패치: #<issue> — 사람 재심이 시정 방향(<one quoted line from the decision>)`⏎`<!-- bodat:worker -->"`. That marker is in `BOUNCE_MARKERS`, so later ticks' `closeout-eligible.sh` excludes it automatically. **Do not ② Pick.** |
+| **Correction** | "the gate is right" · "narrow it / fix it / change it" · implementation instructions · a demand for more tests — **any sentence telling you to change the code** | `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` + on the PR `gh pr comment <pr> --repo <repo> --body "재디스패치: #<issue> — 사람 재심이 시정 방향(<one quoted line from the decision>)`⏎`<!-- bodat:worker -->"`. That marker is in `BOUNCE_MARKERS`, so later ticks' `closeout-eligible.sh` excludes it automatically. **Do not ② Pick.** — **With no linked issue** this transition cannot be called (`closeout-redispatch` requires an issue number: there is no `agent-ready` to return to). There is no lane to bounce to, so take the **same action as the ambiguous row** below and put `시정 방향인데 연결 이슈가 없어 반송 불가` in `--note`. |
 | **Rejected** | the conclusion **explicitly** says "the verdict was wrong / a false positive" · "merge as-is" · "no code change needed", and **none** of the correction signals above are present | **② Pick it.** But **do not re-run ③-1** — the code is unchanged, so the same `[P1]` comes back and the PR loops hold↔release forever (the "infinite loop" clause #174 nailed down). Leave `마감 검증: ✅ 기각 승계 — 사람이 판정을 기각(<one quoted line>), ③-1 재실행 안 함`⏎`<!-- bodat:worker -->` on the PR as the **step-1 completion marker** and start ③ **from step 2 (merge)**; the existing `머지 판정: ✅` joins the step-2 merge gate as-is. |
-| **Ambiguous** | questions only, conditional, both mixed, no decision comment, or the comment query failed | `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<one line: is the release's conclusion a rejection or a correction?>"` — hand it back to the human (fail-closed — do not open what is not proven). **Do not ② Pick.** |
+| **Ambiguous** | questions only, conditional, both mixed, no decision comment, or the comment query failed | `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<one line: is the release's conclusion a rejection or a correction?>"` — hand it back to the human (fail-closed — do not open what is not proven). **Do not ② Pick.** — That transition leaves a fresh `<!-- hold-note: policy -->`, which advances the hold boundary, so this does not spin every tick (the re-attached label also drops it from eligible). But if the human **again** removes the labels with no comment, the same ambiguity repeats — on the **second ambiguous verdict for the same PR**, write `--note` as a **choice** rather than a question (`기각(원안 머지) / 시정(코드 수정) 중 하나로 답해 주세요`) and add `방향 미판정 반복: PR #<pr>(<repo_short>)` to ④ Report's item line so the human sees the repetition. |
 
 **Correction is the default lean.** A decision comment routinely carries both agreement ("the gate
 is right") and instructions ("fix it like this") — the measured re-review **kept** the BLOCKER and
@@ -309,7 +336,9 @@ entire point of this section.
 
 If a transition exits 1 (readback mismatch) or 2 (gh failure), do not change that PR's state; report
 `BLOCKED: 전이 실패 <transition> PR #<pr>(<repo_short>) — <one stderr line>` in ④ Report (isomorphic
-to ①-b). Tally the judgments in ④ Report as `방향 판정 N (기각 n · 시정 m · 모호 k)`.
+to ①-b). Tally into ④ Report's **existing counters** (do not invent a new one) — *correction* into
+`재디스패치 N`, *ambiguous* into `검증보류 N`. Name the verdict on the item line:
+`방향 판정: PR #<pr>(<repo_short>, 시정|기각|모호)`.
 
 **Fixtures — check this section's judgment against these three.** This is a SKILL change, so script
 tests cannot reach it (a script cannot judge the direction of human prose). Fixed examples for
