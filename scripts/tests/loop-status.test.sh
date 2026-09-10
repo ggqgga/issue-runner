@@ -291,6 +291,8 @@ FX
 # ── 픽스처: ggqgga/Reclaim (reclaim) — 재디스패치·조회 실패·이벤트 부재 (#177) ──
 # 셋 다 **구현중 버킷 + 인계 전 창 밖 PR**(4시간 전) 이라 사망 의심 꼬리표가 붙는 자리다.
 # 갈리는 건 claim 시각을 얻는 경로뿐이다.
+# PR #65 는 #61 과 **같은 이슈(#31)** 를 가리키는 두 번째 무소속 PR (#181) — 중복 제거
+# 없이는 같은 이슈의 타임라인을 두 번 조회하고 CLAIM_TIME_MAX 도 두 번 깎는다.
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Reclaim.issues.json" <<'FX'
 [
  {"number":31,"title":"홀드 해제 후 재claim — PR 은 4시간 전, claim 은 5분 전","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
@@ -302,6 +304,8 @@ FX
 sed "s/@AGO240@/$AGO240/g" > "$tmp/fx/ggqgga_Reclaim.pr_open.json" <<'FX'
 [
  {"number":61,"headRefName":"agent/issue-31","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO240@",
+  "closingIssuesReferences":[{"number":31}],"labels":[]},
+ {"number":65,"headRefName":"agent/issue-31-2","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO240@",
   "closingIssuesReferences":[{"number":31}],"labels":[]},
  {"number":62,"headRefName":"agent/issue-32","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO240@",
   "closingIssuesReferences":[{"number":32}],"labels":[]},
@@ -591,6 +595,10 @@ has_line "(a) 재claim 건은 claim 기준 5분" "$tmp/out" \
   "    - 무소속 PR #61(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #31 는 needs-human 아님(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
 no_sub "(a) PR 나이(240분)로 재지 않는다" "$tmp/out" "240분 경과"
 no_sub "(a) 첫 페이지의 옛 claim(200분)을 취하지 않는다 — 전량을 읽는다" "$tmp/out" "200분 경과"
+# (a) (#181) 같은 이슈(#31)를 가리키는 두 번째 무소속 PR #65 — 값은 #61 과 같아야 한다
+# (같은 타임라인을 다시 조회하지 않고 캐시된 claim 시각을 재사용한다는 뜻).
+has_line "(a) 같은 이슈의 두 번째 PR #65 도 같은 claim 시각(5분)" "$tmp/out" \
+  "    - 무소속 PR #65(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #31 는 needs-human 아님(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
 # (b) 조회 실패·이벤트 부재는 숫자를 지어내지 않는다. warn 자체는 유지한다.
 has_line "(b) 타임라인 조회 실패 → 경과 미상(warn 은 유지)" "$tmp/out" \
   "    - 무소속 PR #62(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #32 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
@@ -600,20 +608,42 @@ has_line "(b) claim 이벤트 부재 → 경과 미상(0분으로 접지 않는�
 has_line "(b) 형식 밖 claim 시각 → 그 건만 경과 미상" "$tmp/out" \
   "    - 무소속 PR #64(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #34 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
 no_sub "(b) 형식 밖 시각이 레포 블록을 죽이지 않는다" "$tmp/out" "reclaim — 조회 실패"
-has_line "reclaim: warn 4건(넷 다 남는다)" "$tmp/out" "  warn      4"
+has_line "reclaim: warn 5건(#65 포함)" "$tmp/out" "  warn      5"
 has_sub "(b) 조회 실패는 stderr 에도 사유가 남는다" "$tmp/err" \
   "reclaim #32 agent:claimed 시각(타임라인) 조회 실패"
 has_sub "(b) 시각을 못 얻은 건도 stderr 한 줄" "$tmp/err" \
   "reclaim #33 타임라인에서 agent:claimed 시각을 못 얻음"
-ck "reclaim: 타임라인 조회는 후보 4건뿐" "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 4
+# (a) (#181) 이슈 #31 을 가리키는 무소속 PR 이 #61·#65 두 개인데도 타임라인 조회는 1회뿐 —
+# 중복 제거 없이는 같은 이슈를 두 번(총 5회) 조회한다.
+ck "reclaim: 타임라인 조회는 고유 이슈 4건뿐(PR 은 5개)" "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 4
+ck "reclaim: 이슈 #31 타임라인 조회는 정확히 1회" \
+  "$(grep -cxF "timeline ggqgga/Reclaim 31" "$STUB_CALL_LOG")" 1
 
 run --repo ggqgga/Reclaim --since 24h --json
 ck "--json: 사망 의심 경과는 3상태(분 / null=미상)" \
   "$(jq -c '[.repos[0].warns[] | select(.kind=="orphan_pr") | {p:.pr, m:.claimed_minutes}]' < "$tmp/out")" \
-  '[{"p":61,"m":5},{"p":62,"m":null},{"p":63,"m":null},{"p":64,"m":null}]'
+  '[{"p":61,"m":5},{"p":65,"m":5},{"p":62,"m":null},{"p":63,"m":null},{"p":64,"m":null}]'
 
-# 상한 — 넘는 후보는 조회하지 않고 `경과 미상`(거짓 숫자를 만들지 않는다). 상한이 없으면
-# 루프가 크게 어긋난 날 이 스크립트가 틱을 잡아먹는다.
+# ── (a) (#181) 상한 소모는 PR 줄 수가 아니라 고유 이슈 수다 ──────────────────
+# 고유 이슈는 4건(31·32·33·34)인데 PR 줄은 5개(#31 이 #61·#65 둘). 상한을 정확히 4로
+# 두면: 중복 제거가 없다면 다섯째 줄(#65, 이슈 31 의 재등장)이 상한을 넘겨 진짜 넷째 고유
+# 이슈(#34)가 조회조차 못 되고 밀려난다. 중복 제거가 되면 고유 이슈 4건이 상한 안에 모두
+# 들어가 #34 도 조회는 된다(그 값 자체는 형식 밖이라 여전히 "확인 필요" — 조회 시도는 했다).
+: > "$STUB_CALL_LOG"
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" CLAIM_TIME_MAX=4 \
+  "$SUT" --repo ggqgga/Reclaim --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "CLAIM_TIME_MAX=4(고유 이슈 수): exit 0" "$RC" 0
+ck "CLAIM_TIME_MAX=4: 타임라인 조회는 고유 이슈 수만큼(4건)" \
+  "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 4
+no_sub "CLAIM_TIME_MAX=4: 상한 초과가 발생하지 않는다(PR 줄 수로 셌다면 #34 가 밀렸을 것)" \
+  "$tmp/out" "조회 상한"
+no_sub "CLAIM_TIME_MAX=4: 상한 초과 stderr 도 없다" "$tmp/err" "claim 시각 조회 상한"
+has_sub "CLAIM_TIME_MAX=4: 넷째 고유 이슈(#34)도 조회는 됐다(형식 밖이라 확인 필요)" \
+  "$tmp/out" "연결 이슈 #34 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+
+# ── (b)(c) (#181) 상한에 걸려 안 본 것과 조회했지만 실패한 것은 다른 문구다 ──────
+# 상한을 1로 좁히면 고유 이슈 중 첫째(#31)만 조회되고 둘째(#32)는 **안 본다** — 그 문구는
+# `확인 필요`(조회했지만 실패)가 아니라 `조회 상한`(애초에 안 봤다) 이어야 한다.
 : > "$STUB_CALL_LOG"
 STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" CLAIM_TIME_MAX=1 \
   "$SUT" --repo ggqgga/Reclaim --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
@@ -621,11 +651,16 @@ ck "CLAIM_TIME_MAX=1: exit 0" "$RC" 0
 ck "CLAIM_TIME_MAX=1: 타임라인 조회 1건" "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 1
 has_sub "CLAIM_TIME_MAX=1: 상한 안의 #31 은 그대로 5분" "$tmp/out" \
   "연결 이슈 #31 는 needs-human 아님(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
-has_sub "CLAIM_TIME_MAX=1: 상한 밖은 경과 미상" "$tmp/out" \
+has_sub "(b) CLAIM_TIME_MAX=1: 상한 밖(#32)은 '조회 상한' — '안 봤다'" "$tmp/out" \
+  "연결 이슈 #32 는 needs-human 아님(agent:claimed 인데 경과 미상 — 조회 상한)"
+no_sub "(b) 상한 밖 문구는 조회 실패 문구(확인 필요)와 섞이지 않는다" "$tmp/out" \
   "연결 이슈 #32 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
 has_sub "CLAIM_TIME_MAX=1: 상한 초과 사유가 stderr 에" "$tmp/err" \
   "reclaim #32 claim 시각 조회 상한(1) 초과"
-has_line "CLAIM_TIME_MAX=1: warn 은 여전히 4건" "$tmp/out" "  warn      4"
+has_line "CLAIM_TIME_MAX=1: warn 은 여전히 5건" "$tmp/out" "  warn      5"
+# (c) (#181) 무회귀 — 진짜 타임라인 조회 실패(#32, 기본 상한에서 실측)는 '조회 상한' 이
+# 아니라 종전 문구 '확인 필요' 그대로다. 위 §(b) 블록에서 이미 확인했다(default 상한
+# 20 에서 #32 는 조회는 됐지만 실패해 '확인 필요').
 # 형식 오류는 조용한 기본값이 아니라 환경 실패(HANDOFF_GRACE_MIN·HOLD_NOTE_MAX 와 같은 규율)
 STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" CLAIM_TIME_MAX=스물 \
   "$SUT" --repo ggqgga/Reclaim --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
