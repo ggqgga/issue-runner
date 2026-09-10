@@ -24,6 +24,63 @@ session (headless/cron environment) or `<VERIFY_URL>` is unreachable, skip the s
 report `스모크 skip: <reason>` (no hiding the gap — hand off to the human-report fallback
 path).
 
+**Suspect the address before you skip.** If Chrome reports `ERR_ADDRESS_UNREACHABLE`
+while `curl` gets 200 from the same host, the server is not down — that *address* just
+does not open in Chrome (measured 2026-09-10 on the BoDAT laptop's Chrome: the mini's LAN
+IP and mDNS name fail in Chrome only, while the same box's Tailscale address and loopback
+work, and that same Chrome opens the LAN router — so it is neither DNS nor macOS local
+network permission). Retry on another address for the same box before declaring it
+unreachable — (1) the repo's remote-access address (Tailscale for BoDAT), (2) an SSH
+tunnel. Report unreachable only when both fail.
+
+⚠️ **Verify the tunnel came up, or you will judge someone else's server.** A fixed port
+may already be held by a dev server or another tunnel; the smoke would score that as a
+pass and closeout closes the deploy issue on it (false green). Pick a fresh port, make
+ssh die if forwarding fails, and probe it once:
+
+**A local port collision is not remote unreachability.** If the chosen port is already
+held, `ExitOnForwardFailure=yes` kills ssh — recording that as "unreachable" throws away
+a healthy route. Retry on another port when the bind fails, and clean up through **the
+control socket this invocation created**, never a broad `pkill` (which would cut someone
+else's tunnel on the same port).
+
+```bash
+CTL=$(mktemp -u /tmp/smoke-tun-XXXXXX.sock); ERR=$(mktemp); PORT=""
+for _try in 1 2 3 4 5; do
+  P=$(( 39000 + RANDOM % 1000 ))
+  if ssh -f -N -M -S "$CTL" -o ExitOnForwardFailure=yes \
+       -L "127.0.0.1:$P:127.0.0.1:<remote port>" <ssh host alias> 2>"$ERR"; then
+    PORT=$P; break                      # bound successfully
+  fi
+  grep -qi 'bind\|address already in use' "$ERR" || break   # not a bind problem — retrying is pointless
+done
+if [ -n "$PORT" ] && curl -fsS --connect-timeout 3 --max-time 10 \
+     "http://127.0.0.1:$PORT/up" -o /dev/null; then
+  echo "tunnel ok on $PORT"            # ← smoke URL is http://127.0.0.1:$PORT
+else
+  echo "tunnel unreachable"            # five collisions · remote silent · response too slow (>10s)
+  ssh -S "$CTL" -O exit <ssh host alias> 2>/dev/null || true   # failure path: tear down now
+fi
+rm -f "$ERR"
+```
+
+**On `tunnel ok`, leave the tunnel up and run the whole Chrome smoke through it** — tearing
+it down right after the probe means you never see the screen you came to check (all you
+verified is `/up`). Clean up after the smoke finishes, once, on **every** path — pass,
+fail, or abort:
+
+```bash
+ssh -S "$CTL" -O exit <ssh host alias> 2>/dev/null || true   # common cleanup after the smoke
+```
+
+Only `tunnel unreachable` means unreachable — the loop above already filtered out bind
+collisions, and `--max-time` folds a silent or slow remote into the same verdict after 10s
+so closeout never hangs. Clean up through the control socket (`-O exit`) only — a broad `pkill` on the
+port string cuts other people's tunnels using that port. Find `<ssh host alias>`/`<remote port>` in that
+repo's deploy docs (BoDAT: `bodat-mini` on the office LAN, `bodat-remote` from outside,
+port 3000). If you cannot find them, do not invent them — report
+`스모크 skip: tunnel route unknown (<repo>)`.
+
 **Output contract.** One line per check item with `pass`/`fail`/`skip` and a rationale,
 then a final summary `스모크: <passed>/<total> 통과` (or `스모크 skip: <reason>`).
 Read-only — make no direct changes.
