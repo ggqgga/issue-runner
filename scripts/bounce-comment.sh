@@ -2,7 +2,8 @@
 # bounce-comment.sh <채널> <repo> <pr> <issue> [<attempt> <사유>]
 #
 # 반송(bounce) 코멘트 **문구를 만드는 한 자리**(#212). 마커 어휘 자체의 SSOT 는
-# `bounce-state.sh` 의 BOUNCE_MARKERS — 이 스크립트는 그 마커로 시작하는 실제 코멘트
+# `bounce-state.sh` 상단의 반송 마커 배열(그 파일 밖에 정의를 두지 않는다 —
+# bin/ci 가 검사) — 이 스크립트는 그 마커로 시작하는 실제 코멘트
 # 본문을 만들어 `gh pr comment` 로 게시한다. 지금까지는 SKILL.md 본문에 박힌 예시
 # 문자열을 사람·워커가 매번 손으로 옮겨 적었는데, 그러다 콜론이 빠지거나 어순이
 # 바뀌는 변형이 생겼다(#212 사고 원인 그 자체 — PR #202 의 `재디스패치 attempt 3`).
