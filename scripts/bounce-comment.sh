@@ -10,8 +10,8 @@
 # `transition.sh` 가 라벨 이동을 한 자리로 모은 것과 같은 이유로 문구도 한 자리로
 # 모은다.
 #
-# 채널은 둘이고 각자 다른 인자를 받는다(형식이 달라 하나로 합치지 않는다 — closeout
-# 은 사유가 고정, verify-runner 는 사유·attempt 번호가 매 호출 가변):
+# 채널은 셋이고 각자 다른 인자를 받는다(형식이 달라 하나로 합치지 않는다 — closeout
+# ①-b 는 사유가 고정, 나머지 둘은 사유·attempt 번호가 매 호출 가변):
 #
 #   bounce-comment.sh redispatch <repo> <pr> <issue>
 #     → closeout ①-b stale_reverify 재디스패치 전용(skills/closeout/SKILL.md).
@@ -22,7 +22,15 @@
 #       <attempt> 는 PR 본문 `<!-- verify-attempt: N -->` 의 N+1(호출자가 계산해 넘긴다
 #       — 이 스크립트는 본문을 읽지 않는다).
 #
-# 둘 다 문구 생성과 게시(`gh pr comment`)를 한 호출로 묶는다 — 문구만 stdout 으로
+#   bounce-comment.sh closeout-blocker <repo> <pr> <issue> "<사유>"
+#     → closeout ③-1 마감 검증 BLOCKER 중 **구현으로 닫히는 결함**을 워커 레인으로
+#       반송하는 자리 전용(skills/closeout/SKILL.md ③ 1단계). 사유는 호출자가 넘긴다
+#       — 매 호출 다르다(reverify-fail 과 같은 이유). `redispatch` 를 재사용하지
+#       않는 이유: 그 채널의 고정 문구("완결 유실(검증 전 사망)")는 이 갈래에서
+#       **거짓**이고(PR 은 죽지 않았고 검증도 끝났다), 그 거짓 사유는 다음 틱의 판정
+#       입력이다(finish-classify 와 사람이 같은 코멘트를 읽는다, #271).
+#
+# 셋 다 문구 생성과 게시(`gh pr comment`)를 한 호출로 묶는다 — 문구만 stdout 으로
 # 돌려주고 게시는 호출자가 따로 하게 하면, 그 게시 지점이 다시 손으로 옮겨 적는
 # 자리가 된다.
 set -euo pipefail
@@ -37,6 +45,7 @@ usage() {
 usage:
   bounce-comment.sh redispatch <repo> <pr> <issue>
   bounce-comment.sh reverify-fail <repo> <pr> <issue> <attempt> "<사유>"
+  bounce-comment.sh closeout-blocker <repo> <pr> <issue> "<사유>"
 USAGE
 }
 
@@ -54,6 +63,17 @@ case "$channel" in
       usage; exit 2
     fi
     body="재검증 실패: #${issue} — ${reason} (attempt ${attempt})
+<!-- bodat:worker -->"
+    ;;
+  closeout-blocker)
+    reason=${5:-}
+    if [ -z "$repo" ] || [ -z "$pr" ] || [ -z "$issue" ] || [ -z "$reason" ]; then
+      usage; exit 2
+    fi
+    # 첫 줄 앵커는 `redispatch` 와 같은 마커로 시작한다 — 마커 어휘의 SSOT 는
+    # bounce-state.sh 의 반송 마커 배열이고, 이 채널은 그 어휘를 **쓰는** 쪽이다
+    # (새 어휘를 만들면 판정기 밖에 정의가 하나 더 생긴다).
+    body="재디스패치: #${issue} — ${reason}
 <!-- bodat:worker -->"
     ;;
   *)
