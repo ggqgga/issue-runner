@@ -150,14 +150,20 @@ esac
 TAB=$(printf '\t')
 BLOCKER_Q='.state + "\t" + ([.labels[].name] | join(","))'
 
-# 블로커의 라벨 → 사람이 읽는 한 낱말. 사다리 뒤 단계가 이긴다(needs-human 이 최우선 —
+# 블로커의 라벨 → 사람이 읽는 한 낱말. 사다리 뒤 단계가 이긴다(사람 몫 게이트가 최우선 —
 # 사람이 답해야 풀리는 게이트라 하위가 영원히 대기한다). 그다음이 기계 정지(`hold:*`)인
 # `보류` (#244) — 기계 정지가 `needs-human` 을 떼고 사유 라벨만 남기게 된 뒤로, 이 줄이
 # 없으면 홀드된 블로커가 `대기`(= 곧 집힐 것)로 읽혀 하위가 왜 안 풀리는지 안 보인다.
+# `hold:conflict` 는 `hold:*` 이면서도 **사람대기**다 — 충돌은 루프가 재시도로 못 푸는
+# 사람 몫이라, `loop-status.sh` 가 사람대기 버킷을 `needs-human` ∪ `hold:conflict` 로
+# 정의한다(같은 이슈 #244). 여기서만 일반 `hold:*` 갈래로 보내면 같은 라벨을 두 스크립트가
+# 다르게 읽고, 막힌 하위가 아래 `blocked_human` 카운트에서 빠져 사람대기 경보에 안 잡힌다.
+# 그래서 **일반 `hold:*` 보다 앞**에 둔다 — `case` 는 첫 일치가 이기므로 순서가 판정의 전부다.
 # 순서는 loop-status 의 버킷 우선순위와 같다: 사람대기 > 보류 > 단계 라벨 > 대기.
 blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
   case ",$1," in
     *",needs-human,"*)   printf '사람대기' ;;
+    *",hold:conflict,"*) printf '사람대기' ;;
     *",hold:"*)          printf '보류' ;;
     *",agent:claimed,"*) printf '구현중' ;;
     *",flow:verify,"*)   printf '검증대기' ;;
