@@ -124,6 +124,39 @@ run_case "재디스패치 채널도 잡는다→bounced" bounced '[
   {"body":"재디스패치: #166 — 완결 유실(검증 전 사망) <!-- bodat:worker -->","createdAt":"2026-09-10T07:30:00Z"}
 ]'
 
+# ── #212: 콜론 리터럴 매칭이 문구 변형을 놓친다 ──────────────────────────
+# 마커 판정을 콜론 리터럴 startswith 에서 **접두(단어) 매칭**으로 넓힌다 — 코멘트
+# 첫 줄이 `재디스패치`/`재검증 실패` 로 **시작**하면 뒤에 무엇이 오든(`:`·` attempt N`·
+# `(round 2)`) 반송으로 센다. 실사고(PR #202): 콜론 없는 `재디스패치 attempt 3 — …`
+# 를 옛 구현이 못 잡아 closeout-eligible.sh 가 반송된 PR 을 다시 후보로 올렸다.
+
+# 5-b) 콜론 없는 `attempt N` 변형(closeout 채널) → bounced. 사고 재현 형태 그대로.
+run_case "#212 콜론 없는 attempt 변형→bounced" bounced '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-09-11T07:00:00Z"},
+  {"body":"재디스패치 attempt 3 — 마감 검증 BLOCKER(코드 회귀) <!-- bodat:worker -->","createdAt":"2026-09-11T07:30:00Z"}
+]'
+
+# 5-c) 콜론 있는 기존 형태도 **여전히** bounced — 접두 매칭으로 넓혀도 무회귀.
+run_case "#212 콜론 있는 기존 형태도 무회귀→bounced" bounced '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-09-11T07:00:00Z"},
+  {"body":"재디스패치: #193 — 마감 검증 BLOCKER(코드 회귀) <!-- bodat:worker -->","createdAt":"2026-09-11T07:30:00Z"}
+]'
+
+# 5-d) verify-runner 채널의 콜론 없는 변형(`(round 2)`) → bounced. 두 채널 모두
+#      같은 규칙을 적용한다는 계약(BOUNCE_MARKERS 한 자리).
+run_case "#212 재검증 실패 콜론 없는 (round 2) 변형→bounced" bounced '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-09-11T07:00:00Z"},
+  {"body":"재검증 실패 (round 2) — E2E 실패 <!-- bodat:worker -->","createdAt":"2026-09-11T07:30:00Z"}
+]'
+
+# 5-e) **과잉 매칭 금지**: 본문 중간에 `재디스패치` 를 언급만 하는 설명 코멘트(이 이슈
+#      본문과 같은 실제 형태 — 결함을 서술하며 마커 단어를 인용)는 반송으로 세면 안
+#      된다. 첫 줄이 그 단어로 **시작하지 않으므로** ok 로 남아야 한다(#197 이 고치는
+#      "인용된 마커가 제어 신호로 읽히는" 축과 같은 자리 — 여기서는 판정 쪽을 좁혀 막는다).
+run_case "#212 본문 중간 언급만·시작 아님→ok(과잉매칭 금지)" ok '[
+  {"body":"이 PR 은 #212(반송 마커가 콜론 리터럴이라 「재디스패치 attempt N」 이 안전망을 통과하는 결함)를 고친다. BOUNCE_MARKERS 매칭을 접두 검사로 바꿨다.\n<!-- bodat:worker -->","createdAt":"2026-09-11T07:00:00Z"}
+]'
+
 # 6) **동초** 반송 마커 후행 → bounced. GitHub 코멘트 시각은 초 단위라 createdAt 비교로는
 #    거짓이 된다 — 선후는 **코멘트 배열의 마지막 매칭 인덱스**로 잰다는 계약의 고정핀.
 run_case "동초·반송마커 후행→bounced" bounced '[
@@ -270,6 +303,84 @@ run_case "동초·⚠ 후행→held" held '[
 run_case "영문 Merge verdict ⚠ 후행→held" held '[
   {"body":"재검증 실패: #218 — codex BLOCKER <!-- bodat:worker -->","createdAt":"2026-09-11T00:50:00Z"},
   {"body":"Merge verdict: ⚠ hold — policy question\n<!-- bodat:worker -->","createdAt":"2026-09-11T02:00:00Z"}
+]'
+
+# ── 격자(#218 attempt 2 BLOCKER 방증) — 반송 이후 마지막 종결 판정이 이긴다 ──────
+# 판정 규칙(말로 적는다): "반송 마커 이후에 오는 종결 판정(✅/⚠) 중 **가장 늦은 것**이
+# 결과를 정한다. 반송 마커가 없으면 ok. 반송 이후 종결 판정이 없으면 bounced."
+# attempt 1 은 `$vi != null and $bi <= $vi` 를 **존재 검사**로만 써서, ✅ 가 반송 뒤에
+# 한 번이라도 오면 그 뒤에 더 늦은 ⚠ 이 있어도 그 사실을 보지 못하고 ok 로 새는
+# BLOCKER 를 남겼다 — 아래 18)이 그 정확한 반례다(bodat PR #225 검증자 리뷰 재현).
+# 이 레포 lessons.md(PR#202)가 "짚힌 반례 하나만 차례로 막지 말고 규칙을 옮긴 뒤 순열
+# 격자로 전수 단언하라" 고 남겼으므로, 최소 순열을 여기 한 자리에 모은다.
+
+# 18) **BLOCKER 방증**: 반송 → ✅ → ⚠ → held. attempt 1 은 $bi<=$vi 가 먼저 참이 되어
+#     ok 로 새면서 그 뒤의 ⚠ 을 못 봤다 — 사람 보류를 요청한 PR 이 closeout 에 그대로
+#     rebase·입양 경로로 넘어간다.
+run_case "격자·반송→✅→⚠→held(BLOCKER 방증)" held '[
+  {"body":"재디스패치: #218 — 완결 유실(검증 전 사망) <!-- bodat:worker -->","createdAt":"2026-09-11T03:00:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능(재검증)\n<!-- bodat:worker -->","createdAt":"2026-09-11T03:30:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-09-11T04:00:00Z"}
+]'
+
+# 19) 역순: 반송 → ⚠ → ✅ → ok. ⚠ 뒤에 더 늦은 ✅ 가 오면 정상 완결로 되돌아간다 —
+#     18)만 있으면 "⚠ 이 한 번이라도 있으면 무조건 held" 로 과잉 일반화될 수 있어
+#     양방향을 함께 문다.
+run_case "격자·반송→⚠→✅→ok(역순)" ok '[
+  {"body":"재디스패치: #218 — 완결 유실(검증 전 사망) <!-- bodat:worker -->","createdAt":"2026-09-11T03:00:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-09-11T03:30:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능(재검증)\n<!-- bodat:worker -->","createdAt":"2026-09-11T04:00:00Z"}
+]'
+
+# 20) ✅ 단독(반송 없음) → ok. $bi == null 이면 뒤 판정과 무관하게 즉시 ok 여야 한다.
+run_case "격자·✅ 단독→ok" ok '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-09-11T03:00:00Z"}
+]'
+
+# 21) ⚠ 단독(반송 없음) → ok. held 는 **반송 뒤**의 ⚠ 만 본다 — 반송이 아예 없는데
+#     ⚠ 만 있는 PR 을 이 스크립트가 needs-human 으로 올리면 안 된다(그건
+#     finish-classify.sh 의 held 행 몫).
+run_case "격자·⚠ 단독→ok(반송 없음)" ok '[
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-09-11T03:00:00Z"}
+]'
+
+# 22) ✅ → 반송 → bounced. 종결 판정이 반송보다 **앞**이면 무의미하다 — 반송이
+#     마지막이면 그 앞에 무엇이 있든 워커 레인 소유.
+run_case "격자·✅→반송→bounced" bounced '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-09-11T03:00:00Z"},
+  {"body":"재디스패치: #218 — 완결 유실(검증 전 사망) <!-- bodat:worker -->","createdAt":"2026-09-11T03:30:00Z"}
+]'
+
+# 23) 반송 → ✅ → 반송 → bounced. $bi 는 **마지막** 반송 마커 인덱스라 두 번째 반송이
+#     기준이 된다 — 그 앞의 ✅ 는 이미 낡은 신호라 못 살린다.
+run_case "격자·반송→✅→반송→bounced" bounced '[
+  {"body":"재디스패치: #218 — 완결 유실(검증 전 사망) <!-- bodat:worker -->","createdAt":"2026-09-11T03:00:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능(재검증)\n<!-- bodat:worker -->","createdAt":"2026-09-11T03:30:00Z"},
+  {"body":"재디스패치: #218 — 완결 유실(검증 전 사망) (attempt 2) <!-- bodat:worker -->","createdAt":"2026-09-11T04:00:00Z"}
+]'
+
+# 24) 반송 → ⚠ → 반송 → ✅ → ok. 15)(held 뒤 재반송→bounced)의 연장 — 재반송 뒤에
+#     새 ✅ 까지 찍히면(교체 워커가 정상 완결) 다시 ok 로 돌아온다.
+run_case "격자·반송→⚠→반송→✅→ok" ok '[
+  {"body":"재검증 실패: #218 — codex BLOCKER (attempt 1) <!-- bodat:worker -->","createdAt":"2026-09-11T03:00:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-09-11T03:30:00Z"},
+  {"body":"재디스패치: #218 — 완결 유실(검증 전 사망) (attempt 2) <!-- bodat:worker -->","createdAt":"2026-09-11T04:00:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능(재검증)\n<!-- bodat:worker -->","createdAt":"2026-09-11T04:30:00Z"}
+]'
+
+# 25) 반송 → ⚠ → ⚠(같은 종류 반복) → held. $hi 는 마지막 매칭 인덱스라 반복돼도
+#     흔들리지 않아야 한다.
+run_case "격자·반송→⚠→⚠→held(반복)" held '[
+  {"body":"재디스패치: #218 — 완결 유실(검증 전 사망) <!-- bodat:worker -->","createdAt":"2026-09-11T03:00:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문 1\n<!-- bodat:worker -->","createdAt":"2026-09-11T03:30:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문 2\n<!-- bodat:worker -->","createdAt":"2026-09-11T04:00:00Z"}
+]'
+
+# 26) 반송 → ✅ → ✅(같은 종류 반복) → ok. $vi 도 반복에 흔들리지 않는지.
+run_case "격자·반송→✅→✅→ok(반복)" ok '[
+  {"body":"재디스패치: #218 — 완결 유실(검증 전 사망) <!-- bodat:worker -->","createdAt":"2026-09-11T03:00:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능(재검증 1)\n<!-- bodat:worker -->","createdAt":"2026-09-11T03:30:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능(재검증 2)\n<!-- bodat:worker -->","createdAt":"2026-09-11T04:00:00Z"}
 ]'
 
 # 12) 인자 누락 — 호출자 실수를 조용한 `ok` 로 만들지 않는다.

@@ -3,14 +3,17 @@
 #
 # 질문 하나에만 답한다: **이 PR 은 지금 반송(bounce) 회차 안인가.**
 #
-#   stdout `ok`      exit 0  반송 마커가 없거나, 그 뒤에 새 `머지 판정: ✅` 가 찍혔다
+#   stdout `ok`      exit 0  반송 마커가 없거나, 반송 마커 뒤에 온 종결 판정
+#                            (`머지 판정: ✅`/`⚠ 보류`) 중 **가장 늦은 것**이 ✅ 다
 #                            → 마감 레인(closeout)이 만져도 된다
-#   stdout `bounced` exit 0  최신 반송 마커가 최신 ✅ 보다 뒤고, 그 마커보다 뒤에 새
-#                            `머지 판정: ⚠ 보류` 도 없다 → **워커 레인 소유**. closeout
-#                            은 무접촉이어야 한다
-#   stdout `held`    exit 0  최신 반송 마커보다 **뒤에** 새 `머지 판정: ⚠ 보류` 가
-#                            찍혔다(#218 attempt 2 — codex BLOCKER: 반송을 무조건 조기
-#                            종료하면 반송 뒤 워커가 명시적으로 올린 보류 신호가 묻힌다)
+#   stdout `bounced` exit 0  최신 반송 마커 뒤에 종결 판정(✅·⚠ 어느 쪽도)이 아직
+#                            없다 → **워커 레인 소유**. closeout 은 무접촉이어야 한다
+#   stdout `held`    exit 0  반송 마커 뒤에 온 종결 판정 중 **가장 늦은 것**이 ⚠ 다
+#                            (#218 attempt 2 — codex BLOCKER: 반송을 무조건 조기
+#                            종료하면 반송 뒤 워커가 명시적으로 올린 보류 신호가 묻힌다.
+#                            attempt 3 — codex BLOCKER: ✅ 의 *존재*만 보고 그 뒤에 더
+#                            늦은 ⚠ 을 못 봐 `반송 → ✅ → ⚠` 이 `ok` 로 샜다. 늦은 쪽이
+#                            이기도록 인덱스를 직접 비교해 고쳤다)
 #                            → closeout 이 needs-human 으로 승격해야 한다(finish-classify
 #                            의 `held` 행과 같은 조치). `stale_reverify`/`stale_inline` 은
 #                            이 값으로 승격하지 않는다 — 살아있는 교체 워커와 충돌하는
@@ -53,17 +56,26 @@ repo=${1:-}
 pr=${2:-}
 [ -n "$repo" ] && [ -n "$pr" ] || exit 1
 
-# ── 반송(bounce) 마커 집합 — 한 자리 (#171 · #196) ──────────────────────
+# ── 반송(bounce) 마커 집합 — 한 자리 (#171 · #196 · #212) ────────────────
 # PR 을 워커에게 되돌리는 채널이 둘이고, 각자 자기 어휘로 코멘트를 남긴다:
-#   `재디스패치:`   closeout 마감 검증 BLOCKER·완결 유실 반송 (skills/closeout/SKILL.md)
-#   `재검증 실패:`  verify-runner 재검증 반려          (skills/verify-runner/SKILL.md)
+#   `재디스패치`   closeout 마감 검증 BLOCKER·완결 유실 반송 (skills/closeout/SKILL.md)
+#   `재검증 실패`  verify-runner 재검증 반려          (skills/verify-runner/SKILL.md)
 # 두 채널의 효과는 같다 — 교체 워커가 새 커밋을 올리기 전까지 head 가 그대로라, 그
 # 이전에 찍힌 ✅ 가 살아 남아 "방금 반려된 PR" 을 머지·입양 후보로 만든다. 그래서
 # **한 집합**으로 다룬다. 새 반송 어휘가 늘면 **이 배열 한 곳만** 고쳐라 — 채널마다
 # 가드를 베끼면 하나 빠진 채로 fail-open 이 된다(실제로 verify-runner 채널이 그렇게
 # 빠져 있었다). 두 마커 모두 한/영 SKILL 이 같은 한글 문자열을 찍는다(SKILL.en.md 도
 # 동일) — 영문 변종이 생기면 여기에 함께 넣는다.
-BOUNCE_MARKERS='["재디스패치:","재검증 실패:"]'
+#
+# 매칭은 **접두(prefix) 검사**다 — 콜론을 리터럴로 요구하지 않는다(#212). 아래 판정
+# 절에서 코멘트 **첫 줄이** 이 배열의 값으로 시작하면 뒤에 무엇이 오든(`: #193 —`,
+# ` attempt 3 —`, ` (round 2) —`) 반송으로 센다. 콜론을 배열에 넣어 두면(`재디스패치:`)
+# 워커가 실제로 남기는 `재디스패치 attempt N — …` 같은 변형이 리터럴 불일치로 빠져나가
+# 안전망이 조용히 새는데(실사고: PR #202), 그렇다고 부분 문자열 포함(`contains`)으로
+# 넓히면 **이 코멘트 자신**처럼 결함을 설명하며 본문 중간에 단어만 인용한 코멘트까지
+# 반송으로 잡힌다. 그래서 앵커는 "단어" 이되 위치는 **문자열 시작(=첫 줄)** 으로
+# 고정한다 — 중간 인용은 위치가 0 이 아니므로 자동으로 빠진다.
+BOUNCE_MARKERS='["재디스패치","재검증 실패"]'
 
 # ── 입력 수집 ───────────────────────────────────────────────────────────
 if [ -n "${BOUNCE_COMMENTS_FILE:-}" ]; then
@@ -95,18 +107,26 @@ fi
 # ✅ 하나만 반송을 해제하게 두면 두 형상 모두 안전한 쪽으로 떨어진다 — 사고 재현
 # 픽스처(✅ 0건)도 종전 규약(반송 뒤 새 ✅ 면 복귀)도 같은 식으로 맞는다.
 #
-# ── held(#218 attempt 2) ──────────────────────────────────────────────
+# ── held(#218 attempt 2·attempt 3) ────────────────────────────────────
 # attempt 1 은 `bi > vi`(✅ 없음 포함)를 전부 `bounced` 하나로 묶어 무조건 조기
 # 종료했다 — codex BLOCKER: 반송 뒤 교체 워커가 명시적으로 올린 `머지 판정: ⚠ 보류`
 # 조차 영원히 안 보여 needs-human 승격이 묻힌다("Moving the bounce gate ahead of all
 # classification permanently excludes... a later ⚠ verdict never becomes held").
-# ✅ 와 대칭으로 ⚠ 도 **같은 인덱스 규칙**(마지막 매칭, createdAt 아님)으로 잰다 —
-# `bi < hi`(반송 마커보다 ⚠ 가 뒤)면 "반송 직후" 가 아니라 "반송 뒤 활동이 쌓인
-# 상태" 다. 단, `held` 은 `ok` 가 아니다 — 마감 레인이 `stale_reverify` 재디스패치로
-# 새지 않도록 호출자가 별도로 갈라야 한다(살아있는 교체 워커와 충돌하는 건
-# 재디스패치 쪽이지 needs-human 쪽이 아니다). `bi`·`vi`·`hi` 모두 같은 배열에서 나온
-# 인덱스라 새 술어를 만드는 게 아니라 bounce-state 자신의 판정 규칙을 ⚠ 에도 그대로
-# 적용하는 것뿐이다.
+# attempt 2 는 이 구멍을 `$vi != null and $bi <= $vi` 로 막으려 했지만, 이건 **✅ 의
+# 존재만** 보고 그 뒤에 더 늦은 ⚠ 이 있는지는 안 본다 — `반송 → ✅ → ⚠` 배열에서
+# `$bi <= $vi` 가 먼저 참이 되어 `ok` 로 빠지고 `held` 분기(그 아래 elif)에 아예
+# 도달하지 못했다(attempt 3 BLOCKER). 사람이 봐야 한다고 방금 올라온 판정이 그렇게
+# closeout 의 자동 rebase·입양 경로로 샌다.
+#
+# 규칙(말로): **반송 마커 이후에 오는 종결 판정(✅/⚠) 중 가장 늦은 것이 결과를
+# 정한다.** 반송 마커가 없으면 ok. 반송 이후 종결 판정이 없으면 bounced. 그래서
+# ✅ 와 ⚠ 를 "존재하느냐" 가 아니라 **반송 뒤 인덱스끼리 직접 비교**한다 — 반송 뒤에
+# 온 것 중 인덱스가 더 큰(=더 늦은) 쪽이 이긴다. `bi`·`vi`·`hi` 모두 같은 배열의 마지막
+# 매칭 인덱스(createdAt 아님, 초 단위로 뭉개지는 문제는 위 코멘트 참조)라 새 술어를
+# 만드는 게 아니라 같은 판정 규칙을 ⚠ 에도 대칭으로 적용하는 것뿐이다.
+# 단, `held` 은 `ok` 가 아니다 — 마감 레인이 `stale_reverify` 재디스패치로 새지
+# 않도록 호출자가 별도로 갈라야 한다(살아있는 교체 워커와 충돌하는 건 재디스패치
+# 쪽이지 needs-human 쪽이 아니다).
 state=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
   [.[].body] as $bodies
   | ([ $bodies | to_entries[]
@@ -118,9 +138,15 @@ state=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
   | ([ $bodies | to_entries[]
        | select(.value | startswith("머지 판정: ⚠") or startswith("Merge verdict: ⚠"))
        | .key ] | last) as $hi
+  # 반송 뒤(>bi)에 실제로 온 종결 판정만 후보로 삼는다 — bi 앞에 낡게 남은 ✅/⚠ 는
+  # 무의미하므로 존재 여부가 아니라 "반송보다 늦었는가" 로 먼저 걸러낸다.
+  | (if $vi != null and $vi > $bi then $vi else null end) as $v_after
+  | (if $hi != null and $hi > $bi then $hi else null end) as $h_after
   | if   $bi == null then "ok"
-    elif $vi != null and $bi <= $vi then "ok"
-    elif $hi != null and $hi > $bi then "held"
+    elif $v_after != null and $h_after != null then
+      (if $h_after > $v_after then "held" else "ok" end)
+    elif $h_after != null then "held"
+    elif $v_after != null then "ok"
     else "bounced" end' 2>/dev/null) || exit 1
 
 # jq 가 성공해도 형상이 어긋나면(빈 출력·예상 밖 값) 판정으로 인정하지 않는다.

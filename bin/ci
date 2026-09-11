@@ -179,6 +179,41 @@ echo "[closeout] 반송 마커 집합은 bounce-state.sh 한 자리 (#171 · #19
 dup=$(grep -l 'BOUNCE_MARKERS' scripts/*.sh | grep -v '^scripts/bounce-state.sh$' || true)
 [ -z "$dup" ] || { echo "  ✗ 반송 마커 집합 정의가 bounce-state.sh 밖에도 있다: $dup"; exit 1; }
 
+echo "[closeout·verify-runner] bounce-comment 헬퍼 실행비트·생성 문구 스모크 (#212)"
+# 문구 생성 헬퍼가 실행 비트 없이 배포되면 조용히 exit 126 → 두 SKILL 이 부르는 반송
+# 코멘트가 전부 게시 실패로 degrade 한다(PR#173 교훈, bounce-state.sh 와 같은 함정).
+[ -x scripts/bounce-comment.sh ] || { echo "  ✗ bounce-comment.sh 실행 비트 없음"; exit 1; }
+tmp=$(mktemp -d); mkdir "$tmp/stub"
+# gh 스텁은 **마지막 인자**(호출 계약상 항상 --body 값)만 파일에 그대로 쓴다 — 이
+# 레포는 bash 3.2 를 지원해야 해 mapfile/연관배열을 못 쓴다(transition.sh:177 선례).
+# body 는 개행을 담을 수 있으므로(reverify-fail) 널/줄바꿈 구분자로 여러 인자를
+# 합쳐 쓰지 않고, "마지막 인자 하나만 통째로" 쓰는 방식으로 그 문제를 피한다.
+cat > "$tmp/stub/gh" <<'STUB'
+#!/bin/sh
+last=""
+for a in "$@"; do last="$a"; done
+printf '%s' "$last" > "$STUB_CAPTURE"
+exit 0
+STUB
+chmod +x "$tmp/stub/gh"
+# 생성 본문이 bounce-state.sh 의 BOUNCE_MARKERS 접두와 실제로 맞물리는지 — 헬퍼가
+# 낸 문구를 판정기가 못 알아보면 두 자리가 다시 벌어진다(이 이슈가 고친 바로 그 축).
+for pair in \
+  "redispatch owner/r 1 2:재디스패치" \
+  "reverify-fail owner/r 1 2 3 사유:재검증 실패"; do
+  args="${pair%%:*}"; marker="${pair##*:}"
+  # shellcheck disable=SC2086
+  out=$(PATH="$tmp/stub:$PATH" STUB_CAPTURE="$tmp/cap" scripts/bounce-comment.sh $args 2>&1)
+  rc=$?
+  [ "$rc" = 0 ] || { echo "  ✗ bounce-comment.sh $args 실패(rc=$rc): $out"; rm -rf "$tmp"; exit 1; }
+  body=$(cat "$tmp/cap")
+  case "$body" in
+    "$marker"*) : ;;
+    *) echo "  ✗ bounce-comment.sh $args 본문이 BOUNCE_MARKERS 접두('$marker')로 시작 안 함: $body"; rm -rf "$tmp"; exit 1 ;;
+  esac
+done
+rm -rf "$tmp"
+
 echo "[closeout] ①-b 반송 게이트가 갈래 앞에 배선돼 있는지 — 한/영 SKILL (#196·#218)"
 # 반송 안전망은 프로즈가 bounce-state.sh 를 직접 부르는 배선 하나로만 선다. 원래
 # CONFLICTING 갈래 안에만 있었으나(#196) MERGEABLE stale_reverify/held 갈래는 안 걸려
@@ -545,6 +580,56 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qF 'smoke-prompt' "$f" || { echo "  ✗ $f 에 5단계 Chrome 스모크(smoke-prompt) 지시 없음"; exit 1; }
   awk 'BEGIN{RS="";ok=0} /smoke-prompt/ && /chrome-devtools/ && /<VERIFY_URL>/ {ok=1} END{exit ok?0:1}' "$f" \
     || { echo "  ✗ $f 의 smoke-prompt 단락에 chrome-devtools·<VERIFY_URL> 구동 지시 없음"; exit 1; }
+done
+
+echo "[closeout] 4단계 발행 명령이 코드펜스 안에서 needs-human·deploy-wait 를 다 갖는지 검사 (#214)"
+# 이슈 #214: 4단계 발행 명령이 산문 문단 한가운데 인라인으로 있어 실행자가 라벨 두 개를
+# 조용히 빠뜨렸다(배포 티켓 8/8 누락 실측). 6단계처럼 코드펜스 블록으로 떼어내고, 그 블록
+# 안에 두 라벨이 함께 있는지 여기서 문다 — 다음에 또 산문으로 되돌리면 이 검사가 빨개진다.
+# 스코프를 4단계~6단계 헤더 사이로 좁힌다(사전 리뷰 WARN) — "파일 어딘가"만 보면, 이 코드펜스가
+# 다른 절(예시·anti-pattern 설명)로 옮겨져도 통과해 버려 가드가 무의미해진다. 헤더는 언어별로
+# 번역되므로 볼드 접두 앵커(`**4단계 —`/`**Step 4 —`)로 정확히 그 줄만 집는다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) s4_anchor='^\*\*Step 4 —'; s6_anchor='^\*\*Step 6 —' ;;
+    *)       s4_anchor='^\*\*4단계 —';   s6_anchor='^\*\*6단계 —' ;;
+  esac
+  s4_line=$(grep -nE "$s4_anchor" "$f" | head -1 | cut -d: -f1)
+  s6_line=$(grep -nE "$s6_anchor" "$f" | head -1 | cut -d: -f1)
+  [ -n "$s4_line" ] || { echo "  ✗ $f: 4단계 헤더 앵커 없음"; exit 1; }
+  [ -n "$s6_line" ] || { echo "  ✗ $f: 6단계 헤더 앵커 없음"; exit 1; }
+  in_block=0
+  block=""
+  found=0
+  lineno=0
+  block_start=0
+  while IFS= read -r line; do
+    lineno=$((lineno + 1))
+    # 코드펜스 줄은 들여쓰기(bullet 하위 2칸)를 달고 있을 수 있어 앞 공백을 뗀 뒤 비교한다.
+    trimmed="${line#"${line%%[! ]*}"}"
+    if [ "$trimmed" = '```' ]; then
+      if [ "$in_block" = 1 ]; then
+        if [ "$block_start" -gt "$s4_line" ] && [ "$lineno" -lt "$s6_line" ]; then
+          case "$block" in
+            *"gh issue create"*"--label needs-human"*"--label deploy-wait"*)
+              found=1 ;;
+          esac
+        fi
+        in_block=0
+        block=""
+      else
+        in_block=1
+        block_start=$lineno
+      fi
+      continue
+    fi
+    if [ "$in_block" = 1 ]; then
+      block="$block$line
+"
+    fi
+  done < "$f"
+  [ "$found" = 1 ] \
+    || { echo "  ✗ $f: 4단계~6단계 헤더 사이 코드펜스 안에 needs-human+deploy-wait 형태로 없음"; exit 1; }
 done
 
 echo "[closeout] ci-gate --repo 분기 스모크 (positive + fail-closed)"
@@ -927,6 +1012,9 @@ bash scripts/tests/bounce-state.test.sh
 echo "[test] closeout ①-b 스윕 판정 픽스처 6종 — 반송 게이트가 갈래 앞 (#218)"
 bash scripts/tests/closeout-sweep-gate.test.sh
 
+echo "[test] bounce-comment.sh 반송 코멘트 생성 — SKILL.md 문구와 바이트 동일 (#212)"
+bash scripts/tests/bounce-comment.test.sh
+
 echo "[test] release-labels.sh 라벨 해제 규칙 테스트 (#117)"
 bash scripts/tests/release-labels.test.sh
 
@@ -953,6 +1041,28 @@ echo "[test] timebox-check.sh 진행 증거 판정·queue.log 마지막 줄·유
 # (비트가 빠지면 조용히 exit 126 → 판정 줄이 빈 값이 되고 그 이슈의 timebox 가 무판정으로 샌다).
 [ -x scripts/timebox-check.sh ] || { echo "  ✗ timebox-check.sh 실행 비트 없음"; exit 1; }
 bash scripts/tests/timebox-check.test.sh
+
+echo "[test] lessons-trim.sh lessons-verifier.md 캡 수렴 정리 — 항목 정의·오래된 순 삭제·멱등·append 잠금 (#208)"
+# closeout 1·6단계가 append 직후 `$SCRIPTS/lessons-trim.sh append <파일> 20 "<줄>"`
+# 한 자리로 부르는 계약이므로 실행 비트도 여기서 문다(비트가 빠지면 exit 126 → 캡
+# 정리가 조용히 no-op 으로 degrade, PR#173 교훈과 동일 함정).
+[ -x scripts/lessons-trim.sh ] || { echo "  ✗ lessons-trim.sh 실행 비트 없음"; exit 1; }
+bash scripts/tests/lessons-trim.test.sh
+
+echo "[#227] lessons-trim.sh 호출은 \$SCRIPTS/ 절대경로 — closeout 은 대상 레포 cwd 에서 돈다"
+# closeout 은 대상 레포의 worktree 를 cwd 로 돌 수 있는데, 상대경로 \`scripts/lessons-trim.sh\`
+# 는 그 레포엔 없는 파일이다(스크립트는 ~/.claude/skills/issue-runner/scripts/ 에 산다).
+# 같은 문서의 다른 모든 헬퍼 호출이 \$SCRIPTS/ 를 쓰는 것과 어긋나면 캡 집행이 평상시
+# 안 돈다(#227 검증자 실증 — references/worker-template.md 의 같은 형상을 #185 가
+# 절대경로로 고친 전례와 동일). 백틱으로 감싼 상대경로 호출 문구가 있으면 즉시 회귀다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  if grep -qF '`scripts/lessons-trim.sh' "$f"; then
+    echo "  ✗ $f 가 lessons-trim.sh 를 상대경로로 호출 — \$SCRIPTS/lessons-trim.sh 로 고쳐라(#227)"
+    exit 1
+  fi
+  grep -qF '$SCRIPTS/lessons-trim.sh' "$f" \
+    || { echo "  ✗ $f 에 \$SCRIPTS/lessons-trim.sh 호출 없음"; exit 1; }
+done
 
 echo "[#88] 완결 유실 재파생 배선 검사 — 한/영 SKILL 동기"
 # STALE_FINISH_MIN 상수 + finish-classify.sh 분기 + 4b 인라인 대리 판정 배선이
@@ -1369,7 +1479,10 @@ for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKIL
   if grep -nE 'transition\.sh [a-z-]+ <repo>[^\n]*--reason (policy|conflict)' "$f" | grep -v -- '--note' | grep -q .; then
     echo "  ✗ : --note 없는 --reason policy|conflict 호출 — 사람이 답해야 할 질문 한 줄을 적으라"; exit 1; fi
   # 맨 needs-human 산문 작성 금지(#151) — 사유 없는 사람 대기는 loop-status 가 warn 하고 재개 스윕이 거부한다.
-  if grep -nE -- '--add-label "?needs-human"?' "$f" | grep -q .; then
+  # 예외(#214): 4단계 배포 티켓의 발행 직후 라벨 보강 — needs-human 을 **deploy-wait 와 함께**
+  # 붙이는 줄은 dispatch 홀드를 새로 만드는 게 아니라, 발행 명령이 이미 명시한 두 라벨이
+  # 실제로 붙었는지 확인 후 그대로 되살리는 것뿐이다(hold:* 사유 라벨과 무관한 별개 티켓).
+  if grep -nE -- '--add-label "?needs-human"?' "$f" | grep -v -- '--add-label deploy-wait' | grep -q .; then
     echo "  ✗ $f: 산문 --add-label needs-human — runner-held/verify-held/closeout-blocked --reason 을 쓰라"; exit 1; fi
 done
 for f in SKILL.md SKILL.en.md; do grep -qF "resume-sweep.sh" "$f" || { echo "  ✗ $f: 재개 스윕 배선 없음"; exit 1; }; done
