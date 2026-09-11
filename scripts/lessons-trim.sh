@@ -138,12 +138,27 @@ fi
 # 산문을 통째로 소유한다(그래야 여러 줄짜리 사례가 안 찢어진다). 반면 `- [` bullet 은
 # **정의상 그 한 줄뿐**이라 item_end=start — 다음 경계 직전까지의 나머지 줄(빈 줄이든
 # 독립 산문이든)은 그 bullet 의 소유가 아니다. 그 "소유되지 않은" 구간(item_end+1..
-# gap_end)은 인접 bullet 의 drop 여부와 무관하게 **항상** 그대로 stdout 에 흘린다 —
-# 안 그러면 bullet 을 지울 때 뒤따르는 독립 산문까지 조용히 함께 지워진다(이 이슈의
-# 재현 기전). `## ` 블록은 item_end==gap_end 라 이 구간이 애초에 없다(기존 동작 불변).
+# gap_end)은 **유지되는 bullet 뒤에서는** 항상 그대로 stdout 에 흘린다(원본 그대로 —
+# 안 그러면 bullet 을 지울 때 뒤따르는 독립 산문까지 조용히 함께 지워진다, 이 이슈의
+# 재현 기전). 하지만 **드롭되는 bullet 뒤에서는** gap 에 공백 아닌 줄(산문)이 있을
+# 때만 보존한다 — 사전 리뷰 BLOCKER: gap 을 드롭 여부와 무관하게 항상 흘리면, 빈 줄
+# 구분자만 있는(원장의 지배적 패턴) gap 도 살아남아 `bstart[1]` 이전 프리앰블로
+# 편입되고, 프리앰블은 이후 모든 실행에서 무조건 통과되는 구간이라(아래 `for (i = 1;
+# i < bstart[1]; i++)`) 트림을 반복할 때마다 빈 줄이 영구 누적된다(실측:
+# `- [A] a / 빈줄 / - [B] b / 빈줄 / - [C] c` 에 cap=1 을 걸면 A·B 드롭 후 파일 맨
+# 앞에 빈 줄 2개가 영구 잔존 — scripts/tests/lessons-trim.test.sh 의 "h1 빈 줄
+# 구분자" 격자 참고). `## ` 블록은 item_end==gap_end 라 이 구간이 애초에 없다(기존
+# 동작 불변).
 awk -v cap="$cap" -v removed_file="$removed" -v flag_file="$flag" '
   function is_boundary(l) { return (l ~ /^- \[/) || (l ~ /^## /) }
   function is_bullet(l)   { return (l ~ /^- \[/) }
+  function gap_has_prose(from, to,    i, has) {
+    has = 0
+    for (i = from; i <= to; i++) {
+      if (lines[i] !~ /^[ \t]*$/) { has = 1; break }
+    }
+    return has
+  }
   { lines[NR] = $0 }
   END {
     n = NR
@@ -160,12 +175,15 @@ awk -v cap="$cap" -v removed_file="$removed" -v flag_file="$flag" '
       next_start = (b < nb) ? bstart[b + 1] : n + 1
       gap_end = next_start - 1
       item_end = is_bullet(lines[start]) ? start : gap_end
-      if (b <= drop) {
+      dropped = (b <= drop)
+      if (dropped) {
         print lines[start] > removed_file
       } else {
         for (i = start; i <= item_end; i++) print lines[i]
       }
-      for (i = item_end + 1; i <= gap_end; i++) print lines[i]
+      if (item_end < gap_end && (!dropped || gap_has_prose(item_end + 1, gap_end))) {
+        for (i = item_end + 1; i <= gap_end; i++) print lines[i]
+      }
     }
     print "1" > flag_file
   }

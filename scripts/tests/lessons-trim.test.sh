@@ -388,6 +388,105 @@ else
   bad "(h3 회귀) 정상 파일 append 후 빈 줄 증가 — rc=$rc blank_count=$blank_count line_count=$line_count file=$(cat "$tmp/h3reg.md")"
 fi
 
+# ── (#232 h1 격자 — 빈 줄 구분자 gap) 사전 리뷰 BLOCKER 실측·회귀 ──────────
+# 사전 리뷰가 지적한 실측 재현: gap 을 드롭 여부와 무관하게 항상 흘리면, 원장의
+# 지배적 패턴인 "빈 줄만 있는 gap" 도 살아남아 bstart[1] 이전 프리앰블로 편입되고,
+# 프리앰블은 이후 모든 실행에서 무조건 통과되는 구간이라 트림을 반복할 때마다 빈
+# 줄이 영구 누적된다(실측: `- [A] a / 빈줄 / - [B] b / 빈줄 / - [C] c` 에 cap=1 →
+# A·B 드롭 후 파일 맨 앞에 빈 줄 2개가 영구 잔존). 개별 반례 하나만 막지 않고
+# 입력 형태 × cap × 기대 출력(want) 격자로 전수 단언한다(PR#202 교훈 — 근사가
+# "더 지우는" 방향과 "덜 지우는" 방향 둘 다에서 틀릴 수 있다).
+check_gap_case() {
+  label="$1"; input="$2"; cap="$3"; expected_removed="$4"; expected_final="$5"
+  printf '%s' "$input" > "$tmp/gap-case.md"
+  out=$(bash "$SUT" "$tmp/gap-case.md" "$cap" 2>/dev/null); rc=$?
+  actual_final=$(cat "$tmp/gap-case.md")
+  if [ "$rc" = 0 ] && [ "$out" = "$expected_removed" ] && [ "$actual_final" = "$expected_final" ]; then
+    ok
+  else
+    bad "(h1 격자: $label) rc=$rc removed=[$out] want_removed=[$expected_removed] file=[$actual_final] want_file=[$expected_final]"
+  fi
+}
+
+# 1) 빈 줄 구분자만 있는 gap — 연속 2건 드롭(원 BLOCKER 재현 형태) → 잔존 없이 완전 제거.
+check_gap_case "빈 줄 gap, 연속 드롭 2건" \
+  "- [2026-09-02 PR#33] a
+
+- [2026-09-03 PR#34] b
+
+- [2026-09-04 PR#35] c
+" \
+  1 \
+  "- [2026-09-02 PR#33] a
+- [2026-09-03 PR#34] b" \
+  "- [2026-09-04 PR#35] c"
+# 1-idempotent) 같은 cap 으로 한 번 더 불러도(=멱등 구간) 바이트 불변 — 빈 줄이 또
+# 늘어나지 않는지 직접 확인한다.
+before_idem=$(shasum "$tmp/gap-case.md")
+bash "$SUT" "$tmp/gap-case.md" 1 >/dev/null 2>&1
+after_idem=$(shasum "$tmp/gap-case.md")
+if [ "$before_idem" = "$after_idem" ]; then ok; else bad "(h1 격자: 빈 줄 gap 멱등) 2차 실행 후 파일이 또 바뀜 — before=$before_idem after=$after_idem"; fi
+
+# 2) 독립 산문이 있는 gap — 드롭돼도 산문은 보존(h1 의 원래 목적).
+check_gap_case "산문 gap, 드롭" \
+  "- [2026-08-18 PR#18] a
+prose line — 지워지면 안 됨
+- [2026-08-19 PR#19] b
+- [2026-08-20 PR#20] c
+" \
+  2 \
+  "- [2026-08-18 PR#18] a" \
+  "prose line — 지워지면 안 됨
+- [2026-08-19 PR#19] b
+- [2026-08-20 PR#20] c"
+
+# 3) 빈 줄 + 산문 + 빈 줄이 섞인 gap — 드롭돼도 gap 전체(빈 줄 포함) 보존.
+check_gap_case "혼합 gap(빈줄+산문+빈줄), 드롭" \
+  "- [2026-08-21 PR#21] a
+
+prose in middle — 지워지면 안 됨
+
+- [2026-08-22 PR#22] b
+- [2026-08-23 PR#23] c
+- [2026-08-24 PR#24] d
+" \
+  3 \
+  "- [2026-08-21 PR#21] a" \
+  "
+prose in middle — 지워지면 안 됨
+
+- [2026-08-22 PR#22] b
+- [2026-08-23 PR#23] c
+- [2026-08-24 PR#24] d"
+
+# 4) 빈 줄 gap — 유지되는(kept) bullet 뒤에서는 기존과 동일하게 그대로 보존(회귀:
+# 이번 수정은 "드롭되는" 쪽 분기만 좁혔다 — kept 쪽은 안 건드렸는지 확인).
+check_gap_case "빈 줄 gap, kept 항목 뒤(불변 확인)" \
+  "- [2026-08-28 PR#28] a
+
+- [2026-08-29 PR#29] b
+
+- [2026-08-30 PR#30] c
+" \
+  2 \
+  "- [2026-08-28 PR#28] a" \
+  "- [2026-08-29 PR#29] b
+
+- [2026-08-30 PR#30] c"
+
+# 5) 공백 문자만 있는 gap(완전 빈 줄이 아니라 스페이스 3개) — 드롭 시 여전히 "빈 줄"로
+# 취급돼 제거된다(정규식이 완전 공백뿐 아니라 공백 문자도 블랭크로 인식하는지 확인).
+check_gap_case "공백 전용 gap, 드롭" \
+  "- [2026-09-05 PR#36] a
+   
+- [2026-09-06 PR#37] b
+- [2026-09-07 PR#38] c
+" \
+  2 \
+  "- [2026-09-05 PR#36] a" \
+  "- [2026-09-06 PR#37] b
+- [2026-09-07 PR#38] c"
+
 # ── 오류 경계 ────────────────────────────────────────────────────────
 rc=0
 out=$(bash "$SUT" 2>/dev/null) || rc=$?
