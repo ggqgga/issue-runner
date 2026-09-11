@@ -297,23 +297,23 @@ ck "이슈 만: exit 0" "$RC" 0
 ck "이슈 만: 이슈 이동" "$(labels_of 9)" "flow:ready"
 ck "이슈 만: PR 무변" "$(labels_of 7)" "flow:verify"
 
-# ②-b 연결 이슈 없는 PR(issue=-)에도 사람 신호가 남는가 — 이슈에만 붙이면 needs-human
+# ②-b 연결 이슈 없는 PR(issue=-)에도 사람 신호가 남는가 — 이슈에만 붙이면 정지 라벨
 # 이 아무 데도 안 붙고 exit 0 `ok` 로 끝나 사람 대기가 조용히 사라진다.
 reset; seed 7 flow:verify
 run ok verify-held - 7 --reason conflict --note q
 ck "verify-held issue=-: exit 0" "$RC" 0
-ck "verify-held issue=-: PR 에 needs-human+사유" "$(labels_of 7)" "$(sorted "needs-human hold:conflict")"
+ck "verify-held issue=-: PR 에 사유 라벨만(needs-human 없음)" "$(labels_of 7)" "$(sorted "hold:conflict")"
 
 reset; seed 7 harvesting
 run ok closeout-blocked - 7 --reason policy --note q
 ck "closeout-blocked issue=-: exit 0" "$RC" 0
-ck "closeout-blocked issue=-: PR 에 needs-human+사유" "$(labels_of 7)" "$(sorted "needs-human hold:policy")"
+ck "closeout-blocked issue=-: PR 에 사유 라벨만(needs-human 없음)" "$(labels_of 7)" "$(sorted "hold:policy")"
 
-# 양쪽 다 있는 정상 호출에서도 PR·이슈 둘 다 needs-human 을 받는다
+# 양쪽 다 있는 정상 호출에서도 PR·이슈 둘 다 사유 라벨을 받는다(needs-human 은 안 붙는다, #244)
 reset; seed 7 harvesting; seed 9 "harvesting" "flow:ready"
 run ok closeout-blocked 9 7 --reason ladder
-ck "closeout-blocked 양쪽: PR needs-human" "$(labels_of 7)" "$(sorted "needs-human hold:ladder")"
-ck "closeout-blocked 양쪽: 이슈 needs-human" "$(labels_of 9)" "$(sorted "needs-human hold:ladder")"
+ck "closeout-blocked 양쪽: PR 사유 라벨만" "$(labels_of 7)" "$(sorted "hold:ladder")"
+ck "closeout-blocked 양쪽: 이슈 사유 라벨만" "$(labels_of 9)" "$(sorted "hold:ladder")"
 
 reset
 run ok verify-pass - -
@@ -371,17 +371,17 @@ ck "따옴표 not found: exit 0" "$RC" 0
 ck "따옴표 not found: setup-labels 1회" "$(grep -c . "$tmp/setup.log")" 1
 ck "따옴표 not found: edit 3회(PR 원본+재시도, 이슈 1회)" "$(grep -c '^edit ' "$tmp/edit.log")" 3
 
-# runner-held(#151) — 디스패처 자체의 사람 대기: 이슈 agent:claimed 해제 + 양쪽 needs-human·hold:<r>,
+# runner-held(#151) — 디스패처 자체의 사람 대기: 이슈 agent:claimed 해제 + 양쪽 hold:<r>(needs-human 은 안 붙인다, #244),
 # 단계 라벨(flow:*·harvesting)은 손대지 않는다. PR 없음(`-`) 허용, --reason 필수.
 reset; seed 7 flow:ci; seed 9 agent-ready agent:claimed hold:ladder
 run ok runner-held 9 7 --reason policy --note q
 ck "runner-held: exit 0" "$RC" 0
-ck "runner-held: 이슈 라벨" "$(labels_of 9)" "agent-ready hold:policy needs-human"
-ck "runner-held: PR 라벨(flow:ci 유지)" "$(labels_of 7)" "flow:ci hold:policy needs-human"
+ck "runner-held: 이슈 라벨" "$(labels_of 9)" "agent-ready hold:policy"
+ck "runner-held: PR 라벨(flow:ci 유지)" "$(labels_of 7)" "flow:ci hold:policy"
 reset; seed 9 agent-ready agent:claimed
 run ok runner-held 9 - --reason policy --note q
 ck "runner-held issue만: exit 0" "$RC" 0
-ck "runner-held issue만: 이슈 라벨" "$(labels_of 9)" "agent-ready hold:policy needs-human"
+ck "runner-held issue만: 이슈 라벨" "$(labels_of 9)" "agent-ready hold:policy"
 reset; seed 9 agent-ready agent:claimed
 run ok runner-held 9 -
 ck "runner-held --reason 없음: exit 64" "$RC" 64
@@ -465,7 +465,7 @@ ck "verify-held policy --note 없음: 쓰기 0회" "$(mut_order)" ""
 reset; seed 7 flow:verify; seed 9 flow:verify
 run ok verify-held 9 7 --reason policy --note "이 스펙 갈림길은 A인가 B인가"
 ck "verify-held policy --note: exit 0" "$RC" 0
-ck "verify-held policy --note: 이슈 라벨" "$(labels_of 9)" "hold:policy needs-human"
+ck "verify-held policy --note: 이슈 라벨" "$(labels_of 9)" "hold:policy"
 case "$(mut_order)" in *"issue-comment 9"*"pr-comment 7"*|*"pr-comment 7"*"issue-comment 9"*) c=ok ;; *) c="$(mut_order)" ;; esac
 ck "verify-held policy --note: 양쪽 코멘트" "$c" ok
 reset; seed 9 agent-ready agent:claimed
@@ -514,8 +514,8 @@ run ok verify-held 9 7 --reason policy --note "A인가 B인가"
 ck "순서: exit 0" "$RC" 0
 ck "순서: 코멘트가 라벨 편집보다 앞" "$(mut_order)" \
   "issue-comment 9|pr-comment 7|edit 7|edit 9"
-ck "순서: PR 라벨 종전대로" "$(labels_of 7)" "$(sorted "needs-human hold:policy")"
-ck "순서: 이슈 라벨 종전대로" "$(labels_of 9)" "$(sorted "needs-human hold:policy")"
+ck "순서: PR 라벨 종전대로" "$(labels_of 7)" "$(sorted "hold:policy")"
+ck "순서: 이슈 라벨 종전대로" "$(labels_of 9)" "$(sorted "hold:policy")"
 # ★생산자↔소비자 마커 계약★ — 이 코멘트를 읽는 쪽은 loop-status.sh(질문 유무)와
 # resume-sweep.sh(policy 재심)다. 양쪽이 각자 손으로 적은 정규식을 쓰므로, 여기서 실제
 # 생성 본문을 **그 소비자들의 정규식으로** 물어 둔다 — 안 그러면 포맷이 바뀌어도 세 스위트가
@@ -551,7 +551,7 @@ check "마커 계약: loop-status.sh 의 마커 정규식이 사유를 실어 �
 reset; seed 7 flow:verify; seed 9 flow:verify agent:claimed
 STUB_COMMENT_FAIL=1 run ok verify-held 9 7 --reason ladder
 ck "note 없는 ladder 홀드: 코멘트 API 죽어도 exit 0" "$RC" 0
-ck "note 없는 ladder 홀드: PR 라벨" "$(labels_of 7)" "$(sorted "needs-human hold:ladder")"
+ck "note 없는 ladder 홀드: PR 라벨" "$(labels_of 7)" "$(sorted "hold:ladder")"
 reset; seed 7 flow:verify; seed 9 flow:verify agent:claimed
 STUB_COMMENT_FAIL=1 run ok verify-pass 9 7
 ck "verify-pass: 코멘트 API 죽어도 exit 0" "$RC" 0
@@ -565,32 +565,92 @@ for r in conflict policy ladder; do
   seed 9 flow:verify agent:claimed hold:conflict hold:policy hold:ladder
   run ok verify-held 9 7 --reason "$r" --note q
   ck "verify-held/$r: exit 0" "$RC" 0
-  ck "verify-held/$r: PR" "$(labels_of 7)" "$(sorted "needs-human hold:$r")"
-  ck "verify-held/$r: 이슈" "$(labels_of 9)" "$(sorted "needs-human hold:$r")"
+  ck "verify-held/$r: PR" "$(labels_of 7)" "$(sorted "hold:$r")"
+  ck "verify-held/$r: 이슈" "$(labels_of 9)" "$(sorted "hold:$r")"
 
   reset
   seed 7 harvesting hold:conflict hold:policy hold:ladder
   seed 9 harvesting flow:ready flow:verify hold:conflict hold:policy hold:ladder
   run ok closeout-blocked 9 7 --reason "$r" --note q
   ck "closeout-blocked/$r: exit 0" "$RC" 0
-  ck "closeout-blocked/$r: PR" "$(labels_of 7)" "$(sorted "needs-human hold:$r")"
-  ck "closeout-blocked/$r: 이슈" "$(labels_of 9)" "$(sorted "needs-human hold:$r")"
+  ck "closeout-blocked/$r: PR" "$(labels_of 7)" "$(sorted "hold:$r")"
+  ck "closeout-blocked/$r: 이슈" "$(labels_of 9)" "$(sorted "hold:$r")"
 done
 
 # 사유 교체: conflict 로 잡아 둔 건을 ladder 로 바꾸면 옛 사유가 남지 않는다
 reset; seed 7 flow:verify; seed 9 flow:verify agent:claimed
 run ok verify-held 9 7 --reason conflict --note q
-ck "교체 전: PR hold:conflict" "$(labels_of 7)" "$(sorted "needs-human hold:conflict")"
+ck "교체 전: PR hold:conflict" "$(labels_of 7)" "$(sorted "hold:conflict")"
 run ok verify-held 9 7 --reason ladder
 ck "교체 후: exit 0" "$RC" 0
-ck "교체 후: PR hold:ladder 뿐" "$(labels_of 7)" "$(sorted "needs-human hold:ladder")"
-ck "교체 후: 이슈 hold:ladder 뿐" "$(labels_of 9)" "$(sorted "needs-human hold:ladder")"
+ck "교체 후: PR hold:ladder 뿐" "$(labels_of 7)" "$(sorted "hold:ladder")"
+ck "교체 후: 이슈 hold:ladder 뿐" "$(labels_of 9)" "$(sorted "hold:ladder")"
 run ok verify-held 9 7 --reason ladder
 ck "교체 재실행: exit 0" "$RC" 0
-ck "교체 재실행: PR 동일" "$(labels_of 7)" "$(sorted "needs-human hold:ladder")"
-ck "교체 재실행: 이슈 동일" "$(labels_of 9)" "$(sorted "needs-human hold:ladder")"
+ck "교체 재실행: PR 동일" "$(labels_of 7)" "$(sorted "hold:ladder")"
+ck "교체 재실행: 이슈 동일" "$(labels_of 9)" "$(sorted "hold:ladder")"
+
+# ── ⑧-b (#244) 기계 정지 세 전이는 `hold:<사유>` **하나만** 붙인다 ──────────────
+# 플랜 label-taxonomy-cleanup 3단계: `needs-human` 은 "사람이 직접 세웠다" 하나만 뜻한다.
+# 기계 정지(verify-held·closeout-blocked·runner-held)가 겹쳐 붙이면 사람대기 칸이
+# "손댈 게 없는 것"(창 지나면 루프가 스스로 재개하는 hold:ladder)으로 찬다.
+# ★픽스처에 needs-human 을 **안** 넣는 것이 이 단언의 전부다★ — ① 의 ALL 픽스처는
+# needs-human 을 이미 품고 있어(그리고 이 세 전이는 어느 remove 칸에도 안 넣는다)
+# "붙였다" 와 "원래 있었다" 를 구분하지 못한다. 뮤테이션(부착 되돌리기)에 빨개지는
+# 것은 이 절이다.
+for t in verify-held closeout-blocked runner-held; do
+  for r in conflict policy ladder; do
+    reset; seed 7 flow:verify; seed 9 flow:verify agent:claimed
+    run ok "$t" 9 7 --reason "$r" --note q
+    ck "$t/$r: exit 0" "$RC" 0
+    check "$t/$r: PR 에 needs-human 미부착" \
+      "$(grep -qx 'needs-human' "$tmp/state/7.labels" && echo no || echo ok)"
+    check "$t/$r: 이슈에 needs-human 미부착" \
+      "$(grep -qx 'needs-human' "$tmp/state/9.labels" && echo no || echo ok)"
+    check "$t/$r: PR 에 사유 라벨은 붙는다(비공허)" \
+      "$(grep -qx "hold:$r" "$tmp/state/7.labels" && echo ok || echo no)"
+    check "$t/$r: 이슈에 사유 라벨은 붙는다(비공허)" \
+      "$(grep -qx "hold:$r" "$tmp/state/9.labels" && echo ok || echo no)"
+  done
+done
+# 이미 붙어 있던 `needs-human`(사람이 손으로 세운 정지)은 **떼지도 않는다** — 이 세 전이의
+# remove 칸에 없다. ① 의 ALL 픽스처가 그 방향을 들지만, 사유 라벨 하나만 남는 좁은
+# 픽스처에서도 한 번 못 박는다(remove 칸에 needs-human 이 새로 들어오면 여기가 빨개진다).
+reset; seed 7 flow:verify needs-human; seed 9 flow:verify agent:claimed needs-human
+run ok verify-held 9 7 --reason ladder
+ck "verify-held: 사람이 붙인 needs-human 은 유지" "$(labels_of 9)" "$(sorted "needs-human hold:ladder")"
+
+# ── ⑧-c (#244) policy-kept — 재심 "사람 몫 유지" 판정만이 needs-human 을 붙인다 ──
+# `hold:policy` 재심(#155)은 디스패처가 1회 판정한다. 답이 정말 사람 결정이면(`policy-review:
+# kept`) 그때 사람 호출이 된다 — 그 부착을 산문 `gh issue edit` 이 아니라 전이 하나로 묶는다
+# (PR 미러 규약과 readback 을 공짜로 받는다). 떼는 라벨은 없다 — `hold:policy` 는 사유로 남는다.
+reset; seed 7 flow:verify hold:policy; seed 9 agent-ready hold:policy
+run ok policy-kept 9 7
+ck "policy-kept: exit 0" "$RC" 0
+ck "policy-kept: 이슈 = needs-human 추가, hold:policy 유지" "$(labels_of 9)" \
+  "$(sorted "agent-ready hold:policy needs-human")"
+ck "policy-kept: PR 미러도 같이" "$(labels_of 7)" \
+  "$(sorted "flow:verify hold:policy needs-human")"
+# 멱등 — 같은 전이를 두 번 걸어도 같은 상태
+run ok policy-kept 9 7
+ck "policy-kept 재실행: exit 0" "$RC" 0
+ck "policy-kept 재실행: 이슈 동일" "$(labels_of 9)" "$(sorted "agent-ready hold:policy needs-human")"
+# PR 없음(`-`) 허용 — 재심은 PR 이 없는 이슈에도 걸린다
+reset; seed 9 agent-ready hold:policy
+run ok policy-kept 9 -
+ck "policy-kept issue만: exit 0" "$RC" 0
+ck "policy-kept issue만: 이슈 라벨" "$(labels_of 9)" "$(sorted "agent-ready hold:policy needs-human")"
+# --reason·--note 는 이 전이에 금지(호출부가 붙였다고 착각하지 않게)
+reset; seed 9 agent-ready hold:policy
+run ok policy-kept 9 - --reason policy
+ck "policy-kept --reason: exit 64" "$RC" 64
+reset; seed 9 agent-ready hold:policy
+run ok policy-kept 9 - --note q
+ck "policy-kept --note: exit 64" "$RC" 64
 
 # ── ⑨ 반송 = 사람 대기 해제 — 재개 스윕(#147 §4)이 쓰는 통로 ──────────────────
+# 반송의 remove 칸에서는 `needs-human` 을 **유지한다**(#244) — 사람이 손으로 붙인
+# 정지도 반송 때 함께 풀려야 하고, 없는 라벨 제거는 무해하다.
 reset; seed 7 flow:verify needs-human hold:ladder
 seed 9 flow:verify agent:claimed needs-human hold:ladder
 run ok verify-redispatch 9 7
