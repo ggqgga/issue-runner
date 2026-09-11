@@ -998,8 +998,10 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   step1=$(printf '%s\n' "$sec" | awk '/^\*\*1\)/{on=1} on && /^\*\*2\)/{exit} on')
   [ -n "$step1" ] || { echo "  ✗ $f 의 ①-c 1) 절을 못 찾음"; exit 1; }
   case "$f" in
-    *.en.md) defw='completion verdict'; notres='a new commit is not a resolution'; maxw='max(hold boundary, redispatch marker)'; badre='new commit\)? *(→|->) *resolved' ;;
-    *)       defw='완결 판정 코멘트'; notres='새 커밋은 해소가 아니라 착수 신호다'; maxw='max(보류 경계, 재디스패치 마커)'; badre='새 커밋\)? *→ *해소' ;;
+    *.en.md) defw='completion verdict'; notres='a new commit is not a resolution'; badre='new commit\)? *(→|->) *resolved'
+             maxw="completion-verdict comment's index > \`max(hold boundary, redispatch marker)\`" ;;
+    *)       defw='완결 판정 코멘트'; notres='새 커밋은 해소가 아니라 착수 신호다'; badre='새 커밋\)? *→ *해소'
+             maxw='완결 판정 코멘트의 인덱스 > `max(보류 경계, 재디스패치 마커)`' ;;
   esac
   printf '%s' "$step1" | grep -qF "$defw" \
     || { echo "  ✗ $f ①-c 1) 절에 '$defw' 정의 없음(#198 축①)"; exit 1; }
@@ -1041,9 +1043,12 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f ①-c 1) 멱등 분기가 워커 레인 라벨(agent-ready)을 읽지 않음(#198 축②)"; exit 1; }
   printf '%s' "$step1" | grep -qF "$again" \
     || { echo "  ✗ $f ①-c 1) 절에 '$again'(마커 재발행 없이) 문구 없음(#198 축②)"; exit 1; }
-  n=$(printf '%s' "$sec" | grep -oF 'BLOCKED: 전이 실패' | wc -l | tr -d ' ')
-  [ "$n" -ge 2 ] \
-    || { echo "  ✗ $f ①-c 절 — 마커 실패·전이 실패 두 경로가 같은 'BLOCKED: 전이 실패' 칸에 착지하지 않음(#198 축②, count=$n)"; exit 1; }
+  # 개수만 세면 한 자리를 지워도 나머지가 상한을 채워 통과한다 — 전이-실패 경로가 쓰는
+  # **정확한 보고 줄**을 직접 문다(마커-실패 경로의 '재디스패치-마커' 와 구별되는 형태).
+  printf '%s' "$sec" | grep -qF 'BLOCKED: 전이 실패 재디스패치 PR' \
+    || { echo "  ✗ $f ①-c 절 — 전이 실패 경로가 마커 실패와 같은 'BLOCKED: 전이 실패 재디스패치 PR' 칸에 착지하지 않음(#198 축②)"; exit 1; }
+  printf '%s' "$sec" | grep -qF 'BLOCKED: 전이 실패 재디스패치-마커 PR' \
+    || { echo "  ✗ $f ①-c 절 — 마커 실패 경로의 보고 줄이 사라졌다(#198 축② 비대칭 회귀)"; exit 1; }
 done
 
 echo "[closeout] ①-c '⚠ 보류' 무효 판정 = 결정문 ∧ 라벨 부재 (논리곱, 반증형, #198 흡수 #174)"
@@ -1067,8 +1072,15 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f ①-c 절이 라벨 현재 부재(hold:*)를 읽지 않음(#198 흡수 #174)"; exit 1; }
   printf '%s' "$sec" | grep -qF "$hold" \
     || { echo "  ✗ $f ①-c 절에 논리곱이 깨졌을 때의 결론('$hold') 없음(#198 흡수 #174)"; exit 1; }
-  printf '%s' "$sec" | grep -qF '머지 판정: ⚠ 보류' \
-    || { echo "  ✗ $f ①-c 보류 경계가 워커가 찍은 '머지 판정: ⚠ 보류' 를 포함하지 않음(#198 흡수 #174)"; exit 1; }
+  # 격자 행에도 같은 마커 문자열이 있으므로 절 전체를 훑으면 경계 정의에서 지워져도 통과한다 —
+  # 1) 절의 **경계 정의 문장**에 두 접두가 나란히 있는지로 좁혀 문다.
+  step1b=$(printf '%s\n' "$sec" | awk '/^\*\*1\)/{on=1} on && /^\*\*2\)/{exit} on')
+  case "$f" in
+    *.en.md) bnd='`마감 검증: ⚠ 보류` or `머지 판정: ⚠ 보류`' ;;
+    *)       bnd='`마감 검증: ⚠ 보류` 또는 `머지 판정: ⚠ 보류`' ;;
+  esac
+  printf '%s' "$step1b" | grep -qF "$bnd" \
+    || { echo "  ✗ $f ①-c 보류 경계 정의가 워커가 찍은 '머지 판정: ⚠ 보류' 를 포함하지 않음(#198 흡수 #174)"; exit 1; }
   # 폐기 선언은 **금지 문장이 있는가**(positive)로 물고, 실제 호출 형태만 negative 로 막는다 —
   # 금지 문장 자체가 그 이름을 담고 있어 맨몸 문자열 negative 는 자기 자신을 빨갛게 만든다.
   printf '%s' "$sec" | grep -qF "$pairw" \
@@ -1094,9 +1106,12 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     *.en.md) axes='axis① axis② axis③' ;;
     *)       axes='축① 축② 축③' ;;
   esac
+  # 축 표식은 **격자 행 안**에서만 센다 — 절 본문 산문에도 '축②' 같은 참조가 있어 절 전체를
+  # 훑으면 격자에서 표식이 지워져도 통과한다(뒤집힌 칸이 전수로 안 못박힌다).
+  gridrows=$(printf '%s\n' "$sec" | grep -E '^\| *[0-9]+ *\|' || true)
   for axis in $axes; do
-    printf '%s' "$sec" | grep -qF "$axis" \
-      || { echo "  ✗ $f ①-c 격자에 뒤집힌 칸 표식 '$axis' 없음(#198)"; exit 1; }
+    printf '%s' "$gridrows" | grep -qF "$axis" \
+      || { echo "  ✗ $f ①-c 격자 행에 뒤집힌 칸 표식 '$axis' 없음(#198)"; exit 1; }
   done
   rows=$(printf '%s\n' "$sec" | awk '/^\| *[0-9]+ *\|/' | wc -l | tr -d ' ')
   [ "$rows" -ge 12 ] \
