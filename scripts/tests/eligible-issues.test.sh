@@ -298,12 +298,16 @@ has_line "⑦ 요약 — 사람대기 0건(첫 블로커가 구현중)" "$ERR" "
 # ── ⑥ 검색 창 경고 (#277) — 기준은 한 페이지가 아니라 실질 상한 ─────────────
 # 페이지네이션 이후 "창 50" 은 더 이상 손실선이 아니다 — 51~250 은 이어 받아 전부 본다.
 # 그래서 55 는 절단도 임박도 아니고, 2페이지를 **실제로 부른다**.
-fx=$(mkfx w55 55); mkpage "$fx" 2 55; run_sut "$fx"
+fx=$(mkfx w55 55); mkpage "$fx" 2 55
+bulk_issues "$fx" search.json    200 1
+bulk_issues "$fx" search.p2.json 201 1
+run_sut "$fx"
 ck "⑥ 55 → exit 0" "$RC" "0"
 ck "⑥ 55 → 2페이지를 부른다" "$(count_of "$LOG" 'search page=2')" "1"
 no_line "⑥ 55 는 절단이 아니다(실질 상한 250)" "$ERR" "검색 창 절단"
 no_line "⑥ 55 는 임박도 아니다(임박선 200)" "$ERR" "검색 창 임박"
-ck "⑥ 55 에서도 stdout 은 후보 JSON 뿐" "$(cat "$OUT")" "[]"
+no_line "⑥ 55 에서 창 경고는 한 줄도 없다" "$ERR" "warn: 검색"
+ck "⑥ 55 → 두 페이지가 합쳐진다" "$(jq -c '[.[].number]' "$OUT")" '[200,201]'
 
 # 창 크기를 **못 읽은** 경우는 침묵이 아니다 — 침묵은 "창에 여유가 있다"는 주장이고,
 # 모르는 것을 안다고 말하면 큐가 죽는 신호가 그대로 사라진다(PR#139 의 빈 결과≠실패).
@@ -340,6 +344,23 @@ ck "⑨ 2페이지 후보가 stdout 에 있다(수정 전엔 증발)" \
   "$(jq -c '[.[].number] | map(select(. >= 60)) | sort' "$OUT")" '[60,61]'
 has_line "⑨ 2페이지의 막힌 이슈도 blocked 줄로 말한다" "$ERR" "blocked: owner/repo#62 ← #900(사람대기)"
 has_line "⑨ 요약은 합친 전체 후보 기준" "$ERR" "blocked-summary: 막힘 1건 (사람대기 블로커 1건)"
+
+# ⑨-f 운영 **기본 상수**(창 50 × 5페이지 = 250)를 직접 문다 — 아래 경계 격자는 env 로 줄인
+# 값에서만 돌기 때문에, 기본값이 조용히 바뀌면(예 5→2) 그 격자는 전부 초록인 채로 남는다.
+# 페이지당 1건씩만 싣는다(관심사는 몇 장을 부르고 어떤 문구가 나오는가).
+fx=$(mkfx cap251 251)
+for pg in 2 3 4 5; do mkpage "$fx" "$pg" 251; done
+bulk_issues "$fx" search.json     300 1
+bulk_issues "$fx" search.p2.json  301 1
+bulk_issues "$fx" search.p3.json  302 1
+bulk_issues "$fx" search.p4.json  303 1
+bulk_issues "$fx" search.p5.json  304 1
+run_sut "$fx"
+ck "⑨-f exit 0" "$RC" "0"
+ck "⑨-f 기본 상한까지 5페이지를 부른다" "$(count_of "$LOG" 'search page=')" "5"
+ck "⑨-f 기본 상한 너머(page=6)는 안 부른다" "$(count_of "$LOG" 'search page=6')" "0"
+has_line "⑨-f 기본 실질 상한은 250(= 50 × 5)" "$ERR" \
+  "warn: 검색 창 절단 — agent-ready 후보 251건 > 창 250(페이지 5 × 50), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
 
 # ── ⑨ 상한·경계 격자 — 상수를 창 5 × 3페이지(상한 15 · 임박선 12)로 줄여 문다 ──
 # 페이지당 1건씩만 싣는다: 이 칸들의 관심사는 **몇 페이지를 부르고 무슨 warn 이 나는가**이고,
@@ -386,6 +407,10 @@ run_sut_small "$fx"
 ck "⑨-d exit 0" "$RC" "0"
 ck "⑨-d 빈 2페이지에서 멈춘다(page=3 미호출)" "$(count_of "$LOG" 'search page=3')" "0"
 ck "⑨-d 받은 만큼은 후보로 낸다" "$(jq -c '[.[].number]' "$OUT")" '[130]'
+# 조용히 멈추면 total(13)이 상한(15) 이하라 절단 warn 도 안 나 **완전 침묵**이 된다 —
+# 이 스크립트가 없애려던 조용한 드롭 그 자체다. 멈춘 사실을 반드시 말한다.
+has_line "⑨-d 빈 페이지를 조용히 넘기지 않는다" "$ERR" \
+  "warn: 검색 page=2 가 비었다 — total_count 13건 중 1건만 받았다(search 인덱스 지연 · 다음 틱 재시도)"
 
 # ⑨-e 다음 페이지 조회 실패는 **부분 목록으로 둔갑시키지 않는다**(PR#139: 빈 결과 ≠ 실패).
 # 조용히 1페이지만 들고 가면 이 이슈가 고치려던 드롭이 그대로 재현된다 — 이번 틱을 접는다.

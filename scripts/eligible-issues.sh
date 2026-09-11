@@ -66,9 +66,14 @@ SEARCH_MAX_PAGES=${ELIGIBLE_SEARCH_MAX_PAGES:-5}
 case "$SEARCH_WINDOW" in ''|*[!0-9]*) SEARCH_WINDOW=50 ;; *) SEARCH_WINDOW=$((10#$SEARCH_WINDOW)) ;; esac
 case "$SEARCH_MAX_PAGES" in ''|*[!0-9]*) SEARCH_MAX_PAGES=5 ;; *) SEARCH_MAX_PAGES=$((10#$SEARCH_MAX_PAGES)) ;; esac
 [ "$SEARCH_WINDOW" -ge 1 ] || SEARCH_WINDOW=50
+# search API 의 per_page 상한은 100 이다 — 넘기면 1페이지부터 422 로 틱이 죽으므로 여기서 깎는다.
+[ "$SEARCH_WINDOW" -le 100 ] || SEARCH_WINDOW=100
 [ "$SEARCH_MAX_PAGES" -ge 1 ] || SEARCH_MAX_PAGES=5
 SEARCH_CAP=$((SEARCH_WINDOW * SEARCH_MAX_PAGES))
 SEARCH_CAP_SOFT=$((SEARCH_CAP * 4 / 5))
+# 상한이 아주 작으면 80% 가 0 으로 깎여 후보 1건에도 임박 warn 이 상시 뜬다 — 그 자리에선
+# 임박선을 상한과 같게 둬 절단 갈래에만 맡긴다(경고가 늘 켜져 있으면 신호가 아니다).
+[ "$SEARCH_CAP_SOFT" -ge 1 ] || SEARCH_CAP_SOFT="$SEARCH_CAP"
 
 # 페이지 하나를 받는다. `--paginate` 는 쓰지 않는다 — `--jq` 없이 쓰면 페이지 배열을
 # **병합**해 형상이 달라지고(이 레포 실측 교훈), total_count 기준으로 몇 장을 받을지도
@@ -80,7 +85,12 @@ search_page() {  # search_page <페이지> → {total_count, items}
     -q '{total_count: .total_count, items: [.items[] | {repository: {nameWithOwner: (.repository_url | sub(".*/repos/"; ""))}, number, title, labels: [.labels[] | {name}], createdAt: .created_at}]}'
 }
 
-resp=$(search_page 1)
+# 1페이지 실패도 아래 2페이지 이후와 **같은 자세**로 말한다 — 어느 페이지에서 끊겼는지가
+# 로그에 남아야 "큐가 조용한" 틱과 "조회가 죽은" 틱이 구분된다.
+if ! resp=$(search_page 1 2>&1); then
+  echo "eligible-issues: 검색 page=1 조회 실패 — 후보 목록 없이 진행하지 않는다(이번 틱 중단): $resp" >&2
+  exit 1
+fi
 cands=$(printf '%s' "$resp" | jq -c '.items')
 total=$(printf '%s' "$resp" | jq -r '.total_count')
 
@@ -111,12 +121,19 @@ case "$total" in
           echo "eligible-issues: 검색 page=$page 응답 형식 미상 — 부분 후보 목록을 정상으로 쓰지 않는다(이번 틱 중단): $presp" >&2
           exit 1 ;;
       esac
-      # 빈 페이지 = 서버가 더 줄 게 없다는 뜻(total_count 와 실제 페이지가 어긋나는 인덱스
-      # 지연에서 난다). 무한 루프 대신 멈춘다.
-      [ "$(printf '%s' "$pitems" | jq 'length')" -gt 0 ] || break
-      # 페이지 간 중복은 dedupe 하지 않는다 — 페이지 경계에서 이슈가 바뀌면 같은 후보가
-      # 두 번 실릴 수 있지만, 실제 중복 디스패치는 claim-issue.sh 의 원자적 잠금(#108)이
-      # 막는다. 여기서 지우면 total 대조가 흔들려 경고가 거짓말을 한다.
+      # 빈 페이지 = 서버가 더 줄 게 없다는 뜻(total_count 와 실제 페이지가 어긋나는 search
+      # 인덱스 지연에서 난다). 무한 루프 대신 멈추되 **조용히 멈추지는 않는다** — 여기서
+      # 침묵하면 total 이 상한 이하라 절단 warn 도 안 나고, 이 스크립트가 없애려던 바로 그
+      # "조용한 드롭"(받은 만큼만 들고 가기)이 그대로 재현된다.
+      if [ "$(printf '%s' "$pitems" | jq 'length')" -eq 0 ]; then
+        echo "warn: 검색 page=$page 가 비었다 — total_count ${total}건 중 $(printf '%s' "$cands" | jq 'length')건만 받았다(search 인덱스 지연 · 다음 틱 재시도)" >&2
+        break
+      fi
+      # 페이지 간 겹침·누락은 손대지 않는다 — `created asc` 라 페이지 경계에서 목록이 바뀌면
+      # 같은 후보가 두 장에 실리거나(겹침) 경계 앞 이슈가 어느 장에도 안 실린다(누락).
+      # 겹침의 중복 디스패치는 claim-issue.sh 의 원자적 잠금(#108)이 막고, 누락은 다음 틱에
+      # 회복된다(검색은 매 틱 새로 돈다). 여기서 dedupe 로 지우면 total 대조가 흔들려 경고가
+      # 거짓말을 하므로, 받은 그대로 합친다.
       cands=$(jq -c -n --argjson a "$cands" --argjson b "$pitems" '$a + $b')
     done
 
