@@ -119,8 +119,11 @@ the code closeout itself blocked. So `closeout-eligible.sh` never promotes on th
 2. **Bounce-marker safety net** — covers the window right after a bounce, before the replacement
    worker pushes, when the head time is still unchanged. The marker set lives in **one place**
    (`BOUNCE_MARKERS` in `bounce-state.sh`) and holds both bounce channels: `재디스패치`
-   (this skill, ①-b) and `재검증 실패` (verify-runner ④) — prefix match, no literal colon
-   required (#212). New bounce wording goes in that array and nowhere else. Ordering is
+   (this skill, ①-b) and `재검증 실패` (verify-runner ④). Matching is **start of the first line
+   + a word boundary**: no literal colon is required and anything may follow (#212), but a
+   marker followed immediately by a Hangul syllable (`재디스패치가 …`) is an ordinary sentence
+   with a particle attached, not a bounce (#221).
+   New bounce wording goes in that array and nowhere else. Ordering is
    decided by the **last matching index in the comment array**, not
    by `createdAt` — GitHub comment times are second-granular, so a ✅ and a marker written in the
    same second cannot be ordered by time.
@@ -166,7 +169,8 @@ PR, attached `harvesting`, and ran `git rebase origin/main` inside that worker's
 (nothing was lost only because it had not been pushed yet).
 
 The judgment lives in `bounce-state.sh` **in one place** — both the marker set
-(`재디스패치` · `재검증 실패`, prefix match with no literal colon required — #212) and the
+(`재디스패치` · `재검증 실패`, first-line match with no literal colon required but the marker
+must end on a word boundary — #212 · #221) and the
 rule that ordering is measured by the **last matching
 index in the comments array**, not by `createdAt`; `closeout-eligible.sh` calls the same place
 (no second copy of the logic).
