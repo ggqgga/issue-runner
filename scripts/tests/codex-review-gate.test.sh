@@ -108,6 +108,9 @@ srow() {
     CLEAN)   assert_eq "격자: $name" "$rc" 0; case "$last" in "verdict=CLEAN "*)   ok ;; *) bad "격자[$name] want=CLEAN 실제: $last" ;; esac ;;
     BLOCKER) assert_eq "격자: $name" "$rc" 1; case "$last" in "verdict=BLOCKER "*) ok ;; *) bad "격자[$name] want=BLOCKER 실제: $last" ;; esac ;;
     WARN)    assert_eq "격자: $name" "$rc" 0; case "$last" in "verdict=WARN "*)    ok ;; *) bad "격자[$name] want=WARN 실제: $last" ;; esac ;;
+    NIT)     assert_eq "격자: $name" "$rc" 0; case "$last" in "verdict=NIT "*)     ok ;; *) bad "격자[$name] want=NIT 실제: $last" ;; esac ;;
+    # want 오타/미지원 값이 조용한 no-op 이 되지 않게 — 안 무는 격자 행은 초록을 무죄로 둔갑시킨다
+    *) bad "격자[$name] 지원하지 않는 want=$want" ;;
   esac
   mv "$TMP/stub/codex.real" "$TMP/stub/codex"
 }
@@ -273,6 +276,128 @@ REVIEW_STATUS: reviewed'
 srow "실코퍼스7 — 저장소 접근 불가(진짜 no-basis, f5 형만 차단됨을 대조)" NONE \
   '저장소 접근 권한이 없어 diff 를 확인하지 못했습니다.
 REVIEW_STATUS: no-basis'
+
+# ── #283: codex 가 렌더하는 발견 섹션은 **모델 통제 밖**이다 ────────────────────
+# 위 4b-2 격자는 전부 "리뷰 본문 = 모델이 쓴 글" 을 가정한 스텁이라, 실제 CLI 가 문서를
+# 어떻게 조립하는지를 한 번도 묻지 않았다. 2026-09-11 실호출(codex-cli 0.153.4, gpt-5.6-sol)로
+# 측정한 `codex exec review --prompt` 의 산출 구조는 다음과 같다:
+#
+#   <모델이 쓴 총평>            ← 모델이 통제하는 유일한 구역(계약 줄이 닿는 곳)
+#   (빈 줄)
+#   Review comment:             ← 발견 1건일 때 codex 가 붙이는 헤더
+#   또는 Full review comments:  ← 발견 2건 이상일 때
+#   (빈 줄)
+#   - [Pn] 제목 — 파일:줄       ← codex 가 렌더하는 항목들
+#     본문                       ← **문서의 마지막 줄은 늘 여기다**
+#
+# 두 헤더 문자열은 codex 바이너리 안에 인접 리터럴로 박혀 있다(strings 실측). 즉 발견이
+# 하나라도 있으면 문서의 마지막 줄은 항상 항목 본문이고, "마지막 줄 = 계약 줄" 요구는
+# **구조적으로 충족 불가**다. 이슈 #283 의 3/3 NONE 이 정확히 이것이다 — 그리고 방향이
+# 고약하다: 발견 0 인 리뷰만 계약을 지킬 수 있어 **CLEAN 은 통과하고 BLOCKER·WARN 은
+# 전부 폴백으로 버려진다**(게이트가 발견을 낸 리뷰만 골라 버린다).
+# 해소: 판정 창을 "문서의 마지막 줄" 이 아니라 **"모델 통제 구역(발견 섹션 헤더 앞)의
+# 마지막 줄"** 로 옮긴다. 산문은 여전히 읽지 않는다(#207 재심 (c) 유지) — 새 판별 입력은
+# codex 자신의 렌더 헤더라는 **구조** 신호다.
+echo "[gate] 4b-2d) codex 실렌더 구조 — 발견 섹션 헤더 뒤는 모델 통제 밖 (#283)"
+srow "실렌더 단수 헤더 + [P1] 1건(probe2 실측 구조) = BLOCKER" BLOCKER \
+  'The new report runner permits command injection through untrusted input, so the patch is unsafe.
+REVIEW_STATUS: reviewed
+
+Review comment:
+
+- [P1] Stop executing report input through a shell — auth.py:8-8
+  When user_input contains shell metacharacters, shell=True executes them as arbitrary commands.'
+srow "실렌더 복수 헤더 + [P1] 3건(probe3 실측 구조) = BLOCKER" BLOCKER \
+  '변경분은 명령 주입·SQL 주입·비밀 파일 권한 문제를 함께 들여옵니다.
+REVIEW_STATUS: reviewed
+
+Full review comments:
+
+- [P1] Pass report arguments without invoking a shell — app.py:4-4
+  shell=True 로 셸을 거치면 메타문자가 명령으로 실행된다.
+
+- [P1] Parameterize the user lookup query — app.py:8-8
+  문자열 연결 SQL 은 술어를 바꿔치기당한다.
+
+- [P1] Restrict permissions on the saved secret — app.py:11-12
+  0777 은 로컬 사용자 전원에게 토큰을 노출한다.'
+srow "실렌더 헤더 + [P2] 만 = WARN" WARN \
+  '작은 편차가 하나 있습니다.
+REVIEW_STATUS: reviewed
+
+Review comment:
+
+- [P2] 로그 문구가 계획과 미세하게 다름 — scripts/foo.sh:12
+  본문.'
+srow "실렌더 헤더 + [P3] 만 = NIT" NIT \
+  '사소한 제안 하나.
+REVIEW_STATUS: reviewed
+
+Review comment:
+
+- [P3] 주석 오타 — scripts/foo.sh:3
+  본문.'
+srow "계약 줄이 총평 문장 끝에 인라인(probe3 실측 어투) + 헤더 + 항목 = BLOCKER" BLOCKER \
+  '이 변경은 새 기능에서 악용 가능한 보안 결함을 들여옵니다. REVIEW_STATUS: reviewed
+
+Full review comments:
+
+- [P1] 셸 경유 실행 제거 — app.py:4-4
+  본문.'
+srow "계약 줄이 총평 문장 끝에 인라인 + 발견 0(헤더 없음) = CLEAN" CLEAN \
+  '변경 전체를 읽었고 수용 기준을 충족합니다. REVIEW_STATUS: reviewed'
+
+# fail-open 0 — 구역을 옮겨도 "계약 줄 뒤 산문" 은 여전히 미산출이다(#207 attempt4 봉인 유지).
+srow "총평 안에서 계약 줄 뒤 산문 + 헤더 + 항목 = 미산출(attempt4 봉인 유지)" NONE \
+  'REVIEW_STATUS: reviewed
+I could not inspect the diff because the execution tool was unavailable.
+
+Review comment:
+
+- [P1] 무언가 — a.sh:1
+  본문.'
+srow "헤더는 있는데 총평에 계약 줄이 없음 = 미산출" NONE \
+  '변경을 살펴봤습니다.
+
+Review comment:
+
+- [P1] 무언가 — a.sh:1
+  본문.'
+srow "헤더 + no-basis = 미산출(항목이 있어도 리뷰어가 근거 없음을 밝혔다)" NONE \
+  '지정된 범위를 열지 못했습니다.
+REVIEW_STATUS: no-basis
+
+Review comment:
+
+- [P1] 무언가 — a.sh:1
+  본문.'
+srow "총평이 비어 있고 헤더부터 시작 = 미산출(모델 통제 구역이 없다)" NONE \
+  'Review comment:
+
+- [P1] 무언가 — a.sh:1
+  본문.'
+srow "헤더 유사 문자열(Review comments:)은 헤더가 아니다 — 구역이 안 잘려 미산출" NONE \
+  'REVIEW_STATUS: reviewed
+
+Review comments:
+
+- [P1] 무언가 — a.sh:1
+  본문.'
+# (가) 를 "문서 어디든" 으로 풀었다면 생겼을 오탐 — 리뷰어가 계약문 자체를 인용하며 끝내는
+# 응답. 구역의 **마지막 줄** 만 보므로 인용의 꼬리(no-basis)가 채택돼 미산출로 접힌다.
+srow "리뷰어가 계약문을 인용하며 끝냄(두 값 나열) = 미산출(인용 오탐 방지)" NONE \
+  '계약에 따라 마지막 줄은 다음 둘 중 하나여야 합니다:
+REVIEW_STATUS: reviewed
+REVIEW_STATUS: no-basis'
+srow "헤더 앞 총평 꼬리의 빈 줄은 벗긴다(계약 줄 + 빈 줄 + 헤더 + 항목) = BLOCKER" BLOCKER \
+  '총평.
+REVIEW_STATUS: reviewed
+
+
+Review comment:
+
+- [P1] 무언가 — a.sh:1
+  본문.'
 unset -f srow
 
 echo "[gate] 4b-3) 계약 줄은 프롬프트로 실제로 요구된다 — 파서가 읽는 형식과 같은 문자열(한 자리 정의)"
