@@ -149,6 +149,15 @@
 #   · 단계 라벨 중복 — 이슈에 사다리 라벨 2개 이상.
 #   · 미러 불일치    — 이슈와 **열린** 연결 PR 의 {flow:verify, flow:ready, harvesting}
 #                      집합이 다름. 연결 PR 이 없으면 대조할 상대가 없으니 warn 아님.
+#   · 정지 미러 불일치 (#265)
+#                    — 이슈엔 정지 라벨(`needs-human`·`hold:conflict|policy|ladder` —
+#                      SSOT 는 BUILD_JQ 의 `stop_labels`)이 **하나도 없는데** 연결된 **열린**
+#                      PR 에 남아 있음. 사람이 이슈에서만 홀드를 푼 잔재이고, 그 PR 은
+#                      네 게이트(#242·#262)에서 확정적으로 빠진 채 이슈도 깨끗해 어느 칸에도
+#                      안 뜬다. **해제 방향만** 본다 — 반대(이슈에 있고 PR 에 없음)는 부착
+#                      축이라 이 루프에 교정 수단이 없어 warn 정의(#190)를 벗어난다.
+#                      단계 미러와 달리 연결된 열린 PR 을 **전부** 대조한다(교정 갈래가
+#                      전부를 고치므로). 교정: `resume-sweep.sh` 의 정지 미러 정리 갈래.
 #   · 좌초형(#117)   — 이슈에 사다리 라벨은 있는데 `agent-ready` 가 없음(디스패치 자격 상실).
 #   · 목록 절단      — 이슈·열린 PR·닫힌 PR 중 어느 목록이 `--limit 200` 상한에 닿음.
 #                      창 안의 실패·파생이 조용히 잘렸을 수 있다는 신호(수를 믿지 말 것).
@@ -461,6 +470,13 @@ done
 BUILD_JQ=$(cat <<'JQ'
 def lad: ["agent:claimed","flow:verify","flow:ready","harvesting"];
 def mirror_labels: ["flow:verify","flow:ready","harvesting"];
+# 정지 라벨 — 기계 정지(transition.sh 의 verify-held·closeout-blocked·runner-held)가 이슈와
+# PR **양쪽**에 붙이는 집합이다(#244 가 보존 대상으로 적어 둔 규약). 단계 미러(mirror_labels)
+# 와 **일부러 다른 배열**이다: 단계는 "정확히 하나 이하" 인 사다리 위치라 sort 후 완전 일치로
+# 판정하는데, 정지는 그와 직교하는 플래그라 같은 배열에 섞으면 정지 라벨 하나가 단계 일치
+# 판정을 통째로 깨뜨린다. 값이 한 자리인 이유: #244 가 `needs-human` 을 기계 정지에서 빼는
+# 날, 고칠 곳이 여기 하나여야 나머지 판정이 따라온다.
+def stop_labels: ["needs-human","hold:conflict","hold:policy","hold:ladder"];
 def pr_stage_labels: ["flow:ci","flow:codex","flow:verify","flow:ready","harvesting"];
 def has($l; $x): ($l | index($x)) != null;
 def ladder_of($l): lad | map(select(. as $x | has($l; $x)));
@@ -494,6 +510,9 @@ def stage_labels_of($l): $l | map(select(. as $x | pr_stage_labels | index($x) !
 # 금지 사유(`hold:dup`·`hold:hardware`)는 라벨을 아예 안 만드는 것으로 막는 게 SSOT
 # (setup-labels.sh) 이고, 여기서 또 걸러 내면 실수로 붙은 라벨이 화면에서 사라진다.
 def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | sort;
+# 라벨 목록에서 정지 라벨만 (정렬). 이슈·PR 양쪽에 같은 함수를 쓴다 — 한쪽만 다른 식으로
+# 세면 두 번째 계산기가 생긴다(blockers_of 주석과 같은 규율).
+def stops_of($l): $l | map(select(. as $x | stop_labels | index($x) != null)) | sort;
 # 블로커 번호 (#248) — 규칙의 SSOT 는 `eligible-issues.sh`(body_blockers/label_blockers).
 # 거기의 `grep -oiE '^[[:space:]]*blocked[- ]by[[:space:]]+#[0-9]+'` 를 줄 단위로 옮긴 것이다:
 #   · `split("\n")` 로 먼저 줄을 가른다 — jq(Oniguruma)의 `^` 는 grep 과 달리 **문자열 시작**만
@@ -707,6 +726,32 @@ def orphan_base:
                              + (if ($b | length) == 0 then "단계 없음" else ($b | join(" ")) end))}
                 end
             end))
+      # 정지 미러 불일치 (#265) — 이슈엔 정지 라벨이 **하나도 없는데** 연결된 열린 PR 에
+      # 남아 있다. 사람이 이슈에서만 홀드를 풀면 생기는 상태이고, 그때 네 게이트
+      # (verify-eligible·closeout-eligible·claim-issue·eligible-issues)가 `hold:` 접두를
+      # 직접 보므로(#242·#262) 그 PR 은 어느 루프에도 확정적으로 안 잡힌다. 이슈는 이미
+      # 라벨이 깨끗해 사람대기 칸에도 안 떠서, 이 줄이 없으면 관측에서 통째로 사라진다.
+      #
+      # **해제 방향만** 본다. 반대(이슈에 있고 PR 에 없음)는 부착 축의 문제이고 이 루프에
+      # 교정 수단이 없어 warn 의 정의(#190: 루프가 교정 가능한 불변식 위반)를 벗어난다 —
+      # 조치 불가능한 후보를 얹으면 상시 잡음이 되어 진짜 신호를 죽인다(#188 과 같은 규율).
+      # 이 방향의 교정 수단은 `resume-sweep.sh` 의 정지 미러 정리 갈래다.
+      #
+      # 단계 미러(위)와 달리 `pr_of`(첫 PR)가 아니라 **연결된 열린 PR 전부**를 본다 —
+      # 교정 갈래가 `--head agent/issue-N` 의 열린 PR 을 전부 고치므로, 여기서 첫 건만
+      # 보면 고쳐질 PR 이 경보에 안 뜨는 비대칭이 생긴다(실측: 한 이슈에 PR 두 개인
+      # 픽스처에서 정지 라벨이 남은 쪽이 두 번째였다).
+      #
+      # 이슈가 CLOSED 인 경우는 여기 안 걸린다 — `$iss` 는 OPEN 이슈 목록이다. 그 조합은
+      # 기존 `연결 이슈 종료` warn 이 이미 한 줄로 말하고, 교정은 스윕이 한다.
+      + ([$iss[] | select((stops_of(.ln) | length) == 0) | . as $i
+          | $po[] | select(.issue == $i.number) | . as $p
+          | stops_of($p.ln) as $b
+          | select(($b | length) > 0)
+          | {kind: "hold_mirror_mismatch", repo_short: $rs, issue: $i.number, pr: $p.number,
+             labels: $b,
+             text: ("정지 미러 불일치 #\($i.number)(\($rs)) ↔ PR #\($p.number)(\($rs))"
+                    + " — 이슈 없음 · PR " + ($b | join(" ")))}])
       # 좌초형 (#117)
       + ($iss | map(select((.ladder | length) > 0 and (has(.ln; "agent-ready") | not)))
         | map({kind: "stranded", repo_short: $rs, issue: .number,

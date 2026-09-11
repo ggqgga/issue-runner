@@ -6,6 +6,9 @@
 #   ② 실패·파생의 `--since` 창 필터 — 창 밖 1건씩은 빠진다.
 #   ③ warn 5종 검출(미러 불일치는 양방향 — 이슈에만 단계 / PR 에만 단계)과,
 #      깨끗한 픽스처면 `warn 0`.
+#   ③-b (#265) **정지** 라벨(needs-human·hold:*) 미러 불일치 — 단계 미러와 **별도 판정**이다
+#      (단계 배열에 섞으면 정지 라벨이 단계 일치 판정을 깨뜨린다). 해제 방향만 warn:
+#      이슈에 정지 라벨이 0개인데 연결된 **열린** PR 에 남은 칸. 4격자로 오탐 0 을 단언한다.
 #   ④ 레포 짧은 이름 — issue-runner → runner 특례.
 #   ⑤ 레포 하나 조회 실패 → 그 블록만 실패 줄, 나머지 정상, exit 1.
 #   ⑥ `--json` 의 모든 항목·warn 에 `repo_short`.
@@ -554,8 +557,13 @@ has_line "승격 대기 — release 없는 레포" "$tmp/out" \
 # 루프 밖 이슈는 어디에도 안 센다
 no_sub "루프 밖 이슈 #4900 미집계" "$tmp/out" "#4900"
 
-# ③ warn 5종 + 사유 없음 + 인계 지연(+ #188 회귀 대조 PR #4991 1건 추가)
-has_line "warn 11건(질문 유무 미확인 1 포함 + #188 회귀 대조 #4991)" "$tmp/out" "  warn      11"
+# ③ warn 5종 + 사유 없음 + 인계 지연(+ #188 회귀 대조 PR #4991 1건 + #265 정지 미러 1건)
+has_line "warn 12건(질문 유무 미확인 1 · #188 대조 #4991 · #265 정지 미러 #4852)" "$tmp/out" "  warn      12"
+# (#265) PR #4852 는 `needs-human` 을 단 채 열려 있는데 연결 이슈 #4832 는 깨끗하다 —
+# 종전엔 무소속 warn 에서도 빠지고(PR 자신이 needs-human) 이슈도 사람대기 칸에 안 떠
+# **어느 줄에도 안 나타났다**. 네 게이트(#242·#262)는 그 PR 을 확정적으로 제외한다.
+has_sub "warn 정지 미러 불일치(PR 에만 정지 라벨)" "$tmp/out" \
+  "    - 정지 미러 불일치 #4832(bodat) ↔ PR #4852(bodat) — 이슈 없음 · PR needs-human"
 has_sub "warn 무소속 PR" "$tmp/out" \
   "    - 무소속 PR #4850(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4832 는 needs-human 아님"
 has_sub "warn 단계 라벨 중복" "$tmp/out" \
@@ -981,6 +989,69 @@ ck "⑦ --json: waiting 에는 막힘이 안 남는다" \
 ck "⑦ --json: warn kind 는 blocker_human_wait" \
   "$(jq -c '[.repos[0].warns[] | select(.kind=="blocker_human_wait") | {b:.blocker, k:.bucket, i:.issues}]' < "$tmp/out")" \
   '[{"b":903,"k":"배포대기","i":[17]},{"b":900,"k":"사람대기","i":[16,10]}]'
+
+# ── ③-b (#265) 정지 라벨 미러 불일치 — 4격자 ───────────────────────────────
+# 픽스처는 **단계 라벨(flow:verify)을 이슈·PR 양쪽에 깔아** 단계 미러·무소속·좌초형 warn 을
+# 전부 끈 상태다 — 그래서 `warn 2` 가 곧 "새 판정이 낸 줄이 정확히 둘" 이라는 실측이고,
+# 나머지 두 칸이 조용하다는 것이 오탐 0 의 증거다(격자를 딴 warn 이 가리지 않는다).
+#
+#   이슈 정지 / PR 정지   want
+#   ───────────────────   ───────────────────────────────────────────────
+#   #10 無 / PR #110 無   warn 없음 (둘 다 없음 = 일치)
+#   #20 無 / PR #120 有   **warn** — 사람이 이슈에서만 뗀 잔재(이 이슈가 잡으려는 상태)
+#   #30 有 / PR #130 有   warn 없음 (둘 다 있음 = 일치, 살아 있는 사람 게이트)
+#   #40 有 / PR #140 無   warn 없음 — **부착 방향**은 이 축 밖(#244)이고 루프에 교정
+#                          수단이 없다(#190: warn 은 루프가 교정 가능한 위반일 때만)
+#   #50 無 / PR #150 有   **warn** — `hold:*` 만 남아도(needs-human 없이) 성립해야 한다
+#                          (#244 가 needs-human 을 기계 정지에서 빼는 날의 대비)
+#   (이슈 미연결) PR #160 warn 없음 — 대조할 이슈가 없다(transition.sh 의 `issue=-` 홀드)
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.issues.json" <<'FX'
+[
+ {"number":10,"title":"둘 다 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":20,"title":"PR 에만 정지 라벨이 남았다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":30,"title":"양쪽 다 정지","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":40,"title":"이슈에만 정지","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:ladder"}]},
+ {"number":50,"title":"PR 에 hold 만 남았다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.pr_open.json" <<'FX'
+[
+ {"number":110,"headRefName":"agent/issue-10","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":10}],"labels":[{"name":"flow:verify"}]},
+ {"number":120,"headRefName":"agent/issue-20","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":20}],"labels":[{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":130,"headRefName":"agent/issue-30","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":30}],"labels":[{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":140,"headRefName":"agent/issue-40","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":40}],"labels":[{"name":"flow:verify"}]},
+ {"number":150,"headRefName":"agent/issue-50","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":50}],"labels":[{"name":"flow:verify"},{"name":"hold:conflict"}]},
+ {"number":160,"headRefName":"feat/이슈-없는-정지","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[],"labels":[{"name":"needs-human"},{"name":"hold:policy"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_Mirror.pr_closed.json"
+
+run --repo ggqgga/Mirror --since 24h
+ck "(#265) 격자: exit 0" "$RC" 0
+has_line "(#265) 새 판정이 낸 줄은 정확히 2건(오탐 0)" "$tmp/out" "  warn      2"
+has_line "(#265) PR 에만 정지 라벨 → warn" "$tmp/out" \
+  "    - 정지 미러 불일치 #20(mirror) ↔ PR #120(mirror) — 이슈 없음 · PR hold:policy needs-human"
+has_line "(#265) needs-human 없이 hold:* 만 남아도 warn (#244 대비)" "$tmp/out" \
+  "    - 정지 미러 불일치 #50(mirror) ↔ PR #150(mirror) — 이슈 없음 · PR hold:conflict"
+no_sub "(#265) 둘 다 없음(#10)은 조용하다" "$tmp/out" "정지 미러 불일치 #10"
+no_sub "(#265) 둘 다 있음(#30)은 조용하다 — 살아 있는 사람 게이트" "$tmp/out" "정지 미러 불일치 #30"
+no_sub "(#265) 이슈에만 있음(#40)은 이 축 밖(#244)" "$tmp/out" "정지 미러 불일치 #40"
+no_sub "(#265) 연결 이슈 없는 held PR #160 은 대조 상대가 없다" "$tmp/out" "PR #160"
+# 단계 미러 판정은 정지 라벨에 오염되지 않는다 — 정지 라벨을 mirror_labels 에 밀어 넣었다면
+# #20·#50 이 **단계** 미러 불일치로도 울렸을 자리다(별도 판정이라는 것의 실측).
+no_sub "(#265) 정지 라벨이 단계 미러 판정을 깨뜨리지 않는다" "$tmp/out" "- 미러 불일치 #20"
+no_sub "(#265) 정지 라벨이 단계 미러 판정을 깨뜨리지 않는다(#50)" "$tmp/out" "- 미러 불일치 #50"
+# `--json` 면에도 같은 사실이 실린다(후속 도구가 문자열 파싱을 안 하게)
+run --repo ggqgga/Mirror --since 24h --json
+ck "(#265) --json: kind·issue·pr·labels" \
+  "$(jq -c '[.repos[0].warns[] | select(.kind=="hold_mirror_mismatch") | {i:.issue, p:.pr, l:.labels}]' < "$tmp/out")" \
+  '[{"i":20,"p":120,"l":["hold:policy","needs-human"]},{"i":50,"p":150,"l":["hold:conflict"]}]'
 
 # ── --post 대시보드(#163) ──────────────────────────────────────────────────
 fx="$tmp/fx/ggqgga_issue-runner"
