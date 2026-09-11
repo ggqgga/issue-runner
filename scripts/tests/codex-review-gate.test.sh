@@ -93,7 +93,8 @@ echo "[gate] 4b-2) 응답 계약(구조 신호) — --prompt 호출은 리뷰어
 # (round2 캐비엇 어형 · round3 '부합하는지' · round4 '부합함을' — 어형은 닫히지 않는다).
 # 재심 결정(c): 산문을 판정 입력에서 **빼고**, 프롬프트가 요구한 고정 형식 줄의 유무로 가른다.
 #   구조 줄 있음 → 그 값대로(reviewed = 항목 집계로 판정, no-basis = 미산출)
-#   구조 줄 없음/형식 깨짐 → verdict=NONE(exit 2, fail-closed)
+#   구조 줄 없음/형식 깨짐/위치 아님 → verdict=NONE(exit 2, fail-closed)
+# 위치 = 꼬리에서 빈 줄·닫는 코드펜스만 벗기고 남은 **마지막 한 줄**(아래 위치 격자가 전수 단언).
 # 이 격자는 (구조 줄 있음/없음) × (CLEAN·발견·긍정 산문·부정 산문·빈 출력·깨진 형식) 을
 # `want` 열로 전수 단언한다 — 개별 반례만 차례로 닫는 접근(PR#202 교훈)을 쓰지 않는다.
 # 계약은 `--prompt` 호출에만 붙는다(내장 스코프 리뷰는 프롬프트를 실을 자리가 없다) — 그래서
@@ -129,7 +130,7 @@ REVIEW_STATUS: reviewed'
 srow "구조 줄 reviewed + [P2] 발견 = WARN" WARN \
   '- [P2] 사소한 편차 — scripts/foo.sh:12
 REVIEW_STATUS: reviewed'
-srow "구조 줄 reviewed 가 닫는 코드펜스 앞(마지막 비어있지 않은 줄 창 안)" CLEAN \
+srow "구조 줄 reviewed 가 닫는 코드펜스 앞(꼬리 artifact 만 벗기면 마지막 한 줄)" CLEAN \
   '```
 결함 없음.
 REVIEW_STATUS: reviewed
