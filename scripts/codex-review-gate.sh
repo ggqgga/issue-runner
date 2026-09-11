@@ -10,6 +10,15 @@
 #       + 절감 오버라이드(web_search 끔·memories 생성 끔·reasoning 숨김). 리뷰는 작업 트리를 바꾸지 않는다.
 # 판정(내장 리뷰어 출력은 마크다운 — 요약 문단 + `- [P<n>] 제목 — 파일:줄` 항목; --json 스트림엔 agent_message 텍스트만
 # 있고 구조화 findings 는 없다, 0.153.4 실측): 리뷰 본문의 `[P1]` → BLOCKER · `[P2]` → WARN · `[P3]`/기타 항목 → NIT · 항목 0 → CLEAN.
+# **응답 계약(구조 신호, #207)** — `--prompt` 호출에 한해 이 스크립트가 프롬프트 끝에 "마지막 줄은
+# `<STATUS_KEY>: <STATUS_REVIEWED>|<STATUS_NO_BASIS>`(아래 상수) 여야 한다"는 계약을 덧붙이고, 판정은
+# **그 줄로만** 가른다: 값이 `$STATUS_REVIEWED` → 위 항목 집계대로 · `$STATUS_NO_BASIS`/줄 없음/형식
+# 깨짐 → `verdict=NONE`(미산출, fail-closed).
+# 산문(한국어/영어 "판정할 근거가 없다" 류)은 판정 입력이 **아니다** — 어형 열거는 닫히지 않아
+# 세 라운드 연속 fail-open 을 냈다(#207 round2~4). 형식 문자열은 아래 STATUS_* 상수 **한 자리**에서
+# 정의하고 프롬프트 계약문과 파서가 둘 다 그것을 참조한다(두 자리에 적으면 이 이슈가 고치려던
+# SKILL↔템플릿 불일치가 파서 쪽에서 재발한다). `--prompt` 없는 내장 스코프 리뷰는 계약을 실을
+# 자리가 없어 main 의 영문 '도구 부재' 휴리스틱(#137)만 유지한다.
 # 출력: 진행은 stderr. stdout **마지막 줄** `verdict=<BLOCKER|WARN|NIT|CLEAN> p1=<n> p2=<n> p3=<n> model=<M> secs=<t>`
 #       (호출자가 파싱). 본문은 <out>/review.md (기본 out = mktemp -d, 경로를 stderr 에 찍는다).
 # 종료: 0 = 비차단(CLEAN/NIT/WARN) · 1 = BLOCKER · 2 = 리뷰 미산출(codex 부재·모델 오류·타임아웃·본문 없음 —
@@ -22,6 +31,17 @@ MODEL="${CODEX_GATE_MODEL:-gpt-5.6-sol}"
 EFFORT="${CODEX_GATE_EFFORT:-medium}"
 TIMEOUT="${CODEX_GATE_TIMEOUT:-900}"
 OUT=""; CD=""; SCOPE=(); PROMPT=""
+
+# ── 응답 계약(구조 신호) 형식 — **여기가 유일한 정의 자리**(#207). 아래 프롬프트 계약문과
+# 판정부의 파서가 둘 다 이 상수들로 만들어진다: 요구하는 형식과 읽는 형식이 갈릴 수 없다.
+STATUS_KEY='REVIEW_STATUS'
+STATUS_REVIEWED='reviewed'
+STATUS_NO_BASIS='no-basis'
+STATUS_CONTRACT_TEXT="출력 계약(필수) — 아래를 지키지 않은 응답은 판정이 아니라 **미산출**로 버려지고 리뷰가 다시 돌려진다.
+리뷰 본문의 **마지막 줄**은 다음 둘 중 하나여야 한다(그 뒤에는 빈 줄이나 닫는 코드펜스 외의 텍스트를 두지 마라):
+${STATUS_KEY}: ${STATUS_REVIEWED}
+${STATUS_KEY}: ${STATUS_NO_BASIS}
+'${STATUS_REVIEWED}' = 지정된 범위의 변경을 실제로 열어 읽고 판정했다는 뜻이다. 범위를 읽지 못했거나 판정 근거를 얻지 못했으면 '${STATUS_NO_BASIS}' 를 쓰고, 그때는 발견 항목을 지어내지 마라. 키와 값은 위 문자열 그대로 쓰고 값 뒤에 다른 텍스트를 붙이지 마라."
 
 usage() {
   printf 'usage: codex-review-gate.sh (--base <ref> | --commit <sha> | --uncommitted | --prompt <text>) [--model M] [--effort E] [--out <dir>] [--cd <dir>]\n' >&2
@@ -54,6 +74,16 @@ if [ -n "$PROMPT" ] && [ ${#SCOPE[@]} -gt 0 ]; then
   RANGE_CHECK=("${SCOPE[@]}"); SCOPE=()
 else
   RANGE_CHECK=("${SCOPE[@]+"${SCOPE[@]}"}")   # bash 3.2: 빈 배열 확장은 set -u 에 걸린다
+fi
+# 커스텀 프롬프트에는 응답 계약을 **끝에** 덧붙이고(최근성), 그 호출에서만 구조 줄을 요구한다.
+# 내장 스코프 리뷰(--prompt 없음)는 프롬프트를 실을 자리가 없다 — 거기까지 구조 줄을 요구하면
+# 모든 correctness 호출이 미산출이 되어 게이트가 통째로 멈춘다.
+STATUS_CONTRACT=0
+if [ -n "$PROMPT" ]; then
+  PROMPT="$PROMPT
+
+$STATUS_CONTRACT_TEXT"
+  STATUS_CONTRACT=1
 fi
 
 command -v codex >/dev/null 2>&1 || { log "codex CLI 없음 — 폴백(general-purpose)으로"; echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=0"; exit 2; }
@@ -117,10 +147,6 @@ if grep -q -E 'does not exist or you do not have access|not supported when using
   log "가용 모델 확인: codex debug models · config 의 model 은 유효 모델로(0.153 은 미설정 시 Astra 기본)"
   echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=$secs"; exit 2
 fi
-if grep -q -i -E 'unable to inspect|could not be inspected|execution tool was unavailable|tool (was|is) unavailable|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review|not a substantive' "$REVIEW" 2>/dev/null; then
-  log "리뷰어가 대상을 못 봤다고 답함 — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
-  none "$secs"
-fi
 if [ "$rc" != 0 ] || [ ! -s "$REVIEW" ]; then
   log "리뷰 미산출(exit $rc, review.md $( [ -s "$REVIEW" ] && echo 있음 || echo 없음)) — fail-closed. 로그: $ERR"
   echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=$secs"; exit 2
@@ -129,8 +155,74 @@ fi
 # 판정 — 내장 리뷰어 항목 형식 `- [P1] 제목 — 파일:줄`. 본문에 항목이 하나도 없으면 CLEAN.
 # 항목 = `- ` 로 시작하는 줄 안의 `[P<n>]` 토큰(볼드·번호 변형 허용). 항목 줄에 없는 `[P1]` 언급은 세지 않는다.
 # P0 은 P1 과 함께 BLOCKER 로 센다 — 안 그러면 최우선 발견이 어느 카운터에도 안 잡혀 CLEAN 으로 샌다(#137).
+# 우선순위 집계 — 아래 판정부가 쓴다(`reviewed` 로 계약이 충족된 뒤에만 verdict 로 이어진다).
 p1=$(grep -c -E '^\s*[-*]\s.*\[P[01]\]' "$REVIEW"); p2=$(grep -c -E '^\s*[-*]\s.*\[P2\]' "$REVIEW")
 p3=$(grep -c -E '^\s*[-*]\s.*\[P[3-9]\]' "$REVIEW")
+
+# ── 응답 계약 판정(#207 재심 (c) — 구조 신호 요구) ─────────────────────────────
+# 이 이슈의 결함은 "CLEAN 이 틀렸다"가 아니라 **"안 본 CLEAN 과 본 CLEAN 을 게이트가 구분하지
+# 못한다"** 였다(diff 를 한 줄도 못 본 리뷰가 항목 0 → CLEAN 으로 통과). 초 수로도 못 가른다
+# (10s vs 30s 가 겹친다 — 이슈 본문 실측). 앞선 세 라운드는 한국어 산문을 정규식으로 읽어
+# "결론이 섰는가"를 가리려다 어형마다 fail-open 을 냈다(round2 캐비엇 · round3 '부합하는지'
+# · round4 '부합함을'). 열거는 닫히지 않는다 — 그래서 **구분자를 산문이 아니라 형식에 둔다.**
+#
+# 규칙(전부 이 한 곳): 계약 줄이 있으면 그 값대로, 없으면 미산출.
+#   `$STATUS_KEY: $STATUS_REVIEWED` → 위 항목 집계로 판정(항목 0이면 CLEAN — 과잉 차단 금지:
+#      캐비엇 문장이 섞였다는 이유로 접지 않는다. 이슈 Test plan 의 명시 요구다)
+#   `$STATUS_KEY: $STATUS_NO_BASIS` → 미산출(리뷰어 스스로 근거 없음을 구조로 밝혔다)
+#   줄이 없음 / 형식이 다름        → 미산출(fail-closed — 계약을 어긴 응답은 판정으로 신뢰하지 않는다)
+# 미산출은 **통과가 아니라 폴백행**이다(SKILL ③-1: exit 2 → VERIFIER 폴백 → 그것도 미산출이면
+# BLOCKER 보류). 그래서 항목이 있는 응답이라도 계약 줄이 없으면 미산출로 접는다 — 옛 반송 f1
+# ([P1] 설명문이 산문 패턴에 우연히 걸려 발견이 지워짐)과는 성격이 다르다: 여기서 접히는 것은
+# 리뷰어가 **출력 계약 자체를 어긴** 응답뿐이고, 계약을 지킨 발견은 산문과 무관하게 그대로 산다.
+#
+# 위치 판정은 "마지막 줄"이다 — 꼬리에서 벗기는 것은 **빈 줄과 닫는 코드펜스뿐**이고(계약문이
+# 명시한 그 두 가지 예외), 그렇게 벗기고 남은 **마지막 한 줄**이 계약 줄이어야 한다. 창을 N줄로
+# 두면 안 된다: 계약 줄 뒤에 임의 산문이 와도 통과해 "못 봤다"고 스스로 적은 응답이 CLEAN 으로
+# 샜다(#207 attempt4 반송 — 빈 줄은 이미 지워진 뒤라 3줄 창이 허용한 것은 artifact 가 아니라
+# 산문 2줄이었다). 형식 자체도 관대하지 않다: 키·구분자·값이 STATUS_* 와 정확히 같아야 하고
+# 값 뒤 꼬리 텍스트는 형식 위반이다. 계약 줄 뒤 산문은 곧 미산출이므로, 구 `LEGACY_UNABLE`
+# 산문 휴리스틱이 계약 경로에 없어도 그 문구를 단 응답은 여기서 형식으로 접힌다.
+if [ "$STATUS_CONTRACT" = 1 ]; then
+  last_line=$(awk '
+    { line[NR] = $0 }
+    END {
+      for (i = NR; i >= 1; i--) {
+        s = line[i]
+        sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s)
+        if (s == "") continue                                 # 빈 줄 — 꼬리 artifact
+        if (s ~ /^(```+|~~~+)[ \t]*$/) continue                # 닫는 코드펜스(언어 태그 없는 맨 펜스)만 —
+                                                                # 꼬리 artifact. 언어 태그가 붙으면(예: "```python")
+                                                                # 그건 여는 펜스다 — 벗기면 그 뒤(위) 줄을 계약
+                                                                # 줄로 오판해 응답 계약을 어긴 응답이 새는 방향으로
+                                                                # 틀린다(#207 attempt8, 닫는 펜스는 관례상 맨몸이다)
+        print s; exit
+      }
+    }' "$REVIEW" 2>/dev/null)
+  status=$(printf '%s\n' "$last_line" \
+    | grep -E "^${STATUS_KEY}:[[:space:]]+(${STATUS_REVIEWED}|${STATUS_NO_BASIS})$" \
+    | sed -e "s/^${STATUS_KEY}:[[:space:]]*//")
+  case "$status" in
+    "$STATUS_REVIEWED") : ;;   # 계약 충족 — 아래 항목 집계가 verdict 를 낸다
+    "$STATUS_NO_BASIS")
+      log "리뷰어가 판정 근거 없음으로 답함($STATUS_KEY: $STATUS_NO_BASIS) — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
+      none "$secs" ;;
+    *)
+      log "응답 계약 위반 — 마지막 줄에 '$STATUS_KEY: $STATUS_REVIEWED|$STATUS_NO_BASIS' 가 없다(P1 $p1 · P2 $p2 · P3+ $p3) — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
+      none "$secs" ;;
+  esac
+elif [ "$p1" -eq 0 ] && [ "$p2" -eq 0 ] && [ "$p3" -eq 0 ]; then
+  # 비계약 경로(내장 스코프 리뷰) — 프롬프트를 실을 자리가 없어 구조 줄을 요구할 수 없다.
+  # main 부터 있던 영문 '도구 부재' 휴리스틱(#137)을 그대로 유지한다(리뷰어가 도구를 못 써
+  # 아무것도 못 본 채 항목 0을 냈다고 스스로 적는 정형 문구들). 항목이 0일 때만 본다 —
+  # 항목이 있는 리뷰는 정의상 미산출이 아니다.
+  LEGACY_UNABLE='unable to inspect|could not be inspected|execution tool was unavailable|tool (was|is) unavailable|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review|not a substantive'
+  if grep -q -i -E "$LEGACY_UNABLE" "$REVIEW" 2>/dev/null; then
+    log "리뷰어가 대상을 못 봤다고 답함 — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
+    none "$secs"
+  fi
+fi
+
 if   [ "$p1" -gt 0 ]; then verdict=BLOCKER; code=1
 elif [ "$p2" -gt 0 ]; then verdict=WARN; code=0
 elif [ "$p3" -gt 0 ]; then verdict=NIT; code=0

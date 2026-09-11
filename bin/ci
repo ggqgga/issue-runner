@@ -543,13 +543,21 @@ rm -rf "$tmp"
 echo "[closeout] references placeholder 검사"
 # macOS 기본 bash 3.2 는 declare -A 미지원 — case 분기로 파일별 placeholder 매핑.
 for f in skills/closeout/references/verifier-prompt.md \
+         skills/closeout/references/verifier-prompt-fallback.md \
          skills/closeout/references/deploy-check-issue.md \
          skills/closeout/references/spinoff-issue.md; do
   [ -f "$f" ] || { echo "  ✗ 누락: $f"; exit 1; }
   case "$f" in
-    # <DIFF>·<ISSUE_BODY>: 검증자가 sandbox 네트워크 없이 판정하도록 메인 세션이
-    # diff·이슈 본문을 동봉하는 지점 — 지우면 원문 fetch 회귀(#54).
-    *verifier-prompt.md)    phs="<PR> <REPO> <BASE> <PLAN_REF> <DIFF> <ISSUE_BODY>" ;;
+    # <ISSUE_BODY>: 검증자가 sandbox 네트워크 없이 이슈 수용 기준을 판정하도록 메인
+    # 세션이 이슈 본문을 동봉하는 지점 — 지우면 원문 fetch 회귀(#54). diff 는 동봉하지
+    # 않는다 — #134 내장 리뷰어가 `--base` 범위를 이 프롬프트 지시로 워크트리에서
+    # 직접 읽는다(#207: 동봉 전제 문구와 SKILL 의 "동봉 안 함" 이 정면 충돌해 fail-open).
+    *verifier-prompt-fallback.md)
+      # 폴백(general-purpose)은 Agent 툴에 --cd 대응 인자가 없어 워크트리에 스코프
+      # 안 된다 — 그래서 네이티브 템플릿과 달리 <DIFF> 를 실제로 동봉해야 한다(#207
+      # attempt8). <BASE> 는 없다 — 폴백은 --base 를 넘기지 않고 동봉 diff 로만 판정한다.
+      phs="<PR> <REPO> <PLAN_REF> <ISSUE_BODY> <DIFF>" ;;
+    *verifier-prompt.md)    phs="<PR> <REPO> <BASE> <PLAN_REF> <ISSUE_BODY>" ;;
     *deploy-check-issue.md) phs="<PR> <SHA> <SUMMARY> <DEPLOY_CMD> <LIVE_CHECKS> <VERIFY_URL>" ;;
     *spinoff-issue.md)      phs="<BACKGROUND> <REASON> <PLAN> <TEST_PLAN> <RELATED>" ;;
   esac
@@ -557,6 +565,86 @@ for f in skills/closeout/references/verifier-prompt.md \
   for ph in $phs; do
     grep -qF "$ph" "$f" || { echo "  ✗ $f 에 $ph 없음"; exit 1; }
   done
+done
+# 네이티브↔폴백 파일 간 전제 교차오염 방지 검사는 아래 "③-1 네이티브↔폴백 프롬프트
+# 동기화 검사"(#207 attempt8) 에서 한다.
+
+echo "[closeout] ③-1 1단계 worktree 확보 fetch·reset 검사 (#207)"
+# 1단계 계획 부합 호출의 프롬프트(verifier-prompt.md)가 "이 워크트리는 PR 브랜치의
+# HEAD 로 체크아웃돼 있어 최신이다" 라고 전제한다 — 그 전제가 참이려면 1단계
+# 자신이 worktree 를 fetch·reset 해야 한다(revalidate 절이 이미 같은 이유로 이
+# 두 명령을 건다 — #207 은 1단계에 이 형제가 빠져 있었다는 결함). 언어 불변 앵커
+# (1단계/Step 1 문단 ~ 2단계/Step 2 문단 시작 전)로 1단계 문단만 잘라 그 안에
+# 두 명령이 다 있는지 본다 — 다른 절(revalidate 등)의 fetch·reset 을 오검출하지
+# 않기 위해서다.
+check_step1_worktree_sync() {
+  f="$1"; start_pat="$2"; end_pat="$3"
+  start_ln=$(grep -nE "$start_pat" "$f" | head -1 | cut -d: -f1)
+  end_ln=$(grep -nE "$end_pat" "$f" | head -1 | cut -d: -f1)
+  if [ -z "$start_ln" ] || [ -z "$end_ln" ]; then
+    echo "  ✗ $f 에 1단계/2단계 앵커 없음"; return 1
+  fi
+  section=$(sed -n "${start_ln},$((end_ln - 1))p" "$f")
+  if ! printf '%s\n' "$section" | grep -qF 'fetch origin'; then
+    echo "  ✗ $f 1단계 절에 'fetch origin' 없음 — worktree 가 옛 HEAD 일 수 있다(#207)"; return 1
+  fi
+  if ! printf '%s\n' "$section" | grep -qE 'reset --hard origin/agent/issue'; then
+    echo "  ✗ $f 1단계 절에 'reset --hard origin/agent/issue-<N>' 없음(#207)"; return 1
+  fi
+  return 0
+}
+fail=0
+check_step1_worktree_sync skills/closeout/SKILL.md    '^\*\*1단계 —' '^\*\*2단계 —' || fail=1
+check_step1_worktree_sync skills/closeout/SKILL.en.md '^\*\*Step 1 —' '^\*\*Step 2 —' || fail=1
+[ "$fail" = 0 ] || exit 1
+
+echo "[closeout] ③-1 네이티브↔폴백 프롬프트 동기화 검사 (#207 attempt8)"
+# 이 이슈의 뿌리는 SKILL.md 가 폴백(general-purpose)이 diff 를 동봉한다고 적어놓고
+# 실제로는 네이티브 전용 템플릿(<DIFF> 없음·"이 워크트리는 최신" 전제)을 그대로
+# 재사용해 그 주장이 거짓이었던 것이다. 한쪽만 고쳐도(문서가 새 파일명을 안 부르거나,
+# 새 파일이 실제로 diff 를 안 담으면) 여기서 빨개져야 한다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF 'verifier-prompt-fallback.md' "$f" \
+    || { echo "  ✗ $f 이 폴백 전용 템플릿(verifier-prompt-fallback.md)을 이름으로 지목하지 않는다 — 네이티브 템플릿과 같은 파일을 쓴다고 오독될 수 있다(#207)"; exit 1; }
+done
+[ -f skills/closeout/references/verifier-prompt-fallback.md ] \
+  || { echo "  ✗ skills/closeout/references/verifier-prompt-fallback.md 없음"; exit 1; }
+grep -qF '<DIFF>' skills/closeout/references/verifier-prompt-fallback.md \
+  || { echo "  ✗ verifier-prompt-fallback.md 에 <DIFF> placeholder 없음 — 폴백은 --cd 로 스코프되지 않아 diff 를 실제로 동봉해야 한다(#207)"; exit 1; }
+grep -qF '<DIFF>' skills/closeout/references/verifier-prompt.md \
+  && { echo "  ✗ verifier-prompt.md(네이티브)에 <DIFF> 가 있음 — 동봉 전제는 verifier-prompt-fallback.md 전용이어야 한다(#207 원 결함 재발)"; exit 1; }
+grep -qF '이 워크트리는' skills/closeout/references/verifier-prompt-fallback.md \
+  && { echo "  ✗ verifier-prompt-fallback.md 에 네이티브 전용 워크트리 전제 문구가 있음 — general-purpose 는 --cd 로 스코프되지 않아 거짓이다(#207)"; exit 1; }
+
+echo "[closeout] ③-1 응답 계약(구조 줄) 단일 정의 검사 (#207)"
+# 이 이슈의 뿌리는 SKILL 과 템플릿이 같은 계약을 서로 다르게 적은 것이었다. 응답 계약의
+# 형식 문자열도 두 자리에 적히면 같은 방식으로 갈라진다(프롬프트가 요구하는 형식 ≠ 파서가
+# 읽는 형식 = fail-open 재발). 그래서 형식은 codex-review-gate.sh 의 STATUS_* 상수 **한 자리**
+# 에서만 정의하고, 계약문·파서는 그 상수를 참조해야 하며, 문서·템플릿은 리터럴을 적지 않는다.
+gate=scripts/codex-review-gate.sh
+for v in STATUS_KEY STATUS_REVIEWED STATUS_NO_BASIS; do
+  if ! grep -qE "^$v=" "$gate"; then
+    echo "  ✗ $gate 에 $v 정의 없음 — 응답 계약 형식의 단일 정의 자리"; exit 1
+  fi
+done
+key=$(sed -n "s/^STATUS_KEY='\\(.*\\)'\$/\\1/p" "$gate")
+[ -n "$key" ] || { echo "  ✗ $gate 의 STATUS_KEY 값을 못 읽었다"; exit 1; }
+n=$(grep -c "$key" "$gate")
+if [ "$n" != 1 ]; then
+  echo "  ✗ $gate 에 계약 키('$key') 리터럴이 ${n}곳 — 정의 1곳만 허용(나머지는 \$STATUS_KEY 참조)"; exit 1
+fi
+# 프롬프트가 요구하는 형식 · 파서가 읽는 형식이 둘 다 그 상수에서 만들어지는가
+if ! grep -q '\${STATUS_KEY}: \${STATUS_REVIEWED}' "$gate" || ! grep -q '\${STATUS_KEY}: \${STATUS_NO_BASIS}' "$gate"; then
+  echo "  ✗ $gate 의 프롬프트 계약문이 STATUS_* 상수로 만들어지지 않았다"; exit 1
+fi
+if ! grep -qF '"^${STATUS_KEY}:[[:space:]]+(${STATUS_REVIEWED}|${STATUS_NO_BASIS})$"' "$gate"; then
+  echo "  ✗ $gate 의 판정 파서가 STATUS_* 상수로 만들어지지 않았다 — 요구 형식과 갈라진다"; exit 1
+fi
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md skills/closeout/references/verifier-prompt.md \
+         skills/closeout/references/verifier-prompt-fallback.md; do
+  if grep -q "$key" "$f"; then
+    echo "  ✗ $f 에 계약 형식('$key')이 하드코딩됨 — 정의 자리는 $gate 뿐(#207)"; exit 1
+  fi
 done
 
 echo "[closeout] smoke-prompt 한/영 placeholder 검사 (#69)"
@@ -998,6 +1086,8 @@ echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4
 # (<LESSONS_OR_ 는 접미사가 언어별로 다를 수 있어 워커 템플릿과 동일하게 접두만 본다.)
 grep -qF '<LESSONS_OR_' skills/closeout/references/verifier-prompt.md \
   || { echo "  ✗ verifier-prompt.md 에 <LESSONS_OR_ placeholder 없음"; exit 1; }
+grep -qF '<LESSONS_OR_' skills/closeout/references/verifier-prompt-fallback.md \
+  || { echo "  ✗ verifier-prompt-fallback.md 에 <LESSONS_OR_ placeholder 없음"; exit 1; }
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   awk 'BEGIN{RS="";ok=0} /<LESSONS_OR_/ && /lessons(-verifier)?\.md/ {ok=1} END{exit ok?0:1}' "$f" \
     || { echo "  ✗ $f: 1단계 검증자에 lessons 주입(<LESSONS_OR_ ← lessons-verifier.md) 지시 없음"; exit 1; }
