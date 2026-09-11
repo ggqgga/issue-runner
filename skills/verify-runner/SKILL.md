@@ -21,12 +21,15 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
 ## 상수
 
 - `MAX_VERIFY = 1` — **동시성 1**(한 번에 1 PR 만 끝까지 직렬 검증). 틱당 상한이
-  아니다 — 한 PR 이 종료 상태(passed·redispatched·held·flake_retry)에 닿으면 **다음
+  아니다 — 한 PR 이 종료 상태(passed·redispatched·reissued·held·flake_retry)에 닿으면 **다음
   틱을 기다리지 말고** ①② 로 되돌아 다음 후보를 이어간다(아래 ⑤ Drain). 이 노브가
   E2E 크롬 부하 상한이다 — 절대 올리지 마라(동시 실행 = 크롬 자기포화 = 타임아웃).
 - `VERIFY_ATTEMPTS_LIMIT = 3` — 같은 PR 검증이 N회 실패(재디스패치)하면 그 다음엔
-  재디스패치 대신 `needs-human` 으로 승격한다(무한 반송 서킷 브레이커). 카운트는 PR
-  본문 `<!-- verify-attempt: N -->` 주석에 누적(issue-runner repair-count 동형).
+  재디스패치 대신 **재발행**한다(④ `reissued` — PR 을 닫고 검증자의 마지막 스펙으로 새
+  이슈를 낸다. **사람에게 묻지 않는다**). 카운트는 PR 본문 `<!-- verify-attempt: N -->`
+  주석에 누적(issue-runner repair-count 동형) — 값도 마커 자리도 바꾸지 마라.
+  **예외 회차는 사람만 준다** — 원 이슈에 `회차 허용:` 문형 한 줄(① Reconcile). 그 회차도
+  상한에 닿으면 재발행이다(예외는 이슈당 한 번).
 - `STALE_FINISH_MIN = 30` — `finish-classify.sh` 시간버퍼(분). 재사용.
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
 - `VERIFIER = codex:codex-rescue` — diff correctness 검증자 서브에이전트 타입.
@@ -92,6 +95,23 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
   남아 다음 틱 verify-eligible 에 다시 잡힌다. 별도 스윕이 필요 없다(closeout ①-b 가
   하던 완결 유실 회수 중 **검증 단계** 몫을 이 재집이 흡수).
 - 이 스캔은 `gh api` 조회뿐이라 비용 0 — 조용한 틱에도 매 틱 돈다.
+
+**회차 허용(사람 예외) 읽기 — 큐의 후보마다 한 번.** 각 후보에 대해
+`$SCRIPTS/reissue-pr.sh grant-round <repo> <pr> <issue>` 를 돌린다(연결 이슈가 없으면 건너뛴다.
+후보당 조회 2회 — 큐가 보통 0~3개라 틱 비용은 무시할 만하다). 사람이 원 이슈에 **줄 머리가**
+`회차 허용: +1 — 범위: <한 줄>` 인 코멘트를 남겼으면 그 헬퍼가 PR 본문 `verify-attempt` 를
+`VERIFY_ATTEMPTS_LIMIT - 1` 로 되돌리고 원 이슈에 `<!-- round-granted -->` 마커 코멘트를 남긴다.
+- `granted: …` → ④ Report 에 `회차 허용: #<이슈> — 범위: <한 줄>` 한 줄. 그 **범위 문장은
+  이번 회차의 반송 코멘트·재디스패치 프롬프트에 그대로 싣는다**(요약·의역 금지 — 사람이 준
+  경계가 문장 그대로여야 워커가 범위를 넓히지 않는다).
+- `ignored: …` → warn 한 줄. 예외는 **이슈당 한 번**이라 두 번째 문형은 무시된다.
+- `none: …` → 아무것도 안 한다(조용).
+- 비0 → warn 한 줄만 남기고 그 PR 의 검증은 평소대로 진행한다(허용을 못 읽은 것이 검증을
+  막지는 않는다 — 못 읽으면 그 PR 은 기본 처방인 재발행으로 간다).
+- 판정 규칙 셋(**줄 머리**에서 시작 · 머신 코멘트(`<!-- bodat:worker -->`) 제외 · **인용
+  (코드펜스·인라인 코드) 안은 신호가 아니다**)의 SSOT 는 그 헬퍼다. 그래서 이 문서의 예시
+  문형을 코멘트에 통째로 붙여넣어도 판정이 켜지지 않는다(백틱·코드펜스 안이라서 —
+  `scripts/tests/reissue-pr.test.sh` 가 실제 문서 파일을 코멘트로 먹여 확인한다).
 
 ## ② Pick — 한 번에 1 PR (MAX_VERIFY=1)
 
@@ -222,7 +242,11 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 
 **redispatched** — E2E 진짜 실패 / codex BLOCKER(검증자 데드라인 초과 포함) / 결정적 CI 실패:
 1. `<!-- verify-attempt: N -->` 를 PR 본문에서 읽어(없으면 0) N+1 이 `VERIFY_ATTEMPTS_LIMIT`
-   **미만**이면 재디스패치, **이상**이면 아래 held 로.
+   **미만**이면 재디스패치, **이상**이면 아래 **reissued(재발행)** 로. 예외는 하나 —
+   사람이 준 회차(① 이 남긴 `<!-- round-granted -->` 마커 + `N < LIMIT`)가 아직 살아 있으면
+   이번 회차만 재디스패치하고 **범위 문장을 사유에 그대로** 싣는다. 그 판정을 손으로 하지
+   마라: 재발행 호출(`reissue-pr.sh <repo> <pr> <issue>`)이 exit **65** `grant-live: … — 범위: …`
+   로 **스스로 거절하며** 범위를 stdout 으로 돌려준다(한 자리에서만 판정한다).
 2. 재디스패치: 실패 사유 코멘트(멱등 마커) —
    `$SCRIPTS/bounce-comment.sh reverify-fail <repo> <pr> <issue> <N+1> "<사유>"`
    (문구를 손으로 옮겨 적지 않는다 — 콜론·어순이 변형되면 `bounce-state.sh` 반송
@@ -240,16 +264,37 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    코멘트를 읽고 고친 뒤 다시 `flow:verify` 로 넘긴다(worker-template 절차). **redispatched 종료.**
    (연결 이슈가 없으면 재디스패치 불가 → held 로 폴백.)
 
-**held** — 재디스패치 상한 초과(VERIFY_ATTEMPTS_LIMIT) · 연결 이슈 부재 · 또는 E2E 가
-실장비를 요구해 못 돈 경우:
+**reissued** — 재디스패치 상한(`VERIFY_ATTEMPTS_LIMIT`) 도달. **사람에게 묻지 않는다**
+(옛 `held` 의 이 갈래를 통째로 이리로 옮겼다). 근거는 2026-09-11 실측: 상한에 닿은 네 PR
+(#182 #203 #239 #189)에서 사람이 전부 한 회차를 더 줬고 그중 셋이 그 회차도 BLOCKER 로
+끝나 같은 질문이 다시 올라왔다 — 누적된 반송 문맥을 물려받는 워커보다 **검증자의 마지막
+스펙을 본문으로 받은 새 워커**가 빠르다.
+1. `$SCRIPTS/reissue-pr.sh <repo> <pr> <issue>` **한 호출**이 전부를 한다(순서가 안전 계약):
+   새 이슈 발행(원 이슈 수용 기준 + 검증자 **마지막 BLOCKER/WARN 원문** + 이전 브랜치·head
+   SHA + "그대로 이어받지 않는다") → 확인 → 재발행 마커 → `blocked-by:<구>` 를 새 번호로
+   이전 → **PR 닫기**(브랜치는 남긴다 — 새 워커가 참고한다) → **원 이슈 닫기**(not planned).
+   라벨은 원 이슈에서 상속하고 `agent-ready` 를 붙인다. `spinoff` 는 **안 붙인다**
+   (파생이 아니라 **재시도**다). 템플릿: `references/reissue.md`.
+2. 종료 코드로 갈린다 — 0 성공 · **65 = 살아있는 회차 허용**(재발행 말고 위 재디스패치로
+   가라, 범위는 stdout) · 2 조회 실패(**아무것도 쓰지 않았다**) · 3 발행·확인 실패
+   (**아무것도 닫지 않았다**) · 4 발행 뒤 단계 실패(새 이슈는 있고 원 이슈는 열린 채다 —
+   다음 틱이 `<!-- reissued: #N -->` 마커를 보고 발행을 건너뛰고 이어간다).
+   2·3·4 는 종료 상태를 바꾸지 말고 ④ Report 에
+   `BLOCKED: 재발행 실패 PR #<pr>(<repo_short>) — <stderr 한 줄>`.
+3. 라벨 전이는 없다 — PR 이 CLOSED 라 `verify-eligible`(`is:open`)에서 자동으로 빠진다.
+   `transition.sh` 를 따로 부르지 마라(닫힌 PR 의 라벨을 옮길 이유가 없다).
+4. ④ Report 에 `재발행: #<구> → #<신> (attempt 상한)` 한 줄. **reissued 종료.**
+   (연결 이슈가 없으면 재발행 불가 → 아래 held 로 폴백.)
+
+**held** — 연결 이슈 부재 · 또는 E2E 가 실장비를 요구해 못 돈 경우
+(**재디스패치 상한 초과는 여기가 아니다** — 위 reissued 로 간다. `hold:policy` 는 스펙·정책
+선택이 남았을 때만이고, 상한 도달은 더 이상 policy 질문이 아니다):
 `gh pr comment <pr> --repo <repo> --body "검증 보류: <사유> — 사람 확인 필요
 <!-- bodat:worker -->"` + `$SCRIPTS/transition.sh verify-held <repo> <issue|-> <pr> --reason <conflict|policy|ladder> [--note "<질문 한 줄>" — policy·conflict 필수]`
 (PR 의 `flow:verify` 제거 + PR 과 — 있으면 — 연결 이슈 **양쪽**에 `needs-human` +
 `hold:<reason>` 부착. 연결 이슈가 없어도 PR 에 사람 신호가 남는다). **held 종료.**
 **`--reason` 은 필수다** — 빠지면 전이가 usage exit 64 로 거절한다(사유 없는
 `needs-human` 을 만들 수 없게 하는 게이트). 이 문단의 사유 배정:
-- **재디스패치 상한 초과** → `policy`. 루프가 정한 한도에 걸린 것이라 한도·범위를
-  사람이 다시 정해야 한다.
 - **연결 이슈 부재** → `policy`. 어느 이슈에 붙일지가 사람 결정이다.
 - **E2E 가 실장비를 요구해 못 돈 경우** → 곧바로 held 로 가지 마라. 먼저
   `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
@@ -268,25 +313,28 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 
 ## ⑤ Drain — 다음 후보로 즉시 이어가기
 
-③④ 가 집은 PR 을 종료 상태(passed·redispatched·held·flake_retry)에 닿게 한 **직후**,
+③④ 가 집은 PR 을 종료 상태(passed·redispatched·reissued·held·flake_retry)에 닿게 한 **직후**,
 결과를 ④ Report 용으로 누적하고 **다음 틱을 기다리지 말고 ①② 로 되돌아간다**:
 - ② Pick 이 **새 후보를 집으면**(이번 PR 은 passed→flow:ready 로, redispatched/held→
-  flow:verify 제거로 이미 큐에서 빠졌다. flake_retry 만 flow:verify 가 남는데 —
+  flow:verify 제거로, reissued→PR 이 CLOSED 라 `is:open` 필터로 이미 큐에서 빠졌다. flake_retry 만 flow:verify 가 남는데 —
   같은 PR 재선정 방지 위해 이 틱 드레인에서는 **이번 틱에 이미 처리한 PR 번호를
   건너뛴다**) 그 PR 로 ③ 을 이어간다.
 - ② Pick 후보가 **0이면**(또는 남은 게 이번 틱 처리분뿐이면) 드레인을 멈추고 ④ Report.
 
 무한루프 방지: 각 반복은 큐를 최소 1 줄인다(passed→flow:ready 소멸·redispatched/held→
-flow:verify 소멸). 같은 PR 이 두 번 집히면(flake_retry 반복 등) 그 PR 을 skip 하고
+flow:verify 소멸·reissued→PR CLOSED 로 소멸). 같은 PR 이 두 번 집히면(flake_retry 반복 등) 그 PR 을 skip 하고
 ④ Report 에 `BLOCKED: 재선정 루프 — #<pr>` 로 보고해 드레인을 끊는다. 한 틱 드레인은
 최대 verify-eligible 스냅샷 길이만큼만 돈다.
 
 ## ④ Report
 
-드레인이 끝나면 이 틱 처리분을 합산해 한 줄: `검증통과 N · 재디스패치 N · 보류 N · 재시도 N · warn N`.
+드레인이 끝나면 이 틱 처리분을 합산해 한 줄: `검증통과 N · 재디스패치 N · 재발행 N · 보류 N · 재시도 N · warn N`.
 
 그 아래 **항목마다 번호를 적는다** — 숫자만으론 어느 PR 이 어디로 갔는지 다음 틱이 못 읽는다:
 `검증통과: PR #4790(bodat)←#4780 · 재디스패치: PR #4792(bodat)←#4783 (사유 8자 이내)`.
+재발행은 두 번호를 다 적는다 — `재발행: #4783 → #4801 (attempt 상한)`. ① 이 회차 허용을
+읽었으면 `회차 허용: #4783 — 범위: <한 줄>` 도 한 줄로 남긴다(사람이 준 경계가 로그에 남아야
+다음 틱·다음 워커가 같은 범위를 읽는다).
 `←` 뒤는 연결 이슈(없으면 생략). 레포 짧은 이름 규칙은 `loop-status.sh` 와 같다
 (`owner/repo` 의 repo 를 소문자로 — bodat·bodac, `issue-runner` 만 `runner` 특례).
 warn(flake_retry·동봉 실패·전이 실패 등)이 있으면 경로·사유를 아래 나열. 모든 카운트 0이면
@@ -317,7 +365,10 @@ warn(flake_retry·동봉 실패·전이 실패 등)이 있으면 경로·사유�
 - 운용: issue-runner·closeout 와 별도의 `/loop` 세션(예 `/loop 10m /verify-runner`).
 - 의존: 결정적 헬퍼는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)의
   `verify-eligible.sh`·`closeout-ci-pass.sh`·`run-local-ci.sh`·`make-worktree.sh`·
-  `repo-dir.sh`·`transition.sh`(라벨 이동)·`loop-status.sh`(④ Report 스냅샷), 검증자 프롬프트는 `skills/verify-runner/references/verify-prompt.md`.
+  `repo-dir.sh`·`transition.sh`(라벨 이동)·`reissue-pr.sh`(재발행·회차 허용 — `jq-unquote.sh`·
+  `pr-comments.sh`·`block-issue.sh` 를 쓴다)·`loop-status.sh`(④ Report 스냅샷), 검증자 프롬프트는
+  `skills/verify-runner/references/verify-prompt.md`, 재발행 본문 템플릿은
+  `skills/verify-runner/references/reissue.md`.
   보조 리뷰어는 `pr-review-toolkit@claude-plugins-official` 플러그인(미설치면 3-b 는 자동 skip).
 - 실측이 필요한 항목의 시도 순서·통로·인용 규칙은
   `~/.claude/skills/issue-runner/references/live-verification-ladder.md`

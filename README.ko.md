@@ -135,6 +135,8 @@ flowchart LR
 
 세 루프가 충돌하지 않는 이유는 소유권이 **라벨 경계**이기 때문이다: closeout 이 PR 을 집으면 `harvesting` 라벨을 달고, issue-runner 는 `harvesting` PR 을 건드리지 않는다. verify-runner 도 `flow:verify` PR 을 같은 방식으로 점유한다. closeout 은 한 틱에 PR 하나를 끝까지 마감하며(`MAX_CLOSEOUT = 1`), 페이스는 `/loop` 주기로 조절한다. 그리고 자율에는 천장이 있다 — 루프는 `main` 머지·계획문서 reconcile·후속 이슈 발행까지 무인으로 하지만, **프로덕션 배포는 사람 게이트**다: closeout 이 "배포 대기" 이슈를 발행하고 거기서 멈춘다. 여기서 머지는 항상 사람이 한다는 issue-runner 불변은 그대로다. 상세는 [`skills/closeout/SKILL.md`](skills/closeout/SKILL.md).
 
+**검증 상한에 닿으면 재발행한다(#301).** 같은 PR 이 `VERIFY_ATTEMPTS_LIMIT`(3)회 반송되면 verify-runner 는 사람에게 묻지 않고 `scripts/reissue-pr.sh` 로 **재발행**한다 — 검증자의 마지막 BLOCKER/WARN 원문과 원 이슈 수용 기준을 본문에 실은 새 이슈를 `agent-ready` 로 내고(라벨·`Epic` 줄·우선순위는 원 이슈에서 상속, `spinoff` 는 안 붙인다 — 파생이 아니라 **재시도**다), PR 을 닫고(브랜치는 남긴다), 원 이슈를 `not planned` 로 닫는다. 쓰기 순서가 계약이다: **발행 → 확인 → PR 닫기 → 원 이슈 닫기** — 뒤집히면 원 이슈만 닫히고 새 이슈가 없는 유실이 난다(발행이 실패하면 아무것도 닫지 않는다). 근거는 2026-09-11 실측이다: 상한에 닿은 네 PR 에 사람이 전부 한 회차를 더 줬는데 셋이 그 회차도 BLOCKER 로 끝났다 — 누적된 반송 문맥을 물려받는 워커보다 검증자의 마지막 스펙을 받은 새 워커가 빠르다. **예외 회차는 사람만 주고 문형은 하나다** — 원 이슈에 줄 머리가 `회차 허용: +1 — 범위: <한 줄>` 인 코멘트를 남기면 ① Reconcile 이 그것을 읽어 `verify-attempt` 를 `LIMIT-1` 로 되돌리고 범위 문장을 그대로 반송 프롬프트에 싣는다(마커 `<!-- round-granted -->` 로 멱등 — **예외는 이슈당 한 번**, 두 번째 문형은 무시하고 warn. 인용(코드펜스·백틱) 안의 문형과 머신 코멘트는 신호가 아니다). 그 회차도 상한이면 다시 재발행이다. 그래서 `hold:policy` 에는 더 이상 "한 회차 더 줄까" 질문이 없다.
+
 <details>
 <summary><b>왜 검증 레인을 따로 두나?</b></summary>
 
@@ -234,7 +236,7 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 | `blocked-by:<N>` / `Blocked by #N` | 의존성. 라벨 또는 전용 본문 라인 중 하나. OPEN 인 블로커가 하나라도 있으면 디스패치 제외. `<N>` 은 **이슈** 번호이며, 블로커가 닫히면 게이트가 자동 해제 |
 | `spinoff` | closeout 6단계가 발행한 파생 이슈라는 출처 표식. `loop-status.sh` 의 `파생` 집계가 이 라벨로만 센다 |
 | `deploy-wait` | closeout 4단계·full-cycle §7 이 만든 배포 대기 이슈 — **deploy-cycle 루프의 레인**(사람 정지가 아니다). `loop-status.sh` 가 배포대기와 사람대기를 가르는 버킷 라벨이기도 하다. `needs-human` 은 붙이지 않는다(#243) — 디스패치 게이트는 `agent-ready` 를 요구하고, 버킷은 `deploy-wait` 가 이기며, deploy-bodat 수집은 제목 정규식이라 그 라벨을 아무도 안 본다 |
-| `hold:conflict` · `hold:policy` · `hold:ladder` | `needs-human` 의 **사유**. `transition.sh verify-held|closeout-blocked --reason <사유>` 가 함께 붙인다(사유 없는 `needs-human` 은 만들 수 없다). `ladder` 만 재개 스윕이 자동 재개한다. 디스패치·검증·마감 게이트는 이 **접두**를 직접 본다(#242) — 사람이 홀드를 풀 때는 `needs-human` 과 함께 뗀다. `hold:dup`·`hold:hardware` 는 일부러 없다 — 중복은 `closeout-dup` 이 닫고, 실장비는 사다리를 오른다 |
+| `hold:conflict` · `hold:policy` · `hold:ladder` | `needs-human` 의 **사유**. `hold:policy` 는 **스펙·정책 선택이 남았을 때만**이다 — 검증 재디스패치 상한 도달은 여기가 아니라 재발행이다(#301). `transition.sh verify-held|closeout-blocked --reason <사유>` 가 함께 붙인다(사유 없는 `needs-human` 은 만들 수 없다). `ladder` 만 재개 스윕이 자동 재개한다. 디스패치·검증·마감 게이트는 이 **접두**를 직접 본다(#242) — 사람이 홀드를 풀 때는 `needs-human` 과 함께 뗀다. `hold:dup`·`hold:hardware` 는 일부러 없다 — 중복은 `closeout-dup` 이 닫고, 실장비는 사다리를 오른다 |
 | `dup` | `closeout-dup` 으로 머지 없이 닫힌 PR(이미 main 에 반영·중복). `loop-status.sh` 가 `실패` 와 갈라 `중복종료` 로 센다 |
 
 자격 조건: `open + agent-ready + ¬agent:claimed + 모든 블로커 CLOSED`. 정렬: `P0 > P1 > P2 > 없음`, 동순위는 오래된 순.

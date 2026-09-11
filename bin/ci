@@ -2151,4 +2151,79 @@ if grep -nF -- "ps -Ao pid,command | grep '[b]in/ci'" references/worker-template
   exit 1
 fi
 
+# ── [#301] 재디스패치 상한 처방 = 재발행 · 예외 회차는 사람 문형 하나 ──────────────
+echo "[#301] reissue-pr.sh 재발행·회차 허용 픽스처 + 실행비트"
+# 세 소비자(verify-runner ①·④, 이 테스트)가 `$SCRIPTS/reissue-pr.sh` 를 직접 exec 하므로
+# 실행 비트를 여기서 문다 — 빠지면 조용히 exit 126 이 되고, 호출자는 "허용 없음/재발행 실패"
+# 를 **판정으로** 읽어 상한 처방이 통째로 꺼진다(PR#173 교훈과 같은 함정).
+for f in scripts/reissue-pr.sh scripts/jq-unquote.sh; do
+  [ -x "$f" ] || { echo "  ✗ $f 실행 비트 없음"; exit 1; }
+done
+bash scripts/tests/reissue-pr.test.sh
+
+echo "[#301] 인용 제거 정의(def unquoted)는 scripts/ 안에 한 벌뿐 — jq-unquote.sh"
+# 인용 안의 문형을 신호로 세지 않는 계산기가 두 벌이 되면 한쪽만 고쳐질 때 두 판정
+# (ladder-resume · 회차 허용)이 조용히 갈린다. 정의의 자리는 jq-unquote.sh 하나다.
+unq_files=$(grep -l 'def unquoted:' scripts/*.sh 2>/dev/null | tr '\n' ' ')
+[ "$unq_files" = "scripts/jq-unquote.sh " ] \
+  || { echo "  ✗ def unquoted 정의가 scripts/jq-unquote.sh 밖에도 있다: $unq_files"; exit 1; }
+
+echo "[#301] references/reissue.md placeholder 검사"
+for ph in '<PR>' '<ISSUE>' '<EPIC_LINE>' '<BRANCH>' '<HEAD_SHA>' '<LAST_BOUNCE>' '<VERIFIER_FINDINGS>' '<ISSUE_BODY>'; do
+  grep -qF -- "$ph" skills/verify-runner/references/reissue.md \
+    || { echo "  ✗ skills/verify-runner/references/reissue.md 에 $ph 없음"; exit 1; }
+done
+# 재발행은 파생이 아니라 **재시도**다 — 템플릿에도 스크립트에도 spinoff 부착이 없어야 한다.
+grep -q 'spinoff' scripts/reissue-pr.sh \
+  || { echo "  ✗ reissue-pr.sh 의 라벨 제외 목록에서 spinoff 가 사라졌다"; exit 1; }
+if grep -qE -- '--label spinoff' scripts/reissue-pr.sh; then
+  echo "  ✗ reissue-pr.sh 가 spinoff 를 부착한다 — 재발행은 파생이 아니다"; exit 1
+fi
+
+echo "[#301] verify-runner ④ 구간 스코프 — 상한은 held 가 아니라 reissued 로 간다"
+VSK=skills/verify-runner/SKILL.md
+held_span=$(awk '/^\*\*held\*\* —/{f=1} /^\*\*flake_retry\*\*/{f=0} f' "$VSK")
+reis_span=$(awk '/^\*\*reissued\*\* —/{f=1} /^\*\*held\*\* —/{f=0} f' "$VSK")
+redi_span=$(awk '/^\*\*redispatched\*\* —/{f=1} /^\*\*reissued\*\* —/{f=0} f' "$VSK")
+recon_span=$(awk '/^## ① Reconcile/{f=1} /^## ② Pick/{f=0} f' "$VSK")
+[ -n "$held_span" ]  || { echo "  ✗ $VSK 에서 held 구간을 못 찾았다"; exit 1; }
+[ -n "$reis_span" ]  || { echo "  ✗ $VSK 에 reissued 갈래가 없다 — 상한 처방이 사라졌다"; exit 1; }
+[ -n "$redi_span" ]  || { echo "  ✗ $VSK 에서 redispatched 구간을 못 찾았다"; exit 1; }
+[ -n "$recon_span" ] || { echo "  ✗ $VSK 에서 ① Reconcile 구간을 못 찾았다"; exit 1; }
+# ⓐ held 의 **사유 배정**에 상한이 남아 있으면 안 된다(옛 문면 그대로면 여기서 빨개진다).
+if printf '%s' "$held_span" | grep -qF -- '**재디스패치 상한 초과** →'; then
+  echo "  ✗ held 구간이 아직 '재디스패치 상한 초과' 를 사유로 배정한다 (#301: 재발행으로 옮겼다)"; exit 1
+fi
+if printf '%s' "$held_span" | grep -qF -- '재디스패치 상한 초과(VERIFY_ATTEMPTS_LIMIT) · 연결 이슈 부재'; then
+  echo "  ✗ held 의 사유 목록에 아직 '재디스패치 상한 초과' 가 있다 (#301)"; exit 1
+fi
+# ⓑ 옮겼으면 **가는 곳을 같은 구간이 말해야** 한다 — 산문이 갈라지면 다음 구현자가 옛 갈래를 믿는다.
+printf '%s' "$held_span" | grep -qF -- '위 reissued 로 간다' \
+  || { echo "  ✗ held 구간이 상한 도달을 reissued 로 보내지 않는다 (#301)"; exit 1; }
+# ⓒ redispatched 의 상한 분기도 같은 곳을 가리킨다(한 문서 안에서 두 절이 갈리지 않게).
+printf '%s' "$redi_span" | grep -qF -- 'reissued(재발행)' \
+  || { echo "  ✗ redispatched 의 상한 분기가 reissued 를 가리키지 않는다 (#301)"; exit 1; }
+# ⓓ reissued 갈래는 헬퍼 한 자리 + fail-closed 순서를 명시한다.
+printf '%s' "$reis_span" | grep -qF -- 'reissue-pr.sh <repo> <pr> <issue>' \
+  || { echo "  ✗ reissued 갈래가 reissue-pr.sh 호출을 명시하지 않는다"; exit 1; }
+printf '%s' "$reis_span" | grep -qF -- '아무것도 닫지 않았다' \
+  || { echo "  ✗ reissued 갈래에 발행 실패 = 아무것도 닫지 않는다(fail-closed)가 없다"; exit 1; }
+
+echo "[#301] 예외 회차 문형은 스크립트·SKILL·README 한/영이 같은 한 줄"
+# 문형이 갈라지면 사람이 적은 줄을 루프가 못 읽는다(그리고 그 실패는 조용하다).
+GRANT_PHRASE='회차 허용: +1 — 범위:'
+printf '%s' "$recon_span" | grep -qF -- "$GRANT_PHRASE" \
+  || { echo "  ✗ ① Reconcile 구간에 예외 회차 문형이 없다 (#301)"; exit 1; }
+printf '%s' "$recon_span" | grep -qF -- 'reissue-pr.sh grant-round' \
+  || { echo "  ✗ ① Reconcile 이 grant-round 헬퍼를 부르지 않는다 (#301)"; exit 1; }
+for f in scripts/reissue-pr.sh README.md README.ko.md; do
+  grep -qF -- "$GRANT_PHRASE" "$f" \
+    || { echo "  ✗ $f 에 예외 회차 문형('$GRANT_PHRASE')이 없다"; exit 1; }
+done
+# 멱등 마커도 같은 문자열이어야 한다 — 마커가 갈리면 예외가 이슈당 두 번 적용된다.
+for f in scripts/reissue-pr.sh "$VSK" README.md README.ko.md; do
+  grep -qF -- '<!-- round-granted -->' "$f" \
+    || { echo "  ✗ $f 에 멱등 마커 <!-- round-granted --> 가 없다"; exit 1; }
+done
+
 echo "CI pass"
