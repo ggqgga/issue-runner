@@ -82,6 +82,10 @@ while [ "$i" -lt "$count" ]; do
   case ",$labels," in *",flow:verify,"*|*",flow:ready,"*|*",harvesting,"*) continue ;; esac
 
   # 블로커 = 본문 "Blocked by #N" 라인의 N ∪ blocked-by:<N> 라벨의 N (OR·dedupe).
+  # ★이 파싱 규칙의 SSOT 는 여기다 — `scripts/loop-status.sh` 의 `막힘` 버킷(#248)이
+  #   같은 규칙을 jq 로 옮겨 갖고 있다(그 파일 `blockers_of` 위 주석이 이쪽을 가리킨다).
+  #   여기를 고치면 저쪽도 같이 고쳐라 — 안 그러면 디스패치 자격과 대시보드의 `막힘`
+  #   표시가 조용히 갈린다(한쪽은 집어가는데 다른 쪽은 막혔다고 그린다).
   # 라벨 방식은 이슈 목록에서 블로킹이 한눈에 보이는 게 요점(#85). 새 search 쿼리를
   # 추가하지 않고 이미 받은 labels 배열에서만 파싱한다(gh search 부정라벨 오파싱 #21).
   body=$(gh issue view "$num" --repo "$repo" --json body -q '.body // ""')
