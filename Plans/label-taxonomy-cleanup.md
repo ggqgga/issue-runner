@@ -12,7 +12,7 @@
 |---|---|---|
 | `transition.sh` (verify-held · closeout-blocked · runner-held) | `hold:<사유>` 항상 | 기계가 멈췄다 |
 | closeout 4단계 배포 대기 | `deploy-wait` | 배포 게이트(사람 작업) |
-| full-cycle §7 배포 대기 | ~~없음~~ → `deploy-wait` (2026-09-11 수정) | 배포 게이트 |
+| full-cycle §7 배포 대기 | 없음 — `deploy-wait` 미부착(2026-09-11 실측: 그날 발행된 BodaT #5064 도 없다). BodaT #5071 이 고친다 | 배포 게이트 |
 | closeout — 라이브 검증 이슈(`SKILL.md:530`) · 라벨 부착 실패 폴백(`:468`) | 없음 | 사람 호출 / 비정상 |
 
 - 열린 이슈 실측(2026-09-11): issue-runner 7건 · BodaT 5건의 `needs-human` 중 **맨
@@ -95,7 +95,9 @@
 
 - `skills/closeout/SKILL.md` · `SKILL.en.md` 4단계 발행 명령에서 `--label needs-human` 제거
   (`--label deploy-wait` 만 남긴다).
-- `~/.claude/skills/full-cycle/SKILL.md` §7 도 같이(이 레포 밖 파일 — 사람이 손으로).
+- full-cycle §7 은 **BoDAT 레포 파일**이다(`.claude/skills/full-cycle/SKILL.md` — `~/.claude/skills/full-cycle`
+  은 그 심링크). 사람 손이 아니라 루프 이슈 BodaT #5071 로 태웠다(`deploy-wait` 부착 · `needs-human`
+  제거 · `needs:hardware` 는 라벨 있는 레포에서만).
 - 열린 배포 대기 이슈의 라벨 정리(issue-runner 3건 · BodaT 2건 기준, 실행 시점 재확인).
 - 이 시점에서 #190 의 note 강등은 **저절로 무의미해진다**(② 는 `--label needs-human` 으로
   목록을 걸기 때문에 배포 대기가 아예 안 잡힌다). 코드는 옛 이슈·타 레포 폴백으로 남긴다.
@@ -112,6 +114,11 @@
   정상(사람이 붙인 것)이다. warn 을 없애고 대시보드 카운트로 대체하거나 `note` 로 내린다.
   #190 이 세운 정의("warn 은 루프가 교정 가능한 불변식 위반일 때만")를 축 자체에 적용하는 것.
 - `loop-status.sh`: 사람대기 칸 = `hold:conflict` ∪ 재심 끝난 `hold:policy` ∪ `needs-human`.
+- `loop-status.sh`: **새 칸 `보류`** = `hold:*` ∧ ¬`needs-human`(ladder 재개 대기 · policy 재심 전). 이게 없으면
+  `needs-human` 을 뗀 기계 정지가 전부 `대기`(agent-ready 폴백) 칸으로 떨어져 "집을 수 있는 이슈" 로
+  읽힌다 — 사람대기 칸이 손댈 게 없는 것으로 찼던 오류의 반대 방향. 우선순위
+  `배포대기 > 사람대기 > 보류 > 단계 > 막힘(#248) > 대기`. 부수 효과: 서버 쿼리 `-label:needs-human`
+  이 걸러 주던 held 이슈가 50 창 안으로 들어온다(#247 의 창 절단 warn 이 그래서 필요하다).
 
 ### 4단계 — 문구·라벨 설명 정정
 
@@ -135,7 +142,7 @@
   라벨 자체가 없음). BodaT 레포 규약이고 기계가 읽는 축은 본문 절
   `## 라이브/하드웨어 검증 항목` 이다. 단, full-cycle §7 이 `[--label needs:hardware]` 를
   제시하는데 그 스킬이 issue-runner 에서도 쓰여 **라벨이 없는 레포에서 `gh issue create` 가
-  통째로 실패**한다 — 스킬 문구를 "레포에 그 라벨이 있을 때만" 으로 좁히는 것만 4단계에 넣는다.
+  통째로 실패**한다 — 스킬 문구를 "레포에 그 라벨이 있을 때만" 으로 좁히는 것은 BodaT #5071 에 넣었다.
 - 라벨 이름 변경·삭제 — 레인이 비어 있지 않아 2단계 다중 레포 마이그레이션이 된다.
 
 ## Test plan

@@ -69,7 +69,7 @@
 
     <rect x="8" y="102" width="238" height="34" rx="6" fill="none" stroke="#8a8580"/>
     <text x="18" y="117" fill="currentColor">full-cycle §7 배포 대기</text>
-    <text x="18" y="131" fill="#8a8580">짝 없음 → #190 의 원인</text>
+    <text x="18" y="131" fill="#8a8580">짝 없음 (BodaT #5071 이 고친다)</text>
 
     <rect x="8" y="146" width="238" height="34" rx="6" fill="none" stroke="#8a8580"/>
     <text x="18" y="161" fill="currentColor">closeout 라이브검증 · 부착실패</text>
@@ -156,10 +156,10 @@
     <div class="files">eligible-issues.sh · claim-issue.sh · closeout-eligible.sh · verify-eligible.sh</div></li>
   <li><b>배포 대기 이슈에서 <code>needs-human</code> 제거</b>
     closeout 4단계 발행 명령에서 빼고 <code>deploy-wait</code> 만 남긴다. 열린 이슈 라벨도 정리. 이 시점에서 #190 의 note 강등은 저절로 무의미해진다(폴백으로 남긴다).
-    <div class="files">skills/closeout/SKILL.md · .en.md · ~/.claude/skills/full-cycle/SKILL.md §7 · 열린 이슈</div></li>
+    <div class="files">skills/closeout/SKILL.md · .en.md · 열린 이슈 (full-cycle §7 은 BoDAT 파일 → BodaT #5071)</div></li>
   <li><b>전이표를 사유별로 가른다 — 본 변경</b>
-    <code>verify-held</code>·<code>closeout-blocked</code>·<code>runner-held</code> 가 <code>hold:&lt;사유&gt;</code> 만 붙인다. <code>needs-human</code> 부착은 재심 유지 판정 한 곳만 남는다. ② 의 "사유 없음" warn 은 의미를 잃으므로 없애거나 note 로.
-    <div class="files">transition.sh · resume-sweep.sh(①·③ 쿼리·미러) · loop-status.sh</div></li>
+    <code>verify-held</code>·<code>closeout-blocked</code>·<code>runner-held</code> 가 <code>hold:&lt;사유&gt;</code> 만 붙인다. <code>needs-human</code> 부착은 재심 유지 판정 한 곳만 남는다. ② 의 "사유 없음" warn 은 의미를 잃으므로 없애거나 note 로. <b>loop-status 에 <code>보류</code> 칸</b>(hold:* ∧ ¬needs-human)을 더한다 — 없으면 떼어낸 기계 정지가 전부 <code>대기</code> 로 떨어진다. 우선순위 <code>배포대기 &gt; 사람대기 &gt; 보류 &gt; 단계 &gt; 막힘(#248) &gt; 대기</code>. 부수 효과: 서버 쿼리가 걸러 주던 held 이슈가 50 창 안으로 들어온다(#247 의 창 절단 warn 이 그래서 필요하다).
+    <div class="files">transition.sh · resume-sweep.sh(①·③ 쿼리·미러) · loop-status.sh(사람대기·보류 버킷)</div></li>
   <li><b>문구·라벨 설명 정정</b>
     <code>hold:policy</code> 의 #155 재심 반영 · <code>spinoff</code> 을 "출처(state 아님)" 로 · <code>setup-labels.sh</code> 에 <code>full-cycle</code> 추가 · <code>needs-human</code> 설명 교체.
     <div class="files">setup-labels.sh · resume-sweep.sh 머리 주석 · 라벨 description</div></li>
@@ -169,7 +169,7 @@
 </ol>
 
 <h2>범위 밖</h2>
-<p><code>needs:hardware</code> — 루프가 만들지도 읽지도 않는다(읽는 스크립트 0곳, issue-runner 엔 라벨 자체가 없음, BodaT 누적 200건+). 기계가 읽는 축은 본문 절 <code>## 라이브/하드웨어 검증 항목</code> 이다. 단 full-cycle §7 이 <code>[--label needs:hardware]</code> 를 제시해 <b>라벨 없는 레포에서 <code>gh issue create</code> 가 통째로 실패</b>하므로, 그 문구를 좁히는 것만 4단계에 넣는다.</p>
+<p><code>needs:hardware</code> — 루프가 만들지도 읽지도 않는다(읽는 스크립트 0곳, issue-runner 엔 라벨 자체가 없음, BodaT 누적 200건+). 기계가 읽는 축은 본문 절 <code>## 라이브/하드웨어 검증 항목</code> 이다. 단 full-cycle §7 이 <code>[--label needs:hardware]</code> 를 제시해 <b>라벨 없는 레포에서 <code>gh issue create</code> 가 통째로 실패</b>하므로, 그 문구를 좁히는 것은 BodaT #5071 에 넣었다.</p>
 
 <footer>Plans/label-taxonomy-cleanup.md 의 시각화 사본 — 본문이 정본이다.</footer>
 </main>
