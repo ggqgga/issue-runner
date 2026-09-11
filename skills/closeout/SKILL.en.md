@@ -247,9 +247,11 @@ off, unconditionally** — the promote-to-needs-human branch is removed here ent
 known regression, accepted on purpose: the original incident attempt 2 closed (a post-bounce
 `⚠` never becoming needs-human) comes back **at this specific gate**. One path survives —
 a plain `⚠` with **no bounce marker at all** (where `bounce-state.sh`'s `$bi == null` already
-returns `ok`) never reaches this gate; it still gets promoted by `finish-classify.sh`'s own
-`held` row in 2) below, unmodified by this change, because a PR that was never bounced carries
-none of this ambiguity. `bounce-state.sh`'s own `held` computation is unchanged (the value is
+returns `ok`) passes this gate as `ok` and still gets promoted by `finish-classify.sh`'s own
+`held` row in 2) below, unmodified by this change. That path too keeps **a window where the
+next sweep re-attaches the hold from the same `⚠` after a human removed the label** — that
+release judgment (the attach↔release episode) is closed in `finish-classify.sh` by #174
+(PR #182: after a release it yields `active` instead of `held`). `bounce-state.sh`'s own `held` computation is unchanged (the value is
 still correct) — what is retired is only what this one caller (the sweep) does with it.
 
 **Discipline (bitten three times at this spot)**: when you introduce a new terminal state, do
