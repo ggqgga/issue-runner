@@ -585,10 +585,14 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f 의 smoke-prompt 단락에 chrome-devtools·<VERIFY_URL> 구동 지시 없음"; exit 1; }
 done
 
-echo "[closeout] 4단계 발행 명령이 코드펜스 안에서 needs-human·deploy-wait 를 다 갖는지 검사 (#214)"
-# 이슈 #214: 4단계 발행 명령이 산문 문단 한가운데 인라인으로 있어 실행자가 라벨 두 개를
+echo "[closeout] 4단계 발행 명령이 코드펜스 안에서 deploy-wait 만 갖는지 검사 (#214 · #243)"
+# 이슈 #214: 4단계 발행 명령이 산문 문단 한가운데 인라인으로 있어 실행자가 라벨을
 # 조용히 빠뜨렸다(배포 티켓 8/8 누락 실측). 6단계처럼 코드펜스 블록으로 떼어내고, 그 블록
-# 안에 두 라벨이 함께 있는지 여기서 문다 — 다음에 또 산문으로 되돌리면 이 검사가 빨개진다.
+# 안에 라벨이 있는지 여기서 문다 — 다음에 또 산문으로 되돌리면 이 검사가 빨개진다.
+# #243(플랜 2단계): 그 블록은 이제 `--label deploy-wait` **만** 가져야 한다. `needs-human` 은
+# 배포 대기 이슈에서 하는 일이 없어(디스패치 게이트는 agent-ready 를 요구 · loop-status
+# 버킷은 deploy-wait 가 이김 · deploy-bodat 수집은 제목 정규식) 뜻만 흐렸다 — 되살아나면
+# 여기서 빨개진다(양방향 가드: 없어도 빨강, 다시 생겨도 빨강).
 # 스코프를 4단계~6단계 헤더 사이로 좁힌다(사전 리뷰 WARN) — "파일 어딘가"만 보면, 이 코드펜스가
 # 다른 절(예시·anti-pattern 설명)로 옮겨져도 통과해 버려 가드가 무의미해진다. 헤더는 언어별로
 # 번역되므로 볼드 접두 앵커(`**4단계 —`/`**Step 4 —`)로 정확히 그 줄만 집는다.
@@ -604,6 +608,7 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   in_block=0
   block=""
   found=0
+  nh=0
   lineno=0
   block_start=0
   while IFS= read -r line; do
@@ -614,8 +619,11 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
       if [ "$in_block" = 1 ]; then
         if [ "$block_start" -gt "$s4_line" ] && [ "$lineno" -lt "$s6_line" ]; then
           case "$block" in
-            *"gh issue create"*"--label needs-human"*"--label deploy-wait"*)
-              found=1 ;;
+            *"gh issue create"*"--label deploy-wait"*)
+              found=1
+              case "$block" in
+                *"--label needs-human"*) nh=1 ;;
+              esac ;;
           esac
         fi
         in_block=0
@@ -632,7 +640,9 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     fi
   done < "$f"
   [ "$found" = 1 ] \
-    || { echo "  ✗ $f: 4단계~6단계 헤더 사이 코드펜스 안에 needs-human+deploy-wait 형태로 없음"; exit 1; }
+    || { echo "  ✗ $f: 4단계~6단계 헤더 사이 코드펜스 안에 --label deploy-wait 형태로 없음"; exit 1; }
+  [ "$nh" = 0 ] \
+    || { echo "  ✗ $f: 4단계 발행 명령에 --label needs-human 이 있다 (#243 — deploy-wait 만 남긴다)"; exit 1; }
 done
 
 echo "[closeout] ci-gate --repo 분기 스모크 (positive + fail-closed)"
@@ -1482,10 +1492,10 @@ for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKIL
   if grep -nE 'transition\.sh [a-z-]+ <repo>[^\n]*--reason (policy|conflict)' "$f" | grep -v -- '--note' | grep -q .; then
     echo "  ✗ : --note 없는 --reason policy|conflict 호출 — 사람이 답해야 할 질문 한 줄을 적으라"; exit 1; fi
   # 맨 needs-human 산문 작성 금지(#151) — 사유 없는 사람 대기는 loop-status 가 warn 하고 재개 스윕이 거부한다.
-  # 예외(#214): 4단계 배포 티켓의 발행 직후 라벨 보강 — needs-human 을 **deploy-wait 와 함께**
-  # 붙이는 줄은 dispatch 홀드를 새로 만드는 게 아니라, 발행 명령이 이미 명시한 두 라벨이
-  # 실제로 붙었는지 확인 후 그대로 되살리는 것뿐이다(hold:* 사유 라벨과 무관한 별개 티켓).
-  if grep -nE -- '--add-label "?needs-human"?' "$f" | grep -v -- '--add-label deploy-wait' | grep -q .; then
+  # #214 의 예외(4단계 배포 티켓 발행 직후 라벨 보강이 needs-human 을 deploy-wait 와 함께
+  # 되살리는 줄)는 #243 으로 **소비자가 사라져** 걷어냈다 — 그 보강은 이제 deploy-wait 하나만
+  # 붙인다. 예외를 남겨 두면 산문으로 needs-human 을 되돌릴 통로가 그대로 열려 있다.
+  if grep -nE -- '--add-label "?needs-human"?' "$f" | grep -q .; then
     echo "  ✗ $f: 산문 --add-label needs-human — runner-held/verify-held/closeout-blocked --reason 을 쓰라"; exit 1; fi
 done
 for f in SKILL.md SKILL.en.md; do grep -qF "resume-sweep.sh" "$f" || { echo "  ✗ $f: 재개 스윕 배선 없음"; exit 1; }; done

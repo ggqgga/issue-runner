@@ -455,24 +455,33 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 
   ```
   gh issue create --repo <repo> --title "배포 대기: PR #<pr> — <요약>[ (승격만)]" \
-    --body-file <본문파일> --label needs-human --label deploy-wait [--label <P1|P2>]
+    --body-file <본문파일> --label deploy-wait [--label <P1|P2>]
   ```
 
-  `needs-human` 은 deploy-bodat 등 기존 수집(사람 게이트 쿼리)과의 호환 때문에 유지하고,
-  `deploy-wait` 는 `loop-status.sh` 가 배포대기와 사람대기를 갈라 세는 버킷 라벨이다 —
-  **둘 다** 필요하다. 발행 뒤 `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"`
+  `deploy-wait` 는 `loop-status.sh` 가 배포대기와 사람대기를 갈라 세는 버킷 라벨이자
+  **deploy-cycle 루프가 이 티켓을 집는 레인 표식**이다 — 이 라벨 하나가 필수다.
+  **`needs-human` 은 일부러 붙이지 않는다 (#243, 플랜 2단계) — 되돌리지 마라.** 배포 대기
+  이슈의 소비자 셋이 전부 그 라벨을 안 본다: ⑴ 디스패치 게이트는 `label:agent-ready` 를
+  **요구**하는데(`scripts/eligible-issues.sh`) 배포 대기 이슈엔 그게 없어 애초에 후보가
+  아니고, ⑵ `scripts/loop-status.sh:474` 의 버킷 판별은 `deploy-wait` 가 `needs-human` 을
+  **이기며**, ⑶ deploy-bodat 수집은 라벨이 아니라 **제목 정규식**(`배포 대기: PR #<M>`)이다.
+  남는 건 `needs-human` 의 뜻(=사람이 직접 세운 정지)을 흐리는 중복 표식뿐이었다(#190).
+  발행 뒤 `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"`
   마커를 남긴 뒤 → **approval-required 로 종료**한다.
 - **라벨 부재 fail-closed — 티켓을 잃지 않는다 (6단계 파생과 동형).** `gh issue create` 는
   `--label` 에 레포에 없는 라벨이 있으면 **이슈 자체를 안 만들고 실패**한다. `setup-labels.sh`
   재실행 전의 기존 옵트인 레포엔 `deploy-wait` 가 없으므로, 이 규칙이 없으면 업그레이드 뒤
   첫 마감이 PR 은 머지된 채 티켓·마커 없이 끝난다. `'deploy-wait' not found` 류로 실패하면
   `$SCRIPTS/setup-labels.sh <repo>` 를 **1회** 호출한 뒤 같은 명령을 **1회만** 재시도한다.
-  재시도도 실패하면 더 반복하지 말고 **`--label needs-human` 만으로 발행**하고(티켓 유실 방지 —
-  `loop-status.sh` 는 제목 `배포 대기:` 폴백으로 여전히 배포대기로 센다) ④ Report 에
-  `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로 올린다.
+  재시도도 실패하면 더 반복하지 말고 **`--label` 을 하나도 주지 않고 발행**한다(티켓 유실
+  방지 — `loop-status.sh` 는 제목 `배포 대기:` 폴백으로 여전히 배포대기로 센다). 그 결과는
+  **라벨이 하나도 없는 이슈**이고 그 상태는 정상이 아니다 — deploy-cycle 이 레인 표식으로
+  못 찾으므로, ④ Report 에 `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로
+  올리고 **`$SCRIPTS/setup-labels.sh <repo>` 재실행**(= 사람이 손대야 할 일)을 요구한다.
+  조용히 넘어가지 마라.
 - **발행 직후 확인 (6단계와 동형).** `gh issue view <번호> --repo <repo> --json labels` 로
-  `needs-human` 과 `deploy-wait` 가 **둘 다** 붙었는지 확인하고, 빠진 게 있으면
-  `gh issue edit <번호> --repo <repo> --add-label needs-human --add-label deploy-wait` 로
+  `deploy-wait` 가 붙었는지 확인하고, 빠졌으면
+  `gh issue edit <번호> --repo <repo> --add-label deploy-wait` 로
   보강한다(이번 사고의 8/8 누락은 발행 명령이 산문 한가운데 있었던 것뿐 아니라 이 확인
   절 자체가 4단계에 없었기 때문이다 — 6단계는 있어서 안 샜다).
 
@@ -525,7 +534,9 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
 - **green (전부 통과)** → 배포 이슈 + 원본 PR 에 `✅ 스모크: <n>/<n> 통과` 코멘트(이
   코멘트가 5단계 완료 마커 — 재개 틱이 재스모크하지 않는다). 이어 배포 이슈에서
   `needs-human` 라벨을 제거하고 배포 이슈를 close 한다(남은 게이트가 검증뿐이고 그게
-  통과했으므로 closeout 이 종결 — 미결 결정의 권장안).
+  통과했으므로 closeout 이 종결 — 미결 결정의 권장안). 4단계 발행분엔 #243 이후
+  `needs-human` 이 애초에 없다 — 이 제거는 그 이전에 발행된 옛 이슈용 무해한 잔여
+  정리다(`--remove-label` 은 없는 라벨에 무해).
 - **fail (한 건이라도 실패)** → 직접 고치지 않고 기존 발행 경로: 자동수정 가능하면
   `references/spinoff-issue.md` 로 agent-ready 이슈(**6단계의 "발행 명령" 형태를 그대로
   쓴다** — `--label agent-ready --label spinoff --label <P1|P2>`. 여기도 산문으로 대신하지 마라),
@@ -569,7 +580,8 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
   `open + agent-ready + ¬agent:claimed` 라, 이 라벨이 없으면 이슈는 생성되고도
   issue-runner 가 **영원히 집지 않는다**(실증 2026-08-13 BoDAT: 6단계가 3축 라벨만 달고
   agent-ready 를 빠뜨려 열린 이슈 17건이 루프 밖에 재고로 남음 — 4단계는 명령에
-  `--label needs-human` 이 박혀 있어 186건 전건 정상이었다. 명령이 있는 단계는 안 새고,
+  라벨이 박혀 있어 186건 전건 정상이었다 — 당시 그 라벨은 `--label needs-human` 이었고,
+  지금은 `--label deploy-wait` 다(#243). 명령이 있는 단계는 안 새고,
   산문뿐인 단계가 샜다). 우선순위(`P1`/`P2`)도 함께 단다 — 없으면 정렬에서 최하위로
   밀린다(`P0 > P1 > P2 > 없음`). 그 밖의 축(BoDAT 의 `difficulty:*`·`frontend`(UI 를 건드릴 때만)·
   `needs:hardware` — 레포 CLAUDE.md 의 라벨 절이 SSOT)은 **레포 규약을 따라 추가**하되, 규약 라벨을 다느라

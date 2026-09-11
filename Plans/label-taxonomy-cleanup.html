@@ -65,7 +65,7 @@
 
     <rect x="8" y="58" width="238" height="34" rx="6" fill="none" stroke="#8a8580"/>
     <text x="18" y="73" fill="currentColor">closeout 4단계 배포 대기</text>
-    <text x="18" y="87" fill="#8a8580">+ deploy-wait — 배포 게이트</text>
+    <text x="18" y="87" fill="#8a8580">+ deploy-wait — 배포 레인(무인)</text>
 
     <rect x="8" y="102" width="238" height="34" rx="6" fill="none" stroke="#8a8580"/>
     <text x="18" y="117" fill="currentColor">full-cycle §7 배포 대기</text>
@@ -102,7 +102,7 @@
 <tr><td><span class="tag t-gate">hold:conflict</span></td><td>rebase/semantic 충돌</td><td>사람</td></tr>
 <tr><td><span class="tag t-gate">hold:policy</span></td><td>스펙·정책 결정 필요</td><td>재심 1회는 루프(#155) → 유지 판정 뒤 사람</td></tr>
 <tr><td>호출</td><td><span class="tag t-call">needs-human</span></td><td><b>사람이 직접 세웠다</b></td><td>사람</td></tr>
-<tr><td>배포</td><td><span class="tag t-dep">deploy-wait</span></td><td>배포·승격 게이트</td><td>사람(결정이 아니라 작업)</td></tr>
+<tr><td>배포</td><td><span class="tag t-dep">deploy-wait</span></td><td>배포·승격 게이트</td><td>deploy-cycle 루프(무인 — dev 최신화·승격·배포·종료)</td></tr>
 <tr><td>소유 레인</td><td><span class="tag t-lane">full-cycle</span></td><td>사람 세션 사이클이 들고 있다</td><td>—</td></tr>
 <tr><td>출처</td><td><span class="tag t-org">spinoff</span></td><td>부모 PR/이슈에서 갈라짐</td><td>—</td></tr>
 </table>

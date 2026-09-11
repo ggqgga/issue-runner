@@ -45,12 +45,14 @@ gh label create "flow:ready" --repo "$repo" --color 2DA44E \
   --description "그린라이트(머지 판정 ✅) — closeout 마감 대기" --force
 
 # closeout 파생·배포 대기 표식 (#144) — 지금까지 산문으로만 구분하던 두 종류의 이슈를
-# 목록에서 바로 가른다. `deploy-wait` 는 needs-human 과 **병행**한다(사람 손이 필요한
-# 이슈는 needs-human 뿐이라 배포 대기가 사람대기에 묻히던 문제).
+# 목록에서 바로 가른다. `deploy-wait` 는 **단독으로** 붙는다(#243) — needs-human 과 병행하던
+# 것을 멈췄다. 그 라벨을 배포 대기 이슈에서 읽는 소비자가 하나도 없었기 때문이다(디스패치
+# 게이트는 agent-ready 를 요구 · loop-status 버킷은 deploy-wait 가 이김 · deploy-bodat 수집은
+# 제목 정규식). 배포 대기는 `deploy-wait` 하나로 사람대기와 갈린다.
 gh label create "spinoff" --repo "$repo" --color D0D7DE \
   --description "closeout 6단계 파생 이슈 (부모 PR/이슈에서 갈라짐)" --force
 gh label create "deploy-wait" --repo "$repo" --color BF3989 \
-  --description "closeout 4단계 배포 대기 이슈 (needs-human 과 병행 — 사람대기와 구분용)" --force
+  --description "closeout 4단계·full-cycle §7 배포 대기 이슈 — deploy-cycle 레인 (사람 정지 아님)" --force
 # 루프 현황 고정 이슈(#163) — loop-status.sh --post 가 이 라벨로 찾아 본문을 덮어쓴다(레포당 1개).
 gh label create "loop-dashboard" --repo "$repo" --color 656D76 --force \
   --description "루프 현황 고정 이슈 — 세 루프가 매 틱 본문을 덮어쓴다(직접 편집 금지)"
