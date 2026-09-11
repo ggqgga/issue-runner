@@ -664,8 +664,9 @@ duplicate-issuance marker).
   the loop — while step 4, whose command literally carries `--label needs-human`, was
   correct on all 186. The step with a command did not leak; the prose-only step did).
   Attach a priority (`P1`/`P2`) too — without one it sorts last (`P0 > P1 > P2 > none`).
-  Add the other axes per repo convention (BoDAT: `difficulty:*`·`frontend`/`backend`·
-  `area:*`·`needs:hardware`), but **never let convention labels displace `agent-ready`** —
+  Add the other axes per repo convention (BoDAT: `difficulty:*`·`frontend` (only when UI is
+  touched)·`needs:hardware` — the repo CLAUDE.md label section is the SSOT), but **never let
+  convention labels displace `agent-ready`** —
   that is exactly the observed failure shape.
   `--label spinoff` is the provenance mark — `loop-status.sh`'s `파생` line counts spinoff
   issues in the window by this label alone (no title heuristic). Without it the issue is
