@@ -1947,7 +1947,7 @@ for tok in '**WIP 커밋 규율' \
     || { echo "  ✗ references/worker-template.md 에 WIP 커밋 규율 문구 '$tok' 없음"; exit 1; }
 done
 for tok in '**WIP commit discipline' \
-           'before entering a long stage' \
+           'Before entering a long stage' \
            'significant edits have piled up since your last commit' \
            'WIP: <one line>' \
            'exception to the green requirement' \
