@@ -898,6 +898,20 @@ check "full-cycle+hold:ladder 창 경과: note"             "$(has_ev note)"
 check "full-cycle+hold:ladder: resumed 아님"             "$(no_ev resumed)"
 check "full-cycle+hold:ladder: 편집 0회"                 "$(none 'issue edit')"
 
+# ⓔ (사전 리뷰) deploy_wait_row 판정 자체가 실패(labels 모양이 배열이 아님) → warn·무편집
+# fail-open 이면 "배포 대기 아님" 으로 폴백해 그대로 재개해버린다 — 이 이슈가 막으려는
+# 사고를 판정 실패 경로에서 재현하는 것. number·updatedAt 추출은 .labels 를 안 보므로
+# 위 창 판정까지는 정상 통과하고, deploy_wait_row 의 `.labels[].name` 에서만 깨진다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+jq -n --argjson n 42 --arg u "$(ts 200)" '[{number:$n, labels:"broken", updatedAt:$u}]' > "$tmp/ladder.json"
+run
+check "ⓔ 판정 실패: warn"                                "$(has_ev warn)"
+check "ⓔ 판정 실패: 문구"                                "$(saysl '배포 대기 판정 실패')"
+check "ⓔ 판정 실패: resumed 아님"                        "$(no_ev resumed)"
+check "ⓔ 판정 실패: note 아님"                           "$(no_ev note)"
+check "ⓔ 판정 실패: 편집 0회"                            "$(none 'issue edit')"
+check "ⓔ 판정 실패: 코멘트 0회"                          "$(none 'issue comment')"
+
 if [ "$skip" -gt 0 ]; then
   echo "resume-sweep: $pass passed, $fail failed, $skip skipped (python3 없음)"
 else

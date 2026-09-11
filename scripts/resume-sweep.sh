@@ -315,7 +315,14 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
   # 없음" 가드를 안 타 note 가 안 나왔다 — 그 note 를 여기서 대신 낸다(중복 없이, 갈래를
   # 옮길 뿐). 상한 소진 여부와 무관하게 여기서 먼저 걸러지므로 승격(escalate) 갈래도
   # 같은 제외를 받는다(요청 ③) — 아래로 내려가는 코드 경로 자체가 없다.
-  dw_tsv=$(deploy_wait_row "$row") || dw_tsv=""
+  # 판정 자체가 실패(row 가 예상 모양이 아님 등)하면 "배포 대기 아님" 으로 폴백하지
+  # 않는다 — 그건 이 함수가 fail-open 이 되어 정확히 이 이슈가 막으려는 사고(사람 게이트를
+  # 조용히 벗겨내는 것)를 판정 실패 경로에서 재현한다(사전 리뷰 지적). rc 로 조회 실패와
+  # 빈 결과(배포 대기 아님)를 가른다 — 이 파일이 read_state 등에서 이미 쓰는 규율과 같다.
+  if ! dw_tsv=$(deploy_wait_row "$row"); then
+    emit_warn "$repo" "$num" "배포 대기 판정 실패(라벨 파싱) — 재개 대상인지 확정 못 해 건드리지 않는다"
+    return 0
+  fi
   dwlabel=${dw_tsv#*$'\t'}
   if [ -n "$dwlabel" ]; then
     emit_note "$repo" "$num" "배포 대기(라벨 $dwlabel) — needs-human 이 정상 상태라 warn 아님"
