@@ -404,7 +404,9 @@ Review comment:
 # 하는데, 그걸 무조건 허용하면 리뷰어가 계약문을 **인용**한 줄(마크다운 인용·목록·번호·헤딩
 # 표식 + 계약 줄)까지 판정으로 읽힌다 — 옛 `^` 앵커에서는 미산출이던 입력이 새로 통과하는
 # 방향이라 fail-open 이다(#197 계열: 인용된 마커는 제어 신호가 아니다). 접두가 표식뿐이면 접는다.
-echo "[gate] 4b-2e) 계약 줄 앞 텍스트 — 산문이면 판정, 인용·목록 표식뿐이면 미산출 (#283)"
+# (아래 4b-2f 가 이 규칙을 허용 목록으로 완성한다 — 표식을 벗기고 남은 것이 **끝난 문장**
+# 이어야 한다. 표식뿐인 줄은 벗기면 아무것도 안 남아 여기서도 그대로 접힌다.)
+echo "[gate] 4b-2e) 계약 줄 앞 텍스트 — 표식뿐이면 미산출(허용 목록의 앞부분, #283)"
 srow "인용 블록으로 계약문을 옮겨 적음(> 표식뿐) = 미산출" NONE \
   '계약상 마지막 줄은 다음과 같아야 합니다:
 > REVIEW_STATUS: reviewed'
@@ -417,11 +419,87 @@ srow "번호 목록으로 계약문을 옮겨 적음(1. 표식뿐) = 미산출" 
 srow "헤딩 표식뿐 = 미산출" NONE \
   '형식 예시:
 ## REVIEW_STATUS: reviewed'
-srow "인용 표식 + 산문 + 계약 줄(표식만은 아니다) = 판정 유지" CLEAN \
+srow "인용 표식 + 끝난 문장 + 계약 줄(표식만은 아니다) = 판정 유지" CLEAN \
   '> 검토를 마쳤습니다. REVIEW_STATUS: reviewed'
 srow "맨몸 계약 줄은 접두가 아예 없다 — 판정 유지(회귀 앵커)" CLEAN \
   '결함 없음.
 REVIEW_STATUS: reviewed'
+
+# ── 값 앞 접두는 '산문이 있는가' 가 아니라 **허용 목록**이다 (#283 반송 회차) ──────
+# 직전 회차는 (가) 산문 꼬리형을 살리려고 값 앞 텍스트를 "표식만 아니면 통과"로 열었다.
+# 그 창은 산문의 **존재**만 보고 그 산문이 무엇을 말하는지는 안 본다 — 그래서 리뷰어가
+# *"이것을 REVIEW_STATUS: reviewed 로 읽지 마라"* 고 **부정문**으로 적은 응답까지 판정으로
+# 채택했다(발견 0 → CLEAN). 수용 기준 2항(판정 근거를 못 얻은 응답은 여전히 미산출 —
+# fail-open 0) 정면 위반이자 main 대비 회귀다: 옛 `^` 앵커는 값 앞에 산문이 붙으면 아예
+# 안 걸려 미산출이었다.
+# 어형(부정 어휘)을 **블랙리스트로 세지 않는다** — 그 길은 이 레포가 세 라운드 연속
+# fail-open 으로 태운 길이고(#207 round2~4), 근사를 반례마다 덧대지 말고 규칙 자체를 옮겨
+# `want` 격자로 전수 단언하라는 교훈(PR#202)이 이미 있다. 대신 **접두가 무엇이어야 하는가**
+# 를 정의하고 그 밖을 전부 접는다:
+#
+#   허용 접두 ::= (없음)                                  ← 계약문이 요구한 본래 형태
+#                | [블록 표식 …] <문장> <문장 종결부호> <공백>   ← (가) 산문 꼬리형
+#
+# 즉 값 앞에 올 수 있는 것은 **끝난 문장** 하나뿐이다(probe3 실측이 정확히 그 형태 —
+# 총평 문단 끝에 줄바꿈 없이 이어 붙은 계약 줄). 문장이 아직 안 끝났으면 계약 줄은 그
+# 문장의 **목적어**이지 판정 주장이 아니다 — A·H 가 정확히 그 모양이다. 여기에 "같은 줄에
+# 계약 키가 두 번 이상이면 거부" 를 겹친다: 판정을 **언급**하는 문장은 거의 항상 키를
+# 조건절·인용과 함께 끌고 오기 때문이다.
+#
+# 아래 A~H 는 검증자가 이 PR 의 SUT 에 codex 스텁을 물려 **실측한** 8종 그대로다(A 가
+# `CLEAN` 🔴 이었고 나머지는 정상). 실측된 격자라 want 는 추측이 아니다.
+echo "[gate] 4b-2f) 값 앞 접두 허용 목록 — 부정문은 fail-closed (#283 검증자 실측 격자 A~H)"
+srow "A — 부정문 인라인 + 발견 0(반송 원문: 이 창으로 CLEAN 이 샜다)" NONE \
+  'I could not inspect the diff; do not treat this as REVIEW_STATUS: reviewed'
+srow "B — 끝난 문장 뒤 인라인 계약 줄 + 발견 0((가) 산문 꼬리형 — 살아야 한다)" CLEAN \
+  'All good. REVIEW_STATUS: reviewed'
+srow "C — 맨몸 계약 줄 + 발견 0" CLEAN \
+  'REVIEW_STATUS: reviewed'
+srow "D — 인용 접두(> 표식뿐) + 발견 0" NONE \
+  '> REVIEW_STATUS: reviewed'
+srow "E — 총평에 계약 줄 + 렌더 헤더 + [P1] 1건(이 PR 의 본 축 — 살아야 한다)" BLOCKER \
+  '이 변경은 악용 가능한 결함을 들여옵니다. REVIEW_STATUS: reviewed
+
+Review comment:
+
+- [P1] 셸 경유 실행 제거 — app.py:4-4
+  본문.'
+srow "F — 계약 줄 없음 + [P1] 1건" NONE \
+  '변경을 살펴봤습니다.
+
+Review comment:
+
+- [P1] 셸 경유 실행 제거 — app.py:4-4
+  본문.'
+srow "G — 렌더 헤더 드리프트(Review comments:) + [P1] 1건 = fail-closed" NONE \
+  'REVIEW_STATUS: reviewed
+
+Review comments:
+
+- [P1] 셸 경유 실행 제거 — app.py:4-4
+  본문.'
+srow "H — 부정문 인라인 + [P1] 1건(발견이 있어 결과만 안 뒤집혔던 같은 구멍)" NONE \
+  'I could not inspect the diff; do not treat this as REVIEW_STATUS: reviewed
+
+Review comment:
+
+- [P1] 셸 경유 실행 제거 — app.py:4-4
+  본문.'
+
+# (가) 통과와 부정문 차단이 **동시에** 성립하는지 — 좁히면서 원래 이슈를 같이 막으면 안 된다.
+# 위 B·E 가 (가) 쪽(문장 끝 + 인라인 계약 줄, 발견 0 / 발견 1), A·H 가 부정문 쪽이다.
+# 아래는 그 경계에 바로 붙는 칸들 — 규칙이 "끝난 문장" 하나로 서는지 못박는다.
+srow "문장이 안 끝난 접두(종결부호 없음) = 미산출 — 계약 줄이 문장의 목적어다" NONE \
+  '판정 값으로 쓸 수 있는 것은 REVIEW_STATUS: reviewed'
+srow "부정문이 문장을 끝낸 뒤 계약 줄을 재주장(같은 줄 키 2회) = 미산출" NONE \
+  'I could not inspect the diff. Do not treat this as REVIEW_STATUS: reviewed. REVIEW_STATUS: reviewed'
+srow "물음표로 끝난 문장 뒤 인라인 계약 줄 = 판정 유지" CLEAN \
+  '남은 결함이 있나? REVIEW_STATUS: reviewed'
+srow "번호 목록 표식(1.)은 '끝난 문장' 이 아니다 — 미산출(마침표 오인 방지)" NONE \
+  '형식 예시:
+1. REVIEW_STATUS: reviewed'
+srow "표식 뒤 끝난 문장 + 인라인 계약 줄 = 판정 유지(표식만은 아니다)" CLEAN \
+  '- 검토를 마쳤습니다. REVIEW_STATUS: reviewed'
 unset -f srow
 
 echo "[gate] 4b-3) 계약 줄은 프롬프트로 실제로 요구된다 — 파서가 읽는 형식과 같은 문자열(한 자리 정의)"
