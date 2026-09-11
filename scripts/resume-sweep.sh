@@ -8,8 +8,8 @@
 #
 # 출력(JSON lines):
 #   mirror_cleared — 사람이 이슈에서만 푼 홀드의 **PR 사본**을 뗐다(#265, ④ 갈래). 이슈는
-#               건드리지 않는다(이미 깨끗하다). number=연결 이슈 · pr=고친 PR ·
-#               issue_state=그 이슈의 OPEN/CLOSED · removed=뗀 라벨.
+#               건드리지 않는다(이미 깨끗하다). number=짝 이슈 · pr=고친 PR ·
+#               issue_state=그 이슈의 OPEN/CLOSED · removed=뗀 라벨(정렬·콤마 구분).
 #   resumed   — 라벨을 되돌려 재디스패치 가능 상태로. attempt = 이번이 몇 번째 재개인가.
 #   escalated — 재개 상한 초과 → hold:policy 로 승격(needs-human 유지). 그때만 사람.
 #   waiting   — 아직 창(RESUME_AFTER_MIN) 안. minutes = 마지막 갱신 후 경과 분.
@@ -40,8 +40,11 @@
 # 그런데 그 되돌림은 **이 스윕이 스스로 재개·승격할 때**뿐이었다 — 즉 `hold:ladder` 자동
 # 재개 한 경로. `hold:policy`·`hold:conflict` 는 정의상 **사람이 푸는데**, 사람이 푸는
 # 경로에는 PR 사본을 되돌리는 자리가 어디에도 없었다(#265). 그래서 ④ 갈래를 둔다:
-# 이슈에 정지 라벨이 하나도 없는데 연결된 **열린** PR 에 남아 있으면 **PR 쪽만** 뗀다
-# (이슈는 이미 깨끗하니 건드릴 것이 없다 — 이 갈래는 재개가 아니라 미러 정리다).
+# 이슈에 정지 라벨이 하나도 없는데 짝이 되는 **열린** PR 에 남아 있으면 **PR 쪽만** 뗀다
+# (이슈는 이미 깨끗하니 건드릴 것이 없다 — 이 갈래는 재개가 아니라 미러 정리다). 짝으로
+# 인정하는 것은 head 가 `agent/issue-*` 이고 `closingIssuesReferences` 로 링크가 증명된
+# PR 뿐이다 — 사람이 연 PR 의 표식과 `Refs` 전용 PR 의 정상 홀드를 벗기지 않기 위해서다
+# (규칙 전문은 mirror_row 주석, `loop-status.sh` 의 warn 과 같은 규칙이어야 한다).
 # 부착 방향(이슈엔 있는데 PR 엔 없음)은 이 갈래의 축이 아니다 — 라벨을 **붙이는** 쪽은
 # `transition.sh` 의 몫이고, 여기서 붙이면 사람 게이트를 스윕이 만들어 내는 셈이 된다.
 set -uo pipefail
@@ -54,12 +57,6 @@ LADDER_RESUME_LIMIT="${LADDER_RESUME_LIMIT:-2}"
 # 테스트가 상한 도달 경로를 200건짜리 픽스처 없이 재현하도록 env 로 낮출 수 있게 열어 뒀다
 # (운영에서 내리는 값이 아니다 — 내리면 그만큼 잘린다. 잘림 자체는 warn 으로 드러난다).
 LIST_LIMIT="${RESUME_LIST_LIMIT:-1000}"   # gh issue list 가 내부 페이지네이션(100/페이지)으로 채운다 — #151
-
-# 정지 라벨 — 기계 정지(transition.sh 의 verify-held·closeout-blocked·runner-held)가 이슈와
-# PR **양쪽**에 붙이는 집합이다(#244 가 보존 대상으로 적어 둔 규약). 값이 한 자리인 이유:
-# #244 가 `needs-human` 을 기계 정지에서 빼는 날 고칠 곳이 여기 하나여야 ④ 갈래 전체가
-# 따라온다. 순서가 곧 `--remove-label` 인자와 `removed` 필드의 순서다.
-STOP_LABELS="needs-human hold:conflict hold:policy hold:ladder"
 
 # 값 검증은 **모든 GitHub 호출 앞**에 둔다. `[ "$x" -lt "$y" ]` 는 정수가 아니면 bash 가
 # 에러를 내고 거짓으로 떨어지는데, set -e 가 아니라 그대로 흘러 "창이 지났다"·"상한을
@@ -186,6 +183,22 @@ to_epoch() {
 
 has_label() {  # has_label <콤마목록> <라벨>
   case ",$1," in *",$2,"*) return 0 ;; esac
+  return 1
+}
+
+# 정지 라벨이 하나라도 있나 — 기계 정지(transition.sh 의 verify-held·closeout-blocked·
+# runner-held)가 이슈와 PR **양쪽**에 붙이는 표식이다(#244 가 보존 대상으로 적어 둔 규약).
+# 열거가 아니라 **접두** 판별인 이유: 네 게이트(eligible-issues·claim-issue·verify-eligible·
+# closeout-eligible)가 전부 `hold:` 접두로 보므로(#242), 사유가 하나 늘면(`hold:<새사유>`)
+# 게이트는 그 PR 을 제외하는데 이 갈래만 못 봐서 **이 이슈가 고치려는 조용한 좌초가 그대로
+# 재현된다**. `needs-human` 이 #244 로 기계 정지에서 빠져도 나머지 절반이 판정을 이어받는다.
+# 라벨 경계는 콤마다 — `,hold:` 로 물어야 `hold:` 로 **시작하지 않는** 라벨(`my-hold:x`)이
+# 안 걸린다(eligible-issues.sh:75 와 같은 형태).
+# 쌍둥이: `loop-status.sh` 의 `stops_of`(jq). 한쪽을 고치면 다른 쪽도 같이 고쳐라 —
+# 경보와 교정이 다른 집합을 보면 한쪽이 거짓말을 한다.
+has_stop() {  # has_stop <콤마목록>
+  case ",$1," in *,needs-human,*) return 0 ;; esac
+  case ",$1," in *,hold:*) return 0 ;; esac
   return 1
 }
 
@@ -428,24 +441,33 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate>
 # fail-safe 방향: 판정에 실패하면 **떼지 않는다**. 사람 게이트를 벗겨내는 쪽으로 틀리면
 # #151 재현이다. 편집 **전** 실패는 warn(그대로 두면 다음 틱이 다시 본다), 편집 **후**
 # 실패는 warn_after_edit(상태가 반쯤 바뀌었으니 사람이 본다) — 이 파일의 기존 구분 그대로.
-mirror_row() {  # mirror_row <PR row-json> — "<PR><TAB><이슈|빈값><TAB><정지라벨 공백목록>"
-  # 연결 이슈는 `closingIssuesReferences` 우선, 없으면 head `agent/issue-N` 폴백 —
-  # `loop-status.sh` 의 `linked()` 와 **같은 규칙**이다(같은 질문에 두 답이 나오지 않게).
-  printf '%s' "$1" | jq -r --arg s "$STOP_LABELS" '
-    ($s | split(" ")) as $stop
-    | [.labels[]?.name] as $ln
-    | (if ((.closingIssuesReferences // []) | length) > 0
+# ★짝짓기 규칙 — `loop-status.sh` 의 정지 미러 warn 과 **한 글자도 다르지 않아야 한다**★
+# (경보와 교정의 대상 집합이 갈리면 한쪽이 거짓말을 한다). 짝으로 인정하는 조건 둘:
+#   ⑴ head 가 `agent/issue-*` — 루프가 판 브랜치만. 사람이 연 `feat/*` PR 에 사람이 직접
+#      붙인 `needs-human`·`hold:*` 를 루프가 떼면, 이 파일 ②갈래가 세운 규율("사유 없는
+#      needs-human 은 사람이 붙였을 수 있으니 손대지 않는다")을 정면으로 어긴다.
+#      `loop-status.sh` 의 무소속 warn 도 같은 경계로 좁혀 둔다(#188).
+#   ⑵ `closingIssuesReferences` 로 **증명된** 링크만. head 의 `agent/issue-N` 폴백은 여기서
+#      쓰지 않는다 — 브랜치 이름은 "이 홀드가 이슈 #N 과 한 쌍으로 붙었다" 를 증명하지
+#      못한다. `Refs #N`(Closes 아님) PR 은 전이가 `issue=-` 로 걸려 **PR 에만** 정지가
+#      남는 것이 정상인데, head 로 이으면 그 정상 상태가 불일치로 둔갑해 사람 게이트를
+#      벗겨낸다. ①의 `list_mirror_prs`(head 기준)와 규칙이 다른 것은 의도다: 저쪽은
+#      **이 스윕이 방금 되돌린 이슈**의 PR 이라 짝이 스윕 자신의 행동으로 정해져 있다.
+# 둘 중 하나라도 아니면 이슈 칸이 빈 값으로 나가고, 호출부가 그대로 넘긴다(무편집·무이벤트).
+mirror_row() {  # mirror_row <PR row-json> — "<PR><TAB><짝 이슈|빈값><TAB><정지라벨 공백목록>"
+  printf '%s' "$1" | jq -r '
+    [.labels[]?.name] as $ln
+    | (if (((.headRefName // "") | test("^agent/issue-"))
+           and (((.closingIssuesReferences // []) | length) > 0))
        then (.closingIssuesReferences[0].number | tostring)
-       elif ((.headRefName // "") | test("^agent/issue-[0-9]+"))
-       then (.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n)
        else "" end) as $issue
     | [(.number|tostring), $issue,
-       ($stop | map(select(. as $x | $ln | index($x) != null)) | join(" "))]
+       ($ln | map(select(. == "needs-human" or startswith("hold:"))) | sort | join(" "))]
     | @tsv' 2>/dev/null
 }
 
 sweep_hold_mirror() {  # sweep_hold_mirror <repo> <PR row-json>
-  local repo="$1" row="$2" tsv prnum rest issue stops st istate ilabels lab removed back
+  local repo="$1" row="$2" tsv prnum rest issue stops st st2 istate ilabels lab removed back
   local args=()
 
   tsv=$(mirror_row "$row") || tsv=""
@@ -459,8 +481,8 @@ sweep_hold_mirror() {  # sweep_hold_mirror <repo> <PR row-json>
   stops=${rest#*$'\t'}
 
   [ -n "$stops" ] || return 0   # 정지 라벨이 없는 PR = 정상(대다수) — 조회도 하지 않는다
-  # 연결 이슈가 없는 PR 은 `transition.sh <전이> <repo> - <pr>` 의 정식 형태다(연결 이슈
-  # 없는 PR 의 홀드는 PR 에만 남는 게 맞다). 대조 상대가 없으니 판정 자체가 성립하지 않는다.
+  # 짝이 없다(사람 세션 PR · Closes 링크 없는 PR · 연결 이슈 없는 PR). 근거는 위 짝짓기
+  # 규칙 주석 — 셋 다 "PR 에만 정지가 남는 것이 정상일 수 있는" 상태라 대조가 성립하지 않는다.
   [ -n "$issue" ] || return 0
 
   if ! st=$(read_labels_state "$repo" "$issue"); then
@@ -470,9 +492,7 @@ sweep_hold_mirror() {  # sweep_hold_mirror <repo> <PR row-json>
   istate=${st%%$'\t'*}
   ilabels=${st#*$'\t'}
   # 이슈에 정지 라벨이 **하나라도** 남아 있으면 사람 게이트가 살아 있다 — 무편집.
-  for lab in $STOP_LABELS; do
-    has_label "$ilabels" "$lab" && return 0
-  done
+  has_stop "$ilabels" && return 0
 
   # 레포에 없는 라벨은 `--remove-label` 도 편집 **전체**를 실패시킨다(transition.sh:67) —
   # PR 이 실제로 달고 있는 것만 싣는다.
@@ -488,12 +508,27 @@ sweep_hold_mirror() {  # sweep_hold_mirror <repo> <PR row-json>
     emit_warn_after_edit "$repo" "$issue" "PR #$prnum 정지 미러 readback 조회 실패 — 반영 여부 미상"
     return 0
   fi
-  for lab in $STOP_LABELS; do
-    if has_label "$back" "$lab"; then
-      emit_warn_after_edit "$repo" "$issue" "PR #$prnum 정지 미러 readback 불일치(정지 라벨이 남아 있다)"
-      return 0
-    fi
-  done
+  if has_stop "$back"; then
+    emit_warn_after_edit "$repo" "$issue" "PR #$prnum 정지 미러 readback 불일치(정지 라벨이 남아 있다)"
+    return 0
+  fi
+  # ── 경합 가드 — **편집 뒤** 이슈를 한 번 더 읽는다 ─────────────────────────
+  # `transition.sh` 는 **PR 을 먼저, 이슈를 나중에** 편집한다(그 파일의 전이 순서). 그래서
+  # 기계 정지가 막 걸리는 중이면 "PR 엔 이미 붙었고 이슈엔 아직" 인 창이 존재하고, 그 창에
+  # 들어오면 이 갈래가 **방금 붙은 정지를** PR 에서 도로 떼어 낸다. 편집 **전** 재조회로는
+  # 이 창을 못 닫는다 — 그 시점엔 이슈가 정말로 깨끗하기 때문이다(sweep_issue 의 경합
+  # 가드가 반대 방향의 경합만 잡는 것과 같은 한계). 그래서 뒤에서 한 번 더 읽어, 정지가
+  # 생겼으면 `mirror_cleared` 로 위장하지 않고 사람이 보게 한다.
+  # 되붙이지는 않는다: 라벨을 **붙이는** 것은 transition.sh 의 몫이고(이 갈래는 해제 방향
+  # 전용), 그쪽은 자기 readback 으로 이미 실패를 외친다.
+  if ! st2=$(read_labels_state "$repo" "$issue"); then
+    emit_warn_after_edit "$repo" "$issue" "PR #$prnum 정지 미러 해제 후 이슈 #$issue 재조회 실패 — 경합 여부 미상"
+    return 0
+  fi
+  if has_stop "${st2#*$'\t'}"; then
+    emit_warn_after_edit "$repo" "$issue" "PR #$prnum 정지 미러 해제 뒤 이슈 #$issue 에 정지 라벨이 생겼다(기계 정지와 경합) — 사람 확인 필요"
+    return 0
+  fi
   # 상태는 GitHub 에서 온 문자열이라 그대로 JSON 에 박지 않는다 — 아는 값만 싣는다
   # (모르는 값이면 빈 문자열. 이 파일의 _json_int·_json_token 과 같은 규율).
   case "$istate" in OPEN|CLOSED) ;; *) istate="" ;; esac
