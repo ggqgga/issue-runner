@@ -6,9 +6,12 @@
 # 반송 마커 판정 자체의 SSOT 테스트다(closeout-eligible.test.sh 는 그 판정이 후보
 # 필터에 **배선돼 있는지**를 잰다 — 두 층을 일부러 나눠 둔다).
 #
-# 이 헬퍼가 답하는 질문은 하나다: "최신 반송 마커가 최신 `머지 판정: ✅` 보다 뒤인가."
+# 이 헬퍼가 답하는 질문은 두 개다: "최신 반송 마커가 최신 `머지 판정: ✅` 보다 뒤인가"
+# 그리고(#218 attempt 2) "그 마커보다 뒤에 새 `머지 판정: ⚠ 보류` 가 있는가."
 #   ok      = 반송 마커가 없거나, 그 뒤에 새 ✅ 가 찍혔다 → 마감 레인이 만져도 된다
-#   bounced = 반송이 최신이다 → **워커 레인 소유**(closeout 무접촉)
+#   bounced = 반송이 최신이고, 그 뒤에 새 ⚠ 도 없다 → **워커 레인 소유**(closeout 무접촉)
+#   held    = 반송이 최신이지만 그 뒤에 새 ⚠ 가 찍혔다 → needs-human 승격 대상
+#             (재디스패치로는 가지 않는다 — 살아있는 교체 워커와 충돌하는 건 그 갈래다)
 #   exit 1  = 판정 못 함 → 호출자가 fail-closed 로 받는다(증명 실패는 통과가 아니다)
 #
 # bats 미도입 레포라 closeout-eligible.test.sh 와 같은 순수 bash assert 관행을 따른다.
@@ -353,6 +356,47 @@ else
   fail=$((fail + 1))
   echo "  ✗ 격자 실행 건수 — 기대=$grid_expected(마커 $grid_markers × 12) 실제=$grid_ran"
 fi
+# ── held(#218 attempt 2 — codex BLOCKER) ─────────────────────────────────
+# attempt 1 은 bounced 를 무조건 조기 종료해, 반송 뒤 교체 워커가 새로 올린
+# `머지 판정: ⚠ 보류` 를 영원히 못 봤다. ✅ 와 대칭으로 ⚠ 도 마지막 매칭 인덱스로 잰다.
+
+# 13) 반송 마커 → 그 뒤 새 `⚠ 보류` → held. #218 attempt 2 가 닫는 바로 그 구멍
+#     (bodat PR #225 검증자 리뷰 재현: "a later ⚠ verdict never becomes held").
+run_case "반송 마커 뒤 새 ⚠ 보류→held" held '[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-09-11T00:00:00Z"},
+  {"body":"검증자 리뷰: BLOCKER 1건\n<!-- bodat:worker -->","createdAt":"2026-09-11T00:30:00Z"},
+  {"body":"재검증 실패: #218 — codex BLOCKER (attempt 1)\n<!-- bodat:worker -->","createdAt":"2026-09-11T00:50:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-09-11T02:00:00Z"}
+]'
+
+# 14) `⚠ 보류` → 그 뒤 반송 마커(활동 없음, "반송 직후" 형상) → bounced 유지.
+#     ⚠ 가 마커보다 **앞**이면 그건 반송 뒤 활동이 아니라 반송 전에 이미 쌓인 낡은
+#     신호다 — held 로 승격하면 살아있는 반송 회차를 사람 대기로 잘못 끊는다.
+run_case "⚠ 보류 뒤 반송 마커(활동 없음)→bounced 유지" bounced '[
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-09-11T00:00:00Z"},
+  {"body":"재검증 실패: #218 — codex BLOCKER (attempt 1)\n<!-- bodat:worker -->","createdAt":"2026-09-11T00:50:00Z"}
+]'
+
+# 15) held 뒤 재반송(다른 마커가 또 달림) → bounced. 최신 반송 마커가 다시 ⚠ 보다
+#     뒤로 가면 워커 레인 소유로 되돌아간다 — ✅ 축의 "최신이 이긴다" 규칙과 대칭.
+run_case "held 뒤 재반송→bounced(최신 마커가 이긴다)" bounced '[
+  {"body":"재검증 실패: #218 — codex BLOCKER (attempt 1)\n<!-- bodat:worker -->","createdAt":"2026-09-11T00:50:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-09-11T01:00:00Z"},
+  {"body":"재디스패치: #218 — 완결 유실(검증 전 사망) (attempt 2)\n<!-- bodat:worker -->","createdAt":"2026-09-11T01:10:00Z"}
+]'
+
+# 16) 동초 — 반송 마커와 같은 초에 ⚠ 후행 → held. 6)·7) 의 ✅ 대칭 케이스와 같은
+#     이유(GitHub 코멘트 시각은 초 단위라 인덱스로만 가려낼 수 있다).
+run_case "동초·⚠ 후행→held" held '[
+  {"body":"재검증 실패: #218 — codex BLOCKER <!-- bodat:worker -->","createdAt":"2026-09-11T00:50:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-09-11T00:50:00Z"}
+]'
+
+# 17) 영문 `Merge verdict: ⚠` 도 held 를 낸다(한/영 병행 워커, ✅ 의 영문 게이트와 대칭).
+run_case "영문 Merge verdict ⚠ 후행→held" held '[
+  {"body":"재검증 실패: #218 — codex BLOCKER <!-- bodat:worker -->","createdAt":"2026-09-11T00:50:00Z"},
+  {"body":"Merge verdict: ⚠ hold — policy question\n<!-- bodat:worker -->","createdAt":"2026-09-11T02:00:00Z"}
+]'
 
 # 12) 인자 누락 — 호출자 실수를 조용한 `ok` 로 만들지 않는다.
 rc=0

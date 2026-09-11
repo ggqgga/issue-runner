@@ -5,14 +5,22 @@
 #
 #   stdout `ok`      exit 0  반송 마커가 없거나, 그 뒤에 새 `머지 판정: ✅` 가 찍혔다
 #                            → 마감 레인(closeout)이 만져도 된다
-#   stdout `bounced` exit 0  최신 반송 마커가 최신 ✅ 보다 뒤다
-#                            → **워커 레인 소유**. closeout 은 무접촉이어야 한다
+#   stdout `bounced` exit 0  최신 반송 마커가 최신 ✅ 보다 뒤고, 그 마커보다 뒤에 새
+#                            `머지 판정: ⚠ 보류` 도 없다 → **워커 레인 소유**. closeout
+#                            은 무접촉이어야 한다
+#   stdout `held`    exit 0  최신 반송 마커보다 **뒤에** 새 `머지 판정: ⚠ 보류` 가
+#                            찍혔다(#218 attempt 2 — codex BLOCKER: 반송을 무조건 조기
+#                            종료하면 반송 뒤 워커가 명시적으로 올린 보류 신호가 묻힌다)
+#                            → closeout 이 needs-human 으로 승격해야 한다(finish-classify
+#                            의 `held` 행과 같은 조치). `stale_reverify`/`stale_inline` 은
+#                            이 값으로 승격하지 않는다 — 살아있는 교체 워커와 충돌하는
+#                            건 재디스패치 쪽이라 그 갈래는 계속 막는 게 안전하다.
 #   무출력           exit 1  판정 못 함(코멘트 조회·파싱 실패·인자 누락)
 #
-# 호출자 계약은 한 줄이다 — **출력이 정확히 `ok` 일 때만 진행**하라. 판정 실패(exit 1)와
-# `bounced` 를 같은 방향(무접촉)으로 받는 것이 fail-closed 다: 반송되지 않았음을
-# *증명하지 못한* 상태를 통과로 처리하면 그게 fail-open 이다(PR#139 교훈 — 빈 결과와
-# 실패를 구분하고, 실패는 가드 분기로 보내라).
+# 호출자 계약은 두 줄이다 — **출력이 정확히 `ok` 일 때만 정상 진행**하고, `held` 은
+# needs-human 으로 갈라라. 판정 실패(exit 1)와 `bounced` 를 같은 방향(무접촉)으로 받는
+# 것이 fail-closed 다: 반송되지 않았음을 *증명하지 못한* 상태를 통과로 처리하면 그게
+# fail-open 이다(PR#139 교훈 — 빈 결과와 실패를 구분하고, 실패는 가드 분기로 보내라).
 #
 # ── 왜 스크립트로 뽑았나 (#196) ──────────────────────────────────────────
 # 소비자가 둘이고 실행 주체가 다르다:
@@ -129,6 +137,19 @@ fi
 # (= 교체 워커가 지금 일하는 중이라는 가장 강한 증거)가 반송을 덮어 `ok` 가 된다.
 # ✅ 하나만 반송을 해제하게 두면 두 형상 모두 안전한 쪽으로 떨어진다 — 사고 재현
 # 픽스처(✅ 0건)도 종전 규약(반송 뒤 새 ✅ 면 복귀)도 같은 식으로 맞는다.
+#
+# ── held(#218 attempt 2) ──────────────────────────────────────────────
+# attempt 1 은 `bi > vi`(✅ 없음 포함)를 전부 `bounced` 하나로 묶어 무조건 조기
+# 종료했다 — codex BLOCKER: 반송 뒤 교체 워커가 명시적으로 올린 `머지 판정: ⚠ 보류`
+# 조차 영원히 안 보여 needs-human 승격이 묻힌다("Moving the bounce gate ahead of all
+# classification permanently excludes... a later ⚠ verdict never becomes held").
+# ✅ 와 대칭으로 ⚠ 도 **같은 인덱스 규칙**(마지막 매칭, createdAt 아님)으로 잰다 —
+# `bi < hi`(반송 마커보다 ⚠ 가 뒤)면 "반송 직후" 가 아니라 "반송 뒤 활동이 쌓인
+# 상태" 다. 단, `held` 은 `ok` 가 아니다 — 마감 레인이 `stale_reverify` 재디스패치로
+# 새지 않도록 호출자가 별도로 갈라야 한다(살아있는 교체 워커와 충돌하는 건
+# 재디스패치 쪽이지 needs-human 쪽이 아니다). `bi`·`vi`·`hi` 모두 같은 배열에서 나온
+# 인덱스라 새 술어를 만드는 게 아니라 bounce-state 자신의 판정 규칙을 ⚠ 에도 그대로
+# 적용하는 것뿐이다.
 state=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
   [.[].body] as $bodies
   | ([ $bodies | to_entries[]
@@ -140,13 +161,16 @@ state=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
   | ([ $bodies | to_entries[]
        | select(.value | startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))
        | .key ] | last) as $vi
+  | ([ $bodies | to_entries[]
+       | select(.value | startswith("머지 판정: ⚠") or startswith("Merge verdict: ⚠"))
+       | .key ] | last) as $hi
   | if   $bi == null then "ok"
-    elif $vi == null then "bounced"
-    elif $bi > $vi   then "bounced"
-    else "ok" end' 2>/dev/null) || exit 1
+    elif $vi != null and $bi <= $vi then "ok"
+    elif $hi != null and $hi > $bi then "held"
+    else "bounced" end' 2>/dev/null) || exit 1
 
 # jq 가 성공해도 형상이 어긋나면(빈 출력·예상 밖 값) 판정으로 인정하지 않는다.
 case "$state" in
-  ok|bounced) printf '%s\n' "$state" ;;
+  ok|bounced|held) printf '%s\n' "$state" ;;
   *) exit 1 ;;
 esac
