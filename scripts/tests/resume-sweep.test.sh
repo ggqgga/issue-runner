@@ -146,9 +146,9 @@ case "${1:-} ${2:-}" in
     # (2026-09-12 gh 2.95.0, --owner ggqgga: `label:needs-human` 단독 → 3개 레포 /
     #  `label:needs-human is:open` · `… is:issue` · 둘 다 → 각각 0건 / `--state open`
     #  플래그 → 정상.) 스텁이 이 오파싱을 흉내 내야 옛 질의로 되돌렸을 때 빨개진다.
-    for _a in "$@"; do
-      case "$_a" in *"is:"*) exit 0 ;; esac
-    done
+    # 검사 대상은 **질의 인자 하나**($3)다 — 전 인자를 훑으면 나중에 jq 표현식이나
+    # 필드명에 `is:` 가 섞였을 때 코드가 멀쩡한데 스텁이 빈손을 돌려 가짜 실패가 난다.
+    case "${3:-}" in *"is:"*) exit 0 ;; esac
     cat "$STUB_SEARCH"; exit 0 ;;
 esac
 exit 1
