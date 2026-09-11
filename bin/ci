@@ -196,6 +196,9 @@ printf '%s' "$last" > "$STUB_CAPTURE"
 exit 0
 STUB
 chmod +x "$tmp/stub/gh"
+# 판정 호출용 별도 스텁 — 항상 실패한다(주입 경로가 gh 를 타면 안 된다는 계약의 봉인).
+mkdir "$tmp/nogh"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/nogh/gh"; chmod +x "$tmp/nogh/gh"
 # 생성 본문이 판정기에 실제로 걸리는지를 문다 — **리터럴 대조가 아니라** 그 본문을
 # `BOUNCE_COMMENTS_FILE` 로 `bounce-state.sh` 에 먹여 `bounced` 가 나오는지로 판정한다
 # (#221 ②). 옛 방식은 본문을 **이 검사 안의 마커 리터럴**과 맞췄고, 그래서 SSOT
@@ -211,11 +214,17 @@ for args in \
   rc=$?
   [ "$rc" = 0 ] || { echo "  ✗ bounce-comment.sh $args 실패(rc=$rc): $out"; rm -rf "$tmp"; exit 1; }
   # 본문은 개행을 담을 수 있으므로(reverify-fail) 통째로 한 문자열로 싸서 넘긴다.
-  jq -Rs '[{body: ., createdAt: "2026-01-01T00:00:00Z"}]' < "$tmp/cap" > "$tmp/inject.json" \
+  # 선행 `머지 판정: ✅` 를 함께 깔아 **실제 판정 형상**(✅ 뒤에 반송이 달린 PR)으로 묻는다
+  # — 마커 1건만 넣으면 "✅ 0건이면 bounced" 라는 다른 분기에 기대게 된다.
+  jq -Rs '[{body: "머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->", createdAt: "2026-01-01T00:00:00Z"},
+           {body: ., createdAt: "2026-01-01T00:00:01Z"}]' < "$tmp/cap" > "$tmp/inject.json" \
     || { echo "  ✗ bounce-comment.sh $args 본문을 판정 입력으로 싸지 못했다"; rm -rf "$tmp"; exit 1; }
   # 판정 실패(exit≠0)와 `ok` 를 같은 방향(실패)으로 받는다 — 반송으로 읽힌다는 것을
   # **증명**해야 통과다(PR#139: 증명 실패는 통과가 아니다).
-  state=$(BOUNCE_COMMENTS_FILE="$tmp/inject.json" scripts/bounce-state.sh owner/r 1) || state=""
+  # PATH 의 `gh` 는 항상 실패하는 스텁이다 — 주입 경로가 실조회로 새면(계약 위반) 판정이
+  # 빈 값이 되어 여기서 즉시 빨개진다. CI 머신의 gh 인증 상태에 이 검사가 기대지 않는다.
+  state=$(PATH="$tmp/nogh:$PATH" BOUNCE_COMMENTS_FILE="$tmp/inject.json" \
+    scripts/bounce-state.sh owner/r 1) || state=""
   [ "$state" = bounced ] \
     || { echo "  ✗ bounce-comment.sh $args 가 낸 본문을 bounce-state.sh 가 반송으로 못 읽는다(판정=[$state]): $(cat "$tmp/cap")"; rm -rf "$tmp"; exit 1; }
 done

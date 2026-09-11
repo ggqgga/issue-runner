@@ -269,15 +269,21 @@ run_file_case "주입 파일이 []→ok(코멘트 0건은 정상 판정)" ok "$t
 # 왜 "구분자 화이트리스트"(`:` · 공백+`#` · 공백+`(` · 공백+`attempt` 열거)가 아닌가:
 # 열거는 근사라서 열거 밖의 **진짜 반송 형태**(` — 사유`, ` 3회차`, ` [attempt 3]` …)를
 # 놓치고, 그 방향의 오류는 **fail-open** 이다 — #212 가 막은 사고(반송된 PR 이 머지
-# 후보로 되올라옴)로 그대로 되돌아간다. 낱말 경계 규칙은 **반대 방향으로만** 틀린다
-# (경계가 모호하면 `bounced` = fail-closed = 정체일 뿐 사고가 아니다).
+# 후보로 되올라옴)로 그대로 되돌아간다.
 # (PR#202 교훈: 리뷰가 짚은 개별 반례만 차례로 막지 말고 규칙 자체를 옮긴 뒤 `want`
 # 열을 가진 격자로 전수 단언하라 — 근사가 '더 지우는' 방향으로 틀리면 원래 버그보다
 # 나쁘다.)
 #
+# 규칙의 두 방향을 격자가 **둘 다** 못박는다(SUT 헤더 주석의 "값과 대가" 절과 짝):
+#   · fail-closed 로 남긴 것 — 마커 + 공백 + 평범한 명사는 여전히 `bounced`(아래 마지막
+#     `bounced` 행). 정체는 남지만 사고는 아니다.
+#   · fail-open 으로 연 것 — 마커 + 한글 조사는 `ok`. 손으로 쓴 `재검증 실패로 반송합니다`
+#     같은 반송 문장은 이제 안 잡힌다. 그래서 반송은 `bounce-comment.sh` 로만 남긴다는
+#     계약이 짝이고, 그 계약은 `bin/ci` 의 생성 본문 판정 스모크가 지킨다.
+#
 # 격자의 마커는 **SUT 에서 읽는다** — 테스트가 리터럴을 복제하면 ②와 똑같은 "두 벌" 이
 # 된다(SSOT 마커를 바꿨을 때 격자가 낡은 채로 초록).
-markers_json=$(grep -m1 '^BOUNCE_MARKERS=' "$SUT" | cut -d= -f2- | tr -d "'")
+markers_json=$(sed -n "s/^BOUNCE_MARKERS='\\(.*\\)'\$/\\1/p" "$SUT" | head -1)
 if printf '%s' "$markers_json" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
   pass=$((pass + 1))
 else
@@ -288,26 +294,36 @@ fi
 # grid_case <name> <want: ok|bounced> <후보 코멘트 본문>
 #   선행 ✅ 하나를 깔고 후보를 마지막 코멘트로 둔다 — `bounced` = 마커로 인식됨,
 #   `ok` = 인식 안 됨. 주입 경로를 쓰므로 네트워크·gh 무접속이다.
+grid_ran=0
 grid_case() {
   local name="$1" want="$2" body="$3"
   jq -n --arg b "$body" '[
     {body:"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->", createdAt:"2026-09-11T07:00:00Z"},
     {body:$b, createdAt:"2026-09-11T07:30:00Z"}
   ]' > "$tmp/grid.json"
+  grid_ran=$((grid_ran + 1))
   run_file_case "$name" "$want" "$tmp/grid.json"
 }
 
+# 마커 목록은 공백을 담으므로(`재검증 실패`) IFS 를 개행으로 두고 위치 인자에 싣는다.
+# `set -f` 로 글롭 확장을 끈다 — 마커에 `*`·`?` 가 섞이면 경로로 번질 자리다.
 grid_old_ifs=$IFS
+set -f
 IFS='
 '
 # shellcheck disable=SC2046
 set -- $(printf '%s' "$markers_json" | jq -r '.[]')
 IFS=$grid_old_ifs
+set +f
+grid_markers=$#
 for gm in "$@"; do
-  while IFS='|' read -r g_want g_suffix g_label; do
+  # 격자 행은 **fd 3** 으로 읽는다 — 루프 본문이 stdin 을 먹는 명령을 부르면 남은 행이
+  # 조용히 사라지고 스위트는 초록이 된다(안 돌린 테스트는 CI 를 못 빨갛게 한다 —
+  # PR#219 교훈). 아래 총 실행 건수 단언이 그 사각지대의 두 번째 자물쇠다.
+  while IFS='|' read -r g_want g_suffix g_label <&3; do
     [ -n "$g_want" ] || continue
     grid_case "격자[$gm]$g_label" "$g_want" "$gm$g_suffix"
-  done <<'GRID'
+  done 3<<'GRID'
 bounced|: #193 — 마감 검증 BLOCKER(코드 회귀)|+콜론
 bounced| #193 — 반송|+공백 #N
 bounced| (round 2) — E2E 실패|+공백 (괄호
@@ -326,6 +342,17 @@ GRID
   # 그대로 유지된다(구분자 요구는 앵커를 대체하지 않고 덧붙는다).
   grid_case "격자[$gm]본문 중간 인용" ok "이 코멘트는 $gm 라는 마커가 무엇인지 설명한다."
 done
+
+# 격자가 **실제로 다 돌았는지** 를 센다 — 행이 조용히 사라져도 스위트가 초록이면 격자는
+# 아무것도 못 막는다(PR#219: 안 돌린 테스트는 CI 를 못 빨갛게 한다). 마커당 12행
+# (heredoc 10 + 개행 1 + 중간 인용 1).
+grid_expected=$((grid_markers * 12))
+if [ "$grid_ran" = "$grid_expected" ]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "  ✗ 격자 실행 건수 — 기대=$grid_expected(마커 $grid_markers × 12) 실제=$grid_ran"
+fi
 
 # 12) 인자 누락 — 호출자 실수를 조용한 `ok` 로 만들지 않는다.
 rc=0
