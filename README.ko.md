@@ -249,7 +249,7 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 | `warn-on-main-branch.sh` | PreToolUse · `Write`/`Edit` | `main`/`master` 에서 편집할 때 비차단 경고 — 먼저 브랜치 |
 | `require-issue-in-pr.sh` | PreToolUse · `gh pr create` | 본문에 전용 `Closes/Refs #N` 줄이 없는 PR 차단 (`(no-issue)` 로 우회) |
 
-**Codex 머지 게이트 = 내장 리뷰어.** `scripts/codex-review-gate.sh --base <ref> | --commit <sha> | --prompt "<text>"` 가 `codex exec review`(기본 `gpt-5.6-sol`, medium)를 감싸 발견을 판정으로 매핑한다 — `[P0]`·`[P1]` → BLOCKER(exit 1), `[P2]` → WARN, `[P3+]` → NIT, 없음 → CLEAN; 미산출(codex 부재·모델 오류·타임아웃) → exit 2 로 호출자가 fail-closed. `~/.codex/config.toml` 의 `model` 은 로그인 계정이 쓸 수 있는 모델로 유지할 것(`codex debug models`); 0.153+ 는 미설정 시 Astra 가 기본이다.
+**Codex 머지 게이트 = 내장 리뷰어.** `scripts/codex-review-gate.sh --base <ref> | --commit <sha> | --prompt "<text>"` 가 `codex exec review`(기본 `gpt-5.6-sol`, medium)를 감싸 발견을 판정으로 매핑한다 — `[P0]`·`[P1]` → BLOCKER(exit 1), `[P2]` → WARN, `[P3+]` → NIT, 없음 → CLEAN; 미산출(codex 부재·모델 오류·타임아웃) → exit 2 로 호출자가 fail-closed. `--prompt` 호출에는 응답 계약(리뷰 마지막 줄의 고정 형식 상태 줄)을 헬퍼가 덧붙이고 **그 줄로만** 판정한다 — 줄이 없거나 형식이 깨졌거나 '근거 없음' 값이면 exit 2 미산출(#207: '판정할 근거가 없다'는 산문을 CLEAN 으로 읽던 fail-open 머지 게이트). `~/.codex/config.toml` 의 `model` 은 로그인 계정이 쓸 수 있는 모델로 유지할 것(`codex debug models`); 0.153+ 는 미설정 시 Astra 가 기본이다.
 
 > **Homebrew cask 의 Codex 0.153+:** cask 는 `codex-code-mode-host` 를 동봉하지만 `/opt/homebrew/bin` 엔 `codex` 만 링크한다. 호스트가 `PATH` 에 없으면 `codex exec review` 의 도구 호출마다 "code-mode host" 협상 타임아웃 ~45초가 붙는다(100줄 리뷰가 7분). 한 번만 링크: `ln -sf /opt/homebrew/Caskroom/codex/<ver>/bin/codex-code-mode-host /opt/homebrew/bin/`. `features.code_mode_host` 는 끄지 말 것 — 리뷰 모드에 실행 도구가 없어져 눈감은 CLEAN 을 낸다(게이트는 그 문구를 잡아 fail-closed).
 
