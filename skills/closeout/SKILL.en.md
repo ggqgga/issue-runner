@@ -148,7 +148,8 @@ is:open is:pr" -f per_page=100 -f sort=created -f order=asc` (FIFO). For each PR
 `agent/issue-*` and that is **not labeled `harvesting`**, **not labeled `flow:verify`**, and **not
 labeled `needs-human`**, judge it. A `needs-human` PR is a human hold (`hold:*` reason — verify-held ·
 closeout-blocked · the dispatcher's runner-held repair cap); adopting or re-dispatching it here would undo
-that hold (#151) — never pick it until a human removes the label:
+that hold (#151) — never pick it until a human removes the label. This target filter runs
+**first**, ahead of the 1) CONFLICTING branch as well (#206).
 
 **1) CONFLICTING first — but check the bounce marker before adopting**: if
 `gh pr view <pr> --repo <repo> --json mergeable` is CONFLICTING, run
@@ -156,17 +157,48 @@ that hold (#151) — never pick it until a human removes the label:
 
 - Only when the output is exactly `ok` → **Adopt (rebase path)**: hand to ② Pick; ③ step 2 has
   closeout rebase then merge (step-2 conflict path). (Skip finish-classify.)
-- If it is `bounced`, or **there is no output (exit 1 — undecidable)** → treat as `active`,
-  **leave it**. A bounce round in flight is owned by the worker lane (fail-closed — open only
-  once "not bounced" is *proven*, same direction as #171).
+- **If there is no output (exit 1 — undecidable)** → treat as `active`, **leave it** (fail-closed —
+  open only once "not bounced" is *proven*, same direction as #171).
+- If it is `bounced` → **do not stop at "leave it": classify it with
+  `$SCRIPTS/finish-classify.sh` from 2) below** (#206). But **only the re-dispatch branch opens**:
+  - `stale_reverify` → **Re-dispatch** (same action as that row of the 2) table — the
+    `closeout-redispatch` transition plus the idempotency marker). This is the shape where the
+    bounce-round worker pushed its fix and then died just before ✅.
+  - Every other output (`active` · `done_verdict` · `held` · `stale_inline`) → **leave it**.
+    Not adopting `stale_inline` matters most: a `검증자 리뷰: CLEAN` left on a bounced PR may be
+    from the round **before** the bounce, so adopting it would merge code that was just rejected
+    (exactly the direction #196 closed). `done_verdict` is also left alone here — the normal ✅
+    path is owned by `closeout-eligible.sh` together with its own bounce safety net.
 
 Why (#196, measured: bodat PR #5009 / issue #4973): a bounced PR has no `머지 판정: ✅`, so it
-never shows up in `closeout-eligible.sh`, and ①-b skips finish-classify — meaning it passes
-**neither** of the two places that look at bounce markers. Right after a bounce, `transition.sh`
+never shows up in `closeout-eligible.sh`. Right after a bounce, `transition.sh`
 clears the stage labels, so "no stage labels + CONFLICTING" is not evidence of stranding — it is
 also the normal shape of a bounce round. In the real incident closeout adopted a live worker's
 PR, attached `harvesting`, and ran `git rebase origin/main` inside that worker's worktree
 (nothing was lost only because it had not been pushed yet).
+
+**The stranding that narrowing left behind (#206).** Treating `bounced` as **unconditionally**
+leave-it creates a new stranded class: ⑴ a PR is bounced → ⑵ a replacement worker attaches, fixes
+it and pushes → ⑶ that worker dies just before ✅, so `handoff-verify` never runs (no stage
+labels) → ⑷ main moves meanwhile and the PR turns CONFLICTING. Such a PR falls out of **all three
+lanes** — closeout ①-b (bounce marker is latest), verify-runner (no `flow:verify`), issue-runner ②
+(CI green, no unresolved comments) — and stays stranded until a human spots it. Stranding beats
+damage (which is why the "adopt only on `ok`" predicate stays exactly as it is), but a safety net
+that is not **detectable** turns into a silent omission. So `bounced` is not discarded: it is run
+through finish-classify so that only the *dead* bounce rounds are routed to re-dispatch.
+
+**Live workers are stopped by finish-classify.** Even when the bounce marker is the latest
+comment, a recent commit after it means the attempt-N+1 worker is **alive** — a recurring
+false positive in this repo. Before emitting either 🔄-family branch, finish-classify asks
+`progress-evidence.sh` (the progress-evidence predicate established by #200 — ① latest commit
+within `STALL_MIN`, ② the head SHA's CI ticket still alive in the queue) and returns `active`
+when there is evidence. ② matters especially: waiting in the box-wide serial CI queue (#127) is
+time the worker cannot control, so a worker can be alive with commits over an hour old (#200
+measured 72 and 64 minutes). **The predicate lives in that one file** — the same one
+`timebox-check.sh` calls — and no second calculator is built here (`bin/ci` rejects duplicate
+`^STALL_MIN=` / `^queue_alive()` definitions). When the evidence itself **cannot be judged**
+(e.g. queue.log unreadable) the answer is also `active`: hijacking a live worker's branch over one
+failed lookup is not reversible.
 
 The judgment lives in `bounce-state.sh` **in one place** — both the marker set
 (`재디스패치` · `재검증 실패`, first-line match with no literal colon required but the marker
@@ -187,16 +219,17 @@ ways, so the comment marker alone decides.
 **2) Otherwise `$SCRIPTS/finish-classify.sh <repo> <pr>` for deterministic classification** —
 the helper reads the latest `머지 판정:`/`검증자 리뷰:` comments and the `STALE_FINISH_MIN`
 time buffer to emit a state (reuse the tested helper instead of hand-rolled comment parsing).
-**A live worker / time-buffer-not-reached is filtered out as `active`, preventing races** — no
-separate freshness gate needed:
+**A live worker / time-buffer-not-reached is filtered out as `active`, preventing races** — the
+freshness judgment is inside the helper (`progress-evidence.sh`, #200 · #206), so callers need no
+gate of their own:
 
 | finish-classify output | Meaning | Action |
 |---|---|---|
 | `done_verdict` | latest `머지 판정: ✅` **and it is proven to postdate the current head commit** (#171) | eligible.sh's normal path handles it — sweep skips |
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). |
-| `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
+| `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer + **no progress evidence** (#206) (died before verifying, implementation may be incomplete, #971-type). A CONFLICTING PR whose bounce marker is latest landing here *is* the "died just before ✅ after a bounce" class from 1) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
 | `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `needs-human` + `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the human signal survives even with no linked issue), closeout leaves it (no auto-progress). |
-| `active` | in progress · buffer not reached · not our shape, **or the ✅'s freshness could not be proven** (✅ predates the head commit, or either timestamp could not be obtained, #171). **A CONFLICTING PR from 1) also lands here whenever `bounce-state.sh` is not `ok`** (bounce round in flight, or undecidable) (#196) — empty stage labels are not stranding there, they are worker-lane ownership | **Leave it** (next tick). |
+| `active` | in progress · buffer not reached · not our shape, **or the ✅'s freshness could not be proven** (✅ predates the head commit, or either timestamp could not be obtained, #171), **or there is progress evidence** (commit within `STALL_MIN`, or the head SHA's CI ticket alive in the queue — or that judgment itself is unavailable, #206 · `progress-evidence.sh`). **A CONFLICTING PR from 1) also lands here when `bounce-state.sh` is undecidable (exit 1)** (#196) — empty stage labels are not stranding there, they are worker-lane ownership | **Leave it** (next tick). |
 
 **`flow:*` supplementary signal**: finish-classify judges by comments, but a stale PR with
 `flow:codex`/`flow:ci` and no `flow:ready` is itself evidence of "worker died during verify"

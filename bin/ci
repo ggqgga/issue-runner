@@ -1039,6 +1039,40 @@ bash scripts/tests/resume-sweep.test.sh
 echo "[test] loop-status.sh 파이프라인 스냅샷 버킷·창 필터·warn·부분 실패 (#144)"
 bash scripts/tests/loop-status.test.sh
 
+echo "[#206] 진행 증거 술어는 progress-evidence.sh 한 자리 (#200 → #206)"
+# 커밋 신선도(STALL_MIN)와 CI 큐 티켓 판정을 다른 스크립트가 자기 벌로 들고 있으면 언젠가
+# 한쪽만 고쳐져 두 소비자(timebox-check · finish-classify)가 다른 수를 센다 — 반송 마커
+# 집합을 bounce-state.sh 한 자리에 묶은 것과 같은 규율(PR#191 교훈).
+# 판정선은 **정의**다: 산문·주석의 언급(`STALL_MIN 이내` 등)은 사본이 아니므로 안 건다.
+dup=$(grep -lE '^STALL_MIN=|^queue_alive\(\)' scripts/*.sh | grep -v '^scripts/progress-evidence.sh$' || true)
+[ -z "$dup" ] || { echo "  ✗ 진행 증거 술어 정의가 progress-evidence.sh 밖에도 있다: $dup"; exit 1; }
+# 소비자 둘이 `"$SCRIPT_DIR/progress-evidence.sh"` 로 직접 exec 하므로 실행 비트를 문다
+# (비트가 빠지면 조용히 exit 126 → 판정이 항상 빈 값이 되고, 그 degrade 가 timebox 는
+#  unknown, finish-classify 는 active 로 조용히 새어 완결 유실 회수가 통째로 멈춘다).
+[ -x scripts/progress-evidence.sh ] || { echo "  ✗ progress-evidence.sh 실행 비트 없음"; exit 1; }
+for f in scripts/timebox-check.sh scripts/finish-classify.sh; do
+  grep -qF 'progress-evidence.sh' "$f" || { echo "  ✗ $f 에 progress-evidence.sh 배선 없음"; exit 1; }
+done
+# 헬퍼 자체의 fail-closed 스모크 — 판정 입력이 형식 불량이면 `none`(증거 없음)이 아니라
+# `unknown` 이어야 한다. 그 둘을 섞으면 호출자가 살아있는 워커를 죽인다(PR#139 교훈).
+rc=0
+out=$(scripts/progress-evidence.sh --now 1780000000 --commit-at "어제" --head-sha none 2>/dev/null) || rc=$?
+case "$out $rc" in
+  "unknown commit_at_invalid commit=- queue=- 2") : ;;
+  *) echo "  ✗ progress-evidence: 형식 불량 커밋 시각 → '$out' rc=$rc (기대 unknown commit_at_invalid rc=2)"; exit 1 ;;
+esac
+
+echo "[#206] closeout ①-b — CONFLICTING 반송 회차도 finish-classify 로 분류한다"
+# `bounced` 를 무조건 무접촉으로 두면 "반송 뒤 ✅ 직전 사망 + CONFLICTING" PR 이 세 레인
+# 모두에서 빠져 영구 정체한다(#206). 산문이 그 배선과 신선도 출처를 잃으면 격자 테스트가
+# 초록이어도 루프는 옛 계약대로 돈다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF 'progress-evidence.sh' "$f" \
+    || { echo "  ✗ $f 에 신선도 출처(progress-evidence.sh) 표기 없음"; exit 1; }
+  awk 'BEGIN{RS="";ok=0} /bounced/ && /finish-classify/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f: bounced 갈래를 finish-classify 로 넘기는 지시가 없다"; exit 1; }
+done
+
 echo "[test] timebox-check.sh 진행 증거 판정·queue.log 마지막 줄·유예 상한 (#200)"
 # 디스패처가 `"$SCRIPTS/timebox-check.sh"` 로 직접 exec 하므로 실행 비트도 여기서 문다
 # (비트가 빠지면 조용히 exit 126 → 판정 줄이 빈 값이 되고 그 이슈의 timebox 가 무판정으로 샌다).
@@ -1089,10 +1123,16 @@ for f in SKILL.md SKILL.en.md; do
 done
 # 값 드리프트 검사 — 스크립트 기본값과 프롬프트가 말하는 값이 갈리면 디스패처는 문서의 값을
 # 믿는데 실제 판정은 스크립트 값으로 난다. 존재만 grep 하면 이 어긋남을 못 잡는다.
-for pair in 'STALL_MIN:25' 'MAX_TIMEBOX_GRACE:3' 'ISSUE_TIMEBOX_HOURS:1'; do
+# 상수마다 **정의가 사는 파일**을 함께 적는다 — STALL_MIN 은 #206 에서 진행 증거 술어와
+# 함께 progress-evidence.sh 로 옮겨 갔고, 그 이사를 이 검사가 모르면 드리프트 검사가
+# 조용히 빨개지거나(여기) 엉뚱한 파일을 SSOT 로 믿는다.
+for pair in 'STALL_MIN:scripts/progress-evidence.sh' \
+            'MAX_TIMEBOX_GRACE:scripts/timebox-check.sh' \
+            'ISSUE_TIMEBOX_HOURS:scripts/timebox-check.sh'; do
   name="${pair%%:*}"
-  want=$(sed -n "s/^[A-Z_]*=\"\${$name:-\([0-9][0-9]*\)}\".*/\1/p" scripts/timebox-check.sh | head -1)
-  [ -n "$want" ] || { echo "  ✗ scripts/timebox-check.sh 에서 $name 기본값을 읽지 못함"; exit 1; }
+  src="${pair#*:}"
+  want=$(sed -n "s/^[A-Z_]*=\"\${$name:-\([0-9][0-9]*\)}\".*/\1/p" "$src" | head -1)
+  [ -n "$want" ] || { echo "  ✗ $src 에서 $name 기본값을 읽지 못함"; exit 1; }
   for f in SKILL.md SKILL.en.md; do
     grep -qF "\`$name = $want\`" "$f" \
       || { echo "  ✗ $f 의 $name 값이 스크립트 기본값($want)과 다르다"; exit 1; }
