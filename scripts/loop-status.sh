@@ -150,7 +150,7 @@
 #   · 미러 불일치    — 이슈와 **열린** 연결 PR 의 {flow:verify, flow:ready, harvesting}
 #                      집합이 다름. 연결 PR 이 없으면 대조할 상대가 없으니 warn 아님.
 #   · 좌초형(#117)   — 이슈에 사다리 라벨은 있는데 `agent-ready` 가 없음(디스패치 자격 상실).
-#   · 목록 절단      — 이슈·열린 PR·닫힌 PR 중 어느 목록이 `--limit 200` 상한에 닿음.
+#   · 목록 절단      — 열린 이슈·닫힌 이슈(#260)·열린 PR·닫힌 PR 중 어느 목록이 `--limit 200` 상한에 닿음.
 #                      창 안의 실패·파생이 조용히 잘렸을 수 있다는 신호(수를 믿지 말 것).
 #   · 연결 이슈 종료 — 열린 PR 인데 연결 이슈가 CLOSED. `Refs` 부분착지면 정상 — 사실만 한 줄.
 #                      (연결 이슈의 OPEN 여부는 이미 받은 열린 이슈 목록의 멤버십으로 본다 —
@@ -161,6 +161,30 @@
 #   · 사람 세션 PR   — 무소속 PR 의 나머지 조건은 다 맞는데 head 가 `agent/issue-*` 가 아닌
 #                      열린 PR(사람 세션이 판 `feat/*` 등). warn 에서 빼되 존재는 남긴다 —
 #                      `note N` 줄 아래 한 줄씩(#188).
+#
+# ★에픽 절★ (#260) 열린 `epic` 라벨 이슈마다 leaf(하위) 진척을 한 줄로 찍는다. `승격 대기`
+#   줄 바로 위, `파생` 줄 아래.
+#   leaf 판정 — 열린·닫힌 이슈 본문의 **줄 시작**의 `epic\s+#N`(대소문자 무시, 줄 앞 공백
+#   허용, 첫 매치)를 그 이슈가 가리키는 에픽 번호로 본다. 규칙의 스타일(줄 앵커·대소문자
+#   무시·첫 매치)은 `eligible-issues.sh`/`blockers_of` 의 `Blocked by #N` 파싱과 같다 — 그
+#   파일은 #247 워커 소유라 여기서는 고치지 않고 같은 스타일만 jq 로 옮긴다. 산문 속
+#   `… epic #N …`(줄 시작이 아님)은 leaf 로 잡히지 않는다(과잉 포획 방지 — Blockers 픽스처의
+#   #15/#21/#22 반증과 같은 이유).
+#   한 줄 형식(leaf ≥ 1): `#<에픽> <종료>/<전체> · <버킷 분포> · <P 분포>`. 버킷 분포는
+#   **열린** leaf 만 세고, 8버킷을 5칸으로 접는다 — `agent:claimed`·`flow:verify`·
+#   `flow:ready`·`harvesting` 은 한데 묶어 `진행`, 나머지(`막힘`·`대기`·`사람대기`·`배포대기`)
+#   는 그대로. 0건인 칸은 생략(`· `로 안 이어 붙인다). P 분포도 **열린** leaf 만(닫힌 leaf 의
+#   P 는 과거라 못 고치니 뺀다 — 위 warn 정의와 같은 이유), P 라벨 없는 leaf 는 세지 않는다.
+#   leaf 0 인 에픽은 비율 대신 `#<에픽> leaf 없음(Epic 줄 미부착)` 한 줄.
+#   warn 2종(불변식 위반 — 위 ★warn 정의★ 와 같은 자리에 판정이 산다):
+#     · 에픽 leaf 전부 종료 — leaf ≥1 전부 닫힘인데 에픽 이슈가 열려 있다(에픽 스윕 대상).
+#     · 에픽 내 P 혼재     — 열린 leaf 의 P 라벨이 둘 이상 갈린다(닫힌 leaf 는 위와 같이 제외).
+#   파생 병기 — `파생` 줄 항목에 `(Epic #N)`/`(에픽 없음)` 을 붙이는 것(파생이 에픽 밖으로
+#   새는지 관측)은 **그 레포에 열린 에픽이 하나라도 있을 때만** 한다. 에픽이 0개인 레포는
+#   "에픽 밖으로 샌다" 는 질문 자체가 성립하지 않고(비교할 에픽 스코프가 없다), 이 게이트가
+#   없으면 에픽을 안 쓰는 레포까지 `파생` 줄 서식이 바뀌어 이 이슈의 무회귀 기준(`Epic #N`
+#   이 하나도 없는 픽스처는 에픽 절 추가 외엔 출력이 한 글자도 안 바뀐다)을 깬다.
+#   추가 gh 호출 0 — 닫힌 이슈 목록(아래 gh 호출 예산)에서 이미 받은 본문으로만 판정한다.
 #
 # ★조회 실패 처리★ 이슈/PR 목록 조회가 실패한 레포는 블록 대신
 #   `파이프라인 <short> — 조회 실패: <사유>` 한 줄만 찍고 다음 레포로 계속하며, 최종 exit 는
@@ -186,10 +210,11 @@
 #   이 출력을 ④ Report 에 그대로 붙이므로, stderr 로만 말하면 사유가 사라지고 exit 1 이
 #   "레포 하나 조회 실패"(부분 실패)와 구분되지 않는다.
 #
-# gh 호출 예산: 레포당 이슈 목록 1 + PR 목록(open/closed) 2 + release 확인 1 + 기본 브랜치 1
-# + compare 1 = 최대 6. 블로커 판정(#248)은 이 예산을 **한 호출도 늘리지 않는다** — 이슈 목록
-# `--json` 에 `body` 필드를 더하고(같은 한 번의 호출) 블로커 상태는 이미 받은 열린 이슈·열린 PR
-# 목록의 멤버십으로만 본다. 블로커마다 `gh issue view` 를 치면 N+1 이라 이 기능의 요점이 깨진다.
+# gh 호출 예산: 레포당 열린 이슈 목록 1 + 닫힌 이슈 목록 1(#260) + PR 목록(open/closed) 2 +
+# release 확인 1 + 기본 브랜치 1 + compare 1 = 최대 7. 블로커 판정(#248)·에픽 leaf 판정(#260)은
+# 이 예산을 **한 호출도 늘리지 않는다** — 이슈 목록 `--json` 에 `body` 필드를 더하고(같은
+# 한 번의 호출) 블로커 상태·에픽 소속은 이미 받은 열린/닫힌 이슈 목록의 본문·멤버십으로만
+# 본다. 블로커·leaf 마다 `gh issue view` 를 치면 N+1 이라 이 기능의 요점이 깨진다.
 # **예외 둘**. ①(#157) 사람대기 버킷에서 사유가 `policy`·`conflict` 인
 # 이슈에 한해 질문 코멘트 조회 `gh issue view --json comments` 를 1건씩 더 쓴다 — 라벨만으론
 # 질문 유무를 알 수 없고, 대상은 "지금 사람을 기다리는 건" 이라 목록 전체가 아니라 한 줌이다.
@@ -514,16 +539,34 @@ def bucket_ko($k):
   {"deploy_wait":"배포대기","human_wait":"사람대기","harvesting":"마감중","ready":"마감대기",
    "verify":"검증대기","claimed":"구현중","waiting":"대기","blocked":"막힘",
    "outside":"루프 밖"}[$k];
+# 에픽 번호 (#260) — 본문 **줄 시작**의 `epic\s+#N`(대소문자 무시)의 **첫 매치**만.
+# `blockers_of` 와 같은 스타일(줄 단위로 가른 뒤 capture — jq 의 `^` 는 문자열 시작만
+# 앵커하므로 split 없이 걸면 본문 첫 줄만 검사된다)이지만, 블로커는 여러 개를 모아
+# dedupe 하는 반면 에픽은 **한 이슈 = 최대 한 에픽**이라 첫 매치 하나만 취한다(산문 속
+# `… epic #N …`은 애초에 매치가 안 남 — capture 는 비매치 줄에서 결과를 안 낸다).
+def epic_of($body):
+  ([($body // "") | split("\n")[]
+      | capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)"; "i") | .n]
+   | if length > 0 then (.[0] | tonumber) else null end);
+# 라벨 목록 → P0/P1/P2 중 첫 매치(eligible-issues.sh 의 우선순위 판정과 같은 순서).
+def prio_of($l):
+  if has($l; "P0") then "P0" elif has($l; "P1") then "P1"
+  elif has($l; "P2") then "P2" else null end;
 
 # 이슈 목록만 파일로 받는다(`--slurpfile` → 값 하나가 든 배열) — `body` 를 실으면서
 # 페이로드가 7배(실측 bodat 24KB → 176KB)가 됐고, 200건 상한까지 차면 `--argjson` 의
 # 커맨드라인 경로가 ARG_MAX(macOS 1MB, 인자+환경 합산)에 걸려 **레포 블록 전체가
-# '집계 실패(jq)'** 로 죽는다. PR 목록은 body 가 없어 종전 경로 그대로다.
+# '집계 실패(jq)'** 로 죽는다. PR 목록은 body 가 없어 종전 경로 그대로다. 닫힌 이슈
+# 목록(#260, 에픽 leaf 판정용)도 같은 이유로 파일 경유.
 ($issues_in[0]) as $issues
+| ($closed_issues_in[0]) as $closed_issues
+| ($closed_issues | map({number, epic: epic_of(.body)})) as $cls
 | ($issues | map({
     number, title, createdAt,
     ln: [.labels[].name],
-    blk: blockers_of(.body; [.labels[].name])
+    blk: blockers_of(.body; [.labels[].name]),
+    epic: epic_of(.body),
+    prio: prio_of([.labels[].name])
   })
   | map(. + {ladder: ladder_of(.ln), holds: holds_of(.ln)})
   | map(. + {stage: (if (.ladder | length) == 0 then "none" else key_of(.ladder[-1]) end)})
@@ -552,6 +595,45 @@ def bucket_ko($k):
          else empty end]})
    | map(if .bucket == "waiting" and ((.openblk | length) > 0)
          then .bucket = "blocked" else . end)) as $iss
+# ── 에픽 절 (#260) — 열린 leaf(.bucket 은 위에서 이미 확정) + 닫힌 leaf($cls) 를 에픽 번호로
+# 묶는다. 8버킷을 5칸으로 접는다: claimed/verify/ready/harvesting → `progress`(사람용 `진행`),
+# 나머지는 그대로. P 분포·leaf 전부 종료·P 혼재 판정은 전부 **열린** leaf 만 본다(닫힌
+# leaf 의 P·버킷은 과거라 못 고친다 — ★warn 정의★ 와 같은 근거).
+| def epic_bucket_key($b):
+    if ($b == "claimed" or $b == "verify" or $b == "ready" or $b == "harvesting")
+    then "progress" else $b end;
+  def epic_bucket_ko($k):
+    {"progress":"진행","blocked":"막힘","waiting":"대기","human_wait":"사람대기",
+     "deploy_wait":"배포대기","outside":"루프 밖"}[$k];
+  def bucket_counts($leaves):
+    reduce $leaves[] as $x ({}; .[epic_bucket_key($x.bucket)] += 1);
+  def priority_counts($leaves):
+    reduce $leaves[] as $x ({}; if $x.prio == null then . else .[$x.prio] += 1 end);
+  def epic_bucket_segment($bc):
+    (["progress","blocked","waiting","human_wait","deploy_wait","outside"]
+     | map(select(($bc[.] // 0) > 0) | "\(epic_bucket_ko(.)) \($bc[.])")
+     | join(" · "));
+  def epic_prio_segment($pc):
+    (["P0","P1","P2"] | map(select(($pc[.] // 0) > 0) | "\(.) \($pc[.])") | join(" "));
+  def epic_label($e):
+    if $e.total == 0 then "#\($e.number) leaf 없음(Epic 줄 미부착)"
+    else
+      ("#\($e.number) \($e.closed)/\($e.total)") as $head
+      | epic_bucket_segment($e.buckets) as $bs
+      | epic_prio_segment($e.priorities) as $ps
+      | $head + (if $bs == "" then "" else " · " + $bs end)
+             + (if $ps == "" then "" else " · " + $ps end)
+    end;
+  ($iss | map(select(has(.ln; "epic")))
+   | sort_by(-.number)
+   | map(. as $e
+       | ($iss | map(select(.epic == $e.number))) as $ol
+       | ($cls | map(select(.epic == $e.number))) as $cl
+       | {number: $e.number, repo_short: $rs, title: $e.title,
+          total: (($ol | length) + ($cl | length)), closed: ($cl | length),
+          buckets: bucket_counts($ol), priorities: priority_counts($ol)}
+       | . + {label: epic_label(.)})) as $epics
+| ($epics | length > 0) as $has_epics
 | def blocker_bucket($n):
     ($iss | map(select(.number == $n)) | if length > 0 then bucket_ko(.[0].bucket) else null end);
   def blk_label($b):
@@ -645,12 +727,19 @@ def orphan_base:
       dup_closed: (closed_agent_in_window
         | map(select(has(.ln; "dup")))
         | map(closed_pr_item("중복 종료"))),
+      # 에픽 병기(#260) — 그 레포에 열린 에픽이 하나라도 있을 때만 `(Epic #N)`/`(에픽 없음)`
+      # 을 붙인다($has_epics). 에픽이 0개인 레포는 이 서식이 안 바뀌어야 이 이슈의 무회귀
+      # 기준(`Epic #N` 없는 픽스처는 에픽 절 추가 외엔 출력이 그대로)을 만족한다.
       spinoff: ($iss
         | map(select(has(.ln; "spinoff") and (epoch(.createdAt) >= $cutoff)))
         | sort_by(.createdAt, .number)
-        | map(item(.; "#\(.number)")))
+        | map(item(.; "#\(.number)"
+                     + (if ($has_epics | not) then ""
+                        elif .epic != null then "(Epic #\(.epic))"
+                        else "(에픽 없음)" end))))
     },
     promotion_ahead: $ahead,
+    epics: $epics,
     warns: (
       # 무소속 PR — 후보($ocand)에서 인계 전 창($handoff)을 뺀 나머지.
       # `index/1` 의 인자는 **파이프 좌변(배열)** 을 입력으로 평가된다 — `.number` 를 그대로
@@ -711,8 +800,21 @@ def orphan_base:
       + ($iss | map(select((.ladder | length) > 0 and (has(.ln; "agent-ready") | not)))
         | map({kind: "stranded", repo_short: $rs, issue: .number,
                text: "좌초형 #\(.number)(\($rs)) — 사다리 라벨(\(.ladder | join(" "))) 인데 agent-ready 없음"}))
+      # 에픽 leaf 전부 종료 (#260) — leaf ≥1 전부 닫힘인데 에픽 이슈는 열려 있다(스윕 대상).
+      + ($epics | map(select(.total > 0 and .closed == .total))
+        | map({kind: "epic_all_closed", repo_short: $rs, issue: .number,
+               text: "에픽 leaf 전부 종료 #\(.number)(\($rs)) — 닫아라(에픽 스윕 대상)"}))
+      # 에픽 내 P 혼재 (#260) — **열린** leaf 의 P 가 둘 이상 갈린다(닫힌 leaf 의 P 는 제외).
+      + ($epics | map(select((.priorities | length) > 1))
+        | map(. as $e
+            | {kind: "epic_priority_mixed", repo_short: $rs, issue: $e.number,
+               text: ("에픽 내 P 혼재 #\($e.number)(\($rs)) — "
+                      + (["P0","P1","P2"]
+                         | map(select(($e.priorities[.] // 0) > 0) | "\(.) \($e.priorities[.])")
+                         | join(" · ")))}))
       # 목록 상한 도달 — 창 안의 실패·파생이 잘렸을 수 있다
       + ([{n: ($issues | length), what: "이슈"},
+          {n: ($closed_issues | length), what: "닫힌 이슈"},
           {n: ($prs_open | length), what: "열린 PR"},
           {n: ($prs_closed | length), what: "닫힌 PR"}]
          | map(select(.n >= 200))
@@ -774,7 +876,9 @@ else
   ([ "파이프라인 \(.repo_short) — 열림 \(.open_total) · 스코프 \($scope) · 창 \(.since)",
      row("waiting"), row("blocked"), row("claimed"), row("verify"), row("ready"), row("harvesting"),
      row("human_wait"), row("deploy_wait"), row("failed"), row("dup_closed"), row("spinoff"),
-     "  승격 대기 " + (if .promotion_ahead == null then "—" else "\(.promotion_ahead)커밋" end),
+     "  에픽      \((.epics // []) | length)" ]
+   + ((.epics // []) | map("    - " + .label))
+   + [ "  승격 대기 " + (if .promotion_ahead == null then "—" else "\(.promotion_ahead)커밋" end),
      "  warn      \(.warns | length)" ]
    + (.warns | map("    - " + .text))
    + [ "  note      \((.notes // []) | length)" ]
@@ -806,6 +910,20 @@ for repo in "${repos[@]}"; do
     fi
   else
     fail_reason="이슈 목록 — $GH_ERR"
+  fi
+
+  # 닫힌 이슈 목록 (#260) — 에픽 leaf 카운트(종료/전체)에 쓴다. `body` 를 실어 leaf 의
+  # `Epic #N` 줄을 읽는다(열린 이슈와 같은 이유 — ARG_MAX 근거는 BUILD_JQ 주석). 파일 경유도
+  # 같은 이유로 열린 이슈와 동일하게 한다.
+  if [ -z "$fail_reason" ]; then
+    if run_gh gh issue list --repo "$repo" --state closed --limit 200 \
+        --json number,body,closedAt,labels; then
+      if ! printf '%s\n' "$GH_OUT" > "$tmpdir/issues_closed.json"; then
+        fail_reason="닫힌 이슈 목록 — 임시 파일 쓰기 실패($tmpdir/issues_closed.json)"
+      fi
+    else
+      fail_reason="닫힌 이슈 목록 — $GH_ERR"
+    fi
   fi
 
   if [ -z "$fail_reason" ]; then
@@ -852,6 +970,7 @@ for repo in "${repos[@]}"; do
   build_snapshot() {
     jq -n \
       --slurpfile issues_in "$tmpdir/issues.json" \
+      --slurpfile closed_issues_in "$tmpdir/issues_closed.json" \
       --argjson prs_open "$prs_open_json" \
       --argjson prs_closed "$prs_closed_json" \
       --argjson cutoff "$cutoff" \
