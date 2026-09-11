@@ -481,13 +481,36 @@ Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에
   `BLOCKED: 전이 실패 closeout-dup PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
   판정이 "중복인 것 같다" 수준이면 dup 가 아니다 — 근거 커밋을 못 짚으면 아래 BLOCKER
   경로(`--reason policy`)로 간다.
-- BLOCKER(미산출 포함, 사유 예 `검증자 미산출 — 타임아웃(>VERIFIER_TIMEOUT_MIN분)` / 모델 오류 원문) →
+- BLOCKER(미산출 포함, 사유 예 `검증자 미산출 — 타임아웃(>VERIFIER_TIMEOUT_MIN분)` / 모델 오류 원문)
+  → **갈래가 둘이다. 판별 기준 한 줄: 구현으로 닫히는 결함이면 ⓐ 워커 레인 반송,
+  스펙·정책 선택이 남아 있으면 ⓑ 사람 보류다.** (연결 이슈가 없으면 — PR 본문에
+  `Closes`/`Refs` 가 없어 `<issue>` 를 못 얻으면 — 되돌릴 이슈가 없으니 ⓐ 는 불가, ⓑ 로 간다.)
+- ⓐ **구현으로 닫히는 결함 → 워커 레인 반송**(실측 2회 — 이 갈래에 코멘트 채널이 없어
+  마커를 손으로 적었다, #271).
+  `$SCRIPTS/bounce-comment.sh closeout-blocker <repo> <pr> <issue> "<사유>"` 로 반송
+  코멘트를 남긴다 — **문구를 손으로 옮겨 적지 마라**(콜론이 빠지거나 어순이 바뀌면
+  `bounce-state.sh` 반송 안전망이 그 PR 을 못 보고, `closeout-eligible` 이 **반송 사유가 된
+  코드에 대한 옛 ✅** 로 그 PR 을 다시 머지 후보로 올린다, #212 · #171). `<사유>` 는 워커가
+  그대로 읽고 고칠 수 있게 무엇이 왜 막혔는지로 쓴다(`redispatch` 채널의 고정 문구를
+  빌려 쓰지 마라 — 이 갈래에서 "완결 유실" 은 거짓이고, 거짓 사유는 다음 틱의 판정
+  입력이 된다).
+  이어서 `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` 로 연결 이슈를
+  `agent-ready` 로 되돌린다(`agent:claimed`·단계 라벨·`needs-human`·`hold:*` 를 뗀다 —
+  손으로 `gh issue edit` 하지 마라) → **`blocked` 종료**(머지하지 않는다. 새 종료 상태를
+  만들지 않는다 — ④ Report 에는 `재디스패치 N` 으로도 함께 집계한다). 재디스패치가
+  성사되면 issue-runner Dispatch 가 같은 `agent/issue-N` worktree 를 재사용해 **같은 PR
+  브랜치에서 이어 완결**하므로 새 PR 이 생기지 않는다.
+  **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
+  `BLOCKED: 전이 실패 closeout-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
+- ⓑ **스펙·정책 선택이 남아 있다(검증자 미산출 포함) → 사람 보류.**
   `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>
   <!-- bodat:worker -->"`
   + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`
   (PR 의 `harvesting` 제거 + 연결 이슈에 `needs-human` + `hold:policy` 부착·단계 라벨
-  정리) → **blocked 종료** (머지하지 않는다). 검증자 BLOCKER·미산출은 스펙/정책 판단이
-  필요한 것이므로 사유는 `policy` 다(`conflict` 도 `ladder` 도 아니다).
+  정리) → **blocked 종료** (머지하지 않는다). 이 갈래로 온 BLOCKER·미산출은 스펙/정책
+  판단이 필요한 것이므로 사유는 `policy` 다(`conflict` 도 `ladder` 도 아니다).
+  검증자 미산출은 **언제나 이 갈래다** — 무엇을 고쳐야 하는지 자체가 없으므로 워커에게
+  반송할 사유를 적을 수 없다.
   **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
   `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다
   (라벨이 반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적 — 조용히 넘어가지 않는다).

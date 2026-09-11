@@ -551,13 +551,39 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
   in ④ Report. A hunch ("looks like a duplicate") is not dup — if you cannot name the
   evidence commit, take the BLOCKER path below (`--reason policy`).
 - BLOCKER (including no-verdict, e.g. reason `검증자 미산출 — 타임아웃
-  (>VERIFIER_TIMEOUT_MIN분)`) → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
+  (>VERIFIER_TIMEOUT_MIN분)`) → **there are two branches. The one-line test: if the defect
+  closes with an implementation, take ⓐ (bounce to the worker lane); if a spec/policy call is
+  still open, take ⓑ (hold for a human).** (With no linked issue — the PR body has no
+  `Closes`/`Refs` so `<issue>` cannot be resolved — there is nothing to return to
+  `agent-ready`, so ⓐ is unavailable and you take ⓑ.)
+- ⓐ **Defect that closes with an implementation → bounce to the worker lane** (observed
+  twice — with no comment channel for this branch the marker got hand-typed, #271).
+  Leave the bounce comment with
+  `$SCRIPTS/bounce-comment.sh closeout-blocker <repo> <pr> <issue> "<reason>"` — **never
+  hand-type the wording** (a dropped colon or reordering makes the `bounce-state.sh` bounce
+  safety net miss the PR, and `closeout-eligible` re-lists it as a merge candidate on the
+  **stale ✅ that predates the bounce**, #212 · #171). Write `<reason>` so a worker can read
+  it and fix it — what is blocked and why (do not borrow the `redispatch` channel's fixed
+  wording: "lost finish" is false on this branch, and a false reason becomes the next tick's
+  judgment input).
+  Then `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` returns the linked
+  issue to `agent-ready` (stripping `agent:claimed`, the stage labels, `needs-human` and
+  `hold:*` — do not hand-run `gh issue edit`) → **`blocked` exit** (no merge; do not invent a
+  new exit state — also count it as `재디스패치 N` in ④ Report). Once the re-dispatch lands,
+  issue-runner Dispatch reuses the same `agent/issue-N` worktree, so **the fix continues on
+  the same PR branch** and no new PR appears.
+  **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
+  report `BLOCKED: transition failed closeout-redispatch PR #<pr>(<repo_short>) — <one stderr line>`
+  in ④ Report instead.
+- ⓑ **A spec/policy call is still open (no-verdict included) → hold for a human.**
+  `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
   <!-- bodat:worker -->"`
   + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`
   (removes `harvesting` from the PR, attaches `needs-human` + `hold:policy` to the linked
-  issue and clears the stage labels) → **blocked exit** (do not merge). A verifier BLOCKER
-  or no-verdict needs a spec/policy call, so the reason is `policy` (neither `conflict`
-  nor `ladder`).
+  issue and clears the stage labels) → **blocked exit** (do not merge). A BLOCKER or
+  no-verdict that lands on this branch needs a spec/policy call, so the reason is `policy`
+  (neither `conflict` nor `ladder`). A no-verdict is **always** this branch — with no verdict
+  there is nothing to state as the reason a worker should fix.
   **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
   report `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
   in ④ Report instead (the point is to leave the half-moved labels for the next tick to catch —
