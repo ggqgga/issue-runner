@@ -99,24 +99,51 @@ if [ "$got_lock" != 1 ]; then
   exit 3
 fi
 
+# trap 을 mktemp **앞에** 건다(#232 h2) — out/removed/flag 를 빈 값으로 먼저 초기화해
+# 두면 `rm -f "$out" "$removed" "$flag"` 는 아직 안 채워진 변수라도(`rm -f ""` 는
+# 무해) 안전하다. mktemp 3회 중 하나라도 실패하면(TMPDIR 가 없거나 꽉 찬 경우 등)
+# `set -e` 가 즉시 스크립트를 종료시키는데, trap 이 mktemp **뒤에** 있으면 그 실패
+# 시점엔 아직 trap 이 안 걸려 있어 `$lockdir` 가 안 지워지고 영구히 남는다(이후 모든
+# closeout append 가 exit 3 로 막힌다). trap 을 먼저 걸면 실패 지점이 어디든 EXIT
+# 훅이 잠금을 반드시 회수한다.
+out=""
+removed=""
+flag=""
+trap 'rm -f "$out" "$removed" "$flag"; rmdir "$lockdir" 2>/dev/null' EXIT
+
 out=$(mktemp)
 removed=$(mktemp)
 flag=$(mktemp)
-trap 'rm -f "$out" "$removed" "$flag"; rmdir "$lockdir" 2>/dev/null' EXIT
 
-# append 는 잠금을 쥔 **뒤에** 한다 — 이게 이번 라운드의 핵심 수정이다. 잠금 밖에서
+# append 는 잠금을 쥔 **뒤에** 한다 — 이게 #208 라운드의 핵심 수정이다. 잠금 밖에서
 # append 하면(#208 재검증 BLOCKER②) 다른 프로세스의 read→write 창에 끼어들어
 # 유실될 수 있지만, 잠금 안에서 하면 그 프로세스는 우리가 끝날 때까지 자기 read 조차
 # 시작 못 하므로 유실 창이 없다.
 if [ "$mode" = "append" ]; then
+  # 기존 파일의 마지막 바이트가 개행이 아니면 먼저 개행을 넣는다(#232 h3) — 안 그러면
+  # 새 `- [` 항목이 마지막 줄에 이어 붙어 줄 머리가 아니게 되고, awk 의 `^- \[` 경계
+  # 판정에서 빠져 두 항목이 하나로 합쳐진다(캡 계산 과소). 빈 파일·없는 파일에는 앞에
+  # 개행을 넣지 않는다(맨 앞에 빈 줄이 생기는 걸 막는다) — `-s` 가 이미 그 구분이다.
+  if [ -s "$file" ] && [ -n "$(tail -c1 "$file")" ]; then
+    printf '\n' >> "$file"
+  fi
   printf '%s\n' "$entry" >> "$file"
 fi
 
 # awk 한 패스: 경계선(항목 시작) 인덱스를 모은 뒤, 초과분(오래된 쪽)만 removed_file 에
 # 첫 줄을 적고 본문에서는 통째로 건너뛰고, 나머지(프리앰블 + 유지 항목)는 그대로 stdout.
 # nb<=cap 이면 아무것도 stdout·flag_file 에 쓰지 않는다 — 호출자가 그걸로 "무변경"을 안다.
+#
+# 항목 정의는 두 경계 타입이 다르다(#232 h1): `## ` 헤더는 다음 경계 직전까지 그 블록의
+# 산문을 통째로 소유한다(그래야 여러 줄짜리 사례가 안 찢어진다). 반면 `- [` bullet 은
+# **정의상 그 한 줄뿐**이라 item_end=start — 다음 경계 직전까지의 나머지 줄(빈 줄이든
+# 독립 산문이든)은 그 bullet 의 소유가 아니다. 그 "소유되지 않은" 구간(item_end+1..
+# gap_end)은 인접 bullet 의 drop 여부와 무관하게 **항상** 그대로 stdout 에 흘린다 —
+# 안 그러면 bullet 을 지울 때 뒤따르는 독립 산문까지 조용히 함께 지워진다(이 이슈의
+# 재현 기전). `## ` 블록은 item_end==gap_end 라 이 구간이 애초에 없다(기존 동작 불변).
 awk -v cap="$cap" -v removed_file="$removed" -v flag_file="$flag" '
   function is_boundary(l) { return (l ~ /^- \[/) || (l ~ /^## /) }
+  function is_bullet(l)   { return (l ~ /^- \[/) }
   { lines[NR] = $0 }
   END {
     n = NR
@@ -130,12 +157,15 @@ awk -v cap="$cap" -v removed_file="$removed" -v flag_file="$flag" '
     for (i = 1; i < bstart[1]; i++) print lines[i]
     for (b = 1; b <= nb; b++) {
       start = bstart[b]
-      end = (b < nb) ? bstart[b + 1] - 1 : n
+      next_start = (b < nb) ? bstart[b + 1] : n + 1
+      gap_end = next_start - 1
+      item_end = is_bullet(lines[start]) ? start : gap_end
       if (b <= drop) {
         print lines[start] > removed_file
-        continue
+      } else {
+        for (i = start; i <= item_end; i++) print lines[i]
       }
-      for (i = start; i <= end; i++) print lines[i]
+      for (i = item_end + 1; i <= gap_end; i++) print lines[i]
     }
     print "1" > flag_file
   }

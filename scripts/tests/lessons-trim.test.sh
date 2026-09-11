@@ -268,6 +268,126 @@ else
 fi
 if [ ! -d "$tmp/race.md.lock" ]; then ok; else bad "(동시성) 레이스 후 lock 디렉터리 잔존"; fi
 
+# ── (#232 h1) `- [` bullet 뒤의 독립 산문은 그 bullet 이 지워져도 남는다 ──────
+# bullet 은 정의상 그 한 줄뿐이다 — 다음 경계 직전까지를 통째로 그 bullet 소유로 보면
+# (구 버전 결함) 뒤따르는 산문까지 함께 지워진다. PR#1 만 드롭되는 캡으로 부른다.
+cat > "$tmp/h1.md" <<'EOF'
+- [2026-08-01 PR#1] one
+independent prose after one — 이 줄은 살아남아야 한다
+- [2026-08-02 PR#2] two
+- [2026-08-03 PR#3] three
+- [2026-08-04 PR#4] four
+EOF
+out=$(bash "$SUT" "$tmp/h1.md" 3 2>/dev/null); rc=$?
+if [ "$rc" = 0 ] && [ "$out" = "- [2026-08-01 PR#1] one" ] \
+  && grep -qF -- 'independent prose after one — 이 줄은 살아남아야 한다' "$tmp/h1.md" \
+  && ! grep -qF 'PR#1]' "$tmp/h1.md" \
+  && grep -qF 'PR#2]' "$tmp/h1.md" && grep -qF 'PR#3]' "$tmp/h1.md" && grep -qF 'PR#4]' "$tmp/h1.md"; then
+  ok
+else
+  bad "(h1) bullet 삭제해도 독립 산문은 남아야 한다 — rc=$rc out=[$out] file=$(cat "$tmp/h1.md")"
+fi
+
+# ── (#232 h1 회귀) `##` 블록의 산문은 블록이 지워질 때 함께 지워진다 ─────────
+# h1 수정이 "bullet 뒤 산문 보존"과 정반대 방향(`##` 산문도 항상 보존)으로 과잉교정
+# 되지 않았는지를 전용 픽스처로 문다(기존 (c) 케이스와 별도로, 이슈가 지정한 6개
+# 픽스처 중 하나로 명시).
+cat > "$tmp/h1reg.md" <<'EOF'
+## [2026-08-11 PR#11] title eleven
+prose eleven line A — 지워져야 한다
+prose eleven line B — 지워져야 한다
+- [2026-08-12 PR#12] twelve
+- [2026-08-13 PR#13] thirteen
+- [2026-08-14 PR#14] fourteen
+EOF
+out=$(bash "$SUT" "$tmp/h1reg.md" 3 2>/dev/null); rc=$?
+expected_removed='## [2026-08-11 PR#11] title eleven'
+if [ "$rc" = 0 ] && [ "$out" = "$expected_removed" ] \
+  && ! grep -qF 'title eleven' "$tmp/h1reg.md" \
+  && ! grep -qF 'prose eleven line' "$tmp/h1reg.md"; then
+  ok
+else
+  bad "(h1 회귀) ## 블록 삭제 시 산문도 함께 지워져야 한다 — rc=$rc out=[$out] file=$(cat "$tmp/h1reg.md")"
+fi
+
+# ── (#232 h2) 잠금 획득 후 mktemp 실패해도 <file>.lock 이 남지 않는다 ────────
+# macOS mktemp 는 `-t` 기본 템플릿에서 `_CS_DARWIN_USER_TEMP_DIR` 를 TMPDIR 보다
+# 우선해 TMPDIR 조작만으로는 실패를 재현할 수 없다(실측). PATH 앞단에 항상 실패하는
+# mktemp 스텁을 얹어 OS 무관하게 결정론적으로 재현한다.
+h2tmp=$(mktemp -d)
+mkdir "$h2tmp/stubbin"
+cat > "$h2tmp/stubbin/mktemp" <<'STUB'
+#!/bin/sh
+exit 1
+STUB
+chmod +x "$h2tmp/stubbin/mktemp"
+cat > "$tmp/h2.md" <<'EOF'
+- [2026-08-05 PR#5] five
+EOF
+rc=0
+out=$(PATH="$h2tmp/stubbin:$PATH" bash "$SUT" "$tmp/h2.md" 5 2>/dev/null) || rc=$?
+if [ "$rc" != 0 ] && [ ! -d "$tmp/h2.md.lock" ]; then
+  ok
+else
+  bad "(h2) mktemp 실패 시 lock 잔존 — rc=$rc lockdir_exists=$([ -d "$tmp/h2.md.lock" ] && echo yes || echo no)"
+fi
+rm -rf "$h2tmp"
+
+# ── (#232 h2 회귀) 정상 경로에서 임시파일 3개 + lock 디렉터리가 여전히 치워진다 ──
+# 실제 mktemp 를 그대로 호출하되 만들어진 경로를 로그에 남기는 스텁으로 감싸,
+# 트랩이 그 경로들을 실제로 rm 했는지(=존재하지 않는지) 정면으로 단언한다.
+h2rtmp=$(mktemp -d)
+mkdir "$h2rtmp/stubbin"
+real_mktemp=$(command -v mktemp)
+cat > "$h2rtmp/stubbin/mktemp" <<STUB
+#!/bin/sh
+p=\$("$real_mktemp" "\$@")
+rc=\$?
+echo "\$p" >> "$h2rtmp/created.log"
+echo "\$p"
+exit \$rc
+STUB
+chmod +x "$h2rtmp/stubbin/mktemp"
+cat > "$tmp/h2reg.md" <<'EOF'
+- [2026-08-06 PR#6] six
+EOF
+PATH="$h2rtmp/stubbin:$PATH" bash "$SUT" "$tmp/h2reg.md" 5 >/dev/null 2>&1
+leftover=""
+if [ -f "$h2rtmp/created.log" ]; then
+  while IFS= read -r p; do
+    [ -e "$p" ] && leftover="$leftover $p"
+  done < "$h2rtmp/created.log"
+fi
+if [ -s "$h2rtmp/created.log" ] && [ -z "$leftover" ] && [ ! -d "$tmp/h2reg.md.lock" ]; then
+  ok
+else
+  bad "(h2 회귀) 정상 경로 후 임시파일·lock 잔존 — leftover=[$leftover] created_log_size=$(wc -l < "$h2rtmp/created.log" 2>/dev/null || echo 0)"
+fi
+rm -rf "$h2rtmp"
+
+# ── (#232 h3) 종결 개행 없는 파일에 append 하면 새 항목이 자기 줄에서 시작한다 ──
+printf -- '- [2026-08-07 PR#7] seven' > "$tmp/h3.md"
+out=$(bash "$SUT" append "$tmp/h3.md" 5 "- [2026-08-08 PR#8] eight" 2>/dev/null); rc=$?
+nb=$(grep -c '^- \[' "$tmp/h3.md")
+if [ "$rc" = 0 ] && [ -z "$out" ] && [ "$nb" = 2 ] \
+  && grep -qF -- '- [2026-08-07 PR#7] seven' "$tmp/h3.md" \
+  && grep -qF -- '- [2026-08-08 PR#8] eight' "$tmp/h3.md"; then
+  ok
+else
+  bad "(h3) 종결개행 없는 파일 append — rc=$rc out=[$out] nb=$nb file=$(cat "$tmp/h3.md")"
+fi
+
+# ── (#232 h3 회귀) 이미 개행으로 끝나는 정상 파일에 append 해도 빈 줄이 안 늘어난다 ──
+printf -- '- [2026-08-09 PR#9] nine\n' > "$tmp/h3reg.md"
+out=$(bash "$SUT" append "$tmp/h3reg.md" 5 "- [2026-08-10 PR#10] ten" 2>/dev/null); rc=$?
+blank_count=$(grep -c '^$' "$tmp/h3reg.md" || true)
+line_count=$(wc -l < "$tmp/h3reg.md" | tr -d ' ')
+if [ "$rc" = 0 ] && [ -z "$out" ] && [ "$blank_count" = 0 ] && [ "$line_count" = 2 ]; then
+  ok
+else
+  bad "(h3 회귀) 정상 파일 append 후 빈 줄 증가 — rc=$rc blank_count=$blank_count line_count=$line_count file=$(cat "$tmp/h3reg.md")"
+fi
+
 # ── 오류 경계 ────────────────────────────────────────────────────────
 rc=0
 out=$(bash "$SUT" 2>/dev/null) || rc=$?
