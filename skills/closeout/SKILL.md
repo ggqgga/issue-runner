@@ -263,8 +263,16 @@ Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에
    직접 읽는다(#207 — "동봉이 유일한 SSOT·git 조회 금지"라던 옛 문구는 이 동봉-안-함 계약과 정면 충돌해 리뷰어가
    아무것도 못 본 채 항목 0(=CLEAN)을 내는 fail-open 을 냈다). 지시문은 "이 변경이 계획/이슈 AC 를 충족하는가만
    판정, 미충족·범위 이탈은 `[P1]`, 경미한 편차는 `[P2]` 로" 를 명시한다.
+   **응답 계약(구조 줄) — `--prompt` 호출 전용.** 헬퍼가 이 지시문 끝에 "리뷰 본문의 마지막 줄은
+   `<키>: reviewed|no-basis` 여야 한다"는 계약을 자동으로 붙이고, 판정을 **그 줄로만** 가른다(`reviewed` →
+   항목 집계대로 · `no-basis`/줄 없음/형식 깨짐 → `verdict=NONE` 미산출). 형식 문자열의 유일한 정의 자리는
+   `codex-review-gate.sh` 의 `STATUS_*` 상수다 — 템플릿·이 문서에 손으로 옮겨 적지 마라(요구 형식과 파서가
+   갈리면 SKILL↔템플릿 불일치가 파서 쪽에서 재발한다, #207). 그래서 프롬프트를 채울 때 계약문을 따로 쓸
+   필요가 없다. 산문("판정할 근거가 없다" 류)은 판정 입력이 **아니다** — 어형 열거로는 안 닫혀 세 라운드
+   연속 fail-open 을 냈다(#207 round2~4).
 헬퍼는 자체 타임아웃(`CODEX_GATE_TIMEOUT` 기본 900s = `VERIFIER_TIMEOUT_MIN` 과 동조)을 가진다. 두 호출 중 하나라도
-**exit 2(`verdict=NONE`) = 미산출**(codex 부재·모델 오류·타임아웃)이면 그때만 ## 상수의 `VERIFIER` 폴백(general-purpose,
+**exit 2(`verdict=NONE`) = 미산출**(codex 부재·모델 오류·타임아웃, 그리고 계획 부합 호출에서 리뷰어가
+응답 계약의 구조 줄을 안 냈거나 `no-basis` 로 답한 경우 — #207)이면 그때만 ## 상수의 `VERIFIER` 폴백(general-purpose,
 diff·이슈 본문·lessons 를 프롬프트에 동봉, `run_in_background` + `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을
 쓴다. 폴백도 미산출이면 아래 BLOCKER 경로로 보류 종료한다(fail-closed — 절대 머지로 진행하지 않는다, #96).
 헬퍼 stderr 의 모델 오류 원문(404·not supported·requires a newer version)은 "스톨"이 아니다 — 코멘트에 그대로 남긴다.

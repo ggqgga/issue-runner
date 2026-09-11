@@ -574,6 +574,36 @@ check_step1_worktree_sync skills/closeout/SKILL.md    '^\*\*1단계 —' '^\*\*2
 check_step1_worktree_sync skills/closeout/SKILL.en.md '^\*\*Step 1 —' '^\*\*Step 2 —' || fail=1
 [ "$fail" = 0 ] || exit 1
 
+echo "[closeout] ③-1 응답 계약(구조 줄) 단일 정의 검사 (#207)"
+# 이 이슈의 뿌리는 SKILL 과 템플릿이 같은 계약을 서로 다르게 적은 것이었다. 응답 계약의
+# 형식 문자열도 두 자리에 적히면 같은 방식으로 갈라진다(프롬프트가 요구하는 형식 ≠ 파서가
+# 읽는 형식 = fail-open 재발). 그래서 형식은 codex-review-gate.sh 의 STATUS_* 상수 **한 자리**
+# 에서만 정의하고, 계약문·파서는 그 상수를 참조해야 하며, 문서·템플릿은 리터럴을 적지 않는다.
+gate=scripts/codex-review-gate.sh
+for v in STATUS_KEY STATUS_REVIEWED STATUS_NO_BASIS; do
+  if ! grep -qE "^$v=" "$gate"; then
+    echo "  ✗ $gate 에 $v 정의 없음 — 응답 계약 형식의 단일 정의 자리"; exit 1
+  fi
+done
+key=$(sed -n "s/^STATUS_KEY='\\(.*\\)'\$/\\1/p" "$gate")
+[ -n "$key" ] || { echo "  ✗ $gate 의 STATUS_KEY 값을 못 읽었다"; exit 1; }
+n=$(grep -c "$key" "$gate")
+if [ "$n" != 1 ]; then
+  echo "  ✗ $gate 에 계약 키('$key') 리터럴이 ${n}곳 — 정의 1곳만 허용(나머지는 \$STATUS_KEY 참조)"; exit 1
+fi
+# 프롬프트가 요구하는 형식 · 파서가 읽는 형식이 둘 다 그 상수에서 만들어지는가
+if ! grep -q '\${STATUS_KEY}: \${STATUS_REVIEWED}' "$gate" || ! grep -q '\${STATUS_KEY}: \${STATUS_NO_BASIS}' "$gate"; then
+  echo "  ✗ $gate 의 프롬프트 계약문이 STATUS_* 상수로 만들어지지 않았다"; exit 1
+fi
+if ! grep -qF '"^${STATUS_KEY}:[[:space:]]+(${STATUS_REVIEWED}|${STATUS_NO_BASIS})$"' "$gate"; then
+  echo "  ✗ $gate 의 판정 파서가 STATUS_* 상수로 만들어지지 않았다 — 요구 형식과 갈라진다"; exit 1
+fi
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md skills/closeout/references/verifier-prompt.md; do
+  if grep -q "$key" "$f"; then
+    echo "  ✗ $f 에 계약 형식('$key')이 하드코딩됨 — 정의 자리는 $gate 뿐(#207)"; exit 1
+  fi
+done
+
 echo "[closeout] smoke-prompt 한/영 placeholder 검사 (#69)"
 # 5단계 Chrome 스모크 동봉형 프롬프트(verifier-prompt.md 미러) — 한/영 양쪽이
 # 존재하고 두 placeholder 를 다 담아야 한다. <VERIFY_URL>=production 베이스 URL,

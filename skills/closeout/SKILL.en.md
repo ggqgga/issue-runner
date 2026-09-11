@@ -302,8 +302,17 @@ no subagent spawn, polling, or `TaskStop` wiring:
    not-embedded contract, so the reviewer saw nothing and reported zero findings — a CLEAN fail-open). The
    instructions state "judge only whether this change meets the plan / issue AC; unmet or out-of-scope = `[P1]`,
    minor deviation = `[P2]`".
+   **Response contract (structural line) — `--prompt` calls only.** The helper appends a contract to the end of
+   these instructions ("the last line of the review body must be `<key>: reviewed|no-basis`") and decides **on that
+   line alone** (`reviewed` → by the finding counts · `no-basis`/line missing/format broken → `verdict=NONE`, no
+   verdict). The format string's single definition site is the `STATUS_*` constants in `codex-review-gate.sh` — do
+   not copy it into the template or this document (if the required format and the parser diverge, the very
+   SKILL↔template mismatch this issue fixed reappears on the parser side, #207). So you never write the contract
+   yourself when filling the prompt. Prose ("no basis to judge" wording) is **not** a decision input — enumerating
+   its inflections does not converge and produced three consecutive fail-opens (#207 rounds 2-4).
 The helper has its own timeout (`CODEX_GATE_TIMEOUT`, default 900s = in step with `VERIFIER_TIMEOUT_MIN`). If either
-call returns **exit 2 (`verdict=NONE`) = no verdict** (codex missing · model error · timeout), only then use the
+call returns **exit 2 (`verdict=NONE`) = no verdict** (codex missing · model error · timeout — and, on the plan
+conformance call, the reviewer omitting the contract's structural line or answering `no-basis`, #207), only then use the
 `VERIFIER` fallback from ## Constants (general-purpose, with the diff, issue body, and lessons embedded in the prompt,
 `run_in_background` + the `VERIFIER_TIMEOUT_MIN` deadline + `TaskStop` on overrun). If the fallback also produces no
 verdict, exit on hold via the BLOCKER path below (fail-closed — never proceed to merge, #96). A model error in the

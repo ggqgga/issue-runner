@@ -11,8 +11,9 @@
 # 판정(내장 리뷰어 출력은 마크다운 — 요약 문단 + `- [P<n>] 제목 — 파일:줄` 항목; --json 스트림엔 agent_message 텍스트만
 # 있고 구조화 findings 는 없다, 0.153.4 실측): 리뷰 본문의 `[P1]` → BLOCKER · `[P2]` → WARN · `[P3]`/기타 항목 → NIT · 항목 0 → CLEAN.
 # **응답 계약(구조 신호, #207)** — `--prompt` 호출에 한해 이 스크립트가 프롬프트 끝에 "마지막 줄은
-# `REVIEW_STATUS: reviewed|no-basis` 여야 한다"는 계약을 덧붙이고, 판정은 **그 줄로만** 가른다:
-# `reviewed` → 위 항목 집계대로 · `no-basis`/줄 없음/형식 깨짐 → `verdict=NONE`(미산출, fail-closed).
+# `<STATUS_KEY>: <STATUS_REVIEWED>|<STATUS_NO_BASIS>`(아래 상수) 여야 한다"는 계약을 덧붙이고, 판정은
+# **그 줄로만** 가른다: 값이 `$STATUS_REVIEWED` → 위 항목 집계대로 · `$STATUS_NO_BASIS`/줄 없음/형식
+# 깨짐 → `verdict=NONE`(미산출, fail-closed).
 # 산문(한국어/영어 "판정할 근거가 없다" 류)은 판정 입력이 **아니다** — 어형 열거는 닫히지 않아
 # 세 라운드 연속 fail-open 을 냈다(#207 round2~4). 형식 문자열은 아래 STATUS_* 상수 **한 자리**에서
 # 정의하고 프롬프트 계약문과 파서가 둘 다 그것을 참조한다(두 자리에 적으면 이 이슈가 고치려던
