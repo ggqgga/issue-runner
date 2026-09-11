@@ -704,12 +704,21 @@ and that fact must be visible to a human.
   ⑵ `gh issue edit <number> --repo <repo> --add-label deploy-wait` to attach it **to that
   issue**, then ⑶ `gh issue view <number> --repo <repo> --json labels` to confirm it landed.
   Never pass over it silently.
-- **Verify right after issuance (same shape as step 6).** Check with
+- **Verify right after issuance (same shape as step 6) — runs only when the issuance
+  that carried `--label` succeeded.** Check with
   `gh issue view <number> --repo <repo> --json labels` that
   `deploy-wait` actually landed; if it is missing, top it up with
   `gh issue edit <number> --repo <repo> --add-label deploy-wait`
   (the 8/8 miss behind this fix was not only the command sitting mid-prose — step 4 never
   had this verify step at all, while step 6 did and did not leak).
+  **An issue filed by the fallback above with no `--label` at all is excluded from this
+  verify·top-up** (#223). On that path the issuance and its one retry both failed, so
+  "this repo cannot take the label right now" is already settled — calling the same label
+  edit again here just fails again, and that failure cuts off the PR marker
+  `배포 대기: #N` and the ④ Report line `BLOCKED: deploy-wait label attach failed …`
+  that follow (the ticket exists but nobody knows = exactly the loss the fallback exists
+  to prevent). Recovery for a fallback ticket is owned by the three-step human recovery
+  above — do not duplicate the attempt here.
 
 Why this rule was flipped: the previous rule created no issue when `<LIVE_CHECKS>` was `없음`,
 justified by "④ Report's `승격 대기 N커밋` holds the unpromoted state". But that Report line
