@@ -170,6 +170,53 @@ mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub
 UNABLE="$TMP/unable.md" run --base base; assert_eq "f8 결론 없는 '정보만으로' 는 계속 미산출" "$rc" 2; case "$last" in "verdict=NONE "*) ok ;; *) bad "f8: $last" ;; esac
 mv "$TMP/stub/codex.real" "$TMP/stub/codex"
 
+echo "[gate] 4b-12) 판정-결론 격자(#207 round3 attempt3) — REVIEW_CONCLUDED 는 '부합'·'CLEAN' 의 긍정 단정만 결론으로 센다"
+# 판정 규칙(말로): 항목([Pn]) 0건에 캐비엇(BASIS_ABSENT_CAVEAT)·판정불능 동사(CANNOT_VERB)가
+# 함께 있을 때만 "미산출 후보"다. 그 상태에서 리뷰 본문이 이미 긍정 단정 결론을 냈으면
+# (REVIEW_CONCLUDED — '결함 없'·'이상 없'·'문제 없'·'부합한다/합니다/함'·bare CLEAN) 캐비엇은
+# 곁다리로 보고 CLEAN 을 유지한다. 그런데 '부합'·'CLEAN' 두 토큰은 의문형·부정형 문장 안에도
+# 맨몸으로 나타난다(부합하는지·부합하지 않·CLEAN 이라고/인지) — 그 경우는 결론이 아니라
+# 오히려 "못 봤다"는 뜻이므로 결론으로 세면 안 된다(REVIEW_CONCLUDED_NEGATED 로 되돌린다).
+# want=NONE ⇢ verdict=NONE(exit 2) · want=CLEAN ⇢ verdict=CLEAN(exit 0). 각 행은 별도 UNABLE
+# 파일로 돌려 독립 검증한다(grep -q 는 파일 어디에서든 매치되면 참이라 문장을 줄로 나눠도 무방).
+grid_row() {
+  name="$1"; want="$2"; printf '%s' "$3" > "$TMP/unable.md"
+  mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
+  case "$want" in
+    NONE)  UNABLE="$TMP/unable.md" run --base base; assert_eq "격자: $name" "$rc" 2
+           case "$last" in "verdict=NONE "*) ok ;; *) bad "격자[$name] want=NONE 실제: $last" ;; esac ;;
+    CLEAN) UNABLE="$TMP/unable.md" run --base base; assert_eq "격자: $name" "$rc" 0
+           case "$last" in "verdict=CLEAN "*) ok ;; *) bad "격자[$name] want=CLEAN 실제: $last" ;; esac ;;
+  esac
+  mv "$TMP/stub/codex.real" "$TMP/stub/codex"
+}
+# name                                              | want  | input
+grid_row "의문 — 부합하는지 확인할 수 없다(round3 BLOCKER 원문)" NONE \
+  '제공된 정보만으로 변경 사항이 계획에 부합하는지 확인할 수 없습니다.'
+grid_row "의문 — 부합하는지 판단할 수 없다" NONE \
+  '제공된 정보만으로는 계획에 부합하는지 판단할 수 없습니다.'
+grid_row "부정 — 부합하지 않는다(캐비엇 동반, 결론 아님)" NONE \
+  '제공된 정보만으로는 판단할 수 없습니다만, 이 변경은 계획에 부합하지 않습니다.'
+grid_row "CLEAN 부정 — CLEAN 이라고 볼 수 없다" NONE \
+  '제공된 정보만으로는 판정할 수 없습니다.
+계획 부합 여부가 CLEAN 이라고 볼 수 없습니다.'
+grid_row "CLEAN 부정 — CLEAN 인지 확신할 수 없다" NONE \
+  '제공된 정보만으로는 검증할 수 없습니다.
+이 변경이 CLEAN 인지 확신할 수 없습니다.'
+grid_row "긍정 단정 — 부합한다(캐비엇 동반, 결론 유지)" CLEAN \
+  '제공된 정보만으로는 부하 테스트를 확인할 수 없습니다. 이 변경은 계획에 부합한다.'
+grid_row "긍정 단정 — 부합합니다(캐비엇 동반, 결론 유지)" CLEAN \
+  '제공된 정보만으로는 검증할 수 없습니다. 이 변경은 계획에 부합합니다.'
+grid_row "긍정 단정 — 부합함(캐비엇 동반, 결론 유지)" CLEAN \
+  '제공된 정보만으로는 확인할 수 없습니다. 구현은 계획에 부합함.'
+grid_row "긍정 단정 — 이상 없음(캐비엇 동반, 결론 유지)" CLEAN \
+  '제공된 정보만으로는 검토할 수 없습니다. 이상 없음.'
+grid_row "긍정 단정 — 문제 없습니다(캐비엇 동반, 결론 유지)" CLEAN \
+  '제공된 정보만으로는 판정할 수 없습니다. 문제 없습니다.'
+grid_row "긍정 단정 — bare CLEAN(캐비엇 동반, 결론 유지)" CLEAN \
+  '제공된 정보만으로는 검증할 수 없습니다. 이 변경은 CLEAN 입니다.'
+unset -f grid_row
+
 echo "[gate] 4c) [P0] 도 BLOCKER · events 의 오류 문자열은 오탐 안 냄(codex stderr 만 본다, #137)"
 STUB_MODE=p0 run --base base; assert_eq "P0 exit" "$rc" 1; case "$last" in "verdict=BLOCKER p1=1 p2=0 p3=0 "*) ok ;; *) bad "P0 집계: $last" ;; esac
 STUB_MODE=selfref run --base base; assert_eq "events 자기참조 exit" "$rc" 0; case "$last" in "verdict=WARN p1=0 p2=1 "*) ok ;; *) bad "events 자기참조로 오탐: $last" ;; esac

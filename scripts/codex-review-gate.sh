@@ -153,20 +153,31 @@ p3=$(grep -c -E '^\s*[-*]\s.*\[P[3-9]\]' "$REVIEW")
 # 미산출로 접지 않는다. 결론이 없는 순수 "못 봤다" 응답(f8)은 그대로 차단된다. 나머지
 # 세 갈래(diff 미포함·근거 없음/부족 앞뒤)는 **항상** 리뷰 전체 실패를 뜻해 이 완화가
 # 필요 없다 — 그대로 무조건 적용한다(BASIS_ABSENT_STRONG).
-# 각 갈래를 픽스처로 검증: scripts/tests/codex-review-gate.test.sh.
+#
+# REVIEW_CONCLUDED 는 **긍정 단정**만 결론으로 센다(#207 round3) — '결함 없'·'이상 없'·
+# '문제 없'은 이미 단정형이라 문제가 없지만, '부합'·'CLEAN' 두 토큰은 맨몸으로 매치하면
+# 의문형·부정형 문장에도 걸린다("계획에 **부합**하는지 확인할 수 없습니다" — 뜻은 "못 봤다"
+# 인데 REVIEW_CONCLUDED 가 참이 되어 caveat 이 곁다리로 읽히고 verdict=CLEAN 으로 샜다,
+# round3 검증자 실측 BLOCKER). '부합' 은 단정 어미(한다/합니다/함)를 요구해 '부합하는지'·
+# '부합하지 않' 을 애초에 안 걸리게 좁히고, 'CLEAN' 은 맨몸 매치를 유지하는 대신
+# REVIEW_CONCLUDED_NEGATED 로 뒤에 의문·부정 조사('이라고'·'인지')+무산 동사('없'·'어렵')가
+# 붙은 경우만 걸러 결론에서 뺀다("CLEAN 이라고 볼 수 없다"·"CLEAN 인지 확신할 수 없다").
+# round2 회귀 금지: 캐비엇+긍정 결론 병존(f7)은 그대로 CLEAN 이어야 한다 — 격자로 전수
+# 검증: scripts/tests/codex-review-gate.test.sh 4b-12.
 if [ "$p1" -eq 0 ] && [ "$p2" -eq 0 ] && [ "$p3" -eq 0 ]; then
   LEGACY_UNABLE='unable to inspect|could not be inspected|execution tool was unavailable|tool (was|is) unavailable|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review|not a substantive'
   BASIS_ABSENT_STRONG='diff.{0,40}포함되어 있지|(판정|검증|확인).{0,20}근거.{0,15}(없|부족)|근거.{0,15}(없|부족).{0,20}(판정|검증|확인)'
   BASIS_ABSENT_CAVEAT='제공된 (정보|diff|자료)만으로'
   CANNOT_VERB='(판정|검증|확인|검토|판단|평가).{0,10}할 수 없'
-  REVIEW_CONCLUDED='결함.{0,6}(없|발견)|이상[[:space:]]*없|문제[[:space:]]*없|부합|CLEAN'
+  REVIEW_CONCLUDED='결함.{0,6}(없|발견)|이상[[:space:]]*없|문제[[:space:]]*없|부합(한다|합니다|함)|CLEAN'
+  REVIEW_CONCLUDED_NEGATED='(부합|CLEAN).{0,12}(이라고|인지|하는지).{0,12}(없|어렵)'
   matched=0
   if grep -q -i -E "$LEGACY_UNABLE" "$REVIEW" 2>/dev/null; then
     matched=1
   elif grep -q -E "$BASIS_ABSENT_STRONG" "$REVIEW" 2>/dev/null && grep -q -E "$CANNOT_VERB" "$REVIEW" 2>/dev/null; then
     matched=1
   elif grep -q -E "$BASIS_ABSENT_CAVEAT" "$REVIEW" 2>/dev/null && grep -q -E "$CANNOT_VERB" "$REVIEW" 2>/dev/null \
-    && ! grep -q -E "$REVIEW_CONCLUDED" "$REVIEW" 2>/dev/null; then
+    && { ! grep -q -E "$REVIEW_CONCLUDED" "$REVIEW" 2>/dev/null || grep -q -E "$REVIEW_CONCLUDED_NEGATED" "$REVIEW" 2>/dev/null; }; then
     matched=1
   fi
   if [ "$matched" = 1 ]; then
