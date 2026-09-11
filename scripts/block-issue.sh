@@ -14,8 +14,9 @@ shift 2
   exit 1
 }
 
-# 중립 회색조 — needs-human(D4C5F9)·claimed(D93F0B) 과 시각적으로 구분한다.
-BLOCKED_COLOR="BFDADC"
+# 저채도 회색조 — 팔레트 3단 축(#256)의 C 티어(분류/메타). 블로킹은 "사람 차례"(난색)도
+# "루프 진행"(한색)도 아닌 관계 표시라 조용한 쪽에 둔다. 축 정의는 setup-labels.sh 머리말.
+BLOCKED_COLOR="E1E4E8"
 
 for blocker in "$@"; do
   case "$blocker" in
