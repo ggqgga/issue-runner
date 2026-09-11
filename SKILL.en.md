@@ -204,7 +204,9 @@ closeout-pick) never remove it. Per event:
 - `resumed` — `needs-human` and `hold:ladder` are off and `agent-ready` is untouched (the
   eligibility label is never touched). **Nothing for the dispatcher to do** — the issue
   reappears naturally as an `eligible-issues.sh` candidate in ③ this tick. Record the
-  number and `attempt` under `resumed` in ④ Report.
+  number and `attempt` under `resumed` in ④ Report. An issue carrying the deploy-wait
+  label (`deploy-wait`) never emits this event even once the window passes (#217) — it
+  goes to `note` below instead.
 - `escalated` — the resume cap (`LADDER_RESUME_LIMIT`) was exceeded, so the issue was
   escalated to `hold:policy` (`attempt`/`limit` are the resumes the marker comments actually
   recorded vs. the cap — read as `2/2`). The script already applied the label, so with
@@ -217,8 +219,9 @@ closeout-pick) never remove it. Per event:
   a `repo` of `*` means the account-wide search). The script did **not** touch it —
   **do not touch it either**; copy it verbatim into ④ Report's warns.
 - `note` — an informational line the script did **not** touch (a `needs-human` with no reason
-  label on a deploy-wait issue, for example — a **normal state** with nothing to act on). It
-  is not a warn, so it does not go into ④ Report's warns — if it is worth reporting at all,
+  label on a deploy-wait issue, or a deploy-wait issue's `hold:ladder` (#217, not a resume/
+  escalation target even once the window passes) — a **normal state** with nothing to act
+  on). It is not a warn, so it does not go into ④ Report's warns — if it is worth reporting at all,
   carry it as an info line only. Narrowing `warn` to "an invariant violation the loop can
   correct" and demoting everything else to `note` is the contract #188/#190 set.
 - `warn_after_edit` — a side failure **after** a write was already applied (label-release
