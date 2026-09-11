@@ -180,10 +180,12 @@
 #     · 에픽 leaf 전부 종료 — leaf ≥1 전부 닫힘인데 에픽 이슈가 열려 있다(에픽 스윕 대상).
 #     · 에픽 내 P 혼재     — 열린 leaf 의 P 라벨이 둘 이상 갈린다(닫힌 leaf 는 위와 같이 제외).
 #   파생 병기 — `파생` 줄 항목에 `(Epic #N)`/`(에픽 없음)` 을 붙이는 것(파생이 에픽 밖으로
-#   새는지 관측)은 **그 레포에 열린 에픽이 하나라도 있을 때만** 한다. 에픽이 0개인 레포는
-#   "에픽 밖으로 샌다" 는 질문 자체가 성립하지 않고(비교할 에픽 스코프가 없다), 이 게이트가
-#   없으면 에픽을 안 쓰는 레포까지 `파생` 줄 서식이 바뀌어 이 이슈의 무회귀 기준(`Epic #N`
-#   이 하나도 없는 픽스처는 에픽 절 추가 외엔 출력이 한 글자도 안 바뀐다)을 깬다.
+#   새는지 관측)은 **그 레포 이슈 본문 어딘가에 실제 `Epic #N` 줄이 하나라도 있을 때만**
+#   한다(열린·닫힌 leaf 모두 본다 — 에픽 라벨 이슈의 존재 여부가 아니다: leaf 0 인 에픽만
+#   있고 `Epic #N` 을 단 이슈가 하나도 없는 레포에서까지 무관한 파생에 `(에픽 없음)` 을
+#   붙이면 "에픽 밖으로 샌다" 는 관측 자체가 성립하지 않는 레포까지 서식이 바뀐다). 이
+#   게이트가 없으면 에픽을 안 쓰는 레포까지 `파생` 줄 서식이 바뀌어 이 이슈의 무회귀
+#   기준(`Epic #N` 이 하나도 없는 픽스처는 에픽 절 추가 외엔 출력이 한 글자도 안 바뀐다)을 깬다.
 #   추가 gh 호출 0 — 닫힌 이슈 목록(아래 gh 호출 예산)에서 이미 받은 본문으로만 판정한다.
 #
 # ★조회 실패 처리★ 이슈/PR 목록 조회가 실패한 레포는 블록 대신
@@ -633,7 +635,13 @@ def prio_of($l):
           total: (($ol | length) + ($cl | length)), closed: ($cl | length),
           buckets: bucket_counts($ol), priorities: priority_counts($ol)}
        | . + {label: epic_label(.)})) as $epics
-| ($epics | length > 0) as $has_epics
+# 파생 병기 게이트(#260) — "그 레포에 열린 에픽 라벨 이슈가 있는가" 가 아니라 "이슈 본문
+# **어디에라도** `Epic #N` 줄이 실제로 있는가" 로 잰다(열린 leaf·닫힌 leaf 모두 본다).
+# 앞의 근사(에픽 라벨 이슈 존재 여부)는 leaf 0 인 에픽(#400 류)만 있고 어떤 이슈도 실제로
+# `Epic #N` 을 달지 않은 레포에서, 그 에픽과 무관한 파생 이슈까지 `(에픽 없음)` 을 붙여
+# 무회귀 기준(`Epic #N` 이 하나도 없는 픽스처는 에픽 절 추가 외엔 안 바뀐다)을 문자 그대로
+# 어길 수 있었다(사전 리뷰 WARN). 이 판정은 실제 태그 존재 여부라 그 구멍이 없다.
+| ((($iss | map(select(.epic != null))) + ($cls | map(select(.epic != null))) | length) > 0) as $has_epic_refs
 | def blocker_bucket($n):
     ($iss | map(select(.number == $n)) | if length > 0 then bucket_ko(.[0].bucket) else null end);
   def blk_label($b):
@@ -727,14 +735,15 @@ def orphan_base:
       dup_closed: (closed_agent_in_window
         | map(select(has(.ln; "dup")))
         | map(closed_pr_item("중복 종료"))),
-      # 에픽 병기(#260) — 그 레포에 열린 에픽이 하나라도 있을 때만 `(Epic #N)`/`(에픽 없음)`
-      # 을 붙인다($has_epics). 에픽이 0개인 레포는 이 서식이 안 바뀌어야 이 이슈의 무회귀
-      # 기준(`Epic #N` 없는 픽스처는 에픽 절 추가 외엔 출력이 그대로)을 만족한다.
+      # 에픽 병기(#260) — 그 레포 어딘가에 실제 `Epic #N` 줄이 있을 때만 `(Epic #N)`/
+      # `(에픽 없음)` 을 붙인다($has_epic_refs). 그런 줄이 하나도 없는 레포는 이 서식이
+      # 안 바뀌어야 이 이슈의 무회귀 기준(`Epic #N` 없는 픽스처는 에픽 절 추가 외엔 출력이
+      # 그대로)을 만족한다.
       spinoff: ($iss
         | map(select(has(.ln; "spinoff") and (epoch(.createdAt) >= $cutoff)))
         | sort_by(.createdAt, .number)
         | map(item(.; "#\(.number)"
-                     + (if ($has_epics | not) then ""
+                     + (if ($has_epic_refs | not) then ""
                         elif .epic != null then "(Epic #\(.epic))"
                         else "(에픽 없음)" end))))
     },

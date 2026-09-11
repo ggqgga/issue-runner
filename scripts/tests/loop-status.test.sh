@@ -511,6 +511,20 @@ FX
 echo '[]' > "$tmp/fx/ggqgga_Epics.pr_open.json"
 echo '[]' > "$tmp/fx/ggqgga_Epics.pr_closed.json"
 
+# ── 픽스처: ggqgga/EpicNoRefs (epicnorefs) — 에픽 라벨은 있지만 `Epic #N` 은 0건(사전 리뷰) ──
+# `$has_epic_refs` 게이트가 "열린 에픽 라벨 이슈 존재" 가 아니라 "실제 `Epic #N` 텍스트
+# 존재" 로 재는지 — leaf 0 인 에픽(#700)만 있고 그 무엇의 본문에도 `Epic #N` 이 없는
+# 레포에서, 무관한 파생(#701)까지 `(에픽 없음)` 이 붙으면 안 된다(무회귀 기준 위반).
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicNoRefs.issues.json" <<'FX'
+[
+ {"number":700,"title":"에픽 E — leaf 없음","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":701,"title":"무관한 파생","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"spinoff"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_EpicNoRefs.issues_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicNoRefs.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicNoRefs.pr_closed.json"
+
 # ── 픽스처: ggqgga/issue-runner (runner) — 깨끗함 + release 있음 ─────────────
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_issue-runner.issues.json" <<'FX'
 [
@@ -1082,6 +1096,14 @@ ck "⑦ --json: epics[] 형태 — #400(leaf 없음)" \
   '{"n":400,"t":0,"c":0,"b":{},"p":{}}'
 ck "⑦ --json: 항목마다 repo_short" \
   "$(jq '[.repos[0].epics[] | select(.repo_short=="epics")] | length' < "$tmp/out")" 4
+
+# ── (사전 리뷰 WARN) 에픽 라벨은 있지만 `Epic #N` 텍스트가 0건인 레포 — 파생 무병기 ──
+run --repo ggqgga/EpicNoRefs --since 24h
+ck "epicnorefs: exit 0" "$RC" 0
+has_line "leaf 0 인 에픽 자신은 1줄 그려진다" "$tmp/out" "  에픽      1"
+has_sub "leaf 없음 줄은 그대로" "$tmp/out" "    - #700 leaf 없음(Epic 줄 미부착)"
+has_line "무관한 파생은 에픽 병기 없이 그대로(실제 Epic #N 텍스트가 0건)" "$tmp/out"   "  파생      1  #701"
+no_sub "무관한 파생에 '(에픽 없음)' 이 잘못 붙지 않는다" "$tmp/out" "#701(에픽 없음)"
 
 # ── 무회귀 — bodat(`Epic #N` 이 하나도 없는 픽스처)은 에픽 절(0줄) 추가 외엔 그대로 ──
 run --repo ggqgga/BodaT --since 24h
