@@ -741,8 +741,8 @@ issue is filed, but this section still decides the step-5 smoke:
 - **If it is `없음`**, append `(승격만)` (promotion-only) to the issue title and leave `없음`
   as-is in the body's `## 라이브/하드웨어 검증 항목`. **Skip the step-5 smoke** — a smoke with
   zero items to check did not pass anything, it looked at nothing, yet it prints as
-  `✅ 스모크 0/0 통과` and reads as verified (false green). A human closes this issue once the
-  promotion is done.
+  `✅ 스모크 0/0 통과` and reads as verified (false green). The deploy-cycle lane closes this
+  issue once the promotion is done.
 
 **Do not batch.** Never merge several deploy-wait issues into one — a long-lived issue that
 keeps accruing items loses its closing moment and becomes an issue that never ends (user
