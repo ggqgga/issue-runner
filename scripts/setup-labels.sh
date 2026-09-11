@@ -7,9 +7,12 @@ repo="${1:?usage: setup-labels.sh <owner/repo>}"
 # ── 색 팔레트 3단 축 (#256) — 값을 바꾸기 전에 이 원칙을 먼저 읽어라 ──────────────
 # 원칙: 사람이 **지금 봐야 하는 것**은 난색 고채도 · 루프가 도는 중이라 **안 봐도 되는 것**은
 # 한색 · 분류/메타는 저채도 회색조. 티어별 소속:
-#   A 사람 차례 = needs-human · hold:conflict · hold:policy · deploy-wait
+#   A 사람 차례 = needs-human · hold:conflict · hold:policy
 #   B 루프 진행 = agent-ready · agent:claimed · flow:ci · flow:verify · flow:ready
-#                · harvesting · hold:ladder
+#                · harvesting · hold:ladder · deploy-wait(#243 — "사람 정지 아님" 으로
+#                재정의된 뒤 A 에서 이리로 옮겼다. 사람이 볼 일이 없다는 점에서 hold:ladder
+#                와 같은 처지: 루프(deploy-cycle)가 스스로 집어가는 레인이라 목록을 훑는
+#                사람이 "내 차례" 로 읽으면 안 된다)
 #   C 분류/메타 = flow:codex · spinoff · epic · dup · loop-dashboard (+ block-issue.sh 의 blocked-by:*)
 # 색은 어떤 스크립트도 읽지 않는 **순수 표시값**이지만, 목록을 훑는 사람이 "지금 내 차례인가"
 # 를 색만으로 가르는 축이라 임의로 바꾸면 축이 무너진다 — 옛 팔레트가 정확히 거꾸로였다
@@ -49,9 +52,13 @@ gh label create "flow:ready" --repo "$repo" --color 2DA44E \
 # 것을 멈췄다. 그 라벨을 배포 대기 이슈에서 읽는 소비자가 하나도 없었기 때문이다(디스패치
 # 게이트는 agent-ready 를 요구 · loop-status 버킷은 deploy-wait 가 이김 · deploy-bodat 수집은
 # 제목 정규식). 배포 대기는 `deploy-wait` 하나로 사람대기와 갈린다.
+# 색은 B 티어(한색)로 옮겼다(#243 2회차) — 옛 색 BF3989 는 난색 고채도라 위 A/B 축 주석과
+# 모순이었다(설명은 "사람 정지 아님" 인데 색은 "사람 차례" 티어). 새 색 17A2B8 은 팔레트
+# 안에서 아직 안 쓴 청록 계열 — flow:verify(79C0FF)·hold:ladder(B6E3FF) 같은 파랑 계열과도
+# 구별돼, 목록에서 "루프가 도는 중" 을 한눈에 다른 파랑들과 헷갈리지 않게 읽을 수 있다.
 gh label create "spinoff" --repo "$repo" --color D0D7DE \
   --description "closeout 6단계 파생 이슈 (부모 PR/이슈에서 갈라짐)" --force
-gh label create "deploy-wait" --repo "$repo" --color BF3989 \
+gh label create "deploy-wait" --repo "$repo" --color 17A2B8 \
   --description "closeout 4단계·full-cycle §7 배포 대기 이슈 — deploy-cycle 레인 (사람 정지 아님)" --force
 # 루프 현황 고정 이슈(#163) — loop-status.sh --post 가 이 라벨로 찾아 본문을 덮어쓴다(레포당 1개).
 gh label create "loop-dashboard" --repo "$repo" --color 656D76 --force \

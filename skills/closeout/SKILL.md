@@ -477,7 +477,11 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   방지 — `loop-status.sh` 는 제목 `배포 대기:` 폴백으로 여전히 배포대기로 센다). 그 결과는
   **라벨이 하나도 없는 이슈**이고 그 상태는 정상이 아니다 — deploy-cycle 이 레인 표식으로
   못 찾으므로, ④ Report 에 `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로
-  올리고 **`$SCRIPTS/setup-labels.sh <repo>` 재실행**(= 사람이 손대야 할 일)을 요구한다.
+  올리고 사람에게 **3단 복구**를 요구한다(둘째 단을 빠뜨리면 첫째 단만으로는 그 티켓이
+  계속 무라벨이다 — `setup-labels.sh` 는 라벨 *정의* 만 만들 뿐 기존 이슈에 부착하지
+  않는다): ⑴ **`$SCRIPTS/setup-labels.sh <repo>` 재실행**으로 `deploy-wait` 라벨 정의를
+  복구하고 ⑵ `gh issue edit <번호> --repo <repo> --add-label deploy-wait` 로 **그 이슈에**
+  부착한 뒤 ⑶ `gh issue view <번호> --repo <repo> --json labels` 로 붙었는지 확인한다.
   조용히 넘어가지 마라.
 - **발행 직후 확인 (6단계와 동형).** `gh issue view <번호> --repo <repo> --json labels` 로
   `deploy-wait` 가 붙었는지 확인하고, 빠졌으면

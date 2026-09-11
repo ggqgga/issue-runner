@@ -12,7 +12,7 @@
 |---|---|---|
 | `transition.sh` (verify-held · closeout-blocked · runner-held) | `hold:<사유>` 항상 | 기계가 멈췄다 |
 | closeout 4단계 배포 대기 | `deploy-wait` | deploy-cycle 루프(무인 — dev 최신화·승격·배포·종료) |
-| full-cycle §7 배포 대기 | 없음 — `deploy-wait` 미부착(2026-09-11 실측: 그날 발행된 BodaT #5064 도 없다). BodaT #5071 이 고친다 | 배포 게이트 |
+| full-cycle §7 배포 대기 | `deploy-wait`(BodaT #5069 가 부착 — 이 표를 쓴 시점엔 `deploy-wait` 미부착이었고 BodaT #5071 로 고칠 예정이었으나, #5071 은 중복으로 닫히고 #5069 가 먼저 같은 수정을 머지로 착지시켰다. 2026-09-11 실측: `gh api repos/ggqgga/BodaT/contents/.claude/skills/full-cycle/SKILL.md?ref=main` 원문에 `--label deploy-wait --label full-cycle` 확인. 2026-09-11 그날 발행된 BodaT #5064 는 그 수정 이전 발행분이라 여전히 미부착) | deploy-cycle 루프(무인 — dev 최신화·승격·배포·종료) |
 | closeout — 라이브 검증 이슈(`SKILL.md:530`) · 라벨 부착 실패 폴백(`:468`) | 없음 | 사람 호출 / 비정상 |
 
 - 열린 이슈 실측(2026-09-11): issue-runner 7건 · BodaT 5건의 `needs-human` 중 **맨
@@ -104,8 +104,10 @@
 - `skills/closeout/SKILL.md` · `SKILL.en.md` 4단계 발행 명령에서 `--label needs-human` 제거
   (`--label deploy-wait` 만 남긴다).
 - full-cycle §7 은 **BoDAT 레포 파일**이다(`.claude/skills/full-cycle/SKILL.md` — `~/.claude/skills/full-cycle`
-  은 그 심링크). 사람 손이 아니라 루프 이슈 BodaT #5071 로 태웠다(`deploy-wait` 부착 · `needs-human`
-  제거 · `needs:hardware` 는 라벨 있는 레포에서만).
+  은 그 심링크). 사람 손이 아니라 루프 이슈로 태웠다 — 애초 이 자리는 BodaT #5071 을 가리켰으나
+  **#5071 은 중복으로 닫히고 BodaT #5069(머지됨)가 먼저 같은 수정을 착지시켰다**(`deploy-wait` 부착
+  · `needs-human` 제거 · `needs:hardware` 는 라벨 있는 레포에서만 — 2026-09-11 실측: `gh api
+  repos/ggqgga/BodaT/contents/.claude/skills/full-cycle/SKILL.md?ref=main` 원문 확인).
 - 열린 배포 대기 이슈의 라벨 정리(issue-runner 3건 · BodaT 2건 기준, 실행 시점 재확인).
 - 이 시점에서 #190 의 note 강등은 **저절로 무의미해진다**(② 는 `--label needs-human` 으로
   목록을 걸기 때문에 배포 대기가 아예 안 잡힌다). 코드는 옛 이슈·타 레포 폴백으로 남긴다.
@@ -150,7 +152,8 @@
   라벨 자체가 없음). BodaT 레포 규약이고 기계가 읽는 축은 본문 절
   `## 라이브/하드웨어 검증 항목` 이다. 단, full-cycle §7 이 `[--label needs:hardware]` 를
   제시하는데 그 스킬이 issue-runner 에서도 쓰여 **라벨이 없는 레포에서 `gh issue create` 가
-  통째로 실패**한다 — 스킬 문구를 "레포에 그 라벨이 있을 때만" 으로 좁히는 것은 BodaT #5071 에 넣었다.
+  통째로 실패**한다 — 스킬 문구를 "레포에 그 라벨이 있을 때만" 으로 좁히는 것은 원래 BodaT #5071
+  에 넣을 계획이었으나, #5071 은 중복으로 닫히고 BodaT #5069(머지됨)가 먼저 넣었다.
 - 라벨 이름 변경·삭제 — 레인이 비어 있지 않아 2단계 다중 레포 마이그레이션이 된다.
 
 ## Test plan

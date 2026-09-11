@@ -645,6 +645,29 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f: 4단계 발행 명령에 --label needs-human 이 있다 (#243 — deploy-wait 만 남긴다)"; exit 1; }
 done
 
+echo "[closeout] 4단계 라벨 부재 폴백의 복구 지시에 deploy-wait 부착 단계가 있는지 검사 (#243 2회차)"
+# 검증자 지적(PR #272 2회차): 라벨 부착이 양쪽 다 실패했을 때의 폴백 복구 지시가
+# `setup-labels.sh <repo>` 재실행만 요구했다. 그 스크립트는 라벨 *정의* 만 만들 뿐 기존
+# 이슈에 부착하지 않으므로, 사람이 시킨 대로 해도 그 티켓은 계속 무라벨이라 deploy-cycle
+# 이 레인 표식으로 못 찾는다 — "사람이 조치해도 안 풀리는" BLOCKED 였다. 복구 지시는
+# `gh issue edit <번호> --repo <repo> --add-label deploy-wait` 부착 단계까지 포함해야 한다.
+# "발행 직후 확인" 불릿에 이미 같은 명령이 1회 있으므로(그건 정상 경로 확인용), 폴백
+# 복구 지시에도 등장해 4단계~6단계 구간 전체 등장 횟수가 최소 2회여야 한다 — 폴백 쪽
+# 문구가 되돌아가 1회로 줄면 여기서 빨개진다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) s4_anchor='^\*\*Step 4 —'; s6_anchor='^\*\*Step 6 —' ;;
+    *)       s4_anchor='^\*\*4단계 —';   s6_anchor='^\*\*6단계 —' ;;
+  esac
+  s4_line=$(grep -nE "$s4_anchor" "$f" | head -1 | cut -d: -f1)
+  s6_line=$(grep -nE "$s6_anchor" "$f" | head -1 | cut -d: -f1)
+  [ -n "$s4_line" ] || { echo "  ✗ $f: 4단계 헤더 앵커 없음"; exit 1; }
+  [ -n "$s6_line" ] || { echo "  ✗ $f: 6단계 헤더 앵커 없음"; exit 1; }
+  count=$(sed -n "${s4_line},${s6_line}p" "$f" | grep -c -- '--add-label deploy-wait')
+  [ "$count" -ge 2 ] \
+    || { echo "  ✗ $f: 4단계 구간의 --add-label deploy-wait 등장이 ${count}회뿐 — 라벨 부재 폴백의 복구 지시에도 부착 단계가 있어야 한다 (#243)"; exit 1; }
+done
+
 echo "[closeout] ci-gate --repo 분기 스모크 (positive + fail-closed)"
 # flag_repo 가 있으면 게이트가 cwd 가 아니라 그 레포 기준으로 SHA·캐시를 잡아야 한다 (#47).
 gate="$PWD/hooks/ci-gate-before-pr-merge.sh"

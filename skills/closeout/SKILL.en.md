@@ -557,8 +557,13 @@ and that fact must be visible to a human.
   The result is an issue with **no labels whatsoever**, and that state is not normal — the
   deploy-cycle loop cannot find it by its lane mark — so
   report `BLOCKED: deploy-wait label attach failed on deploy issue — #<number>` in ④ Report
-  and demand a **`$SCRIPTS/setup-labels.sh <repo>` rerun** (a human's job). Never pass over
-  it silently.
+  and demand a **three-step human recovery** (skipping the second step leaves the ticket
+  labelless even if the human does exactly what was asked — `setup-labels.sh` only recreates
+  the label *definition*, it never attaches labels to an existing issue): ⑴
+  **`$SCRIPTS/setup-labels.sh <repo>` rerun** to restore the `deploy-wait` label definition,
+  ⑵ `gh issue edit <number> --repo <repo> --add-label deploy-wait` to attach it **to that
+  issue**, then ⑶ `gh issue view <number> --repo <repo> --json labels` to confirm it landed.
+  Never pass over it silently.
 - **Verify right after issuance (same shape as step 6).** Check with
   `gh issue view <number> --repo <repo> --json labels` that
   `deploy-wait` actually landed; if it is missing, top it up with
