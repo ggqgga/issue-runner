@@ -364,7 +364,7 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       invisible counter counts a different number — #197)
 
       ````sh
-      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("(^|\\n) {0,3}(?<f>```+|~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
       ````
 
       After the filled template, append ⓐ the ladder document's path
