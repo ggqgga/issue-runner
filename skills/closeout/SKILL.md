@@ -442,20 +442,32 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 
 **머지된 PR 은 예외 없이 배포 대기 이슈를 하나 발행한다.** 판정하지 마라 — 테스트
 전용이든 주석 한 줄이든, 머지됐다는 것은 승격 범위에 들어갔다는 뜻이고 그 사실이
-사람에게 보여야 한다. `gh issue create --repo <repo> --label needs-human --label deploy-wait`
-으로 발행하고 — `needs-human` 은 deploy-bodat 등 기존 수집(사람 게이트 쿼리)과의 호환
-때문에 유지하고, `deploy-wait` 는 `loop-status.sh` 가 배포대기와 사람대기를 갈라 세는
-버킷 라벨이다 — `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"` 마커를
-남긴 뒤 → **approval-required 로 종료**한다.
+사람에게 보여야 한다.
 
-**라벨 부재 fail-closed — 티켓을 잃지 않는다 (6단계 파생과 동형).** `gh issue create` 는
-`--label` 에 레포에 없는 라벨이 있으면 **이슈 자체를 안 만들고 실패**한다. `setup-labels.sh`
-재실행 전의 기존 옵트인 레포엔 `deploy-wait` 가 없으므로, 이 규칙이 없으면 업그레이드 뒤
-첫 마감이 PR 은 머지된 채 티켓·마커 없이 끝난다. `'deploy-wait' not found` 류로 실패하면
-`$SCRIPTS/setup-labels.sh <repo>` 를 **1회** 호출한 뒤 같은 명령을 **1회만** 재시도한다.
-재시도도 실패하면 더 반복하지 말고 **`--label needs-human` 만으로 발행**하고(티켓 유실 방지 —
-`loop-status.sh` 는 제목 `배포 대기:` 폴백으로 여전히 배포대기로 센다) ④ Report 에
-`BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로 올린다.
+- **발행 명령 (필수 형태 — 산문으로 대체하지 마라).**
+
+  ```
+  gh issue create --repo <repo> --title "배포 대기: PR #<pr> — <요약>[ (승격만)]" \
+    --body-file <본문파일> --label needs-human --label deploy-wait [--label <P1|P2>]
+  ```
+
+  `needs-human` 은 deploy-bodat 등 기존 수집(사람 게이트 쿼리)과의 호환 때문에 유지하고,
+  `deploy-wait` 는 `loop-status.sh` 가 배포대기와 사람대기를 갈라 세는 버킷 라벨이다 —
+  **둘 다** 필요하다. 발행 뒤 `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"`
+  마커를 남긴 뒤 → **approval-required 로 종료**한다.
+- **라벨 부재 fail-closed — 티켓을 잃지 않는다 (6단계 파생과 동형).** `gh issue create` 는
+  `--label` 에 레포에 없는 라벨이 있으면 **이슈 자체를 안 만들고 실패**한다. `setup-labels.sh`
+  재실행 전의 기존 옵트인 레포엔 `deploy-wait` 가 없으므로, 이 규칙이 없으면 업그레이드 뒤
+  첫 마감이 PR 은 머지된 채 티켓·마커 없이 끝난다. `'deploy-wait' not found` 류로 실패하면
+  `$SCRIPTS/setup-labels.sh <repo>` 를 **1회** 호출한 뒤 같은 명령을 **1회만** 재시도한다.
+  재시도도 실패하면 더 반복하지 말고 **`--label needs-human` 만으로 발행**하고(티켓 유실 방지 —
+  `loop-status.sh` 는 제목 `배포 대기:` 폴백으로 여전히 배포대기로 센다) ④ Report 에
+  `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로 올린다.
+- **발행 직후 확인 (6단계와 동형).** `gh issue view <번호> --repo <repo> --json labels` 로
+  `needs-human` 과 `deploy-wait` 가 **둘 다** 붙었는지 확인하고, 빠진 게 있으면
+  `gh issue edit <번호> --repo <repo> --add-label needs-human --add-label deploy-wait` 로
+  보강한다(이번 사고의 8/8 누락은 발행 명령이 산문 한가운데 있었던 것뿐 아니라 이 확인
+  절 자체가 4단계에 없었기 때문이다 — 6단계는 있어서 안 샜다).
 
 이 규칙이 뒤집힌 이유: 직전 규칙은 `<LIVE_CHECKS>` 가 `없음` 이면 이슈를 안 만들고
 "미승격 현황은 ④ Report 의 `승격 대기 N커밋` 이 갖는다" 로 정당화했다. 그런데 그
