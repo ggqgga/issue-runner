@@ -108,29 +108,32 @@ Procedure:
      the Bash tool's `timeout` to **up to 600000ms (10 minutes)**.
    - **"Tool timeout ≠ work stopped"** (#185 re-review, observed 2026-09-11
      `bodat#5046`). Even if this call is cut off by the Bash tool's 10-minute cap, the
-     underlying `run-local-ci.sh`/`bin/ci` process usually keeps running — what gets
-     cut off is only **the tool call you were waiting on**. So do not conclude "it
-     never ran" and re-queue just because you hit a tool timeout. Look for a **live
-     execution** first, in this order:
-     1. Check `TaskList`/`TaskOutput(block: true, timeout: 600000)` first for whether it
-        got backgrounded. If that is empty (you are a subagent without access) or shows
-        nothing, look for the `bin/ci` process directly with
-        `PID=$(ps -Ao pid,command | grep '[b]in/ci' | awk '{print $1}' | head -1)` — this
-        is **not** a pre-check for whether someone else is running before you start (see
-        the "do not police overlap yourself" bullet below) — it is only for **recovering
-        an execution you already launched**.
-     2. **If the PID is alive (`kill -0 $PID` succeeds), do not re-queue — recover it** —
-        poll inside that tool call with `while kill -0 $PID 2>/dev/null; do sleep 10;
-        done`, and if it has not finished in 10 minutes, re-enter the same poll in your
-        next tool call (each call under 600s, so it is eventually recovered no matter how
-        many calls it takes). Once it finishes, read `<sha>.result` (its path is printed
-        by `run-local-ci.sh` itself — `~/.claude/.local-ci/<repo slug>/<sha>.result`) and
-        judge from that.
-     3. **Only when the PID is already dead and `<sha>.result` does not exist** was there
-        no execution — only then follow the "non-execution" verdict below (discard /
-        abort / ghost-ticket reclaim) and re-queue the same SHA once. (Another session
-        working the same SHA may have finished it first, so do a lightweight check of the
-        result file again before re-queuing.)
+     job you put on the queue is usually still alive — what gets cut off is only **the
+     tool call you were waiting on**. So do not conclude "it never ran" and re-queue
+     just because you hit a tool timeout. **Ask the queue directly** — this one command
+     distinguishes queued, running, finished and never-ran:
+     ```bash
+     ~/.claude/skills/issue-runner/scripts/ci-queue.sh wait <current HEAD SHA> --timeout 540
+     ```
+     Do not omit `--timeout 540` — the default is 7200s, so the command itself would die
+     on the tool cap. At 540 the verdict comes back inside your tool budget. **Branch on
+     the exit code:**
+     1. **0 (pass) / 1 (fail)** — a verdict exists. Take it as-is. **Do not re-queue.**
+     2. **124 (timeout)** — still queued or running. The job is alive, so do not
+        re-queue: **re-issue the same `wait` in your next tool call** — you may re-enter
+        as many times as it takes. `wait` only polls for the result file and does not own
+        the job, so killing this command does not kill the queued job (unlike a
+        `run-local-ci.sh` call, which takes its ticket down with it — that is exactly why
+        recovery goes through `wait`).
+     3. **2 (not in the queue and no result)** — only this means there was no execution.
+        Re-queue `run-local-ci.sh` **once** with the same SHA (current HEAD).
+     You may also check `TaskList`/`TaskOutput(block: true, timeout: 600000)` for whether
+     it got backgrounded, but **the exit code above is what decides**. Do not judge by
+     hunting for a `bin/ci` process with `ps`: while your SHA is **waiting** in the queue
+     your `bin/ci` does not exist yet (what you own is a ticket, not a process), and what
+     `ps` shows you then is **another worker's CI**. Mistaking it for yours makes you wait
+     out their run and then fall through to "no result = never ran", **re-queuing your own
+     perfectly healthy ticket a second time**.
    - **Do not police overlap yourself — the queue does it.** Never scan with `ps` for
      another running CI and conclude "one is running, so I should not queue": that check
      also matches `bin/ci` in **another worktree or another repo**, so it stops you from

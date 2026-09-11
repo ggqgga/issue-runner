@@ -1644,34 +1644,46 @@ grep -qF -- 're-queue the same SHA (current HEAD)' references/worker-template.en
   || { echo "  ✗ references/worker-template.en.md 에 same-SHA 재큐잉 지시 없음"; exit 1; }
 
 echo "[#185] 사람 결정(2026-09-11) 재개 4항목 — 툴 타임아웃 시 살아있는 실행부터 찾기 검사 — 워커 템플릿 한/영"
-# 재심 정정 코멘트 — 툴 타임아웃은 bin/ci 를 죽이지 않는다, 끊기는 것은 기다리던
-# 툴 호출뿐이다. 워커가 곧바로 재큐하지 말고 TaskList/TaskOutput 또는 ps 로 살아있는
-# 실행을 먼저 찾아 kill -0 폴링으로 회수해야 한다(재큐 금지) — 살아있지 않고 결과
-# 파일도 없을 때만 재큐 1회. 네 토큰(①②③④) + 사전 게이트 아님(#189 리뷰) 혼동 금지
-# 문구가 한/영 템플릿 양쪽에 있어야 한다.
+# 재심 정정 코멘트 — 툴 타임아웃은 큐의 잡을 죽이지 않는다, 끊기는 것은 기다리던
+# 툴 호출뿐이다. 회수는 `ci-queue.sh wait <SHA> --timeout 540` 의 **종료 코드**로
+# 판정한다: 0/1=판정 있음(재큐 금지) · 124=대기·실행 중(다음 툴콜에서 재진입) ·
+# 2=큐에도 결과도 없음(그때만 같은 SHA 1회 재큐). `ps` 로 bin/ci 프로세스를 뒤지는
+# 판정은 **금지**다(2026-09-11 사람 결정) — 내 SHA 가 큐에서 기다리는 중이면 내
+# bin/ci 는 아직 없고 ps 에 잡히는 것은 남의 워커 CI 라, 그걸 기다린 뒤 "결과 없음
+# = 미실행" 으로 흘러 멀쩡한 티켓을 중복 재큐한다. 겹침 금지 불릿(위 [#185] 블록)이
+# 같은 명령을 이미 금지하고 있어, ps 를 회수 수단으로 실으면 한 문서가 한 명령을
+# 금지이자 필수로 가르치게 된다.
 grep -qF -- '툴 타임아웃 ≠ 작업 중단' references/worker-template.md \
   || { echo "  ✗ references/worker-template.md 에 '툴 타임아웃 ≠ 작업 중단' 명시 문구 없음"; exit 1; }
 grep -qF -- 'Tool timeout ≠ work stopped' references/worker-template.en.md \
   || { echo "  ✗ references/worker-template.en.md 에 'Tool timeout ≠ work stopped' 명시 문구 없음"; exit 1; }
 grep -qF -- 'TaskList' references/worker-template.md \
   || { echo "  ✗ references/worker-template.md 에 TaskList 확인 지시 없음"; exit 1; }
-grep -qF -- "ps -Ao pid,command | grep '[b]in/ci'" references/worker-template.md \
-  || { echo "  ✗ references/worker-template.md 에 ps 로 bin/ci PID 찾기 지시 없음"; exit 1; }
-grep -qF -- "ps -Ao pid,command | grep '[b]in/ci'" references/worker-template.en.md \
-  || { echo "  ✗ references/worker-template.en.md 에 ps 로 bin/ci PID 찾기 지시 없음"; exit 1; }
-grep -qF -- 'kill -0 $PID' references/worker-template.md \
-  || { echo "  ✗ references/worker-template.md 에 kill -0 폴링 지시 없음"; exit 1; }
-grep -qF -- 'kill -0 $PID' references/worker-template.en.md \
-  || { echo "  ✗ references/worker-template.en.md 에 kill -0 폴링 지시 없음"; exit 1; }
-grep -qF -- '재큐하지 말고 회수하라' references/worker-template.md \
-  || { echo "  ✗ references/worker-template.md 에 '살아있으면 재큐 금지' 지시 없음"; exit 1; }
-grep -qF -- 'do not re-queue — recover it' references/worker-template.en.md \
-  || { echo "  ✗ references/worker-template.en.md 에 '살아있으면 재큐 금지' 미러 없음"; exit 1; }
-# PID 검사는 "이미 띄운 내 실행 회수" 용이지 "돌리기 전 사전 게이트" 가 아니다(#189 리뷰로
-# 기각된 형상) — 이 구분이 문서에서 흐려지면 큐에 줄서는 것조차 막는 회귀가 되살아난다.
-grep -qF -- '사전 게이트' references/worker-template.md \
-  || { echo "  ✗ references/worker-template.md 에 'ps 는 사전 게이트가 아니다' 구분 문구 없음"; exit 1; }
-grep -qF -- 'pre-check for whether someone else is running before you start' references/worker-template.en.md \
-  || { echo "  ✗ references/worker-template.en.md 에 'ps 는 사전 게이트가 아니다' 구분 미러 없음"; exit 1; }
+grep -qF -- 'ci-queue.sh wait' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 ci-queue.sh wait 회수 지시 없음"; exit 1; }
+grep -qF -- 'ci-queue.sh wait' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 ci-queue.sh wait 회수 지시 없음"; exit 1; }
+# --timeout 540 은 생략 불가 — 기본 CI_QUEUE_WAIT_TIMEOUT 이 7200s 라 wait 자신이
+# 툴 600초 상한에 죽고, 워커는 다시 프로세스 고고학으로 돌아간다.
+grep -qF -- '--timeout 540' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 wait --timeout 540 명시 없음"; exit 1; }
+grep -qF -- '--timeout 540' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 wait --timeout 540 명시 없음"; exit 1; }
+# 세 갈래(0/1 · 124 · 2)가 전부 문서에 있어야 한다 — 하나라도 빠지면 워커가 그 구간에서
+# 다시 방법을 지어낸다(#185 가 고치려는 형상).
+grep -qF -- '재큐 금지' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 '판정 있으면 재큐 금지' 지시 없음"; exit 1; }
+grep -qF -- 'Do not re-queue' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 '판정 있으면 재큐 금지' 미러 없음"; exit 1; }
+grep -qF -- '다음 툴콜에서 같은 `wait` 를 다시 걸어라' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 124 재진입 지시 없음"; exit 1; }
+grep -qF -- 're-issue the same `wait` in your next tool call' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 124 재진입 미러 없음"; exit 1; }
+# ps 회수 금지 — 대기 중인 티켓은 프로세스가 아니라서 ps 가 남의 CI 를 집는다.
+# 되살아나면 겹침 금지 불릿과 정면으로 충돌한다(한 명령이 금지이자 필수가 된다).
+if grep -nF -- "ps -Ao pid,command | grep '[b]in/ci'" references/worker-template.md references/worker-template.en.md; then
+  echo "  ✗ 워커 템플릿에 ps 기반 CI 회수가 되살아남 — 회수는 ci-queue.sh wait 의 종료 코드로"
+  exit 1
+fi
 
 echo "CI pass"
