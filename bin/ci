@@ -724,18 +724,19 @@ echo "[closeout] 4단계 발행 명령이 코드펜스 안에서 deploy-wait 만
 # 배포 대기 이슈에서 하는 일이 없어(디스패치 게이트는 agent-ready 를 요구 · loop-status
 # 버킷은 deploy-wait 가 이김 · deploy-bodat 수집은 제목 정규식) 뜻만 흐렸다 — 되살아나면
 # 여기서 빨개진다(양방향 가드: 없어도 빨강, 다시 생겨도 빨강).
-# 스코프를 4단계~6단계 헤더 사이로 좁힌다(사전 리뷰 WARN) — "파일 어딘가"만 보면, 이 코드펜스가
-# 다른 절(예시·anti-pattern 설명)로 옮겨져도 통과해 버려 가드가 무의미해진다. 헤더는 언어별로
-# 번역되므로 볼드 접두 앵커(`**4단계 —`/`**Step 4 —`)로 정확히 그 줄만 집는다.
+# 스코프를 4단계~**5단계** 헤더 사이로 좁힌다(사전 리뷰 WARN + #223) — "파일 어딘가"만 보면, 이
+# 코드펜스가 다른 절(예시·anti-pattern 설명)로 옮겨져도 통과해 버려 가드가 무의미해진다. 상한이
+# 6단계면 5단계가 통째로 구간에 들어가 코드펜스를 5단계로 옮겨도 초록이므로 5단계 헤더로 내린다.
+# 헤더는 언어별로 번역되므로 볼드 접두 앵커(`**4단계 —`/`**Step 4 —`)로 정확히 그 줄만 집는다.
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   case "$f" in
-    *.en.md) s4_anchor='^\*\*Step 4 —'; s6_anchor='^\*\*Step 6 —' ;;
-    *)       s4_anchor='^\*\*4단계 —';   s6_anchor='^\*\*6단계 —' ;;
+    *.en.md) s4_anchor='^\*\*Step 4 —'; s5_anchor='^\*\*Step 5 —' ;;
+    *)       s4_anchor='^\*\*4단계 —';   s5_anchor='^\*\*5단계 —' ;;
   esac
   s4_line=$(grep -nE "$s4_anchor" "$f" | head -1 | cut -d: -f1)
-  s6_line=$(grep -nE "$s6_anchor" "$f" | head -1 | cut -d: -f1)
+  s5_line=$(grep -nE "$s5_anchor" "$f" | head -1 | cut -d: -f1)
   [ -n "$s4_line" ] || { echo "  ✗ $f: 4단계 헤더 앵커 없음"; exit 1; }
-  [ -n "$s6_line" ] || { echo "  ✗ $f: 6단계 헤더 앵커 없음"; exit 1; }
+  [ -n "$s5_line" ] || { echo "  ✗ $f: 5단계 헤더 앵커 없음"; exit 1; }
   in_block=0
   block=""
   found=0
@@ -748,7 +749,7 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     trimmed="${line#"${line%%[! ]*}"}"
     if [ "$trimmed" = '```' ]; then
       if [ "$in_block" = 1 ]; then
-        if [ "$block_start" -gt "$s4_line" ] && [ "$lineno" -lt "$s6_line" ]; then
+        if [ "$block_start" -gt "$s4_line" ] && [ "$lineno" -lt "$s5_line" ]; then
           case "$block" in
             *"gh issue create"*"--label deploy-wait"*)
               found=1
@@ -771,7 +772,7 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     fi
   done < "$f"
   [ "$found" = 1 ] \
-    || { echo "  ✗ $f: 4단계~6단계 헤더 사이 코드펜스 안에 --label deploy-wait 형태로 없음"; exit 1; }
+    || { echo "  ✗ $f: 4단계~5단계 헤더 사이 코드펜스 안에 --label deploy-wait 형태로 없음"; exit 1; }
   [ "$nh" = 0 ] \
     || { echo "  ✗ $f: 4단계 발행 명령에 --label needs-human 이 있다 (#243 — deploy-wait 만 남긴다)"; exit 1; }
 done
@@ -783,18 +784,19 @@ echo "[closeout] 4단계 라벨 부재 폴백의 복구 지시에 deploy-wait �
 # 이 레인 표식으로 못 찾는다 — "사람이 조치해도 안 풀리는" BLOCKED 였다. 복구 지시는
 # `gh issue edit <번호> --repo <repo> --add-label deploy-wait` 부착 단계까지 포함해야 한다.
 # "발행 직후 확인" 불릿에 이미 같은 명령이 1회 있으므로(그건 정상 경로 확인용), 폴백
-# 복구 지시에도 등장해 4단계~6단계 구간 전체 등장 횟수가 최소 2회여야 한다 — 폴백 쪽
-# 문구가 되돌아가 1회로 줄면 여기서 빨개진다.
+# 복구 지시에도 등장해 4단계~**5단계** 구간 전체 등장 횟수가 최소 2회여야 한다 — 폴백 쪽
+# 문구가 되돌아가 1회로 줄면 여기서 빨개진다. 상한은 #223 으로 6단계 → 5단계로 내렸다
+# (두 등장이 모두 4단계 안이라 좁혀도 2회가 유지된다 — 한/영 각각 실측).
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   case "$f" in
-    *.en.md) s4_anchor='^\*\*Step 4 —'; s6_anchor='^\*\*Step 6 —' ;;
-    *)       s4_anchor='^\*\*4단계 —';   s6_anchor='^\*\*6단계 —' ;;
+    *.en.md) s4_anchor='^\*\*Step 4 —'; s5_anchor='^\*\*Step 5 —' ;;
+    *)       s4_anchor='^\*\*4단계 —';   s5_anchor='^\*\*5단계 —' ;;
   esac
   s4_line=$(grep -nE "$s4_anchor" "$f" | head -1 | cut -d: -f1)
-  s6_line=$(grep -nE "$s6_anchor" "$f" | head -1 | cut -d: -f1)
+  s5_line=$(grep -nE "$s5_anchor" "$f" | head -1 | cut -d: -f1)
   [ -n "$s4_line" ] || { echo "  ✗ $f: 4단계 헤더 앵커 없음"; exit 1; }
-  [ -n "$s6_line" ] || { echo "  ✗ $f: 6단계 헤더 앵커 없음"; exit 1; }
-  count=$(sed -n "${s4_line},${s6_line}p" "$f" | grep -c -- '--add-label deploy-wait')
+  [ -n "$s5_line" ] || { echo "  ✗ $f: 5단계 헤더 앵커 없음"; exit 1; }
+  count=$(sed -n "${s4_line},${s5_line}p" "$f" | grep -c -- '--add-label deploy-wait')
   [ "$count" -ge 2 ] \
     || { echo "  ✗ $f: 4단계 구간의 --add-label deploy-wait 등장이 ${count}회뿐 — 라벨 부재 폴백의 복구 지시에도 부착 단계가 있어야 한다 (#243)"; exit 1; }
 done
