@@ -571,8 +571,8 @@ epic 이 있으면 sub-issue 로 연결하고, 없으면 독립 이슈로. 생�
   agent-ready 를 빠뜨려 열린 이슈 17건이 루프 밖에 재고로 남음 — 4단계는 명령에
   `--label needs-human` 이 박혀 있어 186건 전건 정상이었다. 명령이 있는 단계는 안 새고,
   산문뿐인 단계가 샜다). 우선순위(`P1`/`P2`)도 함께 단다 — 없으면 정렬에서 최하위로
-  밀린다(`P0 > P1 > P2 > 없음`). 그 밖의 축(BoDAT 의 `difficulty:*`·`frontend`/`backend`·
-  `area:*`·`needs:hardware`)은 **레포 규약을 따라 추가**하되, 규약 라벨을 다느라
+  밀린다(`P0 > P1 > P2 > 없음`). 그 밖의 축(BoDAT 의 `difficulty:*`·`frontend`(UI 를 건드릴 때만)·
+  `needs:hardware` — 레포 CLAUDE.md 의 라벨 절이 SSOT)은 **레포 규약을 따라 추가**하되, 규약 라벨을 다느라
   `agent-ready` 를 대체하지 마라 — 위 실측의 실패 형태가 정확히 그것이다.
   `--label spinoff` 는 출처 표식이다 — `loop-status.sh` 의 `파생` 줄이 이 라벨로만 창 안의
   파생 이슈를 센다(제목 휴리스틱을 쓰지 않는다). 빠지면 그 이슈는 재고에서 안 보인다.
