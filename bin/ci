@@ -510,6 +510,35 @@ for f in skills/closeout/references/verifier-prompt.md \
   done
 done
 
+echo "[closeout] ③-1 1단계 worktree 확보 fetch·reset 검사 (#207)"
+# 1단계 계획 부합 호출의 프롬프트(verifier-prompt.md)가 "이 워크트리는 PR 브랜치의
+# HEAD 로 체크아웃돼 있어 최신이다" 라고 전제한다 — 그 전제가 참이려면 1단계
+# 자신이 worktree 를 fetch·reset 해야 한다(revalidate 절이 이미 같은 이유로 이
+# 두 명령을 건다 — #207 은 1단계에 이 형제가 빠져 있었다는 결함). 언어 불변 앵커
+# (1단계/Step 1 문단 ~ 2단계/Step 2 문단 시작 전)로 1단계 문단만 잘라 그 안에
+# 두 명령이 다 있는지 본다 — 다른 절(revalidate 등)의 fetch·reset 을 오검출하지
+# 않기 위해서다.
+check_step1_worktree_sync() {
+  f="$1"; start_pat="$2"; end_pat="$3"
+  start_ln=$(grep -nE "$start_pat" "$f" | head -1 | cut -d: -f1)
+  end_ln=$(grep -nE "$end_pat" "$f" | head -1 | cut -d: -f1)
+  if [ -z "$start_ln" ] || [ -z "$end_ln" ]; then
+    echo "  ✗ $f 에 1단계/2단계 앵커 없음"; return 1
+  fi
+  section=$(sed -n "${start_ln},$((end_ln - 1))p" "$f")
+  if ! printf '%s\n' "$section" | grep -qF 'fetch origin'; then
+    echo "  ✗ $f 1단계 절에 'fetch origin' 없음 — worktree 가 옛 HEAD 일 수 있다(#207)"; return 1
+  fi
+  if ! printf '%s\n' "$section" | grep -qE 'reset --hard origin/agent/issue'; then
+    echo "  ✗ $f 1단계 절에 'reset --hard origin/agent/issue-<N>' 없음(#207)"; return 1
+  fi
+  return 0
+}
+fail=0
+check_step1_worktree_sync skills/closeout/SKILL.md    '^\*\*1단계 —' '^\*\*2단계 —' || fail=1
+check_step1_worktree_sync skills/closeout/SKILL.en.md '^\*\*Step 1 —' '^\*\*Step 2 —' || fail=1
+[ "$fail" = 0 ] || exit 1
+
 echo "[closeout] smoke-prompt 한/영 placeholder 검사 (#69)"
 # 5단계 Chrome 스모크 동봉형 프롬프트(verifier-prompt.md 미러) — 한/영 양쪽이
 # 존재하고 두 placeholder 를 다 담아야 한다. <VERIFY_URL>=production 베이스 URL,
