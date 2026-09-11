@@ -565,9 +565,14 @@ if [ -f "$scope_file" ]; then
 else
   # 부정 라벨(`-label:`)은 gh search CLI 가 오파싱하지만(#21) 단일 긍정 라벨은 정상 —
   # reconcile.sh 스윕의 레포 열거와 같은 형태다. 다만 여기선 두 가지를 더 조인다:
-  #   · `is:open is:issue` — 닫힌 이슈·PR 이 창을 채우면 진짜 대상 레포가 밀려난다.
+  #   · `--state open` — 닫힌 이슈가 창을 채우면 진짜 대상 레포가 밀려난다. 의도는 이것이되
+  #     **질의 토큰 `is:open` 으로 쓰지 마라** — gh search 는 이것도 오파싱해 rc=0·빈손을
+  #     돌려준다(#236 실측 2026-09-12 gh 2.95.0 `--owner ggqgga --limit 200`:
+  #     `label:needs-human` 단독 3개 레포 ↔ `is:open` 을 더하면 0건).
+  #     실패가 아니라 "0건" 으로 보여 "멈춘 건 없음" 과 구분되지 않는 것이 해악이었다.
+  #     PR 배제용 `is:issue` 는 애초에 잉여다 — `gh search issues` 는 이슈만 찾는다.
   #   · `--limit 200` — 기본 limit(30)은 조용히 잘라내 그 레포들이 영영 안 스윕된다.
-  if ! gh search issues "label:needs-human is:open is:issue" --owner "$me" --limit "$LIST_LIMIT" \
+  if ! gh search issues "label:needs-human" --owner "$me" --state open --limit "$LIST_LIMIT" \
        --json repository -q '.[].repository.nameWithOwner' > "$tmp/search.raw" 2>/dev/null; then
     echo "resume-sweep: 계정 전체 needs-human 탐색 실패 — 스코프를 못 정해 중단(빈 목록과 구분)" >&2
     exit 2
