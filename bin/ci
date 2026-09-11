@@ -230,23 +230,36 @@ for args in \
 done
 rm -rf "$tmp"
 
-echo "[closeout] ①-b CONFLICTING 입양의 반송 게이트 배선 — 한/영 SKILL (#196)"
-# CONFLICTING 은 finish-classify 를 건너뛰므로, 반송 안전망은 프로즈가 bounce-state.sh 를
-# 직접 부르는 배선 하나로만 선다. 그 호출이 사라지면 #196 사고(살아있는 워커의 PR 입양·
-# rebase)가 그대로 되살아난다 — 문서 회귀를 여기서 문다.
-# 존재만 보면 문서 아무 데나 적혀 있어도 통과한다(사전 리뷰 NIT) — **1) CONFLICTING 절
-# 안**에 있는지까지 본다. 헤더 문구는 번역되므로 언어 불변 앵커를 쓴다: 호출 줄
+echo "[closeout] ①-b 반송 게이트가 갈래 앞에 배선돼 있는지 — 한/영 SKILL (#196·#218)"
+# 반송 안전망은 프로즈가 bounce-state.sh 를 직접 부르는 배선 하나로만 선다. 원래
+# CONFLICTING 갈래 안에만 있었으나(#196) MERGEABLE stale_reverify/held 갈래는 안 걸려
+# #218 사고(반송된 PR 을 "검증 전 사망"으로 오분류·재디스패치)가 났다 — 그래서 게이트를
+# mergeable 판정 **앞**(1))으로 끌어올려 두 갈래가 한 자리를 공유하게 했다. 그 호출이
+# 사라지거나 다시 갈래 안으로 밀려나면 #196·#218 사고가 그대로 되살아난다 — 문서
+# 회귀를 여기서 문다.
+# 존재만 보면 문서 아무 데나 적혀 있어도 통과한다(사전 리뷰 NIT) — **finish-classify.sh
+# 호출보다 앞**에 있는지까지 본다. 헤더 문구는 번역되므로 언어 불변 앵커를 쓴다: 호출 줄
 # (`$SCRIPTS/bounce-state.sh`)이 2) 절의 첫 줄(`$SCRIPTS/finish-classify.sh`)보다 **앞**이어야
-# 1) 안이다.
+# 갈래를 가르기 전에 게이트가 선다.
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   b_line=$(grep -nF '$SCRIPTS/bounce-state.sh' "$f" | head -1 | cut -d: -f1)
   fc_line=$(grep -nF '$SCRIPTS/finish-classify.sh' "$f" | head -1 | cut -d: -f1)
+  mg_line=$(grep -nF -- '--json mergeable' "$f" | head -1 | cut -d: -f1)
   [ -n "$b_line" ] \
-    || { echo "  ✗ $f 에 ①-b CONFLICTING 반송 게이트(\$SCRIPTS/bounce-state.sh) 호출 없음"; exit 1; }
+    || { echo "  ✗ $f 에 ①-b 반송 게이트(\$SCRIPTS/bounce-state.sh) 호출 없음"; exit 1; }
   [ -n "$fc_line" ] \
     || { echo "  ✗ $f 에 \$SCRIPTS/finish-classify.sh 앵커 없음 — 가드가 의미를 잃었다"; exit 1; }
+  [ -n "$mg_line" ] \
+    || { echo "  ✗ $f 에 --json mergeable 앵커 없음 — 가드가 의미를 잃었다"; exit 1; }
   [ "$b_line" -lt "$fc_line" ] \
-    || { echo "  ✗ $f: bounce-state 호출(줄 $b_line)이 2) finish-classify 절(줄 $fc_line) 뒤다 — 1) CONFLICTING 절 안이어야 한다"; exit 1; }
+    || { echo "  ✗ $f: bounce-state 호출(줄 $b_line)이 2) finish-classify 절(줄 $fc_line) 뒤다 — 갈래를 가르기 전(1))이어야 한다"; exit 1; }
+  # #218 의 실제 회귀 판별선 — 위 b_line<fc_line 만으로는 안 걸린다(CONFLICTING 갈래
+  # 안에 갇혀 있던 구버전 문서도 그 부등식은 우연히 만족했다). mergeable 분기보다도
+  # bounce-state 호출이 앞이어야 "갈래를 가르기 전에 게이트" 가 성립한다 — 그래야
+  # MERGEABLE(stale_reverify·held) 갈래도 같은 게이트를 공유한다. 되돌리면(게이트를
+  # CONFLICTING 조건문 뒤로 다시 밀면) 이 줄이 먼저 빨개진다.
+  [ "$b_line" -lt "$mg_line" ] \
+    || { echo "  ✗ $f: bounce-state 호출(줄 $b_line)이 --json mergeable 분기(줄 $mg_line) 뒤다 — CONFLICTING 갈래 안에 갇혀 MERGEABLE(stale_reverify·held) 이 게이트를 안 탄다(#218)"; exit 1; }
 done
 
 echo "[closeout] ci-pass 로컬 CI 분기 세 결과 구분 스모크 (#70 — pass=0/fail=1/부재=2)"
@@ -1017,6 +1030,9 @@ bash scripts/tests/bounce-state.test.sh
 
 echo "[test] bounce-comment.sh 반송 코멘트 생성 — SKILL.md 문구와 바이트 동일 (#212)"
 bash scripts/tests/bounce-comment.test.sh
+
+echo "[test] closeout ①-b 스윕 판정 픽스처 4종 — 반송 게이트가 갈래 앞 (#218)"
+bash scripts/tests/closeout-sweep-gate.test.sh
 
 echo "[test] release-labels.sh 라벨 해제 규칙 테스트 (#117)"
 bash scripts/tests/release-labels.test.sh
