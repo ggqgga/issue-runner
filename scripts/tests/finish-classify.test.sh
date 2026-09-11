@@ -646,12 +646,26 @@ G_40M="2026-07-05T11:20:00Z"    # 40분 전 — STALL_MIN 밖
 G_CLAIM_5M="2026-07-05T11:55:00Z"    # 5분 전 — 방금 디스패치된 교체 워커(첫 푸시 전)
 G_CLAIM_60M="2026-07-05T11:00:00Z"   # 정확히 60분 전 — 타임박스 경계(포함)
 G_CLAIM_61M="2026-07-05T10:59:00Z"   # 61분 전 — 타임박스 밖
+# WARN 3(회차3) 교락 해소 축 — 위 네 값은 전부 "반송 이후 = 타임박스 안 / 반송 이전 =
+# 타임박스 밖" 으로 붙어 다녀서, 신선도 술어가 **반송 시각을 보는지 타임박스만 보는지**를
+# 가르지 못한다. 아래 두 값은 `bounced_recent.json`(반송 11:20)과 짝지어 그 교락을 푼다.
+G_CLAIM_50M="2026-07-05T11:10:00Z"   # 50분 전 — 반송(11:20) **이전**이지만 타임박스 **안**
+G_CLAIM_100M="2026-07-05T10:20:00Z"  # 100분 전 — 반송 이전이고 타임박스 **밖**(대조군)
 
 # 코멘트 픽스처 (본문은 실제 워커·verify-runner 가 찍는 접두를 그대로 쓴다).
 cat > "$GT/bounced_noverifier.json" <<'J'
 [
   {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
   {"body":"재검증 실패: E2E 1건 실패 — 반송\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:35:00Z"}
+]
+J
+# 반송 마커가 **최근**인 판(11:20 — STALE_FINISH_MIN 30 은 넘겼다). 위 픽스처는 반송이
+# 10:35 라 "반송 이전 · 타임박스 안" 칸이 아예 도달 불가다(반송 이전 = 10:35 이전 =
+# 타임박스 경계 11:00 보다 이르다). 이 픽스처가 그 칸을 연다.
+cat > "$GT/bounced_recent.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: E2E 1건 실패 — 반송\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:20:00Z"}
 ]
 J
 cat > "$GT/bounced_verifier_clean.json" <<'J'
@@ -1050,6 +1064,32 @@ row "I7 MERGEABLE·검증자CLEAN+🔄·claim 5분전" untouched \
 row "I8 MERGEABLE·검증자CLEAN+🔄·claim 120분전" adopt_merge \
   MERGEABLE "$GT/verifier_clean.json" "" none "$GT/empty.log" "" 30 "$G_OLD"
 
+
+# ── I9·I10 (회차3 WARN 3) — claim 축의 **교락을 푼다** ────────────────────────
+# I1~I8 의 claim 값 네 개는 "반송 이후 = 타임박스 안(I1·I3) / 반송 이전 = 타임박스 밖
+# (I2·I5 계열)" 으로 완전히 붙어 다닌다. 그래서 신선도 술어가 ⒜ **반송보다 나중인가**를
+# 보는지 ⒝ **타임박스 안인가**만 보는지 그 격자로는 못 가른다 — 나중에 ⒜ 를 넣거나 빼도
+# I1~I8 은 전부 그대로 초록이다. 아래 두 행은 반송이 **최근**(11:20)인 픽스처에서
+# claim 을 반송 **이전**에 두어 그 두 축을 갈라놓는다.
+#
+# I9 의 `want=untouched` 는 **지금 구현이 ⒝ 만 본다**는 사실을 못박은 것이다(⒜ 미구현).
+# 그 선택의 근거: 반송 전이(`transition.sh:148` verify-redispatch · `:160`
+# closeout-redispatch)는 이슈에서 `agent:claimed` 를 **뗀다**(`iss_rm` 에 들어 있다).
+# `claim-at.sh` 는 부착 여부를 **마지막 매칭 이벤트**로 재므로 그 해제 뒤에는 `none` 을
+# 낸다 — 즉 반송을 거친 이슈가 claim 시각을 되돌려 주는 유일한 경우는 디스패처가 **다시
+# 붙인** 것이고, 그 부착은 정의상 반송보다 나중이다. ⒜ 는 구조적으로 함의된다.
+# 남는 구멍은 **전이 스크립트를 안 거친 손 반송**뿐이고, 그 손해는 타임박스 상한
+# (`ISSUE_TIMEBOX_HOURS`) 안의 **지연**이라 영구 정체가 아니다.
+# 이 행이 있으면 나중에 ⒜ 를 실제로 넣는 사람은 I9 가 빨개지는 것을 보고 **의도한
+# 변경인지** 판단하게 된다 — 교락된 격자에서는 그 신호가 아예 안 뜬다.
+row "I9 CONFLICTING·반송최근(11:20)·claim 50분전(반송 이전·타임박스 안)" untouched \
+  CONFLICTING "$GT/bounced_recent.json" "" none "$GT/empty.log" "" 30 "$G_CLAIM_50M"
+
+# I10 대조군 — 같은 픽스처에서 claim 이 타임박스 **밖**이면 종전대로 회수한다.
+#     I9↔I10 은 claim 시각 하나만 다르다(둘 다 반송 이전이라 ⒜ 축은 고정돼 있다).
+row "I10 CONFLICTING·반송최근(11:20)·claim 100분전(반송 이전·타임박스 밖)" redispatch \
+  CONFLICTING "$GT/bounced_recent.json" "" none "$GT/empty.log" "" 30 "$G_CLAIM_100M"
+
 chmod 644 "$GT/unreadable.log" 2>/dev/null || true
 rm -rf "$GT"
 
@@ -1156,38 +1196,96 @@ check_claim "claim-at.sh exit 0·무출력→active(fail-closed)" active "$(run_
 
 # FC_ISSUE 도 위치 인자도 없으면 연결 이슈를 **한 번 묻는다** — 그 호출 계약을 고정한다.
 # (조회 실패는 unknown, 빈 결과는 none 으로 갈라야 한다.)
+#
+# 스텁은 **가공된 번호가 아니라 실제 응답 JSON** 을 낸다 — SUT 가 그 JSON 에서 브랜치
+# 이슈를 고르는 술어 자체를 물어야 하기 때문이다(가공된 번호를 주면 `[0]` 이든 head
+# 파싱이든 똑같이 초록이라 회귀에 눈먼다).
 cat > "$CT/gh" <<'STUB'
 #!/bin/sh
 printf '%s
 ' "$*" >> "$GH_CAPTURE"
 case "$*" in
-  *closingIssuesReferences*) [ -n "$STUB_ISSUE_FAIL" ] && exit 1; printf '%s
-' "$STUB_ISSUE" ;;
+  *closingIssuesReferences*)
+    [ -n "$STUB_ISSUE_FAIL" ] && exit 1
+    [ -n "$STUB_META_EMPTY" ] && exit 0
+    printf '%s
+' "{\"headRefName\":\"$STUB_HEAD\",\"closingIssuesReferences\":$STUB_REFS}"
+    ;;
   *) exit 0 ;;
 esac
 STUB
 chmod +x "$CT/gh"
+
+# 이슈 번호별로 다른 답을 내는 claim 스텁 — **어느 이슈를 물었는지가 판정을 가른다**.
+# (109 = 이 브랜치의 이슈, 방금 claim / 108 = 같은 PR 이 닫는 남의 이슈, claim 없음)
+write_claim_stub_byissue() {
+  cat > "$CT/claim-at.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$CT/args"
+case "\$2" in
+  109) printf '%s\n' '$G_CLAIM_5M' ;;
+  *)   printf 'none\n' ;;
+esac
+exit 0
+EOF
+  chmod +x "$CT/claim-at.sh"
+}
+
+# run_iss <STUB_HEAD> <STUB_REFS> [추가 env 이름=값 …] — 이슈 인자를 **생략**한 실호출.
+run_iss() {
+  local head="$1" refs="$2"; shift 2
+  env -u FC_CLAIMED_AT PATH="$CT:$PATH" GH_CAPTURE="$CT/ghargs" \
+    STUB_HEAD="$head" STUB_REFS="$refs" \
+    FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 STALL_MIN=25 ISSUE_TIMEBOX_HOURS=1 \
+    FC_COMMENTS_FILE="$CT/bounced.json" FC_HEAD_AT="" FC_HEAD_SHA=none \
+    FC_QUEUE_LOG="$CT/empty.log" "$@" \
+    "$CT/finish-classify.sh" owner/repo 1 2>/dev/null
+}
+
 write_claim_stub 0 "$G_CLAIM_5M"
 : > "$CT/ghargs"
-got=$(env -u FC_CLAIMED_AT PATH="$CT:$PATH" GH_CAPTURE="$CT/ghargs" STUB_ISSUE=9 \
-  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 STALL_MIN=25 ISSUE_TIMEBOX_HOURS=1 \
-  FC_COMMENTS_FILE="$CT/bounced.json" FC_HEAD_AT="" FC_HEAD_SHA=none \
-  FC_QUEUE_LOG="$CT/empty.log" "$CT/finish-classify.sh" owner/repo 1 2>/dev/null)
-check_claim "이슈 미지정→closingIssuesReferences 로 찾아 claim 확인" active "$got"
+got=$(run_iss "session/issues-110-109-108" '[{"number":9}]')
+check_claim "이슈 미지정·head 가 agent/issue-* 아님→closingIssuesReferences 폴백" active "$got"
 if grep -q 'closingIssuesReferences' "$CT/ghargs"; then pass=$((pass + 1)); else
   fail=$((fail + 1)); echo "  ✗ [claim 실호출] 연결 이슈 조회 계약 — 실제=[$(cat "$CT/ghargs")]"; fi
+# 같은 한 번의 조회로 head 도 받아와야 한다 — 라운드트립을 늘리지 않는다.
+if grep -q 'headRefName' "$CT/ghargs"; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [claim 실호출] head 를 같은 조회에서 안 받는다 — 실제=[$(cat "$CT/ghargs")]"; fi
 # 연결 이슈 **조회 실패** → unknown(판정 불가) → active. 빈 결과와 섞지 않는다.
-got=$(env -u FC_CLAIMED_AT PATH="$CT:$PATH" GH_CAPTURE="$CT/ghargs" STUB_ISSUE_FAIL=1 \
-  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 STALL_MIN=25 ISSUE_TIMEBOX_HOURS=1 \
-  FC_COMMENTS_FILE="$CT/bounced.json" FC_HEAD_AT="" FC_HEAD_SHA=none \
-  FC_QUEUE_LOG="$CT/empty.log" "$CT/finish-classify.sh" owner/repo 1 2>/dev/null)
+got=$(run_iss "agent/issue-9" '[{"number":9}]' STUB_ISSUE_FAIL=1)
 check_claim "연결 이슈 조회 실패→active(unknown≠none)" active "$got"
+# gh 가 exit 0 인데 **무출력** 인 것도 조회 실패다 — 빈 응답을 "연결 이슈 없음" 으로 접으면
+# 조회 한 번 헛돈 것이 살아있는 워커의 claim 을 떼는 근거가 된다(unknown≠none 같은 규율).
+got=$(run_iss "agent/issue-9" '[{"number":9}]' STUB_META_EMPTY=1)
+check_claim "연결 이슈 조회 무출력→active(unknown≠none)" active "$got"
 # 연결 이슈가 **없는** PR(빈 결과)은 조회 실패가 아니다 — claim 증거 없음(none)으로 진행.
-got=$(env -u FC_CLAIMED_AT PATH="$CT:$PATH" GH_CAPTURE="$CT/ghargs" STUB_ISSUE="" \
-  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 STALL_MIN=25 ISSUE_TIMEBOX_HOURS=1 \
-  FC_COMMENTS_FILE="$CT/bounced.json" FC_HEAD_AT="" FC_HEAD_SHA=none \
-  FC_QUEUE_LOG="$CT/empty.log" "$CT/finish-classify.sh" owner/repo 1 2>/dev/null)
+got=$(run_iss "fix/사람이-연-브랜치" '[]')
 check_claim "연결 이슈 없음(빈 결과)→stale_reverify(증거 없음)" stale_reverify "$got"
+
+# ── 회차3 BLOCKER — `closingIssuesReferences[0]` 은 **브랜치 이슈가 아니다** ──────
+# 이 레포 실데이터: PR #113 head=`agent/issue-109` refs=`[108, 109]` — `[0]` 은 #108(남의
+# 이슈)이다. 이슈를 **닫는** 것과 이 브랜치의 워커가 **집어간** 것은 다른 축인데, `[0]` 은
+# 전자의 순서(GitHub 이 본문의 `Closes` 를 만난 순서)를 후자로 오독한다.
+#
+# 실패 경로: 이 PR 이 새로 여는 ①-b `bounced` 예외 갈래로 CONFLICTING 반송 PR 이 들어오고,
+# 교체 워커는 5분 전 claim 됐지만 첫 푸시 전이다 → `[0]` 이 **#108** 을 물어 claim 이 `none`
+# → 증거 ③ 이 조용히 꺼짐 → `stale_reverify` → `closeout-redispatch` 가 **지금 일하고 있는
+# 워커의 `agent:claimed` 를 뗀다** → 같은 브랜치에 두 워커(워크트리 경합).
+# 이 PR 이 없애려던 사고가 이 PR 이 새로 연 경로에서 재발한다.
+write_claim_stub_byissue
+got=$(run_iss "agent/issue-109" '[{"number":108},{"number":109}]')
+check_claim "head=agent/issue-109·refs=[108,109]→109 로 묻는다(브랜치 이슈)" active "$got"
+# 어느 이슈를 물었는지까지 못박는다 — 결과만 보면 우연히 맞을 수 있다.
+if grep -qx 'owner/repo 109' "$CT/args"; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [claim 실호출] 브랜치 이슈 인자 — 기대=[owner/repo 109] 실제=[$(cat "$CT/args")]"; fi
+# 대조군(실데이터 PR #112) — head 가 `agent/issue-N` 이 **아니면** 폴백 그대로 `[0]`=108 이라
+# claim 이 `none` 이다. 이 행이 초록이어야 위 행을 살린 것이 **head 파싱**임이 증명된다
+# (둘 다 refs 는 같다 — 다른 것은 head 하나뿐).
+: > "$CT/args"
+got=$(run_iss "session/issues-110-109-108" '[{"number":108},{"number":109}]')
+check_claim "head 가 agent/issue-* 아님·refs=[108,109]→폴백 [0]=108(claim 없음)" stale_reverify "$got"
+if grep -qx 'owner/repo 108' "$CT/args"; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [claim 실호출] 폴백 인자 — 기대=[owner/repo 108] 실제=[$(cat "$CT/args")]"; fi
 
 rm -rf "$CT"
 

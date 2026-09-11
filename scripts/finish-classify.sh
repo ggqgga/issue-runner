@@ -82,7 +82,10 @@
 #                      종전대로 epoch 0 으로 degrade 하지만, `✅` 갈래(#171 머지 게이트)
 #                      에선 증명 실패이므로 done_verdict 를 내지 않고 active 다.
 #   FC_ISSUE          연결 이슈 번호 — 세 번째 위치 인자의 env 판(진행 증거 ③).
-#                      둘 다 없으면 `gh pr view --json closingIssuesReferences` 로 한 번 묻는다.
+#                      둘 다 없으면 `gh pr view --json headRefName,closingIssuesReferences` 로
+#                      한 번 묻고, **head 의 `agent/issue-N` 을 1순위**로 브랜치 이슈를 고른다
+#                      (`closingIssuesReferences` 는 폴백 — `[0]` 은 닫는 이슈가 둘 이상일 때
+#                      남의 이슈를 가리킨다, #206 회차3). 조회 실패·무출력은 `unknown`.
 #   FC_CLAIMED_AT     `agent:claimed` 부착 시각(ISO8601) 또는 `none`/`unknown` —
 #                      claim-at.sh 실조회 대체. **설정돼 있으면 실조회로 새지 않는다**
 #                      (픽스처 테스트의 네트워크 무접속을 이 변수 하나가 지킨다).
@@ -310,12 +313,38 @@ claimed_arg() {
     printf '%s' "${FC_CLAIMED_AT:-none}"
     return 0
   fi
-  local iss="$issue" out rc=0
+  local iss="$issue" meta out rc=0
   if [ -z "$iss" ]; then
     # 연결 이슈를 모르면 한 번 묻는다. **조회 실패와 "연결 이슈 없음" 을 가른다**:
     # 실패는 unknown(판정 불가), 빈 결과는 none(재디스패치할 이슈 자체가 없는 PR).
-    iss=$(gh pr view "$pr" --repo "$repo" --json closingIssuesReferences \
-      -q '.closingIssuesReferences[0].number // ""' 2>/dev/null) || { printf 'unknown'; return 0; }
+    #
+    # 브랜치 이슈 추정은 **head 의 `agent/issue-N` 이 1순위**이고
+    # `closingIssuesReferences` 는 폴백이다(#206 회차3 BLOCKER). 여기서 필요한 것은
+    # "이 PR 이 닫는 이슈" 가 아니라 **"이 브랜치의 워커가 집어간 이슈"** 인데, 그 둘은
+    # 다른 축이다 — `[0]` 은 GitHub 이 본문의 `Closes` 를 만난 순서일 뿐이라 닫는 이슈가
+    # 둘 이상이면 **남의 이슈**를 가리킨다. 이 레포 실데이터:
+    #   PR #113  head=agent/issue-109  refs=[108, 109]   ← [0] 은 #108
+    #   PR #112  head=session/issues-110-109-108  refs=[108, 109]
+    # `[0]` 을 쓰면 그 PR 의 claim 조회가 #108 로 가 `none` 이 나오고, 증거 ③ 이 조용히
+    # 꺼져 **지금 일하고 있는 워커**가 `stale_reverify` → 재디스패치된다(워크트리 경합).
+    # 레포의 다른 자리가 전부 head 파싱으로 "이 브랜치의 이슈" 를 얻는 것과도 여기서만
+    # 어긋나 있었다(closeout SKILL ③단계·`closeout-reconcile.sh:25`·`loop-status.sh:504`).
+    # 술어 형태는 `resume-sweep` 쪽(PR #293)과 같은 것을 쓴다 — 두 자리가 어긋나지 않게.
+    #
+    # 조회는 여전히 **한 번**이다(head 를 같은 응답에서 받는다 — 라운드트립을 늘리지 않는다).
+    # `-q` 대신 별도 `jq` 를 쓰는 것은 `claim-at.sh` 와 같은 규율이다: 스텁이 실제 응답
+    # JSON 을 내고 술어 자체가 테스트에 물린다(가공된 번호를 주면 어느 술어든 초록이다).
+    meta=$(gh pr view "$pr" --repo "$repo" --json headRefName,closingIssuesReferences 2>/dev/null) \
+      || { printf 'unknown'; return 0; }
+    # exit 0 + 무출력도 조회 실패다 — 빈 응답을 "연결 이슈 없음"(none)으로 접으면 헛돈
+    # 조회 한 번이 살아있는 워커의 claim 을 떼는 근거가 된다(PR#139 — 빈 결과와 실패를 가른다).
+    [ -n "$meta" ] || { printf 'unknown'; return 0; }
+    iss=$(printf '%s' "$meta" | jq -r '
+      if ((.headRefName // "") | test("^agent/issue-[0-9]+"))
+      then (.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n)
+      else ((.closingIssuesReferences // [])
+            | if length > 0 then (.[0].number | tostring) else "" end)
+      end' 2>/dev/null) || { printf 'unknown'; return 0; }
   fi
   [ -n "$iss" ] || { printf 'none'; return 0; }
   out=$("$SCRIPT_DIR/claim-at.sh" "$repo" "$iss" 2>/dev/null) || rc=$?
