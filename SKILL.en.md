@@ -46,7 +46,7 @@ maintenance must come before new work).
   re-derived by counting issue comment markers (`<!-- timebox-grace: N -->`) created
   **after the current claim timestamp only**.
 - `RESUME_AFTER_MIN = 120` — how long (minutes) the resume sweep waits before letting a
-  stalled issue flow again. Once a `needs-human` + `hold:ladder` issue has gone this long
+  stalled issue flow again. Once a `hold:ladder` issue has gone this long
   without an update, ①'s resume sweep picks it up (passed to `resume-sweep.sh` as the
   environment variable of the same name).
 - `LADDER_RESUME_LIMIT = 2` — cap on automatic resumes per issue. Beyond it the issue is
@@ -140,13 +140,14 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   If it starts with `BLOCKED:`, the worker stopped because human intervention is
   needed (ambiguous spec / plan-reality mismatch / same failure repeating):
   instead of returning the issue to a re-dispatchable state, attach the
-  `needs-human` + `hold:policy` labels with
+  `hold:policy` label with
   `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy --note "<the one-line question a human must answer>"` (this also releases
-  the claim — a reason-less `needs-human` is never produced, #151), remove the
+  the claim — a machine stop carries the reason label only, #244), remove the
   worktree, and surface the BLOCKED reason as a warn in
-  ④ Report (once a human resolves the cause and removes **both** `needs-human`
-  **and** `hold:*`, the issue flows again — the gate also reads the `hold:` prefix,
-  so dropping only one of the two leaves it out of the queue, #242. The README
+  ④ Report (once a human resolves the cause and removes `hold:*`, the issue flows
+  again — the gate reads the `hold:` prefix, so a leftover reason label keeps it out
+  of the queue, #242; if a re-review ended as "kept" the issue also carries
+  `needs-human`, which must come off too. The README
   'guardrails' convention). If the latest comment is not
   a BLOCKED comment, remove the worktree and release the claim (returning the
   issue to a re-dispatchable state).
@@ -191,10 +192,11 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
 
 **Resume sweep — a stalled issue is retried by the tick.** After handling every event
 above, run `$SCRIPTS/resume-sweep.sh` with no arguments (the script applies the loop
-session cwd's `.loop/repos` scope on its own). Of the stops recorded by `needs-human` plus
-a reason label, only **`hold:ladder`** (stopped because ladder rungs ①–③ of live
+session cwd's `.loop/repos` scope on its own). Of the machine stops (`hold:*`),
+only **`hold:ladder`** (stopped because ladder rungs ①–③ of live
 verification all failed) is reverted automatically once the window (`RESUME_AFTER_MIN`)
-passes — `hold:conflict` and `hold:policy` are human decisions and are left alone. Run it
+passes — `hold:conflict` is a human decision and `hold:policy` goes through re-review (③).
+A stop a human set by hand (`needs-human`) alongside it is never auto-resumed (#244). Run it
 **before** ③ Dispatch so this same tick can pick the issue up.
 The resume count is the number of issue **comments** carrying the marker
 `<!-- ladder-resume: N -->` — the body is neither read nor written (append-only, so it can
@@ -203,7 +205,7 @@ linked PR**, so a resume/escalation reverts the PR's labels too — otherwise th
 permanently human-blocked and the downstream transitions (handoff-verify, verify-pass,
 closeout-pick) never remove it. Per event:
 
-- `resumed` — `needs-human` and `hold:ladder` are off and `agent-ready` is untouched (the
+- `resumed` — `hold:ladder` is off and `agent-ready` is untouched (the
   eligibility label is never touched). **Nothing for the dispatcher to do** — the issue
   reappears naturally as an `eligible-issues.sh` candidate in ③ this tick. Record the
   number and `attempt` under `resumed` in ④ Report. An issue carrying the deploy-wait
@@ -213,15 +215,14 @@ closeout-pick) never remove it. Per event:
   escalated to `hold:policy` (`attempt`/`limit` are the resumes the marker comments actually
   recorded vs. the cap — read as `2/2`). The script already applied the label, so with
   **no further action** list it under `escalated` in ④ Report for a human to see.
-- `warn` — a `needs-human` with no reason label (`hold:*` — a human may have attached it by
-  hand, so it is not an auto-resume target), a human-owned `hold:*` coexisting with
-  `hold:ladder`, a race against human edits, a failure **before** any write, or a
+- `warn` — a human-owned stop (`needs-human`, `hold:policy`, `hold:conflict`) coexisting with
+  `hold:ladder` (not an auto-resume target), a race against human edits, a failure **before** any write, or a
   **listing/search cap hit** (the `--limit 200` window filled, so truncated issues are
   invisible this tick — repeated hits mean it is time to narrow scope with `.loop/repos`;
   a `repo` of `*` means the account-wide search). The script did **not** touch it —
   **do not touch it either**; copy it verbatim into ④ Report's warns.
 - `note` — an informational line the script did **not** touch (a `needs-human` with no reason
-  label on a deploy-wait issue, or a deploy-wait issue's `hold:ladder` (#217, not a resume/
+  label — a stop a human set by hand, which is **normal** (#244) — or a deploy-wait issue's `hold:ladder` (#217, not a resume/
   escalation target even once the window passes) — a **normal state** with nothing to act
   on). It is not a warn, so it does not go into ④ Report's warns — if it is worth reporting at all,
   carry it as an info line only. Narrowing `warn` to "an invariant violation the loop can
@@ -238,7 +239,10 @@ closeout-pick) never remove it. Per event:
   answer as a comment (`재심: <answer> <!-- policy-review: resumed --><!-- bodat:worker -->`) and
   resume with `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr|->` (clears
   needs-human/hold:*, keeps agent-ready → a ③ candidate this tick). If it truly is a human
-  decision, leave only `재심: 사람 몫 유지 — <one-line reason> <!-- policy-review: kept --><!-- bodat:worker -->`.
+  decision, leave `재심: 사람 몫 유지 — <one-line reason> <!-- policy-review: kept --><!-- bodat:worker -->`
+  and run `$SCRIPTS/transition.sh policy-kept <repo> <issue> <pr|->` to attach `needs-human`
+  to the PR and the issue **at that point** (#244 — the only place the loop attaches it;
+  `hold:policy` stays as the reason).
   Either way a marker remains, so **the same issue is never asked twice** (until a human removes
   the label). Report it in ④ as `re-reviewed N (resumed n · kept m)`.
 - `waiting` — still inside the window. Pass over it quietly (no reporting needed).
@@ -256,9 +260,9 @@ For each `pr_open` event:
 read the `<!-- repair-count: N -->` HTML comment from the PR body
 (`gh pr view <pr> --repo <repo> --json body`; if the comment is absent, N = 0).
 If N ≥ `MAX_REPAIRS_PER_PR`, **do not dispatch a repair** — attach the
-`needs-human` + `hold:policy` labels to the PR and the issue with
+`hold:policy` label to the PR and the issue with
 `$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy --note "<one-line question>"` and surface it as a
-warn in ④ Report (a reason-less `needs-human` is never produced, #151). If N is below the cap, dispatch the maintenance agent and at
+warn in ④ Report (a machine stop carries the reason label only, #244). If N is below the cap, dispatch the maintenance agent and at
 the same time update the comment in the PR body to `<!-- repair-count: N+1 -->`
 (`gh pr edit <pr> --repo <repo> --body ...` — if the comment was absent, append
 it at the end of the body, keeping the rest of the body unchanged). Even when

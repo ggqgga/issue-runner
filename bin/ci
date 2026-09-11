@@ -1631,6 +1631,15 @@ for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKIL
     echo "  ✗ $f: 산문 --add-label needs-human — runner-held/verify-held/closeout-blocked --reason 을 쓰라"; exit 1; fi
 done
 for f in SKILL.md SKILL.en.md; do grep -qF "resume-sweep.sh" "$f" || { echo "  ✗ $f: 재개 스윕 배선 없음"; exit 1; }; done
+# (#244) 재심 "사람 몫 유지" 판정의 needs-human 부착 배선 — 이게 빠지면 `hold:policy` 재심이
+# 끝나도 사람 호출 신호가 아무 데도 안 남는다(기계 정지에서 needs-human 을 뗀 뒤 남는 유일한
+# 생산자다). 산문 `--add-label needs-human` 은 위 가드가 막으므로 전이로만 배선된다.
+for f in SKILL.md SKILL.en.md; do
+  grep -qF 'transition.sh policy-kept' "$f" \
+    || { echo "  ✗ $f: 재심 '사람 몫 유지' 의 policy-kept 배선 없음 (#244)"; exit 1; }
+done
+grep -qE '^  policy-kept\)' scripts/transition.sh \
+  || { echo "  ✗ scripts/transition.sh: policy-kept 전이 없음 (#244)"; exit 1; }
 # 루프 현황 대시보드(#163) — 세 루프 ④ Report 가 --post 로 게시해야 깃헙만 보고 현황을 안다.
 for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qE 'loop-status\.sh --post (issue-runner|verify-runner|closeout)' "$f" || { echo "  ✗ $f: loop-status.sh --post 배선 없음"; exit 1; }
