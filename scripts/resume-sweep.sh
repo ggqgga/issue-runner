@@ -272,6 +272,25 @@ deploy_wait_row() {  # deploy_wait_row <row-json> — stdout: "<number>\t<axis>"
         else "" end)] | @tsv' 2>/dev/null
 }
 
+# 위 술어를 **`read_state` 가 내는 모양**에 먹이기 위한 얇은 어댑터(#229). 술어를 고치지도
+# 복제하지도 않는다 — 모양만 맞추고 판정은 통째로 `deploy_wait_row` 에 넘긴다(#201·#217 이
+# 한 자리로 모은 것을 다시 가르면 같은 질문에 갈래마다 다른 답이 나온다).
+# 왜 모양이 다른가: 목록 조회는 row-json(`.labels[].name`)을 주는데 `read_state` 는 라벨을
+# **콤마 목록**으로 낸다(그 모양을 쓰는 `has_label` 이 이미 여럿 있다). 보는 것은 같은 라벨
+# 집합이므로 여기서 row-json 으로 되돌려 준다. `number` 는 이 호출부가 축(axis)만 읽으므로
+# `0`(= "특정 이슈가 아니다", `_emit` 이 쓰는 값)으로 채운다.
+# jq 실패는 **rc 로** 나간다 — 빈 값을 "배포 대기 아님" 으로 돌려주면 호출부의 fail-closed
+# 분기에 아예 들어가지 못한다(PR#139 계열: 부분 실패의 부분 출력을 정상값으로 채택하는 사고).
+# 필터 첫 줄의 `# deploy-wait-adapter` 는 스위트가 **이 한 호출만** 실패시켜 fail-closed 를
+# 실증하기 위한 표식이다 — 어댑터가 JSON 을 스스로 만드는 이상 데이터로는 이 경로에 못 닿는다.
+deploy_wait_labels() {  # deploy_wait_labels <라벨 콤마목록> — stdout·rc 계약은 deploy_wait_row 와 같다
+  local rowjson
+  rowjson=$(printf '%s' "$1" | jq -Rsc '# deploy-wait-adapter (#229)
+    {number: 0, labels: (split(",") | map(select(length > 0) | {name: .}))}' 2>/dev/null) || return 1
+  [ -n "$rowjson" ] || return 1
+  deploy_wait_row "$rowjson"
+}
+
 # ── GitHub 읽기 헬퍼 — 전부 **조회 실패는 rc 1** ──────────────────────────
 # 빈 값을 실패로 치면 "라벨이 0개인 이슈"·"코멘트가 0개인 이슈" 같은 정상 결과가
 # 영영 조회 실패로 오분류된다. 값이 아니라 rc 로 가른다.
@@ -365,6 +384,8 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate>
 rc=0
 
 # ── 이슈 1건 처리 (재개 대상 = needs-human ∧ hold:ladder ∧ ¬deploy-wait, #217) ─────
+# 세 조건 모두 **편집 직전 재조회(read_state)** 결과로 판정한다 — 목록 스냅샷(row)은 그 뒤에
+# 붙은 라벨을 모른다(#229). row 는 창 판정(updatedAt)과 파싱 가능성 검사에만 쓴다.
 sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
   local repo="$1" row="$2"
   local num updated row_tsv then_epoch elapsed attempts next cur back live_updated dw_tsv dwlabel
@@ -402,13 +423,18 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
   # 않는다 — 그건 이 함수가 fail-open 이 되어 정확히 이 이슈가 막으려는 사고(사람 게이트를
   # 조용히 벗겨내는 것)를 판정 실패 경로에서 재현한다(사전 리뷰 지적). rc 로 조회 실패와
   # 빈 결과(배포 대기 아님)를 가른다 — 이 파일이 read_state 등에서 이미 쓰는 규율과 같다.
-  if ! dw_tsv=$(deploy_wait_row "$row"); then
+  #
+  # **축의 답은 여기서 내지 않는다(#229).** row 는 목록을 뜬 시점의 스냅샷이라 그 뒤에 붙은
+  # `deploy-wait` 을 모른다 — 기본 창(RESUME_AFTER_MIN=120)에선 라벨이 붙는 순간 updatedAt 이
+  # 갱신돼 위 창 게이트가 **우연히** 경합을 막아 줬지만, 창을 0 으로 두고 돌리면(디버깅·강제
+  # 재개; `_nonneg_int` 가 0 을 정상값으로 받는다) 그 우연이 사라져 낡은 row 만 보는 제외가
+  # 사람 게이트를 그대로 벗겨낸다. 반대로 row 에는 있었지만 사람이 티켓을 닫고 방금 뗀 경우를
+  # row 를 이유로 막으면 반대 방향의 영구 정체다. 그래서 답은 **편집 직전 재조회(cur)** 가
+  # 낸다(아래). 여기서는 row 가 **파싱 가능한 모양인지만** rc 로 본다 — 같은 row 에서
+  # number·updatedAt 을 이미 뽑아 쓴 터라, 이 row 가 깨졌다는 것은 이 이슈에 대한 스냅샷
+  # 전체를 믿을 수 없다는 뜻이고 그때는 아무것도 쓰지 않는다(fail-closed 유지).
+  if ! deploy_wait_row "$row" >/dev/null; then
     emit_warn "$repo" "$num" "배포 대기 판정 실패(라벨 파싱) — 재개 대상인지 확정 못 해 건드리지 않는다"
-    return 0
-  fi
-  dwlabel=${dw_tsv#*$'\t'}
-  if [ -n "$dwlabel" ]; then
-    emit_note "$repo" "$num" "배포 대기(라벨 $dwlabel) — needs-human 이 정상 상태라 warn 아님"
     return 0
   fi
 
@@ -422,6 +448,22 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
   fi
   if ! has_label "$cur" "needs-human" || ! has_label "$cur" "hold:ladder"; then
     emit_warn "$repo" "$num" "재조회 시 needs-human·hold:ladder 가 이미 없다(사람 조작 경합) — 자동 재개 안 함"
+    return 0
+  fi
+  # ── 배포 대기 축 판정 — **재조회 결과**에 같은 술어를 적용한다(#229) ───────
+  # ②·③·위 row 게이트와 같은 한 벌 술어(deploy_wait_row)를 쓰되, `read_state` 가 내는
+  # 콤마 목록 모양만 어댑터(deploy_wait_labels, 위 정의)로 맞춘다. 위 두 술어(needs-human·
+  # hold:ladder) 뒤에 두는 이유: 그 둘을 통과했다는 것이 곧 "재조회에도 needs-human 이
+  # 있다" 라서 아래 note 문구("needs-human 이 정상 상태라")가 실측과 어긋나지 않는다.
+  # 판정 실패는 "배포 대기 아님" 으로 폴백하지 않는다 — row 쪽(위)과 같은 방향, 같은 이유.
+  if ! dw_tsv=$(deploy_wait_labels "$cur"); then
+    emit_warn "$repo" "$num" "배포 대기 재판정 실패(재조회 라벨 파싱) — 재개 대상인지 확정 못 해 건드리지 않는다"
+    return 0
+  fi
+  dwlabel=${dw_tsv#*$'\t'}
+  if [ -n "$dwlabel" ]; then
+    # 문구는 ②·③ 과 **한 글자도 다르지 않게** 재사용한다 — 디스패처 SKILL 이 문구로 분기한다.
+    emit_note "$repo" "$num" "배포 대기(라벨 $dwlabel) — needs-human 이 정상 상태라 warn 아님"
     return 0
   fi
   # `hold:ladder` 옆에 사람 몫 사유가 함께 붙어 있으면 자동 재개 대상이 아니다 — 사다리는
