@@ -207,7 +207,15 @@ had nowhere to drop the PR copy — the same run therefore also does a **stop-mi
 cleanup** (#265): when the issue carries no stop label at all but its paired open PR still
 does, it removes them **from the PR only** (a pair means an `agent/issue-*` head with a
 proven `Closes` link — a human-opened PR's marks and a `Refs`-only PR's legitimate hold are
-left alone). Per event:
+left alone). **What licenses the removal is positive evidence, not absence** — absence ("the
+issue carries no stop label") cannot tell ⓐ a human removed it from ⓑ the machine removed it
+from ⓒ **a transition partially failed and never attached it**, and ⓒ is real
+(`transition.sh` edits the PR first and the issue second). So it reads the label **event
+history** and requires the issue's last removal to be **later** than the PR's last
+attachment; when it cannot prove that it leaves the labels alone and warns. And when the
+PR's only stop label is a bare `needs-human` (no `hold:` prefix at all) it **never** removes
+it — the machine cannot produce that shape (all three hold transitions require `--reason`),
+so it is a brake a human put there by hand. Per event:
 
 - `mirror_cleared` — the script removed the **PR copy** of a hold a human cleared on the
   issue alone (#265). The issue was already clean, so it is left untouched. **Nothing
