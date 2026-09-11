@@ -1211,9 +1211,11 @@ live_marker='[칸 ③]'
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   case "$f" in
     *.en.md) m4_anchor='^\*\*Step 4 —'; m5_anchor='^\*\*Step 5 —'; m6_anchor='^\*\*Step 6 —'
-             mandate='A real-hardware line REQUIRES the `[칸 ③]` prefix marker' ;;
+             mandate='A real-hardware line REQUIRES the `[칸 ③]` prefix marker'
+             verdict='`[칸 ③]` prefix marker** is a real-hardware item' ;;
     *)       m4_anchor='^\*\*4단계 —';   m5_anchor='^\*\*5단계 —';   m6_anchor='^\*\*6단계 —'
-             mandate='실장비 줄은 접두 표식 `[칸 ③]` 필수' ;;
+             mandate='실장비 줄은 접두 표식 `[칸 ③]` 필수'
+             verdict='**접두 표식 `[칸 ③]` 이 붙은 줄**' ;;
   esac
   m4_line=$(grep -nE "$m4_anchor" "$f" | head -1 | cut -d: -f1)
   m5_line=$(grep -nE "$m5_anchor" "$f" | head -1 | cut -d: -f1)
@@ -1227,15 +1229,23 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   #    TEST 워커 …")만 남으면 #309 의 출발점으로 되돌아간다.
   printf '%s\n' "$m4_body" | grep -qF "$mandate" \
     || { echo "  ✗ $f: 4단계 <LIVE_CHECKS> 형태 규율에 실장비 접두 표식 강제 문면('$mandate')이 없다 — 성격 규정은 형태 강제가 아니다 (#309)"; exit 1; }
-  # ⓑ 소비 쪽 — 5단계 실장비 판별이 **같은 표식**을 써야 한다. 표식이 여기 없으면 판별이
-  #    다시 문장 해석으로 돌아가고, 4단계와 갈라진다.
-  printf '%s\n' "$m5_body" | grep -qF "$live_marker" \
-    || { echo "  ✗ $f: 5단계 실장비 판별이 4단계와 같은 표식('$live_marker')을 안 쓴다 — 계산기가 둘이 된다 (#309)"; exit 1; }
+  # ⓑ 소비 쪽 — **판별문 자체**가 같은 표식을 써야 한다. "5단계 어딘가에 표식이 있는가" 로
+  #    물으면 다른 문단(전환기 조항 등)에 표식이 한 번 더 늘어난 뒤 판별문만 산문 술어로
+  #    되돌려도 초록이 된다 — 그래서 판별문 고유 문구에 결합한다.
+  printf '%s\n' "$m5_body" | grep -qF "$verdict" \
+    || { echo "  ✗ $f: 5단계 실장비 판별문이 표식('$live_marker')에 결합돼 있지 않다('$verdict' 부재) — 판별이 문장 해석으로 돌아갔다 (#309)"; exit 1; }
 done
 # ⓒ 템플릿 — 실제로 발행되는 이슈 본문의 형태가 여기서 나온다. 여기가 표식을 안 가르치면
-#    4단계 규율이 아무리 강제여도 발행물엔 표식이 안 붙는다.
-grep -qF "$live_marker" skills/closeout/references/deploy-check-issue.md \
-  || { echo "  ✗ deploy-check-issue.md: 실장비 접두 표식('$live_marker') 안내 없음 — 발행되는 이슈에 표식이 안 붙는다 (#309)"; exit 1; }
+#    4단계 규율이 아무리 강제여도 발행물엔 표식이 안 붙는다. 스코프는 **형태 안내 주석 구간**
+#    (`## 라이브/하드웨어 검증 항목` ~ `<LIVE_CHECKS>`) — 파일 전체로 물면 아래 `## 완료 처리`
+#    문장에 남은 표식 덕에 정작 안내가 지워져도 초록이다.
+tmpl='skills/closeout/references/deploy-check-issue.md'
+t_head=$(grep -nF '## 라이브/하드웨어 검증 항목' "$tmpl" | head -1 | cut -d: -f1)
+t_ph=$(grep -nF '<LIVE_CHECKS>' "$tmpl" | head -1 | cut -d: -f1)
+[ -n "$t_head" ] && [ -n "$t_ph" ] && [ "$t_head" -lt "$t_ph" ] \
+  || { echo "  ✗ $tmpl: '## 라이브/하드웨어 검증 항목' ~ '<LIVE_CHECKS>' 구간을 못 찾음"; exit 1; }
+sed -n "${t_head},${t_ph}p" "$tmpl" | grep -qF '`- [ ] [칸 ③] <동작>` 형태로 적는다' \
+  || { echo "  ✗ $tmpl: 형태 안내 주석에 실장비 접두 표식 형태('- [ ] [칸 ③] <동작>')가 없다 — 발행되는 이슈에 표식이 안 붙는다 (#309)"; exit 1; }
 
 echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4)"
 # 1단계 검증자가 과거 오판 패턴(인용 오판·base 맹점 등)을 반복하지 않도록 lessons 를
