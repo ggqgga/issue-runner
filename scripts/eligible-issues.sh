@@ -106,11 +106,16 @@ blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
 #   **끝 앵커(`$`)는 양쪽 다 없다** — `Epic #12 (읽기 모델)` 같은 꼬리표를 허용하는 현행
 #   판정이고, 채택 여부는 #259 범위라 여기서 바꾸지 않는다.
 #   블로커 파싱(`^…blocked[- ]by…`)과 같은 자리·같은 방식이다(둘 다 `-o` 로 매치 구간만).
-epic_of() {  # epic_of <본문> → 에픽 번호 또는 빈 문자열
+#   마지막 `sed` 는 **선행 0 제거**다(`Epic #007` → `7`). 두 이유가 겹친다: ⑴ 아래
+#   `--argjson epic` 이 `007` 을 유효 JSON 으로 못 읽어 jq 가 죽고, 그 대입은 `set -e` 아래라
+#   **이슈 한 건의 오타가 디스패치 큐 전체를 멈춘다** ⑵ `loop-status.sh` 는 `tonumber` 로
+#   받아 이미 `7` 이라, 안 벗기면 같은 본문에서 두 파일의 **값**이 갈린다(Ⓔ⑧ 의 취지).
+epic_of() {  # epic_of <본문> → 에픽 번호(선행 0 없음) 또는 빈 문자열
   printf '%s' "$1" \
     | grep -oiE '^[[:space:]]*epic[[:space:]]+#[0-9]+' \
     | head -n 1 \
-    | grep -oE '[0-9]+$' || true
+    | grep -oE '[0-9]+$' \
+    | sed 's/^0*\([0-9]\)/\1/' || true
 }
 
 # 집합 원소는 **same-repo 키** `owner/repo#<에픽번호>` — 레포가 다르면 같은 번호라도 다른 에픽이다.
@@ -118,23 +123,27 @@ started_epics=""
 
 # (a) 진행 중인 leaf — 후보 검색 결과(`cands`, 필터 전) 중 진행 라벨이 붙은 row.
 #     이 row 들은 아래 후보 루프에서 `continue` 로 빠져 `gh issue view` 를 **안 부른다** →
-#     본문은 검색 item 의 `body` 필드를 쓴다(추가 gh 호출 0). 진행 라벨 목록은 여기 한 자리뿐.
-inflight_idx=$(printf '%s' "$cands" | jq -r '
-  to_entries[]
-  | select([.value.labels[].name]
-      | any(. == "agent:claimed" or . == "flow:verify" or . == "flow:ready" or . == "harvesting"))
-  | .key') || inflight_idx=""
-# 이 jq 가 죽는 경우는 `cands` 가 배열이 아닐 때뿐이고, 그러면 아래 `count=` 가 같은 이유로
-# 죽어 스크립트가 멈춘다(빈 큐 위장 없음). 여기서 실패를 삼키는 게 아니라 — stderr 는 그대로
-# 흐른다 — (a) 는 **정렬 힌트**이지 게이트가 아니라서 `set -e` 로 큐 전체를 죽이지 않을 뿐이다.
-for idx in $inflight_idx; do
-  i_repo=$(printf '%s' "$cands" | jq -r ".[$idx].repository.nameWithOwner")
-  i_epic=$(epic_of "$(printf '%s' "$cands" | jq -r ".[$idx].body")")
+#     본문은 검색 item 의 `body` 필드를 쓴다(추가 gh 호출 0).
+#
+#     ⚠ 진행 라벨 목록은 이 파일에 **두 자리**다 — 여기(시작 판정)와 후보 루프의
+#     `agent:claimed` / `flow:verify|flow:ready|harvesting` 제외 `case` 두 줄. 둘은 같은
+#     집합이어야 한다: 새 진행 라벨을 **제외 쪽에만** 더하면 그 레인의 leaf 는 후보에서
+#     빠지면서 시작 판정도 못 줘, finish-first 가 조용히 한 출처를 잃는다. 갈리면
+#     `scripts/tests/eligible-issues.test.sh` 의 Ⓔ⑩ 가 양방향으로 빨개진다.
+#
+#     한 행씩 `jq -c` 로 흘려 받는다 — 인덱스로 되짚으면 행마다 배열 전체를 다시 파싱해
+#     창 상한(#277 이후 실질 250)에서 O(n²) 가 된다.
+while IFS= read -r i_row; do
+  i_repo=$(printf '%s' "$i_row" | jq -r '.repository.nameWithOwner')
+  i_epic=$(epic_of "$(printf '%s' "$i_row" | jq -r '.body')")
   if [ -n "$i_epic" ]; then
     started_epics="${started_epics}${i_repo}#${i_epic}
 "
   fi
-done
+done < <(printf '%s' "$cands" | jq -c '
+  .[]
+  | select([.labels[].name]
+      | any(. == "agent:claimed" or . == "flow:verify" or . == "flow:ready" or . == "harvesting"))')
 
 # body 는 (a) 에서만 쓴다 — 후보 루프가 도는 `cands` 는 종전 형상으로 되돌린다(행마다
 # 본문을 재파싱하면 창 상한(#277 이후 실질 250)에서 스캔이 눈에 띄게 느려진다).
@@ -142,36 +151,44 @@ cands=$(printf '%s' "$cands" | jq -c 'map(del(.body))')
 
 # (b) 최근 닫힌 leaf — 추가 검색 **한 번**(이 스크립트가 늘리는 gh 호출은 이것뿐).
 #     닫힌 leaf 가 있다는 건 그 에픽이 이미 진행됐다는 뜻이라 시작 집합에 든다.
+#     gh 의 stderr 는 **합치지 않는다**(`2>&1` 금지) — 합치면 ⑴ 실패 사유가 변수에 갇혀
+#     사라지고 ⑵ 성공했는데 gh 가 stderr 에 한 줄이라도 쓰면 JSON 판정이 깨져 거짓 warn 이 난다.
+#     그대로 흘려보내면 사유는 stderr 에 남고 판정은 stdout 만 본다.
+EPIC_SCAN_WINDOW=100
 epic_scan_ok=false
-closed_leaves='[]'
 since=$(date -u -v-14d +%Y-%m-%d 2>/dev/null || date -u -d '14 days ago' +%Y-%m-%d 2>/dev/null || true)
 if [ -n "$since" ]; then
   if scan_out=$(gh api -X GET search/issues \
       -f q="user:$me is:issue is:closed closed:>=$since \"Epic #\" in:body" \
-      -f per_page=100 \
-      -q '[.items[] | {repo: (.repository_url | sub(".*/repos/"; "")), body: (.body // "")}]' 2>&1); then
-    # 종료코드 0 이어도 배열이 아니면 **값 미상**이다 — 빈 결과와 실패를 구분한다(PR#139).
-    if printf '%s' "$scan_out" | jq -e 'type == "array"' >/dev/null 2>&1; then
+      -f per_page="$EPIC_SCAN_WINDOW" \
+      -q '{total_count: .total_count, items: [.items[] | {repo: (.repository_url | sub(".*/repos/"; "")), body: (.body // "")}]}'); then
+    # 종료코드 0 이어도 items 가 배열이 아니면 **값 미상**이다 — 빈 결과와 실패를 구분한다(PR#139).
+    if printf '%s' "$scan_out" | jq -e '(.items | type) == "array"' >/dev/null 2>&1; then
       epic_scan_ok=true
-      closed_leaves="$scan_out"
     fi
   fi
 fi
 if [ "$epic_scan_ok" = "true" ]; then
-  leaf_repos=$(printf '%s' "$closed_leaves" | jq -r '.[].repo')
-  k=0
-  if [ -n "$leaf_repos" ]; then
-    while IFS= read -r c_repo; do
-      c_epic=$(epic_of "$(printf '%s' "$closed_leaves" | jq -r ".[$k].body")")
-      k=$((k + 1))
-      if [ -n "$c_epic" ]; then
-        started_epics="${started_epics}${c_repo}#${c_epic}
+  # 창 절단도 말한다 — 이 검색은 한 장(per_page 100)뿐이라, 닫힌 leaf 가 창을 넘으면
+  # 시작 집합이 **부분**이 된다(정렬 힌트가 부분적이라는 사실이 침묵하면 안 된다.
+  # 후보 검색이 #247·#277 에서 같은 이유로 절단을 말하게 된 것과 같은 자세다).
+  closed_total=$(printf '%s' "$scan_out" | jq -r '.total_count')
+  case "$closed_total" in
+    ''|*[!0-9]*)
+      echo "warn: 에픽 시작 집합 창 크기 미상 — total_count 를 못 읽었다(닫힌 leaf 절단 여부 판정 불가)" >&2 ;;
+    *)
+      if [ "$closed_total" -gt "$EPIC_SCAN_WINDOW" ]; then
+        echo "warn: 에픽 시작 집합 부분 조회 — 최근 14일 닫힌 leaf ${closed_total}건 > 창 ${EPIC_SCAN_WINDOW}, finish-first 힌트가 부분적이다" >&2
+      fi ;;
+  esac
+  while IFS= read -r leaf; do
+    c_repo=$(printf '%s' "$leaf" | jq -r '.repo')
+    c_epic=$(epic_of "$(printf '%s' "$leaf" | jq -r '.body')")
+    if [ -n "$c_epic" ]; then
+      started_epics="${started_epics}${c_repo}#${c_epic}
 "
-      fi
-    done <<EOF
-$leaf_repos
-EOF
-  fi
+    fi
+  done < <(printf '%s' "$scan_out" | jq -c '.items[]')
 else
   # 조회 실패를 **빈 큐로 위장하지 않는다** — 말하고 계속 진행한다. 시작 집합은 통째로
   # 비운다((a) 만 남기면 "일부만 finish-first" 라는 미상 상태가 되고, 그 순서는 아무도
