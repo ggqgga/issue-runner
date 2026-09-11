@@ -146,6 +146,17 @@ Procedure:
      <REPO> --json comments`) and **fix precisely what it names** (failing E2E test /
      codex BLOCKER / deterministic CI failure) — run steps 1–9 against that failure
      (fix→test→commit→push→local CI). Reuse the existing PR; do not open a new one.
+   - **Bounce-resolution report wording (#251 — the prefix is the contract).** If you post
+     a report comment on the PR/issue after fixing a bounce, **do not start its first line
+     with a bounce marker** — the markers are `BOUNCE_MARKERS` in `scripts/bounce-state.sh`
+     (`재디스패치` · `재검증 실패`). Start with the **`반송 반영`** prefix instead, e.g.
+     `반송 반영: <what you fixed> — <evidence>` (a colon, parenthesis or dash may follow).
+     Why: a first line that starts with a marker is read as a *bounce* by the safety net
+     (`bounce-state.sh` → `closeout-eligible.sh`), so a PR nobody bounced drops out of the
+     closeout queue. The variant that tried to detect "resolution reports" by vocabulary
+     leaked **real bounces as `ok`** on particles, suffix negation and past-tense quotes,
+     and was reverted — this boundary is held by the **wording**, not by the classifier.
+     Do not use the old wording (`재디스패치 반영 완료 …`).
 11. **Hand verification to verify-runner — the worker does NOT do codex or the final
     verdict here.** (E2E test:system, codex correctness review, and `Merge verdict: ✅`
     are all done serially by the verify-runner lane. Doing them inline in the worker

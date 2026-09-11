@@ -131,8 +131,12 @@ the code closeout itself blocked. So `closeout-eligible.sh` never promotes on th
    + the shape after the marker**: no literal colon is required (#212). A bounce idiom right
    after the marker (`:` / `#N` / `(` / a dash / a digit / end of line) is a bounce; if **prose
    continues** (a Hangul particle/ending, or a space plus a word) it counts only when a bounce
-   token (`#N` / `attempt` / a dash / `반송`) is present and no resolution token (`완료` /
-   `해소`, excluding negated or request forms) is (#221 · #251).
+   token (`#N` / `attempt` / a dash / `반송`) is present (#221 · #251). Resolution vocabulary
+   (`완료` / `해소`) is **kept out of the decision** — giving it a veto over the tokens leaks
+   real bounces such as `해소가 필요합니다` / `해소되지 않았습니다` as `ok` (measured in #251
+   attempt 2). The axis where a worker's bounce-resolution report started with a marker and
+   stalled (#251 ②) is closed by the **wording**, not by the classifier — reports use the
+   `반송 반영 …` prefix (`references/worker-template.md` step 10, guarded by `bin/ci`).
    New bounce wording goes in that array and nowhere else. Ordering is
    decided by the **last matching index in the comment array**, not
    by `createdAt` — GitHub comment times are second-granular, so a ✅ and a marker written in the
