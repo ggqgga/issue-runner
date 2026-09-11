@@ -245,22 +245,50 @@ echo "[closeout·verify-runner] 스킬 문서가 반송 마커를 손으로 게�
 # 표·설명문에 같은 낱말이 정당하게 쓰인다.
 # 마커는 SSOT(`bounce-state.sh` 의 마커 배열)에서 **읽어 온다** — 여기 리터럴로 베껴
 # 두면 집합이 바뀔 때 가드가 낡은 채로 초록이다(#221 이 같은 자리에서 밟은 함정).
-bc_markers=$(sed -n "s/^BOUNCE_MARKERS='\(.*\)'\$/\1/p" scripts/bounce-state.sh | head -1 | jq -r '.[]') \
-  || { echo "  ✗ bounce-state.sh 의 반송 마커 집합을 파싱하지 못했다"; exit 1; }
+bc_json=$(sed -n "s/^BOUNCE_MARKERS='\(.*\)'\$/\1/p" scripts/bounce-state.sh | head -1)
+[ -n "$bc_json" ] \
+  || { echo "  ✗ bounce-state.sh 에서 BOUNCE_MARKERS 정의 줄을 못 찾았다 — 가드가 의미를 잃었다"; exit 1; }
+bc_markers=$(printf '%s' "$bc_json" | jq -r '.[]') \
+  || { echo "  ✗ BOUNCE_MARKERS JSON 파싱 실패(jq 부재?): $bc_json"; exit 1; }
 [ -n "$bc_markers" ] \
   || { echo "  ✗ bounce-state.sh 에서 반송 마커를 하나도 못 읽었다 — 가드가 의미를 잃었다"; exit 1; }
 bc_hit=0
+# 대상 목록은 하드코딩이다(스킬·템플릿이 몇 안 되고 언어판 비대칭 — verify-runner 는
+# 영문판이 없다). 그래서 **파일 부재를 통과로 두지 않는다** — 개명·이동이 가드를 조용히
+# 무력화하는 fail-open 이 이 레포의 상습 함정이다(#219 형).
 for f in SKILL.md SKILL.en.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md \
          skills/verify-runner/SKILL.md references/worker-template.md references/worker-template.en.md; do
+  [ -f "$f" ] \
+    || { echo "  ✗ 반송 마커 게시 가드의 대상 파일이 없다: $f (개명·이동이면 목록을 고쳐라)"; exit 1; }
   while IFS= read -r m; do
     [ -n "$m" ] || continue
-    for q in '"' "'"; do
-      if grep -nF -- "--body $q$m" "$f" | grep -q .; then
-        echo "  ✗ $f: 산문이 반송 마커('$m')를 --body 로 직접 게시한다 — \$SCRIPTS/bounce-comment.sh <채널> 을 쓰라 (#212 · #271)"
-        grep -nF -- "--body $q$m" "$f" | head -3
-        bc_hit=1
-      fi
-    done
+    # `--body` 뒤 값이 마커로 **시작**하는지. 같은 줄(`--body "…"`·`--body=…`·공백 여러 칸)과
+    # **다음 줄로 넘어간 값**(`--body` 로 줄이 끝나거나 `\` 로 이어지는 형태)을 함께 본다 —
+    # 한 칸+따옴표만 보던 판본은 긴 gh 명령을 줄바꿈으로 잇는 문서 관행에 그대로 샜다.
+    bc_lines=$(awk -v m="$m" -v q="\"'" '
+      function strip(s,   c) {
+        sub(/^[[:space:]=]*/, "", s)
+        c = substr(s, 1, 1)
+        if (c != "" && index(q, c) > 0) s = substr(s, 2)
+        sub(/^[[:space:]]*/, "", s)
+        return s
+      }
+      {
+        if (pend == 1 && index(strip($0), m) == 1) print NR ": " $0
+        pend = 0
+        i = index($0, "--body")
+        if (i > 0) {
+          rest = strip(substr($0, i + 6))
+          if (index(rest, m) == 1) print NR ": " $0
+          else if (rest == "" || rest == "\\") pend = 1
+        }
+      }
+    ' "$f")
+    if [ -n "$bc_lines" ]; then
+      echo "  ✗ $f: 산문이 반송 마커('$m')를 --body 로 직접 게시한다 — \$SCRIPTS/bounce-comment.sh <채널> 을 쓰라 (#212 · #271)"
+      printf '%s\n' "$bc_lines" | head -3
+      bc_hit=1
+    fi
   done <<EOF
 $bc_markers
 EOF

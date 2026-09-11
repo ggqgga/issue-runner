@@ -112,6 +112,19 @@ rc=0
 PATH="$tmp/bin:$PATH" bash "$SUT" closeout-blocker owner/repo 42 166 >/dev/null 2>&1 || rc=$?
 check_eq "closeout-blocker 사유 누락 → exit 2" "2" "$rc"
 
+# 사유는 호출자 자유 입력이다 — 여러 줄 사유가 와도 **첫 줄 앵커**가 안 깨지는지
+# (bounce-state.sh 는 첫 줄만 본다. 사유 둘째 줄이 첫 줄로 올라오면 판정이 뒤집힌다).
+STUB_CAPTURE="$tmp/cap5"
+PATH="$tmp/bin:$PATH" STUB_CAPTURE="$STUB_CAPTURE" \
+  bash "$SUT" closeout-blocker owner/repo 42 166 "폴백 경로가 diff 를 못 받는다 해소
+함께: 재발 방지 테스트" >/dev/null 2>&1
+body=$(get_body "$STUB_CAPTURE")
+first_line=$(printf '%s\n' "$body" | head -1)
+check_eq "closeout-blocker 여러 줄 사유 — 첫 줄 앵커 유지" \
+  "재디스패치: #166 — 폴백 경로가 diff 를 못 받는다 해소" "$first_line"
+last_line=$(printf '%s\n' "$body" | tail -1)
+check_eq "closeout-blocker 여러 줄 사유 — 마지막 줄 = 머신 마커" "<!-- bodat:worker -->" "$last_line"
+
 # ── 인자 누락 — usage(exit 2), gh 호출 없음 ──────────────────────────────
 STUB_CAPTURE="$tmp/cap3"; : > "$STUB_CAPTURE"
 rc=0

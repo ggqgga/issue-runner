@@ -566,6 +566,11 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
   it and fix it — what is blocked and why (do not borrow the `redispatch` channel's fixed
   wording: "lost finish" is false on this branch, and a false reason becomes the next tick's
   judgment input).
+  **If that comment exits non-zero (gh failure / bad args), do NOT run the transition** — the
+  issue would go back to `agent-ready` while the PR carries no bounce marker, so the safety net
+  misses the PR and `closeout-eligible` re-picks it on the stale ✅ (exactly the state this
+  branch exists to prevent). Leave that PR's terminal state unchanged and report
+  `BLOCKED: 반송 코멘트 실패 PR #<pr>(<repo_short>) — <one stderr line>` in ④ Report.
   Then `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` returns the linked
   issue to `agent-ready` (stripping `agent:claimed`, the stage labels, `needs-human` and
   `hold:*` — do not hand-run `gh issue edit`) → **`blocked` exit** (no merge; do not invent a
