@@ -1031,7 +1031,7 @@ bash scripts/tests/bounce-state.test.sh
 echo "[test] bounce-comment.sh 반송 코멘트 생성 — SKILL.md 문구와 바이트 동일 (#212)"
 bash scripts/tests/bounce-comment.test.sh
 
-echo "[test] closeout ①-b 스윕 판정 픽스처 4종 — 반송 게이트가 갈래 앞 (#218)"
+echo "[test] closeout ①-b 스윕 판정 픽스처 6종 — 반송 게이트가 갈래 앞 (#218)"
 bash scripts/tests/closeout-sweep-gate.test.sh
 
 echo "[test] release-labels.sh 라벨 해제 규칙 테스트 (#117)"
