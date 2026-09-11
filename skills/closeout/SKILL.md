@@ -132,9 +132,17 @@ PR 은 워커·verify·closeout 코멘트가 겹겹이 쌓여 100건이 먼 숫�
 **대상**: `me=$(gh api user -q .login)` 후 `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc`(FIFO)로 열린 PR 을 모으고,
 head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify` 미부착**이고 **`needs-human`
-미부착**인 PR 마다 판정한다. `needs-human` PR 은 사람 대기(`hold:*` 사유 — verify-held·closeout-blocked·
-디스패처 runner-held 보수 상한)라 스윕이 입양·재디스패치하면 방금 건 사람 대기를 되돌린다(#151) —
-사람이 라벨을 떼기 전엔 절대 집지 않는다. **`flow:verify` PR 은 verify-runner 가 검증 중(소유)이라 여기서 절대 집지
+미부착**이며 **`hold:` 접두 미부착**인 PR 마다 판정한다. 두 라벨은 **다른 정지**다(#244) —
+`needs-human` 은 사람이 직접 세운 정지고, `hold:<사유>` 는 기계 정지(verify-held·closeout-blocked·
+디스패처 runner-held 보수 상한) 그 자체다. 전이는 기계 정지에 사유 라벨 **하나만** 붙이므로
+`needs-human` 만 보면 홀드된 PR(셋 다 없고 `hold:*` 만 남은 PR)이 **매 틱 다시 대상이 되어**
+hold-note 를 되붙이고, `stale_reverify` 갈래에선 `closeout-redispatch` 가 verify-runner 가 방금
+세운 홀드를 통째로 벗긴다(#151 재현). 어느 쪽이든 스윕이 입양·재디스패치하면 방금 선 정지를
+되돌리는 것이라, 그 라벨이 떨어지기 전엔 절대 집지 않는다 — 해제는 사람이(`hold:conflict`·
+`needs-human`) 또는 재개 스윕이(`hold:ladder`·재심을 통과한 `hold:policy`) 한다. 판별은
+**접두**라 사유가 늘어도(`hold:<새사유>`) 안 깨지고 `holding`·`on-hold`·`area:hold` 는 걸리지
+않는다 — `closeout-eligible.sh` 의 같은 필터와 같은 규칙이다(과잉 제외는 머지 가능한 PR 을
+조용히 큐에서 지우는 방향이라 원래 결함보다 나쁘다). **`flow:verify` PR 은 verify-runner 가 검증 중(소유)이라 여기서 절대 집지
 않는다** — 이걸 빠뜨리면 finish-classify 가 `🔄`(verify-runner 가 아직 ✅ 안 찍음)를
 `stale_reverify` 로 오분류해 재디스패치하고, verify-runner 의 검증과 충돌한다(양쪽이
 같은 PR 을 물어뜯음). 이 배제는 1) CONFLICTING 갈래에도 그대로 적용된다 — 대상 필터가
@@ -214,9 +222,10 @@ CONFLICTING·`stale_reverify`·`held` 세 갈래가 한 자리로 덮인다 — 
 
 **attempt 4 — `held` 의 해제 경로**(마감 검증 BLOCKER, PR #225): attempt 2·3 이 세운
 `held` 는 **진입만 있고 해제가 없었다.** 후보 집합이 ✅·⚠ 둘뿐이라 `머지 판정: 🔄` 가
-빠져 있었고, 그래서 ⑴ 반송 마커 ⑵ 워커 `⚠ 보류` → `held` → `needs-human`+`hold:policy`
-⑶ **사람이 그 보류를 풀어 라벨을 뗀다** ⑷ 교체 워커가 `🔄` 로 재개한다 ⑸ 다음 틱:
-`needs-human` 이 없으니 다시 스윕 대상인데 판정이 **여전히 `held`** → `closeout-blocked`
+빠져 있었고, 그래서 ⑴ 반송 마커 ⑵ 워커 `⚠ 보류` → `held` → `hold:policy`
+(#244 이전엔 `needs-human` 과 쌍이었다 — 지금은 사유 라벨 하나다) ⑶ **사람이 그 보류를 풀어
+라벨을 뗀다** ⑷ 교체 워커가 `🔄` 로 재개한다 ⑸ 다음 틱: 정지 라벨이 떨어졌으니
+다시 스윕 대상인데 판정이 **여전히 `held`** → `closeout-blocked`
 가 다시 걸려 **사람이 방금 푼 보류가 되살아나고 살아있는 교체 워커가 끊긴다**(`✅` 에
 도달해야만 풀리는데 끊기니까 도달할 수 없다). 이 레포가 막아 온 "루프 대 사람
 싸움"(#151)이 방향만 바뀐 형태고, 이 게이트는 **매 틱** 도는 자리라 조용히 반복된다.
@@ -328,7 +337,7 @@ claim 은 몇 시간 전이다. 이 신호가 필요한 이유: 진행 증거 �
 | `done_verdict` | 최신 `머지 판정: ✅` **이고 그 판정이 현재 head 커밋 이후임이 증명됨**(#171) | eligible.sh 정상 경로가 처리 — 스윕은 skip |
 | `stale_inline` | 🔄 + 검증자 CLEAN + 버퍼 초과 (검증까지 도달·최종판정만 유실, #970형) | **입양(머지)** — ② Pick 후보로. ③ 1단계가 **독립 재검증** 후 마감. **새 이슈 안 만듦**(완료된 일 재수행 금지). 단 위 1) 의 `bounced` 갈래에서 나온 `stale_inline` 은 **입양하지 않고 재디스패치**한다(그 CLEAN 이 반송 이전 회차의 것일 수 있다). |
 | `stale_reverify` | 🔄 + 검증자 부재/미해결 BLOCKER + 버퍼 초과 + **진행 증거 없음**(#206) (검증 전 사망·구현 미완 가능, #971형). CONFLICTING + 반송 마커 최신인 PR 이 여기로 오면 그게 위 1) 의 "반송 뒤 ✅ 직전 사망" 계급이다 | **재디스패치** — 미완 코드를 codex 재검증 하나로 자동 머지하지 않는다(사용자 결정). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (연결 이슈를 `agent-ready` 로 되돌리고 `agent:claimed`·단계 라벨을 뗀다) → 새 워커가 같은 브랜치서 검증자 재실행→체크박스→최종판정으로 완결. 멱등 마커(아래). — head 커밋이 신선하면(#110, 스테일 클록에 커밋 시각 합류) 코멘트가 낡았어도 `active` 로 떨어져 살아있는 attempt N+1 워커를 오분류하지 않는다. |
-| `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (PR 과 연결 이슈 **양쪽**에 `needs-human` + `hold:policy` 부착 + 단계 라벨 정리 — 연결 이슈가 없어도 PR 에 사람 신호가 남는다), closeout 무접촉(자동 진행 안 함). |
+| `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **정지(`hold:policy`)** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (PR 과 연결 이슈 **양쪽**에 `hold:policy` 부착 + 단계 라벨 정리 — 연결 이슈가 없어도 PR 에 정지 신호가 남는다. **`needs-human` 은 안 붙는다**(#244) — 기계 정지는 사유 라벨 하나뿐이고, 사람 호출은 재개 스윕 ③ 의 재심이 "사람 몫 유지" 로 끝났을 때만 `transition.sh policy-kept` 가 붙인다), closeout 무접촉(자동 진행 안 함). |
 | `active` | 진행 중·버퍼 미도달·우리 형상 아님, 또는 **✅ 의 신선도를 증명 못 함**(✅ 가 head 커밋보다 이르거나 두 시각 중 하나를 못 얻음, #171), 또는 **진행 증거가 있음**(커밋이 `STALL_MIN` 이내 · head SHA 의 CI 티켓이 큐에 살아 있음 · **현재 회차의 `agent:claimed` 가 타임박스 안에 붙었음** — 또는 그 판정 자체가 불가: queue.log 를 못 읽음·head 조회 실패·claim 조회 실패(`unknown`≠`none`), #206 · `progress-evidence.sh`). MERGEABLE 인 반송 회차는 1) 게이트에서 이미 무접촉으로 걸러져 여기까지 오지 않는다(#218) — 여기로 오는 반송 회차는 1) 의 **CONFLICTING 예외 갈래**로 들어온 것뿐이고(#206), 판정 실패도 거기서 이미 걸러졌다(#196) | **무접촉**(다음 틱). |
 
 **flow:\* 보조 신호**: finish-classify 가 코멘트로 판정하지만, `flow:ready` 없이
@@ -385,7 +394,7 @@ skip 하고 ④ Report 에
 또는 `closeout-redispatch`(워커로 반송) **전이를 쓴다 — 손으로 `gh issue edit` 하지 않는다**.
 PR·이슈 양쪽의 `harvesting`·`flow:*` 정리를 전이 표가 보장한다(스테일 단계 라벨 잔재 방지).
 `closeout-blocked` 는 **`--reason <conflict|policy|ladder> [--note "<질문 한 줄>" — policy·conflict 필수]` 가 필수**다(없으면 usage
-exit 64 — 사유 없는 `needs-human` 을 만들 수 없다). rebase/semantic conflict 는
+exit 64 — 사유 없는 정지를 만들 수 없다). rebase/semantic conflict 는
 `conflict`, 그 외 루프가 못 정하는 스펙·정책·검증 미산출은 `policy`, 사다리
 (`~/.claude/skills/issue-runner/references/live-verification-ladder.md`)
 의 칸을 실제로 올라가 실패 출력을 인용한 경우만 `ladder` 다.
@@ -465,8 +474,8 @@ Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에
   `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>
   <!-- bodat:worker -->"`
   + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`
-  (PR 의 `harvesting` 제거 + 연결 이슈에 `needs-human` + `hold:policy` 부착·단계 라벨
-  정리) → **blocked 종료** (머지하지 않는다). 검증자 BLOCKER·미산출은 스펙/정책 판단이
+  (PR 의 `harvesting` 제거 + PR 과 연결 이슈에 `hold:policy` 부착·단계 라벨
+  정리 — `needs-human` 은 안 붙는다, #244) → **blocked 종료** (머지하지 않는다). 검증자 BLOCKER·미산출은 스펙/정책 판단이
   필요한 것이므로 사유는 `policy` 다(`conflict` 도 `ladder` 도 아니다).
   **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
   `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다

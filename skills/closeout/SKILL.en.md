@@ -159,10 +159,20 @@ missing from `head_at` and an unverified head would surface as a candidate.
 
 **Targets**: `me=$(gh api user -q .login)`, then `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc` (FIFO). For each PR whose head is
-`agent/issue-*` and that is **not labeled `harvesting`**, **not labeled `flow:verify`**, and **not
-labeled `needs-human`**, judge it. A `needs-human` PR is a human hold (`hold:*` reason — verify-held ·
-closeout-blocked · the dispatcher's runner-held repair cap); adopting or re-dispatching it here would undo
-that hold (#151) — never pick it until a human removes the label. This target filter runs
+`agent/issue-*` and that is **not labeled `harvesting`**, **not labeled `flow:verify`**, **not
+labeled `needs-human`**, and carries **no `hold:`-prefixed label**, judge it. The two are
+**different stops** (#244): `needs-human` means a human set the stop by hand, while
+`hold:<reason>` *is* the machine stop (verify-held · closeout-blocked · the dispatcher's
+runner-held repair cap). The transition attaches **only** the reason label to a machine stop, so
+watching `needs-human` alone lets a held PR (none of the three labels, only `hold:*` left) become
+a target **again every tick** — re-posting the hold-note, and on the `stale_reverify` branch
+letting `closeout-redispatch` strip a hold verify-runner just set (#151, reproduced). Either way,
+adopting or re-dispatching it here would undo a stop that was just set, so never pick it until
+that label comes off — released by a human (`hold:conflict` · `needs-human`) or by the resume
+sweep (`hold:ladder`, and a `hold:policy` that passed re-review). The test is on the **prefix**, so
+new reasons (`hold:<new>`) do not break it and `holding`/`on-hold`/`area:hold` do not match — the
+same rule as the identical filter in `closeout-eligible.sh` (over-exclusion silently drops
+mergeable PRs from the queue, which is worse than the original defect). This target filter runs
 **first**, ahead of the 1) CONFLICTING branch as well (#206).
 
 **1) Bounce-marker gate first — before the branch splits, common to CONFLICTING and
@@ -245,8 +255,9 @@ bounced code as finished).
 **attempt 4 — how `held` gets *released*** (closeout-verification BLOCKER, PR #225): the `held`
 built in attempts 2·3 had **an entry path but no exit.** The candidate set was ✅ and ⚠ only,
 leaving `머지 판정: 🔄` out, so this sequence repeated every tick: ⑴ bounce marker ⑵ worker
-posts `⚠ 보류` → `held` → `needs-human`+`hold:policy` ⑶ **a human clears the hold and removes
-the labels** ⑷ the replacement worker resumes with `🔄` ⑸ next tick: `needs-human` is gone so
+posts `⚠ 보류` → `held` → `hold:policy` (before #244 this came paired with `needs-human`; now it
+is the reason label alone) ⑶ **a human clears the hold and removes
+the labels** ⑷ the replacement worker resumes with `🔄` ⑸ next tick: the stop labels are gone so
 the PR is swept again, but the verdict is **still `held`** → `closeout-blocked` fires **again**,
 **resurrecting the hold the human just cleared and cutting off the live replacement worker**
 (only a `✅` releases it, and it can never get there once cut off). That is the repo's
@@ -371,7 +382,7 @@ gate of their own:
 | `done_verdict` | latest `머지 판정: ✅` **and it is proven to postdate the current head commit** (#171) | eligible.sh's normal path handles it — sweep skips |
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). Except: a `stale_inline` coming out of the `bounced` branch in 1) is **re-dispatched, never adopted** (that CLEAN may predate the bounce). |
 | `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer + **no progress evidence** (#206) (died before verifying, implementation may be incomplete, #971-type). A CONFLICTING PR whose bounce marker is latest landing here *is* the "died just before ✅ after a bounce" class from 1) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
-| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `needs-human` + `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the human signal survives even with no linked issue), closeout leaves it (no auto-progress). |
+| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **Stop (`hold:policy`)** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the stop signal survives even with no linked issue. **`needs-human` is not attached** (#244): a machine stop carries only its reason label, and the human call is attached by `transition.sh policy-kept` only when the resume sweep's ③ re-review ends as "kept"), closeout leaves it (no auto-progress). |
 | `active` | in progress · buffer not reached · not our shape, **or the ✅'s freshness could not be proven** (✅ predates the head commit, or either timestamp could not be obtained, #171), **or there is progress evidence** (commit within `STALL_MIN` · the head SHA's CI ticket alive in the queue · **the current round's `agent:claimed` was attached within the timebox** — or that judgment itself is unavailable: queue.log unreadable · head lookup failed · claim lookup failed (`unknown` ≠ `none`), #206 · `progress-evidence.sh`). A MERGEABLE bounce round is already filtered to leave-it by the 1) gate and never reaches here (#218) — the only bounce rounds that arrive here came through 1)'s **CONFLICTING exception branch** (#206), and an undecidable bounce state was filtered there as well (#196) | **Leave it** (next tick). |
 
 **`flow:*` supplementary signal**: finish-classify judges by comments, but a stale PR with
@@ -439,7 +450,7 @@ conflict needing human judgment·incomplete doc reconcile·etc.) **must use the
 never a hand-run `gh issue edit`**. The transition table guarantees the `harvesting`·`flow:*`
 cleanup on both the PR and the issue (prevents stale stage-label residue).
 `closeout-blocked` **requires `--reason <conflict|policy|ladder> [--note "<질문 한 줄>" — policy·conflict 필수]`** (without it the
-transition refuses with usage exit 64 — no reasonless `needs-human` can be created). A
+transition refuses with usage exit 64 — no reasonless stop can be created). A
 rebase/semantic conflict is `conflict`; anything else the loop cannot decide (spec·policy·
 no verdict) is `policy`; `ladder` only when the rungs of
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
@@ -530,8 +541,9 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
   (>VERIFIER_TIMEOUT_MIN분)`) → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
   <!-- bodat:worker -->"`
   + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`
-  (removes `harvesting` from the PR, attaches `needs-human` + `hold:policy` to the linked
-  issue and clears the stage labels) → **blocked exit** (do not merge). A verifier BLOCKER
+  (removes `harvesting` from the PR, attaches `hold:policy` to the PR and the linked
+  issue and clears the stage labels — `needs-human` is not attached, #244) → **blocked exit**
+  (do not merge). A verifier BLOCKER
   or no-verdict needs a spec/policy call, so the reason is `policy` (neither `conflict`
   nor `ladder`).
   **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
