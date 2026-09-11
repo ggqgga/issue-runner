@@ -16,7 +16,8 @@
 #               되짚어야 할 때(사람 확인)와 그냥 다음 틱을 기다리면 될 때를 못 가른다.
 #   note      — **아무것도 안 건드린** 정보 줄. warn 과 달리 조치할 것이 **없는** 정상 상태다
 #               (배포 대기 이슈의 사유 없는 needs-human · #201: 배포 대기 이슈의 질문 없는
-#               hold:policy). 버리지 않고 남기는 이유는 emit_note 주석.
+#               hold:policy · #217: 배포 대기 이슈의 hold:ladder — 창이 지나도 재개·승격
+#               대상이 아니다). 버리지 않고 남기는 이유는 emit_note 주석.
 #
 # 상태 파일 없음 — 재개 횟수는 **이슈 코멘트에 붙은 마커**(`<!-- ladder-resume: N -->`)의
 # 개수가 SSOT 다. 재개 코멘트가 자기 마커를 품으므로 카운터와 알림이 한 번의 append 로 끝나고,
@@ -168,8 +169,9 @@ emit_note() {  # emit_note <repo> <num> <msg>
   _emit note "$1" "$2" "$3"
 }
 
-# 배포 대기 축 판정 — ②(사유 없는 needs-human)·③(policy 재심 no-note, #201) 이 공유하는
-# **한 벌** 술어다. 복제하면 두 벌이 나중에 갈라진다(#201 이 막으려는 것 자체).
+# 배포 대기 축 판정 — ①(재개·승격, #217)·②(사유 없는 needs-human)·③(policy 재심 no-note,
+# #201) 이 공유하는 **한 벌** 술어다. 복제하면 세 벌이 나중에 갈라진다(#201·#217 이 막으려는
+# 것 자체 — 같은 질문에 갈래마다 다른 답이 나오는 사고).
 # 라벨만 본다 — 제목은 사람이 자유롭게 쓰므로 판별 축이 될 수 없다(그래서 이 스크립트는
 # title 을 조회조차 하지 않는다). `deploy-wait` 가 정본 축이다(closeout 이 배포 대기 이슈에
 # 붙인다) — 그래서 둘 다 있으면 이쪽을 문구에 남긴다. `full-cycle` 은 **과도기 축**이다:
@@ -279,10 +281,10 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate>
 
 rc=0
 
-# ── 이슈 1건 처리 (재개 대상 = needs-human ∧ hold:ladder) ─────────────────
+# ── 이슈 1건 처리 (재개 대상 = needs-human ∧ hold:ladder ∧ ¬deploy-wait, #217) ─────
 sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
   local repo="$1" row="$2"
-  local num updated row_tsv then_epoch elapsed attempts next cur back live_updated
+  local num updated row_tsv then_epoch elapsed attempts next cur back live_updated dw_tsv dwlabel
 
   # 한 번의 jq 로 둘 다 뽑는다 — 큰 레포에선 이 함수가 이슈 수만큼 돌아, 필드마다
   # 프로세스를 띄우면 조회보다 파싱이 더 비싸진다.
@@ -302,6 +304,28 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
     # "창 안이라 안 건드렸다" 와 "대상이 아예 없었다" 를 구분하는 유일한 신호라, 사람이
     # 스윕을 손으로 돌려 디버깅할 때·앞으로 loop-status 가 세게 될 때 이 줄이 근거다.
     printf '{"event":"waiting","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$(_emit_num "$num")" "$elapsed"
+    return 0
+  fi
+
+  # ── 배포 대기 축 — 창이 지나도 재개·승격 대상이 아니다(#217) ──────────────
+  # #5040 실측: 같은 실행에서 이 이슈가 `resumed`(여기)와 배포 대기 `note`(②)를 동시에
+  # 냈다 — 판정(②)은 배포 대기임을 알고 쓰기(여기)는 몰랐던 것이 근본 원인이다. ②·③ 과
+  # **같은 술어**(deploy_wait_row, 위 정의)를 **같은 row**(이미 들고 있다 — 추가 조회 없음)
+  # 에 적용해 답을 하나로 모은다. hold:ladder 만 보고 있으니 이 이슈는 애초에 ② 의 "hold:*
+  # 없음" 가드를 안 타 note 가 안 나왔다 — 그 note 를 여기서 대신 낸다(중복 없이, 갈래를
+  # 옮길 뿐). 상한 소진 여부와 무관하게 여기서 먼저 걸러지므로 승격(escalate) 갈래도
+  # 같은 제외를 받는다(요청 ③) — 아래로 내려가는 코드 경로 자체가 없다.
+  # 판정 자체가 실패(row 가 예상 모양이 아님 등)하면 "배포 대기 아님" 으로 폴백하지
+  # 않는다 — 그건 이 함수가 fail-open 이 되어 정확히 이 이슈가 막으려는 사고(사람 게이트를
+  # 조용히 벗겨내는 것)를 판정 실패 경로에서 재현한다(사전 리뷰 지적). rc 로 조회 실패와
+  # 빈 결과(배포 대기 아님)를 가른다 — 이 파일이 read_state 등에서 이미 쓰는 규율과 같다.
+  if ! dw_tsv=$(deploy_wait_row "$row"); then
+    emit_warn "$repo" "$num" "배포 대기 판정 실패(라벨 파싱) — 재개 대상인지 확정 못 해 건드리지 않는다"
+    return 0
+  fi
+  dwlabel=${dw_tsv#*$'\t'}
+  if [ -n "$dwlabel" ]; then
+    emit_note "$repo" "$num" "배포 대기(라벨 $dwlabel) — needs-human 이 정상 상태라 warn 아님"
     return 0
   fi
 

@@ -191,7 +191,9 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
 
 - `resumed` — `needs-human`·`hold:ladder` 가 떨어졌고 `agent-ready` 는 그대로다(자격은
   건드리지 않는다). **디스패처가 따로 할 일은 없다** — 이번 틱 ③ 의 `eligible-issues.sh`
-  후보로 자연히 다시 나타난다. ④ Report 의 `재개` 에 번호와 `attempt` 를 적는다.
+  후보로 자연히 다시 나타난다. ④ Report 의 `재개` 에 번호와 `attempt` 를 적는다. 배포 대기
+  라벨(`deploy-wait`)이 붙은 이슈는 창이 지나도 이 이벤트가 나오지 않는다(#217) — 대신
+  아래 `note` 로 간다.
 - `escalated` — 재개 상한(`LADDER_RESUME_LIMIT`) 초과라 `hold:policy` 로 승격됐다
   (`attempt`/`limit` 은 마커 코멘트가 기록한 소진 횟수 대 상한 — `2/2` 로 읽는다). 라벨은
   스크립트가 이미 붙였으니 **추가 조치 없이** ④ Report 의 `승격` 에 올려 사람이 보게 하라.
@@ -200,7 +202,8 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
   **목록/탐색 상한 도달**(`--limit 200` 에 닿아 잘린 이슈가 이번 틱엔 안 보인다는 뜻 — 반복되면
   `.loop/repos` 로 스코프를 좁히라는 신호다. `repo` 가 `*` 면 계정 전체 탐색 쪽이다).
   스크립트가 **손대지 않은** 건이다 — **건드리지 말고** ④ Report 의 warn 에 그대로 옮겨라.
-- `note` — 스크립트가 **손대지 않은** 정보 줄이다(배포 대기 이슈의 사유 없는 `needs-human` 처럼
+- `note` — 스크립트가 **손대지 않은** 정보 줄이다(배포 대기 이슈의 사유 없는 `needs-human` ·
+  배포 대기 이슈의 `hold:ladder`(#217, 창이 지나도 재개·승격 대상이 아니다)처럼
   **정상 상태**라 조치할 것이 없는 건). warn 이 아니므로 ④ Report warn 에 올리지 않는다 —
   보고가 필요하면 정보 줄로만 남긴다. warn 을 "루프가 교정 가능한 불변식 위반" 으로 좁히고
   나머지를 note 로 내리는 것이 #188/#190 이 정한 규약이다.

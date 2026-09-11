@@ -849,6 +849,69 @@ run
 check "잘못된 RESUME_LIST_LIMIT: exit 64"   "$([ "$RC" = 64 ] && echo ok || echo no)"
 check "잘못된 RESUME_LIST_LIMIT: gh 호출 0" "$([ ! -s "$tmp/gh.log" ] && echo ok || echo no)"
 
+# ── ㉞ (#217) 배포 대기 티켓의 hold:ladder — 재개·승격이 note 갈래와 같은 답을 읽는다 ──
+# 실측 ggqgga/BodaT#5040: 같은 실행이 `resumed`(①)와 배포 대기 `note`(②)를 동시에 냈다.
+# ②는 hold:ladder 가 있는 행을 애초에 안 보므로(②의 "hold:* 없음" 가드) note 는 여기(①)
+# 에서 대신 낸다 — deploy_wait_row 공유 술어(②·③과 동일, #201) 를 여기서도 쓴다.
+
+# ⓐ deploy-wait + needs-human + hold:ladder, 창 경과 → note 만, 라벨 그대로
+setup "needs-human,hold:ladder,deploy-wait,agent-ready" 200 0
+run
+check "ⓐ deploy-wait+hold:ladder 창 경과: note"        "$(has_ev note)"
+check "ⓐ: resumed 아님"                                "$(no_ev resumed)"
+check "ⓐ: warn 아님"                                    "$(no_ev warn)"
+check "ⓐ: needs-human 유지(라벨 그대로)"                "$(hasl needs-human)"
+check "ⓐ: hold:ladder 유지(라벨 그대로)"                "$(hasl hold:ladder)"
+check "ⓐ: 편집 0회"                                     "$(none 'issue edit')"
+check "ⓐ: 마커 코멘트도 0회"                            "$(none 'issue comment')"
+check "ⓐ: 문구에 deploy-wait"                           "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("deploy-wait"))' >/dev/null 2>&1 && echo ok || echo no)"
+
+# ⓑ 회귀 방지 — deploy-wait 없는 needs-human+hold:ladder, 창 경과 → 종전대로 resumed·라벨 해제
+setup "needs-human,hold:ladder,agent-ready" 200 0
+run
+check "ⓑ 배포 대기 아님: resumed(회귀 없음)"            "$(has_ev resumed)"
+check "ⓑ: needs-human 해제"                             "$(lacksl needs-human)"
+check "ⓑ: hold:ladder 해제"                             "$(lacksl hold:ladder)"
+check "ⓑ: note 아님"                                     "$(no_ev note)"
+
+# ⓒ deploy-wait + hold:ladder, 재개 마커 2개(상한 소진) → escalated 아님, hold:policy 안 붙는다
+setup "needs-human,hold:ladder,deploy-wait,agent-ready" 200 2
+run
+check "ⓒ deploy-wait 상한 소진: escalated 아님"          "$(no_ev escalated)"
+check "ⓒ: note"                                          "$(has_ev note)"
+check "ⓒ: hold:policy 안 붙는다"                         "$(lacksl hold:policy)"
+check "ⓒ: hold:ladder 유지(승격 안 함)"                  "$(hasl hold:ladder)"
+check "ⓒ: 편집 0회"                                      "$(none 'issue edit')"
+check "ⓒ: 상한 초과 코멘트도 안 남긴다"                  "$(none '사다리 재개 상한')"
+
+# ⓓ 회귀 방지 — deploy-wait 없는 상한 소진 → 종전대로 escalated
+setup "needs-human,hold:ladder,agent-ready" 200 2
+run
+check "ⓓ 배포 대기 아님 상한 소진: escalated(회귀 없음)" "$(has_ev escalated)"
+check "ⓓ: hold:policy 부착"                              "$(hasl hold:policy)"
+check "ⓓ: note 아님"                                      "$(no_ev note)"
+
+# full-cycle(과도기 축)도 같은 술어를 공유한다 — ②·③과 동일 트레이드오프.
+setup "needs-human,hold:ladder,full-cycle,agent-ready" 200 0
+run
+check "full-cycle+hold:ladder 창 경과: note"             "$(has_ev note)"
+check "full-cycle+hold:ladder: resumed 아님"             "$(no_ev resumed)"
+check "full-cycle+hold:ladder: 편집 0회"                 "$(none 'issue edit')"
+
+# ⓔ (사전 리뷰) deploy_wait_row 판정 자체가 실패(labels 모양이 배열이 아님) → warn·무편집
+# fail-open 이면 "배포 대기 아님" 으로 폴백해 그대로 재개해버린다 — 이 이슈가 막으려는
+# 사고를 판정 실패 경로에서 재현하는 것. number·updatedAt 추출은 .labels 를 안 보므로
+# 위 창 판정까지는 정상 통과하고, deploy_wait_row 의 `.labels[].name` 에서만 깨진다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+jq -n --argjson n 42 --arg u "$(ts 200)" '[{number:$n, labels:"broken", updatedAt:$u}]' > "$tmp/ladder.json"
+run
+check "ⓔ 판정 실패: warn"                                "$(has_ev warn)"
+check "ⓔ 판정 실패: 문구"                                "$(saysl '배포 대기 판정 실패')"
+check "ⓔ 판정 실패: resumed 아님"                        "$(no_ev resumed)"
+check "ⓔ 판정 실패: note 아님"                           "$(no_ev note)"
+check "ⓔ 판정 실패: 편집 0회"                            "$(none 'issue edit')"
+check "ⓔ 판정 실패: 코멘트 0회"                          "$(none 'issue comment')"
+
 if [ "$skip" -gt 0 ]; then
   echo "resume-sweep: $pass passed, $fail failed, $skip skipped (python3 없음)"
 else
