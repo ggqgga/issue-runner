@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# closeout-sweep-gate.test.sh — ①-b 스윕 판정 픽스처 4종 (#218).
+# closeout-sweep-gate.test.sh — ①-b 스윕 판정 픽스처 6종 (#218).
 #
 # ①-b 의 최종 조치는 SKILL.md 프로즈(LLM 워커가 읽고 따른다)지 셸 함수가 아니다.
 # 그래서 이 파일은 "생산 로직" 이 아니라 SKILL.md ①-b 가 문서화한 결정 규칙을
@@ -99,6 +99,21 @@ no_bounce_comments='[
 ]'
 printf '%s' "$no_bounce_comments" > "$tmp/ok.json"
 
+# (e)(f) 공용: 워커가 `⚠ 보류` 를 찍은 뒤 verify 가 반송한 순서(이슈 본문이 명시
+# 검토를 요청한 held 갈래 겹침) — finish-classify 단독으로는 최신 `머지 판정:` 이
+# ⚠ 이므로 즉시 held 다(🔄 갈래처럼 버퍼·검증자 판정을 보지 않는다).
+held_bounced_comments='[
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-09-11T01:00:00Z"},
+  {"body":"재검증 실패: #5036 — codex BLOCKER <!-- bodat:worker -->","createdAt":"2026-09-11T01:20:00Z"}
+]'
+printf '%s' "$held_bounced_comments" > "$tmp/held_bounced.json"
+
+# (e): 반송 마커 없음(ok) — 워커가 정말로 보류를 찍고 끝난 정상 held 형상.
+held_ok_comments='[
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-09-11T01:00:00Z"}
+]'
+printf '%s' "$held_ok_comments" > "$tmp/held_ok.json"
+
 # ── #218 Test plan 픽스처 4종 (신규 규칙 sweep_decide 로 판정) ─────────────
 
 # (a) stale_reverify 형상 + bounced → 무접촉(active). #218 이 고치는 바로 그 사고.
@@ -118,12 +133,25 @@ run "(c) MERGEABLE·판정 실패(exit 1)→무접촉" sweep_decide \
 run "(d) CONFLICTING+ok→입양(무회귀)" sweep_decide \
   CONFLICTING "$tmp/ok.json" "$no_bounce_comments" "$now_epoch" "$head_at" adopt_conflict
 
-# ── 뮤테이션 방증 — 게이트를 갈래 안으로 되돌리면 (a)·(c) 가 빨개진다 ──────
+# ── held 갈래 겹침 (이슈 본문 요청: "held 갈래도 함께 검토하라") ────────────
+
+# (e) held 형상 + ok(정말 보류) → held(needs-human, 무회귀). 정상 보류는 그대로 선다.
+run "(e) MERGEABLE·held 형상+ok→held(무회귀)" sweep_decide \
+  MERGEABLE "$tmp/held_ok.json" "$held_ok_comments" "$now_epoch" "$head_at" held
+
+# (f) held 형상 + bounced(워커 ⚠ 뒤 verify 반송) → 무접촉(active). 게이트가 없으면
+#     finish-classify 가 여전히 `held` 를 내(최신 `머지 판정:` 만 보므로 반송 마커를
+#     못 봄) needs-human 으로 잘못 승격한다 — 아래 뮤테이션 대조에서 실증.
+run "(f) MERGEABLE·held 형상+bounced→무접촉" sweep_decide \
+  MERGEABLE "$tmp/held_bounced.json" "$held_bounced_comments" "$now_epoch" "$head_at" active
+
+# ── 뮤테이션 방증 — 게이트를 갈래 안으로 되돌리면 (a)·(c)·(f) 가 빨개진다 ──
 # `sweep_decide_pre218` (게이트가 CONFLICTING 갈래 안에만 있던 구형상)로 같은
-# 입력을 판정하면: (a)·(c) 는 MERGEABLE 이라 bounce-state 를 아예 안 보고 곧장
-# finish-classify 로 가 `stale_reverify` 를 낸다 — **무접촉이어야 할 것이 재디스패치
-# 된다.** (b)·(d) 는 게이트 위치 이동의 영향을 받지 않는 형상이라 그대로 통과해야
-# 한다(이 비교가 전부 실패로 뒤집히는 게 아니라는 대조군).
+# 입력을 판정하면: (a)·(c)·(f) 는 MERGEABLE 이라 bounce-state 를 아예 안 보고
+# 곧장 finish-classify 로 가 잘못된 조치를 낸다 — (a)·(c) 는 `stale_reverify`
+# (무접촉이어야 할 것이 재디스패치), (f) 는 `held`(무접촉이어야 할 것이
+# needs-human 으로 잘못 승격). (b)·(d)·(e) 는 게이트 위치 이동의 영향을 받지 않는
+# 형상이라 그대로 통과해야 한다(이 비교가 전부 실패로 뒤집히는 게 아니라는 대조군).
 mut_pass=0
 mut_fail=0
 check_mutation() {
@@ -137,21 +165,25 @@ check_mutation() {
     echo "  ✗ 뮤테이션 대조 $name — 구형상 기대=$expect_old 실제=$out"
   fi
 }
-# 구형상에서 (a)·(c) 는 잘못된 값(stale_reverify)을 낸다 — 즉 새 규칙이 없으면
-# 이 두 픽스처가 빨개진다는 것의 증명.
+# 구형상에서 (a)·(c) 는 잘못된 값(stale_reverify)을, (f) 는 잘못된 값(held)을 낸다
+# — 즉 새 규칙이 없으면 이 세 픽스처가 빨개진다는 것의 증명.
 check_mutation "(a)→구형상에서 오분류(stale_reverify)" sweep_decide_pre218 \
   MERGEABLE "$tmp/bounced.json" "$stale_reverify_comments" stale_reverify
 check_mutation "(c)→구형상에서 오분류(stale_reverify)" sweep_decide_pre218 \
   MERGEABLE "$tmp/does-not-exist.json" "$stale_reverify_comments" stale_reverify
-# 대조군 — (b)·(d) 는 게이트 위치 이동과 무관해 구형상에서도 그대로다.
+check_mutation "(f)→구형상에서 오분류(held)" sweep_decide_pre218 \
+  MERGEABLE "$tmp/held_bounced.json" "$held_bounced_comments" held
+# 대조군 — (b)·(d)·(e) 는 게이트 위치 이동과 무관해 구형상에서도 그대로다.
 check_mutation "(b)→구형상에서도 무회귀(stale_reverify)" sweep_decide_pre218 \
   MERGEABLE "$tmp/ok.json" "$no_bounce_comments" stale_reverify
 check_mutation "(d)→구형상에서도 무회귀(adopt_conflict)" sweep_decide_pre218 \
   CONFLICTING "$tmp/ok.json" "$no_bounce_comments" adopt_conflict
+check_mutation "(e)→구형상에서도 무회귀(held)" sweep_decide_pre218 \
+  MERGEABLE "$tmp/held_ok.json" "$held_ok_comments" held
 
 if [ "$mut_fail" = 0 ]; then
   pass=$((pass + 1))
-  echo "  ✓ 뮤테이션 방증: 게이트를 CONFLICTING 갈래 안으로 되돌리면 (a)·(c) 가 실제로 오분류된다(mut_pass=$mut_pass)"
+  echo "  ✓ 뮤테이션 방증: 게이트를 CONFLICTING 갈래 안으로 되돌리면 (a)·(c)·(f) 가 실제로 오분류된다(mut_pass=$mut_pass)"
 else
   fail=$((fail + 1))
   echo "  ✗ 뮤테이션 방증 실패 — 대조군이 어긋났다(mut_pass=$mut_pass mut_fail=$mut_fail)"
