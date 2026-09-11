@@ -136,22 +136,104 @@ head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify`
 라벨 잔존)이 소유한다 — closeout ①-b 는 **검증 이후**(✅+flow:ready 인데 closeout 머지가
 죽은 경우)와 CONFLICTING 입양만 맡는다.
 
-**1) CONFLICTING 먼저 — 단, 반송 마커를 먼저 본다**:
-`gh pr view <pr> --repo <repo> --json mergeable` 가 CONFLICTING 이면, 입양하기 **전에**
-`$SCRIPTS/bounce-state.sh <repo> <pr>` 를 돌려라.
+**1) 반송 마커 게이트 먼저 — 갈래를 가르기 전에, CONFLICTING·MERGEABLE 공통**(#218):
+mergeable 값을 보기 **전에** `$SCRIPTS/bounce-state.sh <repo> <pr>` 를 한 번 돌려라.
+출력은 `ok`/`bounced`/`held` 세 값이다(#218 attempt 2 — `held` 신설). 판정 규칙은 한 줄이다:
+**최신 반송 마커 뒤에 오는 판정 코멘트(`머지 판정: ✅`/`⚠ 보류`/`🔄`) 중 가장 늦은 것이
+결과를 정한다** — ✅ 면 `ok`, ⚠ 면 `held`, `🔄` 면 `bounced`(교체 워커가 지금 일하는
+중이라는 가장 강한 증거라 워커 레인 소유다, #218 attempt 4).
 
-- 출력이 정확히 `ok` 일 때만 → **입양(rebase 경로)**: ② Pick 후보로 넘기고 ③ 2단계에서
-  closeout 이 직접 rebase 후 머지(2단계 conflict 경로). (finish-classify 는 건너뛴다.)
-- `bounced` 이거나 **출력이 없으면(exit 1 — 판정 실패)** → `active` 취급 **무접촉**.
+- `held` 이거나 `bounced` 이거나 **출력이 없으면(exit 1 — 판정 실패)** → `active` 취급
+  **무접촉**, 여기서 멈춘다(mergeable 도 안 보고 2) finish-classify 도 안 부른다).
   진행 중인 반송 회차는 워커 레인 소유다(fail-closed — 반송되지 않았음을 *증명*했을
   때만 연다, #171 과 같은 방향).
+  **`held` 도 스윕은 needs-human 으로 승격하지 않는다**(#218 두 번째 회차 — 사람 결정
+  (c), 아래 "왜 `held` 를 스윕이 더 이상 승격하지 않는가" 절). **사람이 `held` 를 풀어
+  라벨을 뗀 뒤 교체 워커가 `머지 판정: 🔄` 를 찍고 재개한 PR 도 여기로 온다** — 그게
+  `bounced` 쪽 해제 경로다(#218 attempt 4).
+- 출력이 정확히 `ok` 일 때만 → `gh pr view <pr> --repo <repo> --json mergeable` 로
+  갈라라:
+  - CONFLICTING 이면 → **입양(rebase 경로)**: ② Pick 후보로 넘기고 ③ 2단계에서
+    closeout 이 직접 rebase 후 머지(2단계 conflict 경로). (finish-classify 는 건너뛴다.)
+  - 아니면(MERGEABLE 등) → 2) `finish-classify.sh` 로 계속.
 
-왜 필요한가(#196 실측: bodat PR #5009 / 이슈 #4973): 반송된 PR 은 `머지 판정: ✅` 가
-없어 `closeout-eligible.sh` 목록에 애초에 안 뜨고, ①-b 는 finish-classify 를 건너뛴다 —
-그래서 **반송 마커를 보는 자리를 둘 다 안 지난다.** 반송 직후에는 `transition.sh` 가 단계
-라벨을 정리하므로 "단계 라벨 0 + CONFLICTING" 은 좌초의 증거가 아니라 **반송 회차의 정상
-형상이기도 하다.** 실제로 closeout 이 살아 있는 워커의 PR 을 입양해 `harvesting` 을 붙이고
-그 워크트리에서 `git rebase origin/main` 까지 돌렸다(원격은 push 전이라 무손상).
+왜 갈래 **안**이 아니라 **앞**인가(#218 실측: bodat PR #5050 / 이슈 #5036): CONFLICTING
+갈래 전용 게이트(#196)만으론 **MERGEABLE 인데 방금 반송된** PR 이 안 걸린다 —
+`finish-classify.sh` 가 그런 PR 을 `stale_reverify`(검증 전 사망)로 오분류해
+재디스패치하고, 사실과 다른 멱등 마커(`재디스패치: #<이슈> — 완결 유실(검증 전
+사망)`)를 원장에 남긴다. `finish-classify.sh ggqgga/BodaT 5050` → `stale_reverify`,
+`bounce-state.sh ggqgga/BodaT 5050` → `bounced`(verify-runner 가 이미 반송한
+회차인데 `stale_reverify` 는 "검증 전 사망"이라 사인이 틀렸다). `held`(워커 `⚠ 보류`)
+뒤에 verify 가 반송한 순서도 같은 겹침이라, 게이트를 갈래 앞으로 끌어올리면
+CONFLICTING·`stale_reverify`·`held` 세 갈래가 한 자리로 덮인다 — 갈래가 하나 더
+생겨도 이 자리 하나로 자동 덮인다.
+
+**attempt 1 에서 attempt 2 로 — ⓐ/ⓑ 를 가른 근거**(#218 attempt 2, codex BLOCKER 재검증
+실패 PR #225): attempt 1 은 `bounced` 를 무조건 여기서 조기 종료했다. 그런데 `bounced`
+는 "지금 반송 중"과 "반송 뒤 활동이 쌓인 상태" 두 뜻을 겸하고 있었다(PR#168 교훈과
+같은 형상 — 공유 센티널 하나가 두 사유를 가린다). 반송 뒤 활동은 갈래가 둘이다:
+- **ⓐ 교체 워커 사망(✅ 도 ⚠ 도 없음)**: 다른 레인이 덮는다 — 반송 전이가 연결
+  이슈를 `agent-ready` 로 되돌리므로 디스패처가 새 워커를 붙이고, 그 워커가 죽으면
+  타임박스 판정(`scripts/timebox-check.sh`, #200)이 claim 을 회수해 다시
+  `agent-ready` 로 돌린다. 영구 정체가 아니므로 **여기서 고치지 않는다.**
+- **ⓑ 반송 뒤의 `머지 판정: ⚠ 보류`**: 덮는 레인이 없다. 워커가 "사람이 판단해야
+  한다" 고 명시적으로 올린 신호인데 게이트가 `bounced`에서 멈춰 `finish-classify`를
+  안 부르니 `held`(→needs-human)가 **한 번도 실행되지 않았다.** 사람 신호가 조용히
+  묻히는 것 — 이 스윕이 애초에 없애려던 그 형상이라 여기서 고친다.
+
+이 구분을 `bounce-state.sh` **안**에 뒀다(새 신선도 술어를 SKILL 프로즈에 짜 넣지
+않는다) — ✅ 축과 정확히 같은 규칙(마지막 매칭 **인덱스**, createdAt 아님)을 ⚠ 축에도
+그대로 적용해 세 번째 출력값 `held` 를 냈을 뿐이다(`scripts/bounce-state.sh` 참조).
+`stale_reverify`·`stale_inline`·`done_verdict` 는 `bounced` 일 때 여전히 승격하지
+않는다 — ⓐ 는 위에서 이미 무회귀가 증명됐고, `bounced` 인 채로 그 값들을 승격하면
+#218 attempt 1 이 막았던 사고(반송된 코드를 완결로 오분류)가 되살아난다.
+
+**attempt 4 — `held` 의 해제 경로**(마감 검증 BLOCKER, PR #225): attempt 2·3 이 세운
+`held` 는 **진입만 있고 해제가 없었다.** 후보 집합이 ✅·⚠ 둘뿐이라 `머지 판정: 🔄` 가
+빠져 있었고, 그래서 ⑴ 반송 마커 ⑵ 워커 `⚠ 보류` → `held` → `needs-human`+`hold:policy`
+⑶ **사람이 그 보류를 풀어 라벨을 뗀다** ⑷ 교체 워커가 `🔄` 로 재개한다 ⑸ 다음 틱:
+`needs-human` 이 없으니 다시 스윕 대상인데 판정이 **여전히 `held`** → `closeout-blocked`
+가 다시 걸려 **사람이 방금 푼 보류가 되살아나고 살아있는 교체 워커가 끊긴다**(`✅` 에
+도달해야만 풀리는데 끊기니까 도달할 수 없다). 이 레포가 막아 온 "루프 대 사람
+싸움"(#151)이 방향만 바뀐 형태고, 이 게이트는 **매 틱** 도는 자리라 조용히 반복된다.
+해소는 규칙을 그대로 두고 후보 집합만 대칭으로 채우는 것 — `🔄` 를 넣되 결과값은 `ok`
+가 **아니라** `bounced`(`ok` 로 두면 attempt 1 이 막은 "CONFLICTING 갈래가 살아있는
+워커 PR 을 입양·rebase" 가 되돌아온다).
+
+**왜 `held` 를 스윕이 더 이상 승격하지 않는가(#218 두 번째 회차, 사람 결정 (c))**:
+attempt 4 의 해제 경로는 **교체 워커가 이미 `🔄` 를 찍은 뒤**만 고친다. ⑶ 사람이
+라벨을 떼는 시점과 ⑷ 교체 워커가 `🔄` 를 찍는 시점 사이에는 창이 남는다 — 그 창
+안에서는 코멘트 배열이 ⑵ 시점과 한 글자도 다르지 않아 `bounce-state.sh` 가 여전히
+`held` 를 낸다. 이 함수는 코멘트 배열의 순수 함수라 "이 `held` 를 스윕이 이미 한
+번 소비해 needs-human 을 붙였다가 사람이 방금 뗐다" 와 "이 `held` 를 스윕이 아직
+한 번도 못 봤다"(=attempt 2 가 원래 잡으려던 첫 진입)를 **문자열만으로는 구분할
+수 없다** — 둘 다 똑같이 `held` 다. 코멘트 밖 신호로 가르는 안(타임라인 이력·해제
+마커)도 검토됐으나 채택하지 않았다 — 해제 마커는 사람이 라벨만 떼면 바로 깨지고,
+타임라인 이력은 #174 의 에피소드 키가 다루는 더 넓은 축이다(그쪽이 "무엇이
+해제인가" 를 정하면, 여기는 "해제 뒤 누가 다시 붙일 수 있나" 를 좁힌다).
+
+그래서 (c): **스윕은 `held` 를 `bounced`·판정 실패와 똑같이 무접촉으로 받는다** —
+needs-human 으로 승격하는 갈래를 이 자리에서 없앤다. 되살아나는 것을 알고 고른
+선택이다 — attempt 2 가 막았던 원래 사고(반송 뒤 `⚠` 가 영영 needs-human 이 안 되는
+것)가 **이 게이트 자리에서는** 되살아난다. 대신 살아남는 경로가 있다: **반송 마커가
+전혀 없는** 순수 `⚠`(bounce-state.sh 가 `$bi == null` 로 애초에 `ok` 를 내는 경우)는
+이 게이트를 `ok` 로 통과해 아래 2) `finish-classify.sh` 자신의 `held` 행으로 그대로
+승격된다. 단 이 경로에도 **사람이 라벨을 뗀 뒤 같은 `⚠` 로 다음 스윕이 홀드를 되붙이는
+창**은 남는다 — 그 해제 판정(부착↔해제 에피소드)은 #174(PR #182)가 `finish-classify.sh`
+에서 닫는다(해제 뒤면 `held` 대신 `active`).
+`bounce-state.sh` 의 `held` 계산 자체는 바뀌지 않는다(값은 여전히 정확하다) — 폐지는
+이 호출자(스윕)가 그 값으로 하던 조치뿐이다.
+
+**규율(이 자리에서 세 번 물린 것)**: 새 종결 상태를 만들 때는 진입 경로만 보지 말고
+**해제 경로까지 함께** 세워라. 진입만 보면 그 상태가 사람의 해제를 매 틱 되돌린다.
+
+CONFLICTING 갈래에 왜 원래 필요했나(#196 실측: bodat PR #5009 / 이슈 #4973): 반송된
+PR 은 `머지 판정: ✅` 가 없어 `closeout-eligible.sh` 목록에 애초에 안 뜨고,
+finish-classify 를 건너뛰는 CONFLICTING 갈래는 반송 마커를 볼 자리가 따로 없었다.
+반송 직후에는 `transition.sh` 가 단계 라벨을 정리하므로 "단계 라벨 0 + CONFLICTING"
+은 좌초의 증거가 아니라 **반송 회차의 정상 형상이기도 하다.** 실제로 closeout 이
+살아 있는 워커의 PR 을 입양해 `harvesting` 을 붙이고 그 워크트리에서
+`git rebase origin/main` 까지 돌렸다(원격은 push 전이라 무손상).
 
 판정은 `bounce-state.sh` **한 자리**다 — 마커 집합(`재디스패치`·`재검증 실패`, 콜론
 리터럴을 요구하지 않되 마커가 낱말로 끝나야 하는 첫 줄 매칭 — #212 · #221)도, 선후를
@@ -166,7 +248,8 @@ CONFLICTING PR 도 그 라벨을 그대로 달고 있다 — 배제 조건으로
 가 `agent:claimed` 를 뗀 뒤 디스패처가 새 워커를 붙일 때까지의 창에서는 **워커 레인
 소유인데 라벨이 없다**. 두 방향 모두 틀리므로 코멘트 마커 하나로 판정한다.
 
-**2) 아니면 `$SCRIPTS/finish-classify.sh <repo> <pr>` 로 결정적 분류** — 이 헬퍼가 최신
+**2) 위 1) 의 반송 게이트를 `ok` 로 통과했으면 `$SCRIPTS/finish-classify.sh <repo> <pr>` 로
+결정적 분류** — 이 헬퍼가 최신
 `머지 판정:`/`검증자 리뷰:` 코멘트와 `STALE_FINISH_MIN` 시간버퍼로 상태를 낸다(손수
 코멘트 파싱 대신 테스트된 헬퍼 재사용). **살아있는 워커·시간버퍼 미도달은 `active` 로
 걸러져 레이스가 방지된다** — 별도 신선도 게이트가 필요 없다:
@@ -177,7 +260,7 @@ CONFLICTING PR 도 그 라벨을 그대로 달고 있다 — 배제 조건으로
 | `stale_inline` | 🔄 + 검증자 CLEAN + 버퍼 초과 (검증까지 도달·최종판정만 유실, #970형) | **입양(머지)** — ② Pick 후보로. ③ 1단계가 **독립 재검증** 후 마감. **새 이슈 안 만듦**(완료된 일 재수행 금지). |
 | `stale_reverify` | 🔄 + 검증자 부재/미해결 BLOCKER + 버퍼 초과 (검증 전 사망·구현 미완 가능, #971형) | **재디스패치** — 미완 코드를 codex 재검증 하나로 자동 머지하지 않는다(사용자 결정). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (연결 이슈를 `agent-ready` 로 되돌리고 `agent:claimed`·단계 라벨을 뗀다) → 새 워커가 같은 브랜치서 검증자 재실행→체크박스→최종판정으로 완결. 멱등 마커(아래). — head 커밋이 신선하면(#110, 스테일 클록에 커밋 시각 합류) 코멘트가 낡았어도 `active` 로 떨어져 살아있는 attempt N+1 워커를 오분류하지 않는다. |
 | `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (PR 과 연결 이슈 **양쪽**에 `needs-human` + `hold:policy` 부착 + 단계 라벨 정리 — 연결 이슈가 없어도 PR 에 사람 신호가 남는다), closeout 무접촉(자동 진행 안 함). |
-| `active` | 진행 중·버퍼 미도달·우리 형상 아님, 또는 **✅ 의 신선도를 증명 못 함**(✅ 가 head 커밋보다 이르거나 두 시각 중 하나를 못 얻음, #171). **위 1) 의 CONFLICTING PR 도 `bounce-state.sh` 가 `ok` 가 아니면(반송 회차 진행 중이거나 판정 실패) 여기로 떨어진다**(#196) — 단계 라벨이 비어 있어도 그건 좌초가 아니라 워커 레인 소유다 | **무접촉**(다음 틱). |
+| `active` | 진행 중·버퍼 미도달·우리 형상 아님, 또는 **✅ 의 신선도를 증명 못 함**(✅ 가 head 커밋보다 이르거나 두 시각 중 하나를 못 얻음, #171). (CONFLICTING 이든 MERGEABLE 이든 반송 회차 진행 중이거나 판정 실패면 1) 게이트에서 이미 `active` 로 걸러져 여기까지 오지 않는다 — #218, #196) | **무접촉**(다음 틱). |
 
 **flow:\* 보조 신호**: finish-classify 가 코멘트로 판정하지만, `flow:ready` 없이
 `flow:codex`/`flow:ci` 만 있고 오래된 PR 은 그 자체로 "검증 중 워커 사망"의 방증이다
