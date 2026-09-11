@@ -204,8 +204,10 @@ permanently human-blocked and the downstream transitions (handoff-verify, verify
 closeout-pick) never remove it. That revert only ever happened when the sweep itself
 resumed or escalated, so the path where a **human** clears `hold:policy`/`hold:conflict`
 had nowhere to drop the PR copy — the same run therefore also does a **stop-mirror
-cleanup** (#265): when the issue carries no stop label at all but a linked open PR still
-does, it removes them **from the PR only**. Per event:
+cleanup** (#265): when the issue carries no stop label at all but its paired open PR still
+does, it removes them **from the PR only** (a pair means an `agent/issue-*` head with a
+proven `Closes` link — a human-opened PR's marks and a `Refs`-only PR's legitimate hold are
+left alone). Per event:
 
 - `mirror_cleared` — the script removed the **PR copy** of a hold a human cleared on the
   issue alone (#265). The issue was already clean, so it is left untouched. **Nothing

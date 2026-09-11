@@ -190,7 +190,9 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·closeout-pick)가 그걸 안 뗀다.
 그 되돌림은 스윕이 **스스로 재개·승격할 때**뿐이라, 사람이 `hold:policy`·`hold:conflict` 를
 푸는 경로엔 PR 사본을 지우는 자리가 없었다 — 그래서 같은 실행이 **정지 미러 정리**(#265)도
-한다: 이슈에 정지 라벨이 하나도 없는데 연결된 열린 PR 에 남아 있으면 **PR 쪽만** 뗀다.
+한다: 이슈에 정지 라벨이 하나도 없는데 짝이 되는 열린 PR 에 남아 있으면 **PR 쪽만** 뗀다
+(짝은 head 가 `agent/issue-*` 이고 `Closes` 링크가 증명된 PR 뿐 — 사람이 연 PR 의 표식과
+`Refs` 전용 PR 의 정상 홀드는 건드리지 않는다).
 이벤트별 처리:
 
 - `mirror_cleared` — 사람이 이슈에서만 푼 홀드의 **PR 사본**을 스크립트가 뗐다(#265).
