@@ -991,6 +991,8 @@ while IFS= read -r repo; do
   # ③ policy 재심 — `hold:policy` 가 창(RESUME_AFTER_MIN)을 넘겼는데 재심 마커 코멘트
   #    `<!-- policy-review: … -->` 가 없으면 **1회** 재심 대상(#155). 스크립트는 판정하지 않고
   #    이벤트만 낸다(판정은 디스패처 ① — 질문 한 줄이 루프가 답할 수 있는 것인지). 무편집.
+  #    **단 `needs-human` 이 동존하면 재심 대상이 아니다**(#244) — 사람이 직접 세운 정지는
+  #    루프가 풀지 않는다. 그 건은 due 대신 note 로 내려간다(아래 갈래).
   if fetch_issues "$repo" "$tmp/issues.policy" "hold:policy" --label hold:policy; then
     while IFS= read -r row <&3; do
       [ -n "$row" ] || continue
@@ -1000,6 +1002,24 @@ while IFS= read -r repo; do
       [ "${pep:--1}" -ge 0 ] || { emit_warn "$repo" "$pnum" "updatedAt 해석 불가($pupd) — 재심 창 판정 못 함"; continue; }
       pmin=$(( ( $(date -u +%s) - pep ) / 60 ))
       [ "$pmin" -ge "$RESUME_AFTER_MIN" ] || continue
+      # `needs-human` 은 **사람이 직접 세운 정지**다(#244). ③ 은 `--label hold:policy`
+      # 단독 쿼리라 사람이 손으로 그 라벨을 더한 건도 집어 온다 — 그대로 `policy_review_due`
+      # 를 내면 디스패처가 그 판정에서 `verify-redispatch` 를 부를 수 있고, 그 전이는
+      # `needs-human` 과 `hold:*` 를 **둘 다** 뗀다(transition.sh 의 반송 전이). 이 이슈가
+      # 방금 "루프가 치우면 안 되는 것" 으로 정의한 라벨을 루프가 치우는 것이다.
+      # ①(sweep_issue, 위)이 쓰는 것과 **같은 술어**를 여기서도 쓴다.
+      # warn 이 아니라 note 인 이유: warn 의 정의는 "루프가 교정 가능한 불변식 위반"
+      # (emit_note 주석, 위)인데 이건 사람이 이 이슈가 정의한 축을 정상적으로 행사한 것이라
+      # 루프가 교정할 것이 없다 — ②가 "사람이 직접 세운 정지 … 정상 상태라 warn 아님" 을
+      # note 로 내는 것과 **같은 사람 행동, 같은 낱말**이다(hold:* 유무만 다르다).
+      # ① 이 warn 인 것은 **다른 질문**이라서다: 거기선 루프가 만든 기계 홀드(hold:ladder)가
+      # 좌초해 영영 재개되지 않는다는 신호다(M8 이 무는 자리). 여기 ③ 은 무편집 읽기 갈래라
+      # 좌초시킬 루프 상태가 없다.
+      # 조용한 continue 로 두지 않는다(#247) — 왜 재심이 안 도는지가 어디에도 안 남는다.
+      if printf '%s' "$row" | jq -e '[.labels[].name] | index("needs-human") != null' >/dev/null 2>&1; then
+        emit_note "$repo" "$pnum" "사람이 세운 needs-human 동존 — 재심 안 함, 정상 상태라 warn 아님"
+        continue
+      fi
       pout=$(gh issue view "$pnum" --repo "$repo" --json comments 2>/dev/null) \
         || { emit_warn "$repo" "$pnum" "재심 마커 조회 실패 — 이번 틱은 건너뛴다"; continue; }
       # 에피소드 단위: 마지막 `hold-note: policy` 코멘트(=이번 홀드의 질문) **이후**에 재심 마커가

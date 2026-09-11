@@ -783,6 +783,31 @@ setup "hold:policy,agent-ready" 30 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 run
 check "policy 재심 창 안: 이벤트 없음" "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+
+# ── ③-h (#244 반송②) 사람이 세운 `needs-human` 이 동존하면 재심 대상이 아니다 ──
+# ③ 은 `--label hold:policy` 단독 쿼리라 사람이 손으로 `needs-human` 을 더한 건도
+# 집어 온다. 그대로 `policy_review_due` 를 내면 디스패처가 그 판정에서
+# `verify-redispatch` 를 부를 수 있고, 그 전이는 `needs-human` 과 `hold:*` 를 **둘 다**
+# 뗀다(transition.sh:147-148) — 이 이슈가 방금 "루프가 치우면 안 되는 것" 으로 정의한
+# 라벨을 루프가 치운다. ①(sweep_issue :479-484)에는 이 배제가 있는데 ③ 에는 없었다.
+# 조용한 continue 로 두지 않는다(#247) — 왜 재심이 안 도는지가 어디에도 안 남는다.
+# `warn` 이 아니라 `note` 인 근거는 resume-sweep.sh 의 갈래 주석에.
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "③-h needs-human 동존: exit 0" "$([ "$RC" = 0 ] && echo ok || echo no)"
+check "③-h needs-human 동존: policy_review_due 안 냄" \
+  "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+check "③-h needs-human 동존: note 로 남긴다(조용한 스킵 아님)" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("needs-human"))' >/dev/null 2>&1 && echo ok || echo no)"
+check "③-h needs-human 동존: warn 아님" "$(no_ev warn)"
+check "③-h needs-human 동존: 무편집" "$(none 'issue edit')"
+# 대조군 — 같은 픽스처에서 needs-human 만 빼면 종전대로 due 가 난다(배제가 과하지 않다).
+setup "hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "③-h 대조군: needs-human 없으면 종전대로 due" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .number == 42' >/dev/null 2>&1 && echo ok || echo no)"
 setup "hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 note "재심: 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->"
