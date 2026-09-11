@@ -717,7 +717,9 @@ for out-of-merge-scope verification the step-1 verifier excluded from the merge 
   it is counted as an ordinary Chrome item, passed, and the ticket closes without the
   TEST worker ever running (#309). Even when rungs ①② failed and the carried-over line
   never says "TEST worker", **if the rung it steps is ③, attach the marker** — the basis
-  for the decision is the marker, not the meaning of the sentence.
+  for the decision is the marker, not the meaning of the sentence. The marker is a
+  **literal**: write `[칸 ③]` exactly, never a translation ("[rung ③]" and the like) —
+  step 5 and the `bin/ci` guard both match one fixed string.
 
 Why the shape is enforced: the branch below reads this section to decide whether an issue
 is filed at all, and free prose leaves that decision to per-tick interpretation, which
@@ -854,20 +856,28 @@ structure/empty-state confirmation from real-data render confirmation in the res
   TEST-worker profile #18 dry run), which Chrome cannot step — but keep the rationale as
   rationale and **decide by the marker**. Interpreting the sentence lets the same line
   read as real hardware in one tick and as an ordinary item in the next (#309).
-  **Drop marked lines from the `<n>/<n>` denominator** — pretending Chrome compared them makes both a pass and a fail
-  a lie (the same false green as "no items" above). If dropping them leaves zero items to
+  **Drop marked lines from the `<n>/<n>` denominator** — pretending Chrome compared
+  them makes both a pass and a fail a lie (the same false green as "no items" above). If dropping them leaves zero items to
   compare, do not open Chrome — skip the smoke exactly like the "no items" bullet above.
   And if **even one** such line remains, **do not close the deploy issue even when
   everything else passes** — rung ③ is deploy-cycle ⑦'s job, so closing here finalizes a
   ticket whose real-hardware items never met the TEST worker once. Leave the reason as a
   comment instead: `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦`. That issue is a
   container the deploy-cycle lane's ⑦ closes after it steps rung ③.
-  **An unmarked line is a Chrome item** — never promote one to real hardware by
+  **Transition — catch in-flight tickets by the fixed string, then backfill the marker.**
+  Deploy issues filed before this discipline and still open carry no `[칸 ③]` at all
+  (anything filed before #309 merged). For those tickets only, a line containing the
+  fixed string `TEST 워커 프로필 #18` counts as real hardware — that is **a second fixed
+  string, not an interpretation**, so do not widen it by reading meaning. Rewrite such a
+  line in the deploy issue body as `- [ ] [칸 ③] <동작>` on the spot so the next tick only
+  has to look at the marker, and note the backfill in one comment line. Once the backlog
+  is drained this clause catches nothing and dies on its own.
+  **Any other unmarked line is a Chrome item** — never promote one to real hardware by
   interpretation (that is the moment a second calculator for "real-hardware items" is
   born). If Chrome genuinely cannot compare it, do not print it as a pass — leave it a
   **fail** and let the fail branch below file the follow-up issue; a follow-up beats a
-  false green. If the marker looks to have been dropped by step 4, say so in one line as
-  a comment on the deploy issue.
+  false green. If the marker looks to have been dropped by step 4, note that in a comment
+  line too.
 - **Already-closed deploy issue — skip the smoke.** If the deploy issue is already
   CLOSED and has a verification/deploy-complete comment, treat step 5 as complete —
   do not re-smoke, proceed to the next step (the case where the deploy lane
