@@ -321,14 +321,32 @@ rule that ordering is measured by the **last matching
 index in the comments array**, not by `createdAt`; `closeout-eligible.sh` calls the same place
 (no second copy of the logic).
 
-**`agent:claimed` is deliberately NOT used as a supplementary gate** (#196 item 3, evidence-based):
+**The *presence* of `agent:claimed` is deliberately NOT used as a supplementary gate** (#196 item 3, evidence-based):
 `reconcile.sh` does **not** strip `agent:claimed` from an issue that still has an open PR (it only
 does so as `stale` when the worktree is gone *and* no open PR exists). So the genuinely stranded
 CONFLICTING PRs that ①-b exists to rescue carry that label too — using it as an exclusion would
 close the whole CONFLICTING adoption lane. It fails in the other direction as well: right after a
 bounce, `closeout-redispatch`/`verify-redispatch` remove `agent:claimed`, so until the dispatcher
 attaches a new worker there is a window that **is worker-lane-owned with no label**. Wrong both
-ways, so the comment marker alone decides.
+ways, so **the adopt/exclude decision** rests on the comment marker alone.
+
+**Its *attach time*, however, is used — that is a different signal** (#206 attempt 3, codex
+BLOCKER). Presence only says "someone claimed this at some point"; the attach time says **when
+the current round started**. A claim the dispatcher attached right after a bounce is minutes old;
+a stranded round's claim is hours old. Why this is needed: progress evidence ① (commit freshness)
+and ② (CI queue ticket) only exist **after the worker has left something behind**, so neither
+covers the window where a replacement worker was dispatched after the bounce but **has not pushed
+yet** — in that window every value `finish-classify.sh` sees belongs to the *previous* attempt, so
+`stale_reverify` fires and `closeout-redispatch` **strips the `agent:claimed` of the worker that
+is working right now.** So progress evidence ③ is: if `agent:claimed` is **attached now** and its
+last attachment is within `ISSUE_TIMEBOX_HOURS`, the PR is `active` even with no commits. The
+lookup lives in `$SCRIPTS/claim-at.sh <repo> <issue>` **in one place** (attachment decided by the
+last matching index in the timeline — the same rule as `bounce-state.sh`), which is why the
+classify call in 2) also takes the issue number (`finish-classify.sh <repo> <pr> [<issue>]` — it
+asks `closingIssuesReferences` once when omitted). Why `ISSUE_TIMEBOX_HOURS` as the bound: a claim
+older than that is already reclaimable by ① Reconcile's `timebox-check.sh`, so there is nothing to
+save here — both places read the same constant and therefore the same boundary. A failed lookup is
+`unknown`, not `none` (stripping a live worker's claim over one failed lookup is irreversible).
 
 **2) Once 1)'s bounce gate has passed `ok`, `$SCRIPTS/finish-classify.sh <repo> <pr>` for
 deterministic classification** — the helper reads the latest `머지 판정:`/`검증자 리뷰:` comments and the `STALE_FINISH_MIN`

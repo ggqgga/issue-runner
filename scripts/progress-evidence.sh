@@ -13,7 +13,7 @@
 # 실패를 표현할 말이 없으면 호출자는 결국 `none` 을 쓴다(회차1 이 그렇게 반송됐다).
 #
 # 출력(한 줄, 공백 구분):
-#   <verdict> <reason> commit=<분>m|none|- queue=<state>|-
+#   <verdict> <reason> commit=<분>m|none|- queue=<state>|- claim=<분>m|none|-
 #
 #   progress <recent_commit|ci_queued>  exit 0  진행 증거 있음 — 워커는 살아 있다
 #   none     no_progress                exit 0  증거 없음 — 무진전
@@ -29,11 +29,22 @@
 # `bounce-state.sh` 한 자리에 묶은 것과 같은 규율이다(#171·#196, PR#191 교훈).
 # `bin/ci` 가 `^STALL_MIN=`·`^queue_alive()` 정의가 이 파일 밖에 생기면 실패시킨다.
 #
-# ── 진행 증거 (둘 중 하나라도 참이면 progress) ───────────────────────────────
+# ── 진행 증거 (셋 중 하나라도 참이면 progress) ───────────────────────────────
 #   ① 최신 커밋이 STALL_MIN 이내
 #   ② 그 head SHA 의 CI 티켓이 큐에 살아 있음(queue.log 의 그 SHA **마지막 줄**이
 #      `대기열 N번째`) — 박스 전역 직렬 CI 큐(#127) 대기는 워커가 통제할 수 없는
 #      시간이다(실측 bodat #5020 72분 · #5024 64분, 둘 다 살아 있었다).
+#   ③ 현재 회차의 `agent:claimed` 가 ISSUE_TIMEBOX_HOURS 안에 붙어 **아직 붙어 있음**
+#      (`--claimed-at`, 부착 시각은 `claim-at.sh` 가 낸다 — #206 attempt 3).
+#
+# ①②는 워커가 **이미 뭔가 남긴 뒤에만** 존재하는 증거다. 반송 직후 교체 워커가 디스패치됐지만
+# **첫 푸시 전**인 창에는 둘 다 없고, 그때 호출자가 보는 커밋·판정 시각은 전부 *이전* attempt
+# 의 것이다 — 그래서 ①②만으로는 살아있는 워커를 죽인다(#206 attempt 2 codex BLOCKER).
+# ③이 그 창을 덮는다. 상한이 ISSUE_TIMEBOX_HOURS 인 이유: 그 시간을 넘긴 claim 은
+# `timebox-check.sh`(① Reconcile)가 이미 회수 대상으로 보는 구간이라 여기서 살릴 이유가 없다
+# — 두 자리가 같은 상수를 읽어 같은 경계를 쓴다(정의는 SKILL.md 상수 절).
+# ③은 **옵션 입력**이다 — `--claimed-at` 을 안 주면 종전과 똑같이 ①②만으로 판정한다
+# (`timebox-check.sh` 는 자기 경과 검사로 이미 같은 경계를 재므로 넘기지 않는다).
 #
 # queue.log 판정은 반드시 **그 SHA 의 마지막 줄**로 한다. 같은 SHA 가 여러 줄인 것이
 # 정상이다 — `폐기 — 실행 시점 HEAD 가 …` · `중단(INT/TERM)` · `유령 티켓 회수(pid 사망)`
@@ -46,20 +57,24 @@
 # env 오버라이드:
 #   PE_QUEUE_LOG  queue.log 경로(기본 ~/.claude/.local-ci/queue.log)
 #   STALL_MIN     커밋 신선도 임계(분, 기본 25) — **이 파일이 이 상수의 한 자리다**
+#   ISSUE_TIMEBOX_HOURS  claim 신선도 상한(시간, 기본 1) — `timebox-check.sh` 와 같은 값을 읽는다
+#                        (두 리더의 기본값이 갈리지 않게 bin/ci 가 문다)
 # macOS bash 3.2 대상.
 set -uo pipefail
 
 STALL_MIN="${STALL_MIN:-25}"
+TIMEBOX_HOURS="${ISSUE_TIMEBOX_HOURS:-1}"
 QUEUE_LOG="${PE_QUEUE_LOG:-$HOME/.claude/.local-ci/queue.log}"
 
 usage() {
-  echo "usage: progress-evidence.sh --now <epoch> --commit-at <ISO8601|none|unknown> --head-sha <sha|none|unknown>" >&2
+  echo "usage: progress-evidence.sh --now <epoch> --commit-at <ISO8601|none|unknown> --head-sha <sha|none|unknown> [--claimed-at <ISO8601|none|unknown>]" >&2
   exit 64
 }
 
 now=""
 commit_at=""
 head_sha=""
+claimed_at=none   # 옵션 — 안 주면 증거 ③ 없이 ①②만으로 판정한다(종전 동작)
 while [ $# -gt 0 ]; do
   # 값이 없는데 `shift 2` 를 하면 `set -e` 가 꺼져 있어 인자 목록이 그대로 남아 같은
   # 플래그를 무한히 다시 읽는다(timebox-check.sh 가 실제로 밟은 자리).
@@ -67,15 +82,18 @@ while [ $# -gt 0 ]; do
     --now)       [ $# -ge 2 ] || usage; now="$2"; shift 2 ;;
     --commit-at) [ $# -ge 2 ] || usage; commit_at="$2"; shift 2 ;;
     --head-sha)  [ $# -ge 2 ] || usage; head_sha="$2"; shift 2 ;;
+    --claimed-at) [ $# -ge 2 ] || usage; claimed_at="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
 
 commit_field="-"
 queue_state="-"
+claim_field="-"
 
 emit() {  # emit <verdict> <reason> <exit>
-  printf '%s %s commit=%s queue=%s\n' "$1" "$2" "$commit_field" "$queue_state"
+  printf '%s %s commit=%s queue=%s claim=%s\n' \
+    "$1" "$2" "$commit_field" "$queue_state" "$claim_field"
   exit "$3"
 }
 
@@ -170,10 +188,33 @@ fi
 # 불가다(부재 `nolog`·무매칭 `none` 과 구분해 여기서만 갈라낸다).
 [ "$queue_state" = logerr ] && emit unknown queue_log_read_failed 2
 
+# ── 증거 ③ 현재 회차 claim 신선도 ───────────────────────────────────────
+# `--claimed-at` 의 어휘는 ① 과 같다: `<ISO8601>` / `none`(붙어 있지 않음 — 정상 입력) /
+# `unknown`(조회 실패 — 부재와 갈라 판정 불가로 낸다). **빈 문자열은 옵션 미지정으로 보고
+# `none` 과 같이 다룬다** — ① 과 달리 이 플래그는 애초에 옵션이라 "안 줬다" 와 "없다" 가
+# 호출자 쪽에서 이미 같은 뜻이다(플래그를 준 호출자는 반드시 세 어휘 중 하나를 쓴다).
+claim_fresh=0
+if [ "$claimed_at" = unknown ]; then
+  claim_field=unknown
+  emit unknown claimed_at_unknown 2
+elif [ "$claimed_at" = none ] || [ -z "$claimed_at" ]; then
+  claim_field=none
+elif claim_epoch=$(iso_to_epoch "$claimed_at"); then
+  claim_age=$((now - claim_epoch))
+  [ "$claim_age" -lt 0 ] && claim_age=0
+  claim_field="$((claim_age / 60))m"
+  [ "$claim_age" -le $((TIMEBOX_HOURS * 3600)) ] && claim_fresh=1
+else
+  emit unknown claimed_at_invalid 2
+fi
+
 if [ "$commit_recent" = 1 ]; then
   emit progress recent_commit 0
 elif [ "$queue_state" = queued ]; then
   emit progress ci_queued 0
+elif [ "$claim_fresh" = 1 ]; then
+  # 첫 푸시 전 창 — 커밋도 CI 티켓도 아직 없지만 **이번 회차가 방금 시작됐다**.
+  emit progress claim_fresh 0
 fi
 
 emit none no_progress 0
