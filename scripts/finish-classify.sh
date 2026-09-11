@@ -69,6 +69,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# 픽스처용 큐 로그 경로는 **있을 때만** 넘긴다 — 기본 경로는 progress-evidence.sh 가
+# 이미 갖고 있고, 여기 한 벌 더 적으면 이 PR 이 세운 SSOT 규율과 반대 방향이다.
+[ -n "${FC_QUEUE_LOG:-}" ] && export PE_QUEUE_LOG="$FC_QUEUE_LOG"
+
 repo=${1:?repo}
 pr=${2:?pr_num}
 
@@ -250,14 +254,18 @@ is_clean() {
 # 증명 없이 열지 않는다).
 has_progress() {
   local out rc=0
-  # 커밋 시각은 **이미 파싱에 성공한 것만** 넘긴다. head_epoch 가 비었다는 것은 시각을
-  # 못 얻었거나(빈 값) 형식이 아니라는(쓰레기 값) 뜻이고, 이 파일의 🔄 계열 갈래는 그걸
-  # 종전부터 "커밋 증거 없음(epoch 0 degrade)" 으로 다룬다 — 헬퍼에 그대로 넘겨 `unknown`
-  # 으로 만들면 쓰레기 값 하나가 모든 갈래를 active 로 덮어 완결 유실 회수가 통째로 멈춘다.
-  # 판정 술어는 그대로 헬퍼 한 자리이고, 여기서 하는 것은 그 입력 계약(`none`)으로의 정규화다.
-  out=$(PE_QUEUE_LOG="${FC_QUEUE_LOG:-${PE_QUEUE_LOG:-$HOME/.claude/.local-ci/queue.log}}" \
-    "$SCRIPT_DIR/progress-evidence.sh" --now "$now" \
-    --commit-at "${head_epoch:+$head_at}" --head-sha "${head_sha:-none}" 2>/dev/null) || rc=$?
+  # 커밋 시각은 **이미 파싱에 성공한 것만** 넘기고, 아니면 헬퍼의 입력 계약대로 문자열
+  # `none`(= 커밋 증거 없음)을 **명시**한다. head_epoch 가 비었다는 것은 시각을 못 얻었거나
+  # (빈 값) 형식이 아니라는(쓰레기 값) 뜻이고, 이 파일의 🔄 계열 갈래는 그걸 종전부터
+  # "커밋 증거 없음(epoch 0 degrade)" 으로 다룬다 — 그대로 넘겨 `unknown` 으로 만들면
+  # 쓰레기 값 하나가 모든 갈래를 active 로 덮어 완결 유실 회수가 통째로 멈춘다.
+  # 판정 술어는 그대로 헬퍼 한 자리이고, 여기서 하는 것은 그 입력 계약으로의 정규화다.
+  # (빈 문자열을 그냥 넘기지 않는 이유: 헬퍼는 빈 값을 `none` 으로 접지 않고 판정 실패로
+  #  본다 — 호출자가 "증거 없음" 을 뜻했는지 "못 얻었다" 를 뜻했는지 헬퍼는 모르기 때문.)
+  local commit_arg=none
+  [ -n "$head_epoch" ] && commit_arg="$head_at"
+  out=$("$SCRIPT_DIR/progress-evidence.sh" --now "$now" \
+    --commit-at "$commit_arg" --head-sha "${head_sha:-none}" 2>/dev/null) || rc=$?
   case "${out%% *}" in
     progress) return 0 ;;
     none)     [ "$rc" = 0 ] && return 1; return 0 ;;
