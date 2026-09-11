@@ -1033,6 +1033,21 @@ echo "[test] lessons-trim.sh lessons-verifier.md 캡 수렴 정리 — 항목 �
 [ -x scripts/lessons-trim.sh ] || { echo "  ✗ lessons-trim.sh 실행 비트 없음"; exit 1; }
 bash scripts/tests/lessons-trim.test.sh
 
+echo "[#227] lessons-trim.sh 호출은 \$SCRIPTS/ 절대경로 — closeout 은 대상 레포 cwd 에서 돈다"
+# closeout 은 대상 레포의 worktree 를 cwd 로 돌 수 있는데, 상대경로 \`scripts/lessons-trim.sh\`
+# 는 그 레포엔 없는 파일이다(스크립트는 ~/.claude/skills/issue-runner/scripts/ 에 산다).
+# 같은 문서의 다른 모든 헬퍼 호출이 \$SCRIPTS/ 를 쓰는 것과 어긋나면 캡 집행이 평상시
+# 안 돈다(#227 검증자 실증 — references/worker-template.md 의 같은 형상을 #185 가
+# 절대경로로 고친 전례와 동일). 백틱으로 감싼 상대경로 호출 문구가 있으면 즉시 회귀다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  if grep -qF '`scripts/lessons-trim.sh' "$f"; then
+    echo "  ✗ $f 가 lessons-trim.sh 를 상대경로로 호출 — \$SCRIPTS/lessons-trim.sh 로 고쳐라(#227)"
+    exit 1
+  fi
+  grep -qF '$SCRIPTS/lessons-trim.sh' "$f" \
+    || { echo "  ✗ $f 에 \$SCRIPTS/lessons-trim.sh 호출 없음"; exit 1; }
+done
+
 echo "[#88] 완결 유실 재파생 배선 검사 — 한/영 SKILL 동기"
 # STALE_FINISH_MIN 상수 + finish-classify.sh 분기 + 4b 인라인 대리 판정 배선이
 # 한/영 SKILL 양쪽에 있어야 한다(완결 유실 갭 자가 재파생 — 규칙4 분리).

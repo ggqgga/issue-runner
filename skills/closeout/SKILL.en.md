@@ -332,16 +332,19 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
   flowed through unchanged — that BLOCKER was a false judgment that got reversed.
   Append one line `- [YYYY-MM-DD PR#<pr>] <false-BLOCKER pattern → recurrence-
   prevention action>` to **`.loop/lessons-verifier.md`** under the path output by
-  `$SCRIPTS/repo-dir.sh <repo>` (create it if absent — this is the verifier's
-  casebook, kept separate from the worker's `lessons.md`). **Cap: 20 entries** —
-  on overflow, drop the oldest entries as whole units **until the entry count is
-  at or below the cap**, not by line: this file mixes multi-line cases starting
-  with `##`, and cutting by line tears the prose apart (an entry = one line
-  starting with `- [`, or a `##` header through just before the next entry).
-  Don't count by hand — call `scripts/lessons-trim.sh <file> 20` in one place
-  right after appending (#208: the old rule dropped only **one** oldest entry,
-  so append(+1)/delete(-1) netted zero and overflow never shrank once past the
-  cap). This record is fed back into
+  `$SCRIPTS/repo-dir.sh <repo>`, then trim to the cap — **call
+  `$SCRIPTS/lessons-trim.sh append <file> 20 "<line>"` in one place** (create the
+  file if absent — this is the verifier's casebook, kept separate from the
+  worker's `lessons.md`). **Do not append by hand outside this call** — another
+  tick may be trimming the same file concurrently, and an append done outside the
+  lock can be lost if it lands in that trim's read→write window (#208
+  re-verification BLOCKER②). **Cap: 20 entries** — on overflow, drop the oldest
+  entries as whole units **until the entry count is at or below the cap**, not by
+  line: this file mixes multi-line cases starting with `##`, and cutting by line
+  tears the prose apart (an entry = one line starting with `- [`, or a `##`
+  header through just before the next entry). #208: the old rule dropped only
+  **one** oldest entry, so append(+1)/delete(-1) netted zero and overflow never
+  shrank once past the cap. This record is fed back into
   the next verification via the `<LESSONS_OR_"없음">` injection above, preventing
   recurrence of the same misjudgment (citation misreads·base blind spots·etc.).
   (If it was not a reversal — a normal CLEAN — do not record.)
@@ -615,11 +618,13 @@ structure/empty-state confirmation from real-data render confirmation in the res
   `gh issue create` fail outright (the only colon form is `needs:hardware`).
   - **Record a code-unrelated smoke failure (lessons).** If that smoke failure turns
     out to be code-unrelated (infra outage·flake·transient verify-URL error·etc.),
-    separately from the publish path above, append one line
+    separately from the publish path above, append and trim one line
     `- [YYYY-MM-DD PR#<pr>] <smoke-misjudgment pattern → recurrence-prevention action>`
     to **`.loop/lessons-verifier.md`** under the path output by `$SCRIPTS/repo-dir.sh <repo>`
+    using the same call as step 1 — `$SCRIPTS/lessons-trim.sh append <file> 20 "<line>"`
     (same file and cap as step 1 — it is a verdict-misjudgment class, so it belongs in
-    the verifier's casebook). A failure that turns out to be a code defect is not recorded
+    the verifier's casebook. Same loss risk here too — do not append by hand outside
+    this call). A failure that turns out to be a code defect is not recorded
     here — the publish path handles it.
 - **Browser cleanup — leak prevention (common exit; green·fail·degrade all).** **After**
   leaving the smoke-verdict comment above, always close the chrome-devtools page this tick
