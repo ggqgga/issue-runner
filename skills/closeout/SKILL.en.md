@@ -132,7 +132,7 @@ the code closeout itself blocked. So `closeout-eligible.sh` never promotes on th
    after the marker (`:` / `#N` / `(` / a dash / a digit / end of line) is a bounce; if **prose
    continues** (a Hangul particle/ending, or a space plus a word) it counts only when a bounce
    token (`#N` / `attempt` / a dash / `반송`) is present and no resolution token (`완료` /
-   `해소`) is (#221 · #251).
+   `해소`, excluding negated or request forms) is (#221 · #251).
    New bounce wording goes in that array and nowhere else. Ordering is
    decided by the **last matching index in the comment array**, not
    by `createdAt` — GitHub comment times are second-granular, so a ✅ and a marker written in the
