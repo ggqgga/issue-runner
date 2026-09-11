@@ -298,7 +298,11 @@ N 도 디스패치당 1만 올린다.
    `slots = MAX_AGENTS - in-flight`. slots ≤ 0 이면 건너뛴다.
    **적체 배압**: 상태 무관 열린 PR 총수가 `MAX_OPEN_PRS` 이상이면 신규 디스패치를
    건너뛰고 ④ Report 에 "머지 대기 적체 N개" warn 을 올린다 (보수는 ② 에서 계속 돈다).
-2. `$SCRIPTS/eligible-issues.sh` 실행 → 우선순위 정렬된 후보.
+2. `$SCRIPTS/eligible-issues.sh` 실행 → 우선순위 정렬된 후보(**stdout**).
+   **stderr 의 `blocked:`·`blocked-summary:`·`warn:` 줄은 ④ Report 로 옮긴다** (#247) —
+   `blocked: <repo>#<num> ← #<b>(<상태>)` 는 `막힘` 항목으로, `blocked-summary:` 의 N 은
+   `막힘 N` 카운트로, 검색 창 `warn:` 은 Report 의 `warn` 에 그대로. 게이트 탈락은
+   조용한 `continue` 라, 안 옮기면 "대기 N건이 왜 안 도는가"가 어디에도 안 남는다.
 3. **LLM 판단 (덜 집는 쪽으로만)**: 후보 중 같은 레포·같은 모듈을 건드릴 것으로
    보이는 이슈가 둘 이상이면 이번 틱에는 하나만 집는다. 판단이 서지 않으면 집는다
    (충돌은 다음 틱 rebase 가 풀어준다).
@@ -359,10 +363,13 @@ N 도 디스패치당 1만 올린다.
 
 ## ④ Report
 
-한 줄 요약: `정리 N · 보수 N · 신규 N · 재개 N · 승격 N · 대기(사람 리뷰) N · warn N`
-(`재개`·`승격` 은 ① 재개 스윕의 `resumed`·`escalated` 수).
+한 줄 요약: `정리 N · 보수 N · 신규 N · 재개 N · 승격 N · 막힘 N · 대기(사람 리뷰) N · warn N`
+(`재개`·`승격` 은 ① 재개 스윕의 `resumed`·`escalated` 수. `막힘` 은 ③-2 eligible 스캔의
+`blocked-summary:` 수 — 후보였는데 OPEN 블로커로 탈락한 건이다. 0 이어도 적는다).
 그 아래 **항목마다 번호를 적는다** — 숫자만으론 어느 이슈·PR 이 어디로 갔는지 다음 틱이 못 읽는다:
-`정리: #4801(bodat, PR #4810 머지) · 보수: PR #4812(bodat, rebase) · 신규: #4818(bodat) · 재개: #4772(bodat, 2/2) · 승격: #4803(bodat, hold:policy) · warn: #4799(bodat) dirty worktree`.
+`정리: #4801(bodat, PR #4810 머지) · 보수: PR #4812(bodat, rebase) · 신규: #4818(bodat) · 재개: #4772(bodat, 2/2) · 승격: #4803(bodat, hold:policy) · 막힘: #4986(bodat ← #4985 사람대기) · warn: #4799(bodat) dirty worktree`.
+검색 창 `warn:`(`검색 창 절단`·`검색 창 임박`)은 warn 줄에 그대로 옮긴다 — 창이 차면
+**가장 새 이슈부터** 후보 목록에서 조용히 사라지므로, 그 신호가 사라지면 큐가 죽어도 안 보인다.
 레포 짧은 이름 규칙은 `loop-status.sh` 와 같다(`owner/repo` 의 repo 를 소문자로 — bodat·bodac,
 `issue-runner` 만 `runner` 특례).
 warn 이 있으면 경로와 사유를 그 아래 나열.
@@ -373,7 +380,8 @@ warn 이 있으면 경로와 사유를 그 아래 나열.
 이전 틱 Report 의 같은 이슈 `토큰:` 수치 + 이번 보고치 (안 보이면 이번 보고치 그대로).
 누적이 `SOFT_TOKEN_BUDGET_PER_ISSUE` 초과면 그 줄에 **"소프트 예산 초과 —
 needs-human 승격 권고"** 를 명시하라 (보고만 — 라벨 부착·워커 중단 등 자동 조치 금지).
-모든 카운트가 0이면 "조용함" 한 줄만.
+모든 카운트가 0이면 "조용함" 한 줄만 — `막힘 N` 도 카운트다. 막힌 건이 있으면 조용한 틱이
+아니다(그 침묵이 이 항목을 만든 이유다).
 
 **파이프라인 스냅샷 (매 틱 필수).** 위 줄들 뒤에 `$SCRIPTS/loop-status.sh --post issue-runner --delta "<이 틱 한 줄 요약>"`(레포마다 고정 이슈 `루프 현황`(라벨 `loop-dashboard`) 본문도 덮어쓴다 — 깃헙만 보고 누가 들고 있고 루프가 마지막으로 언제 돌았는지 알게, #163) 를 실행해
 출력을 **그대로** 붙인다 — 카운터는 "이 틱에 한 일"만 말하고 무엇이 쌓여 있는지는

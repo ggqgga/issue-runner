@@ -4,6 +4,14 @@
 #       모든 블로커가 CLOSED (블로커 = 본문 "Blocked by #N" 라인의 N ∪ blocked-by:<N> 라벨의 N, OR·dedupe)
 # 정렬: P0 > P1 > P2 > 없음, 동순위는 오래된 순.
 # 주의: search API는 인덱스 지연이 있다 — 최종 재확인은 claim-issue.sh가 직접 API로 한다.
+#
+# 출력 갈래 (#247) — 두 스트림이 섞이지 않는다:
+#   · **stdout = 후보 JSON 배열 하나뿐.** 디스패처 파이프라인이 이걸 SSOT 로 읽으므로
+#     어떤 진단도 stdout 으로 새면 안 된다(한 바이트도 더하지 않는다).
+#   · stderr = 진단. 게이트에 탈락한 이슈마다 `blocked: <owner/repo>#<num> ← #<b>(<상태>)`,
+#     스캔 끝에 `blocked-summary: 막힘 N건 (사람대기 블로커 M건)`, 검색 창 경고는 `warn: `.
+#     ④ Report 가 이 셋을 그대로 옮긴다(SKILL.md ③-2 · ④) — 게이트 탈락이 조용히
+#     `continue` 로 빠지면 "15개 놀고 있는데 루프가 멍때린다" 로만 보인다.
 set -euo pipefail
 
 # 사용자 확인은 공유 헬퍼(gh-login.sh) (#131) — REST /user 503 폴백·형식 검증·재시도는
@@ -29,13 +37,59 @@ in_scope() {
 # 라벨명 하나("X -label:Y")로 오파싱해 항상 0건이 된다 (이슈 #21, GH_DEBUG=api 실측).
 # REST search/issues 직접 호출만 정상 동작. 출력은 기존 gh search --json 형태와
 # 동일하게 변환해 이후 파이프라인(repository.nameWithOwner/labels[].name/createdAt) 무수정.
-# sort=created·order=asc — 최종 정렬(sort_by)은 아래서 하지만, 후보가 per_page=50 을
+# sort=created·order=asc — 최종 정렬(sort_by)은 아래서 하지만, 후보가 창(SEARCH_WINDOW)을
 # 넘으면 "어떤 50개가 창에 담기는지"가 정렬 없인 best-match(관련도) 순 = 임의가 되어
 # 오래된 이슈가 창 밖으로 밀릴 수 있다. 창 자체를 오래된 순으로 고정한다.
-cands=$(gh api -X GET search/issues \
+#
+# 창 상한 두 개는 여기 한 자리에만 둔다 (#247). 막힌 이슈도 `agent-ready` 를 달고 창을
+# 차지하므로(파생 이슈는 블로커가 있어도 agent-ready 한 벌로 발행한다) 후보가 창을 넘으면
+# **가장 새 이슈부터** 조용히 안 보인다 — 그래서 total_count 를 함께 받아 창에 닿기 전
+# (SOFT)부터 말한다.
+SEARCH_WINDOW=50
+SEARCH_WINDOW_SOFT=40
+
+resp=$(gh api -X GET search/issues \
   -f q="user:$me is:open is:issue label:agent-ready -label:needs-human" \
-  -f per_page=50 -f sort=created -f order=asc \
-  -q '[.items[] | {repository: {nameWithOwner: (.repository_url | sub(".*/repos/"; ""))}, number, title, labels: [.labels[] | {name}], createdAt: .created_at}]')
+  -f per_page="$SEARCH_WINDOW" -f sort=created -f order=asc \
+  -q '{total_count: .total_count, items: [.items[] | {repository: {nameWithOwner: (.repository_url | sub(".*/repos/"; ""))}, number, title, labels: [.labels[] | {name}], createdAt: .created_at}]}')
+cands=$(printf '%s' "$resp" | jq -c '.items')
+total=$(printf '%s' "$resp" | jq -r '.total_count')
+
+case "$total" in
+  ''|*[!0-9]*)
+    # total_count 를 못 읽었다 — 창 상태 **미상**이다. 빈 결과·실패를 정상으로 둔갑시키지
+    # 않는다(PR#139): 침묵은 "창에 여유가 있다"는 주장이라 여기선 거짓말이 된다.
+    # 읽은 값은 한 줄로 접어 싣는다 — ④ Report 가 옮기는 warn 은 **한 줄**이어야 한다.
+    echo "warn: 검색 창 크기 미상 — total_count 를 못 읽었다(창 절단 여부 판정 불가): [$(printf '%s' "$total" | tr '\n' ' ')]" >&2 ;;
+  *)
+    if [ "$total" -gt "$SEARCH_WINDOW" ]; then
+      echo "warn: 검색 창 절단 — agent-ready 후보 ${total}건 > 창 $SEARCH_WINDOW, 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)" >&2
+    elif [ "$total" -gt "$SEARCH_WINDOW_SOFT" ]; then
+      echo "warn: 검색 창 임박 $total/$SEARCH_WINDOW" >&2
+    fi ;;
+esac
+
+# 블로커 조회는 상태와 라벨을 **한 호출**로 받는다 (#247) — 라벨은 탈락 사유(`<상태>`)를
+# stderr 에 적기 위한 것이라, 이것 때문에 gh 호출 수가 늘면 안 된다(틱 비용). 구분자는
+# 탭이다(GitHub 라벨명에는 탭이 없다).
+TAB=$(printf '\t')
+BLOCKER_Q='.state + "\t" + ([.labels[].name] | join(","))'
+
+# 블로커의 라벨 → 사람이 읽는 한 낱말. 사다리 뒤 단계가 이긴다(needs-human 이 최우선 —
+# 사람이 답해야 풀리는 게이트라 하위가 영원히 대기한다).
+blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
+  case ",$1," in
+    *",needs-human,"*)   printf '사람대기' ;;
+    *",agent:claimed,"*) printf '구현중' ;;
+    *",flow:verify,"*)   printf '검증대기' ;;
+    *",flow:ready,"*)    printf '마감대기' ;;
+    *",harvesting,"*)    printf '마감중' ;;
+    *)                   printf '대기' ;;
+  esac
+}
+
+blocked_n=0
+blocked_human=0
 
 out="[]"
 count=$(printf '%s' "$cands" | jq 'length')
@@ -107,24 +161,46 @@ while [ "$i" -lt "$count" ]; do
   # 블로커 조회 실패는 "진짜 미존재"와 "일시 오류(rate-limit·네트워크·auth)"를 구분한다:
   #   - 미존재(GraphQL "Could not resolve to an issue"): 영구 정체 방지 위해 게이트 무시(통과).
   #   - 그 외 오류: 아직 OPEN 인 블로커를 뚫지 않도록 이번 틱은 blocked 유지(다음 틱 재시도).
-  # (2>&1 병합: 성공 시 gh_out=상태값, 실패 시 gh_out=에러문. if 조건이라 set -e 안전.)
+  # (2>&1 병합: 성공 시 gh_out=상태+탭+라벨, 실패 시 gh_out=에러문. if 조건이라 set -e 안전.)
+  # 첫 OPEN 블로커에서 멈추는 break 는 유지한다 — 막혔다는 사실은 블로커 하나면 족하고,
+  # 둘째를 조회하면 호출 수가 는다.
   blocked=false
+  blocker_num=""
+  blocker_state=""
   for b in $blockers; do
-    if gh_out=$(gh issue view "$b" --repo "$repo" --json state -q '.state' 2>&1); then
+    if gh_out=$(gh issue view "$b" --repo "$repo" --json state,labels -q "$BLOCKER_Q" 2>&1); then
+      # 종료코드는 0인데 구분자가 없으면 **값 미상**이다 — 빈/깨진 출력을 유효값으로 받으면
+      # (예: 상태를 못 읽었는데 CLOSED 로 읽힘) 게이트가 증명 없이 열린다(PR#139).
+      case "$gh_out" in
+        *"$TAB"*) ;;
+        *)
+          echo "warn: $repo#$num blocked-by #$b 조회 형식 미상 — 이번 틱 blocked 유지(재시도): $gh_out" >&2
+          blocked=true; blocker_num="$b"; blocker_state="조회오류"; break ;;
+      esac
+      b_state=${gh_out%%"$TAB"*}
+      b_labels=${gh_out#*"$TAB"}
       # 블로커가 PR이면 gh issue view도 조회는 되지만 종료 상태가 CLOSED가 아니라
       # MERGED로 나온다(#1457 실측: #1446은 PR, state=MERGED) — MERGED도 종료로 인정.
-      case "$gh_out" in
+      case "$b_state" in
         CLOSED|MERGED) ;;
-        *) blocked=true; break ;;
+        *) blocked=true; blocker_num="$b"; blocker_state=$(blocker_state_of "$b_labels"); break ;;
       esac
     elif printf '%s' "$gh_out" | grep -qi 'could not resolve to an issue'; then
       echo "warn: $repo#$num blocked-by #$b 미존재 — 영구 정체 방지 위해 게이트 무시(통과)" >&2
     else
       echo "warn: $repo#$num blocked-by #$b 조회 일시 오류 — 이번 틱 blocked 유지(재시도): $gh_out" >&2
-      blocked=true; break
+      blocked=true; blocker_num="$b"; blocker_state="조회오류"; break
     fi
   done
-  [ "$blocked" = "true" ] && continue
+  if [ "$blocked" = "true" ]; then
+    # 탈락을 말한다 — 조용한 continue 는 ④ Report 를 "신규 0" 한 줄로 만든다(#247).
+    echo "blocked: $repo#$num ← #$blocker_num($blocker_state)" >&2
+    blocked_n=$((blocked_n + 1))
+    if [ "$blocker_state" = "사람대기" ]; then
+      blocked_human=$((blocked_human + 1))
+    fi
+    continue
+  fi
 
   prio=3
   case ",$labels," in
@@ -140,5 +216,13 @@ while [ "$i" -lt "$count" ]; do
     --argjson prio "$prio" --arg created "$created" \
     '. + [{repo:$repo, number:$num, title:$title, priority:$prio, createdAt:$created}]')
 done
+
+# 요약은 stderr 로 (stdout 은 후보 JSON 전용). 0 건도 말한다 — 침묵과 "막힌 게 없다"는
+# 다른 주장이고, ④ Report 의 `막힘 N` 은 매 틱 숫자가 있어야 읽힌다.
+if [ "$blocked_n" = 0 ]; then
+  echo "blocked-summary: 막힘 0건" >&2
+else
+  echo "blocked-summary: 막힘 ${blocked_n}건 (사람대기 블로커 ${blocked_human}건)" >&2
+fi
 
 printf '%s' "$out" | jq 'sort_by(.priority, .createdAt)'

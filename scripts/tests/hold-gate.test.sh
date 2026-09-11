@@ -104,9 +104,13 @@ chmod +x "$tmp/bin.pr/gh"
 # ── SUT 러너 — 각각 후보로 남으면 `pass`, 게이트에 걸리면 `block` 을 낸다 ────
 run_eligible() {
   local labels="$1" cands out n
+  # #247: eligible-issues.sh 의 검색은 items 와 함께 `total_count` 도 뽑는다
+  # (`-q '{total_count, items}'`) — 스텁이 돌려주는 형상도 그 `-q` 의 결과 형상이어야 한다.
+  # 창 경고는 stderr 로만 나가고 이 테스트는 stdout(후보 유무)만 보므로 값 자체는 무관하다.
   cands=$(jq -c -n --argjson l "$(names_json "$labels")" \
-    '[{repository: {nameWithOwner: "owner/repo"}, number: 7, title: "t",
-       labels: $l, createdAt: "2026-01-01T00:00:00Z"}]')
+    '{total_count: 1,
+      items: [{repository: {nameWithOwner: "owner/repo"}, number: 7, title: "t",
+               labels: $l, createdAt: "2026-01-01T00:00:00Z"}]}')
   out=$(cd "$cwd" && PATH="$tmp/bin.eligible:$PATH" STUB_CANDS="$cands" \
     bash "$DIR/eligible-issues.sh" 2>/dev/null)
   n=$(printf '%s' "$out" | jq 'length' 2>/dev/null)
