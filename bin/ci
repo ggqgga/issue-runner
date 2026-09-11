@@ -1931,4 +1931,30 @@ if grep -nF -- "ps -Ao pid,command | grep '[b]in/ci'" references/worker-template
   exit 1
 fi
 
+echo "[worker-template] WIP 커밋 규율 문면 검사 (#187)"
+# 커밋 트리거가 '완료된 단위' 하나뿐이면 TDD 사이클 중간에 죽은 워커는 커밋이 0이라
+# push 할 것이 없고, 미커밋 작업이 worktree 에 갇혀 그 이슈가 정체한다(cleanup-worktree.sh
+# 더티 가드가 제거를 보류 → 사람 개입). 아래 일곱 축이 한/영 양쪽에 살아 있어야 한다:
+# 규율 제목 · 트리거 (a) · 트리거 (b) · `WIP:` 접두 · 초록 요건의 예외 · 처분 · 그 근거.
+for tok in '**WIP 커밋 규율' \
+           '긴 단계에 들어가기 전' \
+           '마지막 커밋 이후 편집이 상당히 쌓였을 때' \
+           'WIP: <한 줄>' \
+           '초록 요건의 예외' \
+           '최종 PR 에 그대로 남긴다' \
+           'squash 머지'; do
+  grep -qF -- "$tok" references/worker-template.md \
+    || { echo "  ✗ references/worker-template.md 에 WIP 커밋 규율 문구 '$tok' 없음"; exit 1; }
+done
+for tok in '**WIP commit discipline' \
+           'before entering a long stage' \
+           'significant edits have piled up since your last commit' \
+           'WIP: <one line>' \
+           'exception to the green requirement' \
+           'left in the final PR as-is' \
+           'squash merge'; do
+  grep -qF -- "$tok" references/worker-template.en.md \
+    || { echo "  ✗ references/worker-template.en.md 에 WIP 커밋 규율 문구 '$tok' 없음"; exit 1; }
+done
+
 echo "CI pass"
