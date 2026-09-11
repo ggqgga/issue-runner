@@ -188,7 +188,7 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   기다린 것이라, 여기서 청소하면 방금 깨운 워커를 죽인다). 재개하지 않은 건이면
   살아있어도 **진행이 있는지** 확인하라 — 판정 입력은 경과 시간이 아니라 진행
   증거다(#200: 경과에는 워커가 통제할 수 없는 박스 전역 직렬 CI 큐 대기가 통째로
-  들어가, 실측 2건에서 진행 중인 워커를 죽일 뻔했다). claim 경과 시간을 확인하라 —
+  들어가, 실측 2건에서 진행 중인 워커를 죽일 뻔했다).
   `gh api repos/<repo>/issues/<num>/timeline --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed")] | last.created_at'`
   로 claim 시각을 구하고 (빈 응답이면 worktree 디렉토리 생성 시각으로 대체),
   `$SCRIPTS/timebox-check.sh <repo> <num> --claim-at <ISO8601>` 에 넘겨라 (`working` 은

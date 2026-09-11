@@ -106,7 +106,7 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
      안 됐다"고 단정해 재큐하지 마라. **큐에 직접 물어라** — 이 한 명령이 대기·실행·
      완료·미실행을 전부 구분해 준다:
      ```bash
-     ~/.claude/skills/issue-runner/scripts/ci-queue.sh wait "$(git rev-parse HEAD)" --timeout 540
+     ~/.claude/skills/issue-runner/scripts/ci-queue.sh wait "$(git -C <WT_PATH> rev-parse HEAD)" --timeout 540
      ```
      **이 `wait` 호출도 Bash 툴 `timeout: 600000` 으로 걸어라.** 툴 기본값은
      120000ms 라 그대로 치면 540초짜리 `wait` 가 120초에 잘려 **종료 코드를 영영 못
@@ -181,7 +181,7 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    안 끝나 이번 턴에서 결과를 못 보고 마쳐야 한다면, 마지막 메시지를 반드시
    `CI 대기 중 — <SHA 40자> <queued N|running|none>, 다음 할 일: <한 줄>` 형식으로
    남겨라. 상태 토큰은 지어내는 말이 아니라
-   `~/.claude/skills/issue-runner/scripts/ci-queue.sh status "$(git rev-parse HEAD)"`
+   `~/.claude/skills/issue-runner/scripts/ci-queue.sh status "$(git -C <WT_PATH> rev-parse HEAD)"`
    가 돌려주는 세 값 중 하나를 그대로 옮겨 적는 것이다:
    - `queued N` — 큐에서 N번째로 기다리는 중(옛 `대기열 N번째` 가 이 경우다).
    - `running` — 내 잡이 **이미 돌고 있다**. 이 상태엔 대기열 번호가 **없다** —

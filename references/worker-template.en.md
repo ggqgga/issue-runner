@@ -113,7 +113,7 @@ Procedure:
      just because you hit a tool timeout. **Ask the queue directly** — this one command
      distinguishes queued, running, finished and never-ran:
      ```bash
-     ~/.claude/skills/issue-runner/scripts/ci-queue.sh wait "$(git rev-parse HEAD)" --timeout 540
+     ~/.claude/skills/issue-runner/scripts/ci-queue.sh wait "$(git -C <WT_PATH> rev-parse HEAD)" --timeout 540
      ```
      **This `wait` call too must use the Bash tool `timeout: 600000`.** The tool default
      is 120000ms, so typing it as-is cuts a 540s `wait` off at 120s and you **never see
@@ -202,7 +202,7 @@ Procedure:
    `CI 대기 중 — <SHA 40자> <queued N|running|none>, 다음 할 일: <한 줄>` (the literal
    is Korean because the dispatcher matches it verbatim; `<한 줄>` is your next step in
    one line). The state token is not something you word yourself — copy whichever of the
-   three values `~/.claude/skills/issue-runner/scripts/ci-queue.sh status "$(git rev-parse HEAD)"`
+   three values `~/.claude/skills/issue-runner/scripts/ci-queue.sh status "$(git -C <WT_PATH> rev-parse HEAD)"`
    gives back:
    - `queued N` — waiting Nth in the queue (this is the old `대기열 N번째` case).
    - `running` — your job is **already running**. There is **no queue position** in this
