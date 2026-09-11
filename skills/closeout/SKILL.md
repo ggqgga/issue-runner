@@ -287,13 +287,30 @@ PR 은 closeout ①-b(반송 마커가 최신)·verify-runner(`flow:verify` 없�
 `createdAt` 이 아니라 **코멘트 배열의 마지막 매칭 인덱스**로 재는 규칙도 거기 있고
 `closeout-eligible.sh` 가 같은 자리를 부른다(로직 두 벌 금지).
 
-**`agent:claimed` 는 보조 게이트로 쓰지 않는다**(#196 3항 결정, 실측 근거):
+**`agent:claimed` 의 *존재*는 보조 게이트로 쓰지 않는다**(#196 3항 결정, 실측 근거):
 `reconcile.sh` 는 열린 PR 이 있는 이슈에서 `agent:claimed` 를 **떼지 않는다**(worktree 가
 사라지고 열린 PR 도 없을 때만 stale 로 뗀다). 그래서 ①-b 가 집어야 할 *진짜* 좌초
 CONFLICTING PR 도 그 라벨을 그대로 달고 있다 — 배제 조건으로 걸면 CONFLICTING 입양 레인이
 통째로 닫힌다. 반대 방향으로도 못 쓴다: 반송 직후 `closeout-redispatch`/`verify-redispatch`
 가 `agent:claimed` 를 뗀 뒤 디스패처가 새 워커를 붙일 때까지의 창에서는 **워커 레인
-소유인데 라벨이 없다**. 두 방향 모두 틀리므로 코멘트 마커 하나로 판정한다.
+소유인데 라벨이 없다**. 두 방향 모두 틀리므로 **입양·배제 판정은** 코멘트 마커 하나로 한다.
+
+**다만 그 라벨의 *부착 시각*은 쓴다 — 그건 다른 신호다**(#206 attempt 3, codex BLOCKER).
+존재는 "누군가 언젠가 집었다" 밖에 말하지 않지만, 부착 시각은 **이번 회차가 언제
+시작됐나**를 말한다. 반송 직후 디스패처가 붙인 claim 은 몇 분 전이고 좌초한 회차의
+claim 은 몇 시간 전이다. 이 신호가 필요한 이유: 진행 증거 ①(커밋 신선도)·②(CI 큐 티켓)는
+워커가 **이미 뭔가 남긴 뒤에만** 존재해서, 반송 직후 교체 워커가 디스패치됐지만 **첫 푸시
+전**인 창을 못 덮는다 — 그 창에서 `finish-classify.sh` 가 보는 값은 전부 *이전* attempt 의
+것이라 `stale_reverify` 가 나고, `closeout-redispatch` 가 **지금 일하고 있는 워커의
+`agent:claimed` 를 떼어낸다.** 그래서 진행 증거 ③ 은 `agent:claimed` 가 **지금 붙어 있고**
+마지막 부착이 `ISSUE_TIMEBOX_HOURS` 안이면 커밋이 없어도 `active` 다. 조회는
+`$SCRIPTS/claim-at.sh <repo> <이슈>` **한 자리**(타임라인의 마지막 매칭 인덱스로 부착 여부
+판정 — `bounce-state.sh` 와 같은 규율)이고, 그래서 2) 의 분류 호출이 이슈 번호를 함께 받는다
+(`finish-classify.sh <repo> <pr> [<이슈>]` — 안 주면 `closingIssuesReferences` 로 한 번 묻는다).
+상한이 `ISSUE_TIMEBOX_HOURS` 인 이유: 그 시간을 넘긴 claim 은 ① Reconcile 의
+`timebox-check.sh` 가 이미 회수 대상으로 보는 구간이라 여기서 살릴 이유가 없다 — 두 자리가
+같은 상수를 읽어 같은 경계를 쓴다. 조회 실패는 `none` 이 아니라 `unknown` 이다(조회 실패
+한 번으로 살아 있는 워커의 claim 을 떼는 것은 되돌릴 수 없다).
 
 **2) 위 1) 의 반송 게이트를 `ok` 로 통과했으면 `$SCRIPTS/finish-classify.sh <repo> <pr>` 로
 결정적 분류** — 이 헬퍼가 최신

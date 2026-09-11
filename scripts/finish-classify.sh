@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# finish-classify.sh <repo> <pr>
+# finish-classify.sh <repo> <pr> [<issue>]
 #
 # 완결 유실 갭 판별자 (#88). PR 의 코멘트·타임스탬프·CI 를 읽어 종료 상태를 아래
 # 다섯 중 하나로 stdout 에 분류한다 (SKILL ② Maintain 규칙4 가 이 결과로 4a/4b/4c
@@ -21,12 +21,21 @@
 #
 # **진행 증거 게이트 (#206).** 🔄 계열 두 갈래(stale_inline·stale_reverify)는 "워커가 죽었다"
 # 는 주장이다. 그 주장을 내기 전에 `progress-evidence.sh` 에 워커가 살아 있다는 증거가
-# 있는지 묻고, 있으면 `active` 로 떨어뜨린다. 증거는 두 가지다 —
+# 있는지 묻고, 있으면 `active` 로 떨어뜨린다. 증거는 세 가지다 —
 #   ① 최신 커밋이 STALL_MIN 이내   ② 그 head SHA 의 CI 티켓이 큐에 살아 있음
+#   ③ **현재 회차의 `agent:claimed` 가 ISSUE_TIMEBOX_HOURS 안에 붙어 아직 붙어 있음**
 # ②가 특히 중요하다: 박스 전역 직렬 CI 큐(#127) 대기는 워커가 통제할 수 없는 시간이라
 # 커밋이 한 시간 넘게 멈춰 있어도 워커는 살아 있다(#200 실측 72분·64분). 술어는
 # `progress-evidence.sh` **한 자리**에 있다 — `timebox-check.sh`(#200)가 부르는 그 자리다.
 # 두 벌로 복제하면 사람 눈에 안 보이는 두 번째 계산기가 다른 수를 센다.
+#
+# ③은 **첫 푸시 전 창** 전용이다(#206 attempt 2 codex BLOCKER). ①②는 워커가 이미 뭔가
+# 남긴 뒤에만 존재하는 증거라, 반송 직후 교체 워커가 디스패치됐지만 아직 아무것도 push
+# 하지 않은 구간에서는 둘 다 없다 — 그때 이 파일이 보는 값(판정 시각·head 시각)은 전부
+# **이전 attempt** 의 것이고 `STALE_FINISH_MIN` 을 넘겨 `stale_reverify` 가 난다. 그러면
+# `closeout-redispatch` 가 **지금 일하고 있는 워커의 `agent:claimed` 를 떼어낸다.**
+# 그 창을 덮는 유일한 신호가 "이번 회차가 언제 시작됐나" = `agent:claimed` 부착 시각이고,
+# 조회는 `claim-at.sh` **한 자리**다(존재가 아니라 시각을 쓰는 이유는 그 파일 주석 참조).
 #
 # 판정 실패(헬퍼가 `unknown` 이거나 아예 못 돔)는 "증거 없음" 이 **아니다** — 그 방향으로
 # 접으면 조회 실패 한 번에 살아 있는 워커의 브랜치를 채간다(되돌릴 수 없는 손해). 그래서
@@ -72,8 +81,14 @@
 #                      빈 값/파싱 불가 = **못 얻음**. 🔄 계열 갈래(#110 스테일 클록)에선
 #                      종전대로 epoch 0 으로 degrade 하지만, `✅` 갈래(#171 머지 게이트)
 #                      에선 증명 실패이므로 done_verdict 를 내지 않고 active 다.
+#   FC_ISSUE          연결 이슈 번호 — 세 번째 위치 인자의 env 판(진행 증거 ③).
+#                      둘 다 없으면 `gh pr view --json closingIssuesReferences` 로 한 번 묻는다.
+#   FC_CLAIMED_AT     `agent:claimed` 부착 시각(ISO8601) 또는 `none`/`unknown` —
+#                      claim-at.sh 실조회 대체. **설정돼 있으면 실조회로 새지 않는다**
+#                      (픽스처 테스트의 네트워크 무접속을 이 변수 하나가 지킨다).
 #   FC_NOW            현재 epoch(초) — date 대체
 #   STALE_FINISH_MIN  시간버퍼(분, 기본 30)
+#   ISSUE_TIMEBOX_HOURS  claim 신선도 상한(시간, 기본 1) — progress-evidence.sh 가 읽는다
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -84,6 +99,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 repo=${1:?repo}
 pr=${2:?pr_num}
+issue=${3:-${FC_ISSUE:-}}
 
 stale_min=${STALE_FINISH_MIN:-30}
 stale_sec=$((stale_min * 60))
@@ -280,6 +296,35 @@ is_clean() {
 # 반환: 0 = 진행 증거 있음(또는 **판정 불가**) → 살아 있다고 본다. 1 = 증거 없음.
 # 판정 불가를 "증거 없음" 으로 접지 않는 이유는 파일 머리 주석 참조(되돌릴 수 없는 쪽을
 # 증명 없이 열지 않는다).
+# 진행 증거 ③ 의 입력 — 현재 회차의 `agent:claimed` 부착 시각을 헬퍼 어휘로 낸다.
+# 세 값 그대로: `<ISO8601>` / `none`(붙어 있지 않음·연결 이슈 없음) / `unknown`(조회 실패).
+# **여기서도 실패를 `none` 으로 접지 않는다** — 접으면 조회 실패 한 번이 "이번 회차는 시작된
+# 적 없다" 로 둔갑해 살아 있는 워커의 claim 을 떼어낸다(회차1·회차2 BLOCKER 와 같은 가족).
+#
+# 이 조회는 **🔄 계열 갈래를 내기 직전에만** 돈다(has_progress 안에서 불린다) — 정상 PR 은
+# ✅ 갈래에서 이미 빠져나가므로 스윕 한 틱의 gh 호출이 PR 수만큼 늘지 않는다.
+claimed_arg() {
+  # 주입이 있으면 실조회로 **새지 않는다**. 빈 문자열 주입은 `none` 으로 본다
+  # (호출자가 "claim 증거 없음" 을 뜻한 것 — 실패는 `unknown` 이라는 단어로 말한다).
+  if [ -n "${FC_CLAIMED_AT+x}" ]; then
+    printf '%s' "${FC_CLAIMED_AT:-none}"
+    return 0
+  fi
+  local iss="$issue" out rc=0
+  if [ -z "$iss" ]; then
+    # 연결 이슈를 모르면 한 번 묻는다. **조회 실패와 "연결 이슈 없음" 을 가른다**:
+    # 실패는 unknown(판정 불가), 빈 결과는 none(재디스패치할 이슈 자체가 없는 PR).
+    iss=$(gh pr view "$pr" --repo "$repo" --json closingIssuesReferences \
+      -q '.closingIssuesReferences[0].number // ""' 2>/dev/null) || { printf 'unknown'; return 0; }
+  fi
+  [ -n "$iss" ] || { printf 'none'; return 0; }
+  out=$("$SCRIPT_DIR/claim-at.sh" "$repo" "$iss" 2>/dev/null) || rc=$?
+  # 비0 종료·무출력(실행 비트 누락 exit 126 포함) = 조회 실패. 빈 값을 `none` 으로
+  # 정규화하면 헬퍼가 조용히 degrade 한 것이 증거 부재로 둔갑한다(PR#173 교훈).
+  if [ "$rc" != 0 ] || [ -z "$out" ]; then printf 'unknown'; return 0; fi
+  printf '%s' "$out"
+}
+
 has_progress() {
   local out rc=0
   # 커밋 시각은 **이미 파싱에 성공한 것만** 넘기고, 아니면 헬퍼의 입력 계약대로 문자열
@@ -302,7 +347,8 @@ has_progress() {
     commit_arg="$head_at"
   fi
   out=$("$SCRIPT_DIR/progress-evidence.sh" --now "$now" \
-    --commit-at "$commit_arg" --head-sha "$sha_arg" 2>/dev/null) || rc=$?
+    --commit-at "$commit_arg" --head-sha "$sha_arg" \
+    --claimed-at "$(claimed_arg)" 2>/dev/null) || rc=$?
   case "${out%% *}" in
     progress) return 0 ;;
     none)     [ "$rc" = 0 ] && return 1; return 0 ;;
