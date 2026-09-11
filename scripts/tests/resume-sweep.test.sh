@@ -141,6 +141,14 @@ case "${1:-} ${2:-}" in
     labels_json "$(cat "$STUB_PR_LABELS")"; exit 0 ;;
   "search issues")
     [ -z "${STUB_SEARCH_FAIL:-}" ] || { echo "gh: search boom" >&2; exit 1; }
+    # 실측 재현(#236): gh search CLI 는 **질의 문자열 안의** `is:` 한정자를 오파싱해
+    # rc=0 · 빈손을 돌려준다 — 실패가 아니라 "0건" 으로 보이는 것이 이 버그의 해악이다.
+    # (2026-09-12 gh 2.95.0, --owner ggqgga: `label:needs-human` 단독 → 3개 레포 /
+    #  `label:needs-human is:open` · `… is:issue` · 둘 다 → 각각 0건 / `--state open`
+    #  플래그 → 정상.) 스텁이 이 오파싱을 흉내 내야 옛 질의로 되돌렸을 때 빨개진다.
+    for _a in "$@"; do
+      case "$_a" in *"is:"*) exit 0 ;; esac
+    done
     cat "$STUB_SEARCH"; exit 0 ;;
 esac
 exit 1
@@ -477,6 +485,26 @@ echo '[]' > "$tmp/ladder.json"; echo '[]' > "$tmp/human.json"
 LL=3; awk 'BEGIN{for(i=1;i<=2;i++) print "owner/r" i}' > "$tmp/search"
 run
 check "탐색 상한 미만: warn 없음"        "$(no_ev warn)"
+
+# ── ㉒-b (#236) 폴백 질의는 `is:` 한정자를 쓰지 않는다 ─────────────────────
+# 옛 질의(`label:needs-human is:open is:issue`)는 gh search 오파싱으로 항상 빈손이라,
+# 스윕이 레포 0개를 훑고 exit 0 · 무출력으로 끝나 "멈춘 건 없음" 과 구분되지 않았다.
+# 닫힌 이슈·PR 배제라는 **의도는 그대로**이고 수단만 `--state open` 플래그로 옮긴다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+WORKDIR="$tmp/noscope"
+printf 'owner/repo\n' > "$tmp/search"
+run
+check "폴백 질의: is: 한정자 없음"       "$(none 'search issues .*is:')"
+check "폴백 질의: --state open 플래그"   "$(some 'search issues .*--state open')"
+check "폴백 열거: 레포를 실제로 훑는다"  "$(some 'issue list')"
+check "폴백 열거: 재개까지 간다"         "$(has_ev resumed)"
+check "폴백 열거: exit 0"                "$([ "$RC" = 0 ] && echo ok || echo no)"
+
+# ── ㉒-c (#236) 스코프 갈래(.loop/repos 있음)는 미변경 — 탐색을 아예 안 부른다 ──
+setup "needs-human,hold:ladder,agent-ready" 200 0
+run
+check "스코프 갈래: search 미호출"       "$(none 'search issues')"
+check "스코프 갈래: 재개까지 간다"       "$(has_ev resumed)"
 
 # ── ㉓ 정상 경로 exit 0 ───────────────────────────────────────────────────
 setup "needs-human,hold:ladder,agent-ready" 200 0
