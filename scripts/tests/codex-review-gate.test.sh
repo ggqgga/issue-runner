@@ -135,6 +135,36 @@ srow "구조 줄 reviewed 가 닫는 코드펜스 앞(마지막 비어있지 않
 REVIEW_STATUS: reviewed
 ```'
 
+# ── 계약 줄의 **위치**: 꼬리 artifact 만 벗기고 남은 마지막 한 줄이어야 한다 ──
+# attempt4 반송(#207): 판정 창이 "빈 줄을 지운 뒤의 마지막 3줄"이라 계약 줄 뒤에 임의 산문이
+# 두 줄까지 와도 통과했다 — 허용하려던 것(빈 줄)은 파이프라인 첫 단계가 이미 지웠고, 실제로
+# 통과한 것(산문)은 계약이 금지한 것이다. 그래서 **"못 봤다"고 스스로 적은 응답이 CLEAN** 으로
+# 머지 게이트를 지났다. 아래 6행이 창의 정의를 전수로 못박는다: 꼬리에서 벗기는 것은 빈 줄과
+# 닫는 코드펜스**뿐**이고, 그 뒤 남은 마지막 한 줄이 계약 줄이어야 한다.
+srow "계약 줄 뒤 산문 1줄 = 계약 위반(미산출)" NONE \
+  'REVIEW_STATUS: reviewed
+Please re-run with repository access.'
+srow "계약 줄 뒤 산문 2줄 = 계약 위반(attempt4 반송 원문 픽스처)" NONE \
+  'REVIEW_STATUS: reviewed
+I could not inspect the diff because the execution tool was unavailable.
+Please re-run with repository access.'
+srow "계약 줄 + 뒤따르는 빈 줄(꼬리 artifact — 판정 유지)" CLEAN \
+  '결함 없음.
+REVIEW_STATUS: reviewed
+
+'
+srow "계약 줄 + 닫는 코드펜스(꼬리 artifact — 판정 유지)" CLEAN \
+  '결함 없음.
+REVIEW_STATUS: reviewed
+```'
+srow "계약 줄 + 빈 줄 + 닫는 코드펜스(꼬리 artifact — 판정 유지)" CLEAN \
+  '결함 없음.
+REVIEW_STATUS: reviewed
+
+```
+'
+srow "계약 줄이 유일한 줄(판정 유지)" CLEAN 'REVIEW_STATUS: reviewed'
+
 # ── 구조 줄 no-basis ────────────────────────────────────────────────────────
 # 리뷰어가 스스로 "근거 없음"을 구조로 밝힌 경우 — 산문 해석 없이 곧장 미산출.
 srow "구조 줄 no-basis (#207 원문 산문 동반)" NONE \

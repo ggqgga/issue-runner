@@ -176,14 +176,28 @@ p3=$(grep -c -E '^\s*[-*]\s.*\[P[3-9]\]' "$REVIEW")
 # ([P1] 설명문이 산문 패턴에 우연히 걸려 발견이 지워짐)과는 성격이 다르다: 여기서 접히는 것은
 # 리뷰어가 **출력 계약 자체를 어긴** 응답뿐이고, 계약을 지킨 발견은 산문과 무관하게 그대로 산다.
 #
-# 위치 판정은 "마지막 줄"이다 — 빈 줄과 닫는 코드펜스 같은 꼬리 artifact 를 허용하려고 마지막
-# 비어있지 않은 3줄 창 안에서 찾는다(계약문도 같은 예외를 명시한다). 형식 자체는 관대하지
-# 않다: 키·구분자·값이 STATUS_* 와 정확히 같아야 하고 값 뒤 꼬리 텍스트는 형식 위반이다.
+# 위치 판정은 "마지막 줄"이다 — 꼬리에서 벗기는 것은 **빈 줄과 닫는 코드펜스뿐**이고(계약문이
+# 명시한 그 두 가지 예외), 그렇게 벗기고 남은 **마지막 한 줄**이 계약 줄이어야 한다. 창을 N줄로
+# 두면 안 된다: 계약 줄 뒤에 임의 산문이 와도 통과해 "못 봤다"고 스스로 적은 응답이 CLEAN 으로
+# 샜다(#207 attempt4 반송 — 빈 줄은 이미 지워진 뒤라 3줄 창이 허용한 것은 artifact 가 아니라
+# 산문 2줄이었다). 형식 자체도 관대하지 않다: 키·구분자·값이 STATUS_* 와 정확히 같아야 하고
+# 값 뒤 꼬리 텍스트는 형식 위반이다. 계약 줄 뒤 산문은 곧 미산출이므로, 구 `LEGACY_UNABLE`
+# 산문 휴리스틱이 계약 경로에 없어도 그 문구를 단 응답은 여기서 형식으로 접힌다.
 if [ "$STATUS_CONTRACT" = 1 ]; then
-  status=$(grep -v '^[[:space:]]*$' "$REVIEW" 2>/dev/null | tail -3 \
-    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+  last_line=$(awk '
+    { line[NR] = $0 }
+    END {
+      for (i = NR; i >= 1; i--) {
+        s = line[i]
+        sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s)
+        if (s == "") continue                                 # 빈 줄 — 꼬리 artifact
+        if (s ~ /^(```+|~~~+)[A-Za-z0-9_.+-]*$/) continue     # 닫는 코드펜스 — 꼬리 artifact
+        print s; exit
+      }
+    }' "$REVIEW" 2>/dev/null)
+  status=$(printf '%s\n' "$last_line" \
     | grep -E "^${STATUS_KEY}:[[:space:]]+(${STATUS_REVIEWED}|${STATUS_NO_BASIS})$" \
-    | tail -1 | sed -e "s/^${STATUS_KEY}:[[:space:]]*//")
+    | sed -e "s/^${STATUS_KEY}:[[:space:]]*//")
   case "$status" in
     "$STATUS_REVIEWED") : ;;   # 계약 충족 — 아래 항목 집계가 verdict 를 낸다
     "$STATUS_NO_BASIS")
