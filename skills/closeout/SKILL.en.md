@@ -352,10 +352,23 @@ So ② Pick must run a candidate through this section **before** picking it. It 
 ①-b — `--paginate` lives **inside** that helper, do not pass it as an argument). If that call
 exits 1, the state is **unproven** — do not let it through; go to *ambiguous* in 3) below.
 
-- **Hold boundary** = the **last matching index** among comments that either start with
-  `마감 검증: ⚠ 보류` or contain `<!-- hold-note: `. Measure by **comment array index**, not
-  `createdAt` — GitHub comment timestamps are second-granular and cannot order two comments made in
-  the same second (the same idiom `closeout-eligible.sh`'s bounce-marker net uses).
+**Pin the hold, the marker and the verdict each to an index — the latest one wins.** Do not put an
+"does it exist" test at the front of the branch chain; compare indices (#225 nailed this spot — an
+existence test in front makes the later branches unreachable).
+
+- **Hold boundary** = the **last matching index** among comments that start with
+  `마감 검증: ⚠ 보류` or `머지 판정: ⚠ 보류`, or contain `<!-- hold-note: `. A worker-stamped
+  `머지 판정: ⚠ 보류` is the same boundary — its release is judged by this section too
+  (#174 absorbed). Measure by **comment array index**, not `createdAt` — GitHub comment timestamps
+  are second-granular and cannot order two comments made in the same second (the same idiom
+  `closeout-eligible.sh`'s bounce-marker net uses).
+- **Redispatch marker** = the **last matching index** among comments starting with
+  `재디스패치: #<issue>`, the marker the *correction* row in 3) below leaves.
+- **Completion verdict comment** = a comment **starting with** `머지 판정: ✅` or `마감 검증: ✅`,
+  and **those two only**. `머지 판정: 🔄` (in progress) is what a worker leaves at handoff and is
+  **not** a completion; the `⚠ 보류` forms are not completions either — they advance the **hold
+  boundary** above. Lumping the three together lets a worker's one-line handoff comment leak
+  through as a resolution and a half-fixed PR gets merged.
 - **Compute the boundary per source, in that source's own array.** An index only means something
   inside its own array, so a PR-array index cannot be applied to the issue array — since 2) below
   also reads the linked issue, recompute the issue-side boundary in the **issue's comment array**
@@ -365,47 +378,109 @@ exits 1, the state is **unproven** — do not let it through; go to *ambiguous* 
   `closeout-blocked` writes `<!-- hold-note: <reason> -->` to **both** the PR and the issue, so in
   the normal shape both sides have a boundary.
 - If no such comment exists (on the PR) → there was no hold → go straight to ② Pick.
-- **Resolved?** In the PR array, after that index, if ⑴ a comment starting with `마감 검증: ✅`
-  exists, or ⑵ the head commit time from `$SCRIPTS/pr-head-at.sh <repo> <pr>` is **later** than that
-  hold comment's `createdAt` (i.e. a new commit landed after the hold) → resolved → go to ② Pick
-  (③-1 runs normally).
-- **Exception to ⑴ — `마감 검증: ✅ 기각 승계`.** If that ✅ is the succession marker left by the
+
+**Resolved? — only a new completion verdict resolves (#198 10:11/P1 axis①).** In the PR array, if
+the **completion-verdict comment's index > `max(hold boundary, redispatch marker)`** (i.e. a new
+completion verdict landed after the hold **and** after the last bounce) → **resolved** → go to
+② Pick (③-1 runs normally). The comparison is against `max(hold boundary, redispatch marker)` and
+not the hold boundary alone because a ✅ **earlier** than the marker is a verdict on the pre-bounce
+code — counting it as a resolution the moment it clears the hold boundary reopens the very same
+hole through a side door.
+
+- **Exception — `마감 검증: ✅ 기각 승계`.** If that ✅ is the succession marker left by the
   *rejected* branch in 3), treat the hold as resolved but **still start ③ from step 2 (merge)**. The
   code is still unchanged, so if the merge failed or was interrupted and the PR survives into the
   next tick, re-running ③-1 **reproduces the same `[P1]`** and the hold↔release loop this section
   exists to stop runs one more lap. The succession marker *is* the step-1 completion marker
   (isomorphic to ① Reconcile's marker table).
-- If `pr-head-at.sh` exits 1 (no output), do **not** read that as "no new commit" — it means the
-  value **could not be obtained**. Resolution is unproven, so treat it as unresolved and go to 2)
-  (fail-closed — same direction as ①-b).
-- Neither of the two → **unresolved hold**. But **do not bounce a correction that was already
-  redispatched, a second time (idempotent — #198 bounce round 3/P1).** If a comment starting with
-  `재디스패치: #<issue>` (the same marker the *correction* row in 3) below leaves) already exists
-  after this hold boundary, reuse the **same predicate** the `stale_reverify` row uses ("if the
-  head commit is fresh, it falls to `active` even with a stale comment, so a live attempt-N+1
-  worker is not misclassified") to judge "was there worker activity after that marker" — no new
-  helper: re-compare the `pr-head-at.sh` head-commit time already obtained above against that
-  marker's `createdAt`. If the head commit is **not later** than the marker (no new commit since
-  the marker), **leave this tick alone** — do not re-post the marker and do not re-call
-  `$SCRIPTS/transition.sh closeout-redispatch`. ①-b's idempotent-marker clause only says "if the
-  marker already exists and no new commit/verifier comment has landed since, do not repost the
-  **comment**" — it does **not** block re-calling the transition. Without this check, every tick
-  the ①-b sweep classifies the same unchanged-code PR as `done_verdict` and routes it back here,
-  and each re-call of `closeout-redispatch` strips `agent:claimed` from whatever live attempt-N+1
-  worker was dispatched in the meantime (measured on the verify lane — the whole window from
-  dispatch-wait through implementation time was a re-call window every tick). If the head commit
-  **is later** than the marker (a new commit landed), that only proves the new worker has
-  **started** — not that it has **finished**. Conflating "started" with "finished" into one signal
-  (the first commit) lets a half-done commit get picked (#198 review/P1). In this case too,
-  **leave this tick alone** — stay `active`, do not re-post the marker, and do not re-call
-  `closeout-redispatch`. The wait ends when a **new completion verdict** lands — the redispatched
-  worker's own fresh `머지 판정: ✅` posted **after** this marker — at which point `finish-classify`
-  independently classifies the PR as `done_verdict` (①-b's `done_verdict` row), and ①-c re-enters
-  normally, joining the "Resolved?" path above (no new judgment rule invented — the existing
-  `done_verdict` classification itself is the completion signal). If no such marker exists at all
-  (first pass through this section) → go to 2).
 
-**2) Identify the release decision comment.** Among comments **after that source's own** hold
+**A new commit is not a resolution — it is a start signal (#198 review/P1 + 10:11/P1 axis①).** If
+the head commit time from `$SCRIPTS/pr-head-at.sh <repo> <pr>` is **later** than the `createdAt` of
+the `max(hold boundary, redispatch marker)` comment, that only proves somebody has **started** —
+not that anyone has **finished** → stay **`active` (untouched)** and **leave this tick alone**. Do
+not re-post the marker and do not re-call `$SCRIPTS/transition.sh closeout-redispatch`. This is the
+**same predicate** the `stale_reverify` row uses (if the head commit is fresh it falls to `active`
+even with a stale comment, so a live attempt-N+1 worker is not misclassified), and it invents no
+new helper — it reuses the `pr-head-at.sh` value already obtained.
+
+- **This branch used to be a resolution** — "head commit later than the hold → resolved → ② Pick"
+  fired **upstream**, so the idempotency branch below and its "started ≠ finished" rule were
+  **never even reached**. The moment a redispatched worker pushed its first commit, a half-fixed PR
+  went straight to ② Pick. The branch **order is therefore part of the contract**: read
+  **resolution (completion verdict) → start (new commit) → idempotency**, in that order only.
+- The **only** thing that ends the wait is the resolution test above. Once a new completion verdict
+  lands, `finish-classify` independently classifies the PR as `done_verdict` (①-b's `done_verdict`
+  row), so ①-c re-enters normally and joins the resolution path — no new judgment rule is invented.
+  If a completion verdict never lands, that is a stall, and surfacing it belongs to
+  `loop-status.sh`'s stop-mirror warn (#265), not here.
+- If `pr-head-at.sh` exits 1 (no output), do **not** read that as "no new commit" — it means the
+  value **could not be obtained**. Resolution is unproven, so treat it as unresolved and read on
+  (fail-closed — same direction as ①-b).
+
+**Already bounced? Then do not bounce again — but split on "did the transition land", not "does the
+marker exist" (idempotent, #198 bounce round 3/P1 + 10:11/P1 axis②).** If the **redispatch marker
+index > hold boundary** (a bounce for this hold already went out), do not go untouched on the
+marker alone — do one **transition-effect readback**: does the linked issue **currently** carry a
+worker-lane label (`agent-ready` or `agent:claimed`)?
+
+- **Yes** → the transition landed → the worker lane owns this one → **leave this tick alone**
+  (`active`, untouched). Do not re-post the marker and do not re-call `closeout-redispatch`. ①-b's
+  idempotent-marker clause only says "if the marker already exists and no new commit/verifier
+  comment has landed since, do not repost the **comment**" — it does **not** block re-calling the
+  transition. Without this check, every tick the ①-b sweep classifies the same unchanged-code PR as
+  `done_verdict` and routes it back here, and each re-call of `closeout-redispatch` stripped
+  `agent:claimed` from whatever live attempt-N+1 worker was dispatched in the meantime (measured on
+  the verify lane — the whole window from dispatch-wait through implementation time was a re-call
+  window every tick).
+- **Neither label** → the marker stands but **the transition did not** (in the marker-first order
+  only the transition failed, or it was reverted later). Left alone, the issue never gets
+  `agent-ready` back and no worker ever comes (permanent stall). The marker is already up, so **do
+  not re-post it — re-call only the transition**:
+  `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`. If that fails again it lands in
+  the **same cell** as a marker-posting failure: put
+  `BLOCKED: 전이 실패 재디스패치 PR #<pr>(<repo_short>) — <one line of stderr>` in ④ Report and
+  leave the PR's state unchanged (retried next tick — the unresolved hold is still there, so
+  `active`/`done_verdict` routes it back into this section next tick). **Why both failures must
+  land in the same cell**: covering only the marker failure with a retry and not the transition
+  failure is exactly the **asymmetry** that makes the latter stall silently forever — the marker is
+  in `BOUNCE_MARKERS`, so `closeout-eligible.sh` drops the PR too and nobody picks it up.
+- **Order is contract** — the resolution test above runs **before** this branch. If this branch ran
+  first, then after a worker finished, stamped `머지 판정: ✅` and had its lane labels cleaned up,
+  "no label" would be misread as "the transition failed" and a finished PR would be bounced again.
+  The completion verdict after `max(hold boundary, redispatch marker)` filters that out first.
+- **If there is no linked issue** there is no label to read and no lane to bounce to → send it to
+  the human on the **same path as the *ambiguous* row** in 3) below.
+- If no such marker exists at all (first entry into this section) → go to 2).
+
+**2) Did the release actually happen? — decision comment ∧ labels absent (a conjunction, #174
+absorbed).** To treat an unresolved hold as void and move on to the direction call,
+**both must hold**:
+
+- ⓐ **there is a decision comment after the window** — identified by the rules below, and
+- ⓑ **neither the issue nor the PR currently carries `needs-human`·`hold:*`** — i.e. the human
+  actually let go.
+
+If both are true, that `⚠ 보류` no longer counts as the latest verdict (void) → go to the direction
+call in 3). **If either is false, the hold stands** (fail-closed — if it is not proven, do not open
+it):
+
+- ⓑ false (**the labels are still on**) → the human is still holding it → **leave it untouched**.
+  Do not re-call the transition (it is already held; the call would change nothing). This is true
+  even when a decision comment is already there — while the labels remain, the human has not let go.
+- ⓐ false (**labels removed with no decision comment**) → go to *ambiguous* in 3). The
+  `closeout-blocked` called there re-attaches the labels, and that re-attachment **is** the hold
+  standing. Stalling like this is the intended outcome; making the stall visible is not this
+  section's job but `loop-status.sh`'s stop-mirror warn (#265).
+
+**Timeline event queries, attach↔release pairing, and `pr-hold-released-at.sh` are not used.** #174
+went four rounds on that approach (enumerating label names (A) only moved the problem to
+enumerating event pairs (B)) and the human retired it — PR #182's code is not imported. The two
+conditions above are decided from **the comment array and the current labels alone**.
+
+Once it is void, **the direction call is exactly the rules in 3)** — rejected → ② Pick (never
+re-run ③-1), correction → `closeout-redispatch` + bounce marker, ambiguous → `closeout-blocked`.
+
+**Identify the decision comment.** Among comments **after that source's own** hold
 boundary index (computed by 1)'s "per source" rule), a comment is a decision candidate if it is
 either of the following; take the **last matching index**:
 
@@ -482,6 +557,38 @@ review and regression comparison:
 | **Correction release** | `마감 검증: ⚠ 보류` on the PR; on the issue `재심: 좁힌다 — … fix it like this <!-- policy-review: resumed --><!-- bodat:worker -->`; no new commit, no new `마감 검증: ✅` | **no ② Pick** · `closeout-redispatch` + `재디스패치:` marker comment |
 | **Rejection release** | same shape, but the decision reads `재심: 판정 기각 — 원안 그대로 머지, 코드 변경 없음` | **② Pick** · **no ③-1 re-run** (③ starts at step 2) · `마감 검증: ✅ 기각 승계` marker |
 | **Ambiguous** | the decision is `이거 왜 이렇게 짰나요?` (a question only), or there is no decision comment at all | `closeout-blocked --reason policy` · **no ② Pick** |
+
+**Exhaustive grid — `want` column and `origin/main` comparison.** This is a *narrowing* change, so
+a green grid of one's own is not evidence (PR#296's lesson: feed the same inputs to the
+`origin/main` judge side by side, find every flipped cell exhaustively, and pin it in the `want`
+column). `origin/main` has **no ①-c section at all**, so a PR whose hold labels were removed passes
+`closeout-eligible.sh` and goes straight to ② Pick — the main column is `② Pick` on every row, and
+the real effect of the narrowing must be read from the **`attempt5` (this branch at the 10:11
+bounce) → `want`** comparison. The `뒤집힘` column is what this round closes.
+
+`h`=hold boundary · `r`=redispatch marker · `f`=completion verdict comment (`머지 판정: ✅` ·
+`마감 검증: ✅`) · `c`=head commit is later · `L`=linked issue currently has a worker-lane label
+(`agent-ready`∪`agent:claimed`) · `H`=issue/PR currently has `needs-human`·`hold:*` ·
+`D`=decision comment after the window exists.
+
+| # | input | `origin/main` | `attempt5` | `want` | 뒤집힘 |
+|---|---|---|---|---|---|
+| 1 | no `h` | ② Pick | ② Pick | ② Pick | — |
+| 2 | `h`, `f > max(h,r)` | ② Pick | ② Pick | ② Pick | — |
+| 3 | `h`, `c` only (no `f`), no `r` | ② Pick | **② Pick** | **`active`** | ✅ axis① |
+| 4 | `h`, `r > h`, `c` (new commit after marker), no `f`, `L` present | ② Pick | **② Pick** (upstream ⑵ fires first, never reaching "started ≠ finished") | **`active`, untouched** | ✅ axis① |
+| 5 | `h`, `r > h`, no `c`, `L` present | ② Pick | `active`, untouched | `active`, untouched | — |
+| 6 | `h`, `r > h`, no `f`, **no `L`** (transition failed/lost) | ② Pick | **`active` untouched → permanent stall** (no worker ever comes) | **re-call only the transition, no re-post** · on failure `BLOCKED: 전이 실패 재디스패치` | ✅ axis② |
+| 7 | `h`, marker posting failed (transition not called) | ② Pick | `BLOCKED` · state unchanged · retried next tick | same | — |
+| 8 | `h`, no `r`, `D` present, no `H` | ② Pick | direction call in 3) | direction call in 3) | — |
+| 9 | `h`, no `r`, `D` present, **`H` present** (labels still on) | ② Pick | **proceeds to the direction call** (② Pick if rejected) | **hold stands · untouched** | ✅ axis③ |
+| 10 | `h`, no `r`, **no `D`**, no `H` | ② Pick | ambiguous → `closeout-blocked` | same (= hold stands) · the stall is #265's warn | — |
+| 11 | `h`, decision comment **on the issue only** | ② Pick | adopt the side that has one | same | — |
+| 12 | `h`, PR and issue decisions **disagree** | ② Pick | ambiguous | same | — |
+| 13 | `h`, `pr-comments.sh` query failed | ② Pick | ambiguous (quotation exempt) | same | — |
+| 14 | `h`, `f` exists but **`f < r`** (✅ earlier than the marker) | ② Pick | **resolved → ② Pick** | **`active`** (must be after `max(h,r)`) | ✅ axis① |
+| 15 | release of a worker-stamped `머지 판정: ⚠ 보류` | ② Pick | **not counted as a boundary → ② Pick** | counted → 2) conjunction → 3) direction call | ✅ axis③ |
+| 16 | `h`, only a `머지 판정: 🔄` follows (not `f`) | ② Pick | **leaks through as a completion** | **not a completion** → `active`/idempotency branch | ✅ axis① |
 
 ## ② Pick — 1 PR at a time (MAX_CLOSEOUT=1, concurrency 1)
 
