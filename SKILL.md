@@ -188,8 +188,15 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 읽지도 쓰지도 않는다(append-only 라 남의 편집을 덮어쓸 일이 없다). 정지 라벨은 이슈와
 **연결된 열린 PR 양쪽**에 미러돼 있으므로 재개·승격은 PR 라벨까지 함께 되돌린다 — 안 그러면
 PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·closeout-pick)가 그걸 안 뗀다.
+그 되돌림은 스윕이 **스스로 재개·승격할 때**뿐이라, 사람이 `hold:policy`·`hold:conflict` 를
+푸는 경로엔 PR 사본을 지우는 자리가 없었다 — 그래서 같은 실행이 **정지 미러 정리**(#265)도
+한다: 이슈에 정지 라벨이 하나도 없는데 연결된 열린 PR 에 남아 있으면 **PR 쪽만** 뗀다.
 이벤트별 처리:
 
+- `mirror_cleared` — 사람이 이슈에서만 푼 홀드의 **PR 사본**을 스크립트가 뗐다(#265).
+  이슈는 원래 깨끗하니 건드리지 않는다. **추가 조치 없다** — 그 PR 은 이번 틱부터
+  `verify-eligible.sh`·`closeout-eligible.sh` 후보로 자연히 돌아온다. ④ Report 에
+  `미러 정리 N` 으로 한 줄(번호는 `pr`, 연결 이슈는 `number`, 뗀 라벨은 `removed`).
 - `resumed` — `needs-human`·`hold:ladder` 가 떨어졌고 `agent-ready` 는 그대로다(자격은
   건드리지 않는다). **디스패처가 따로 할 일은 없다** — 이번 틱 ③ 의 `eligible-issues.sh`
   후보로 자연히 다시 나타난다. ④ Report 의 `재개` 에 번호와 `attempt` 를 적는다. 배포 대기
