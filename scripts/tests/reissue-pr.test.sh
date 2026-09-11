@@ -89,7 +89,9 @@ case "${1:-} ${2:-}" in
       *"--json number,state"*)
         st=$(cat "$STUB_DIR/state-$num" 2>/dev/null || echo OPEN)
         [ "$st" = "__FAIL__" ] && exit 1
-        jq -n --argjson n "$num" --arg s "$st" '{number:$n, state:$s}' ;;
+        lb=$(cat "$STUB_DIR/labels-$num" 2>/dev/null || echo "agent-ready")
+        jq -n --argjson n "$num" --arg s "$st" --arg l "$lb" \
+          '{number:$n, state:$s, labels: ($l|split(",")|map(select(length>0)|{name:.}))}' ;;
       *)
         fx="$STUB_DIR/issue-$num.json"
         [ -f "$fx" ] || exit 1
@@ -140,10 +142,26 @@ case "${1:-} ${2:-}" in
     exit 0 ;;
   "issue edit")
     fail_if issue-edit
+    tgt="$3"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --add-label)
+          cur=$(cat "$STUB_DIR/labels-$tgt" 2>/dev/null || echo "")
+          case ",$cur," in *",$2,"*) ;; *) printf '%s' "${cur:+$cur,}$2" > "$STUB_DIR/labels-$tgt" ;; esac
+          shift 2 ;;
+        *) shift ;;
+      esac
+    done
     exit 0 ;;
   "issue list")
-    fail_if issue-list
-    fx="$STUB_DIR/blocked-list.json"
+    case "$*" in
+      *--search*)
+        fail_if body-blocked-list
+        fx="$STUB_DIR/body-blocked-list.json" ;;
+      *)
+        fail_if issue-list
+        fx="$STUB_DIR/blocked-list.json" ;;
+    esac
     [ -f "$fx" ] || fx="$STUB_DIR/empty.json"
     cat "$fx"
     exit 0 ;;
@@ -392,6 +410,88 @@ check "⑨ exit 0" "$([ "$(rc)" = 0 ] && echo ok || echo no)"
 want_not_in "⑨ 새 이슈를 또 만들지 않는다" "$STUB_LOG" "issue create"
 want_in "⑨ 닫기는 마저 한다(PR)"          "$STUB_LOG" "pr close 55"
 want_in "⑨ 닫기는 마저 한다(원 이슈)"      "$STUB_LOG" "issue close 10"
+
+echo "── ⑨-b 멱등 재진입도 **확인**을 지난다 (레인 밖 새 이슈를 두고 닫지 않는다) ──"
+setup 2
+issue_comments '[{"body":"재발행: #10 → #900 (attempt 상한)\n<!-- reissued: #900 -->\n<!-- bodat:worker -->","created_at":"2026-09-11T05:00:00Z"}]'
+printf 'P1' > "$tmp/state/labels-$NEW"        # 앞 회차가 agent-ready 부착에서 멈춘 상태
+touch "$tmp/state/fail-issue-edit"            # 이번에도 부착이 실패한다
+run "$REPO" "$PR" "$OLD"
+check "⑨-b exit 비0" "$([ "$(rc)" != 0 ] && echo ok || echo no)"
+want_in "⑨-b 사유가 stderr 에"        "$tmp/state/err.txt" "agent-ready"
+want_not_in "⑨-b PR 을 닫지 않았다"     "$STUB_LOG" "pr close"
+want_not_in "⑨-b 원 이슈를 닫지 않았다" "$STUB_LOG" "issue close"
+
+echo "── ⑨-c 재진입이 레인을 복구하면 닫기를 마저 한다 ──────────────────"
+setup 2
+issue_comments '[{"body":"재발행: #10 → #900 (attempt 상한)\n<!-- reissued: #900 -->\n<!-- bodat:worker -->","created_at":"2026-09-11T05:00:00Z"}]'
+printf 'P1' > "$tmp/state/labels-$NEW"
+run "$REPO" "$PR" "$OLD"
+check "⑨-c exit 0" "$([ "$(rc)" = 0 ] && echo ok || echo no)"
+want_in "⑨-c agent-ready 를 붙였다" "$STUB_LOG" "issue edit 900 --repo owner/repo --add-label agent-ready"
+want_in "⑨-c PR 닫힘"               "$STUB_LOG" "pr close 55"
+want_in "⑨-c 원 이슈 닫힘"          "$STUB_LOG" "issue close 10"
+
+echo "── ③-c 본문 'Blocked by #구' 도 새 번호로 잇는다 (라벨만 보면 조기 해제) ──"
+setup
+echo '[{"number":88,"body":"Blocked by #10 — 앞 건이 먼저"}]' > "$tmp/state/body-blocked-list.json"
+run "$REPO" "$PR" "$OLD"
+check "③-c exit 0" "$([ "$(rc)" = 0 ] && echo ok || echo no)"
+want_in "③-c 새 번호 라벨로 막힘을 이었다" "$STUB_LOG" "issue edit 88 --repo owner/repo --add-label blocked-by:900"
+want_in "③-c 낡은 본문 줄을 warn 으로 알린다" "$tmp/state/err.txt" "본문 'Blocked by #10' 줄은 낡았다"
+
+echo "── ③-d 본문 블로커 조회 실패 → 원 이슈를 닫지 않는다 ──────────────"
+setup
+touch "$tmp/state/fail-body-blocked-list"
+run "$REPO" "$PR" "$OLD"
+check "③-d exit 비0" "$([ "$(rc)" != 0 ] && echo ok || echo no)"
+want_not_in "③-d 원 이슈를 닫지 않았다" "$STUB_LOG" "issue close"
+
+echo "── ①-b 검증자 코멘트 부재 → 발행은 하되 조용히 넘기지 않는다 ──────"
+setup
+printf '%s' '[{"body":"재검증 실패: #10 — E2E 실패 (attempt 2)\n<!-- bodat:worker -->","created_at":"2026-09-11T01:00:00Z"}]' > "$tmp/state/comments-$PR.json"
+run "$REPO" "$PR" "$OLD"
+check "①-b exit 0" "$([ "$(rc)" = 0 ] && echo ok || echo no)"
+want_in "①-b warn 이 stderr 에" "$tmp/state/err.txt" "검증자 리뷰"
+want_in "①-b 본문에 자리표시자"  "$tmp/state/created-body.md" "코멘트를 직접 읽어라"
+
+echo "── ①-c 판정 줄이 코멘트 **중간**이어도 싣는다 (머리 매칭 함정) ─────"
+setup
+jq -n '[{body:"자동 보고 머리말\n검증자 리뷰: BLOCKER 1 / WARN 0건 · gpt-5/90s\n[P1] scripts/mid.sh:7 — 중간 줄 판정\n<!-- bodat:worker -->", created_at:"2026-09-11T02:00:00Z"}]' > "$tmp/state/comments-$PR.json"
+run "$REPO" "$PR" "$OLD"
+want_in "①-c 중간 줄 검증자 지적도 새 본문에" "$tmp/state/created-body.md" "[P1] scripts/mid.sh:7 — 중간 줄 판정"
+
+echo "── ②-c 멱등 마커 코멘트 실패 → 닫기는 계속(중복 발행 창을 줄인다) ──"
+setup
+touch "$tmp/state/fail-issue-comment"
+run "$REPO" "$PR" "$OLD"
+check "②-c exit 0" "$([ "$(rc)" = 0 ] && echo ok || echo no)"
+want_in "②-c warn 이 stderr 에" "$tmp/state/err.txt" "재발행 마커 코멘트 실패"
+want_in "②-c PR 닫힘"           "$STUB_LOG" "pr close 55"
+want_in "②-c 원 이슈 닫힘"      "$STUB_LOG" "issue close 10"
+
+echo "── ④-c 이미 적용된 허용은 매 틱 warn 을 쌓지 않는다 (조용한 none) ──"
+setup 2
+issue_comments '[{"body":"회차 허용: +1 — 범위: 첫 번째","created_at":"2026-09-11T03:00:00Z"},
+ {"body":"회차 허용 접수: attempt 을 2 로 되돌린다 — 범위: 첫 번째\n<!-- round-granted -->\n<!-- bodat:worker -->","created_at":"2026-09-11T03:10:00Z"}]'
+run grant-round "$REPO" "$PR" "$OLD"
+want_in "④-c none"                 "$tmp/state/out.txt" "none"
+want_not_in "④-c warn 을 안 쌓는다" "$tmp/state/err.txt" "warn"
+want_not_in "④-c 무쓰기"            "$STUB_LOG" "issue comment"
+
+echo "── ⑤-b 문형이 어긋나면(하이픈·빈 범위) 조용히 흘리지 않고 warn ────"
+setup 2
+issue_comments '[{"body":"회차 허용: +1 - 범위: 하이픈으로 적었다","created_at":"2026-09-11T03:00:00Z"}]'
+run grant-round "$REPO" "$PR" "$OLD"
+want_in "⑤-b none"          "$tmp/state/out.txt" "none"
+want_in "⑤-b 어긋난 문형 warn" "$tmp/state/err.txt" "문형이 어긋난"
+
+echo "── ⑦-b jq 판정 실패는 '문형 없음'으로 둔갑하지 않는다 ─────────────"
+setup 2
+printf '%s' '[{"body":42}]' > "$tmp/state/comments-$OLD.json"
+run grant-round "$REPO" "$PR" "$OLD"
+check "⑦-b exit 비0" "$([ "$(rc)" != 0 ] && echo ok || echo no)"
+want_not_in "⑦-b 무쓰기" "$STUB_LOG" "issue comment"
 
 echo "── ⑩ 사용법·인자 검증 ─────────────────────────────────────────────"
 setup
