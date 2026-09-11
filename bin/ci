@@ -1012,6 +1012,9 @@ bash scripts/tests/closeout-eligible.test.sh
 echo "[test] 네 게이트의 needs-human·hold:* 배제 — 격자 한 벌을 네 SUT 에 전수 적용 (#242)"
 bash scripts/tests/hold-gate.test.sh
 
+echo "[test] eligible-issues.sh 막힘 stderr 보고·블로커 상태 표기·검색 창 warn·stdout 불변 (#247)"
+bash scripts/tests/eligible-issues.test.sh
+
 echo "[test] bounce-state.sh 반송 판정 — ①-b CONFLICTING 입양 안전망 (#196)"
 bash scripts/tests/bounce-state.test.sh
 
