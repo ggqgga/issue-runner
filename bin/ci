@@ -1195,6 +1195,48 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f: 5단계 green 갈래에 실장비 예외 상호참조('$xref')가 없다 — green 만 읽으면 그대로 닫는다 (#278)"; exit 1; }
 done
 
+echo "[closeout] <LIVE_CHECKS> 실장비 표식 — 형태 강제 + 4·5단계·템플릿 동일 표식 검사 (#309)"
+# #298 은 5단계 green 갈래에 "실장비 항목이 `- [ ]` 로 남아 있으면 닫지 않는다" 예외를 넣어
+# **닫는 자리**를 막았다. 그런데 그 예외가 걸리려면 5단계가 **어느 줄이 실장비인지** 알아야
+# 하는데, 당시 근거는 4단계의 산문 한 줄("한 줄 = … (실장비면 TEST 워커 프로필 #18 드라이런)")
+# 뿐이었다 — 그건 *실장비란 무엇인가* 의 성격 규정이지 *그 줄을 이렇게 적어라* 는 형태 강제가
+# 아니다. 그래서 칸 ①② 실패로 이월된 줄이 "TEST 워커 프로필 #18" 이라는 말 없이 적히면
+# (`- [ ] worker001 에서 프록시 회전 후 IG 세션 유지 확인`) 5단계가 그 줄을 일반 항목으로
+# 세어 크롬 pass → green → close 로 흘러, TEST 워커를 한 번도 안 거친 티켓이 종결된다(#309).
+# 처방: 실장비 줄에 `없음`·`- [ ]` 와 **같은 등급**의 접두 표식 `[칸 ③]` 을 형태로 강제하고,
+# 생산(4단계)·소비(5단계)·템플릿 **셋이 같은 표식**을 쓰는지 여기서 문다 — 셋 중 하나가
+# 갈라지면 실장비를 세는 계산기가 둘이 되고, 그 갈라짐은 사람 눈에 안 보인다.
+# 스코프를 구간으로 좁히는 이유는 #278·#223 과 같다 — "파일 어딘가" 면 문구가 6단계로 밀려도 초록.
+live_marker='[칸 ③]'
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) m4_anchor='^\*\*Step 4 —'; m5_anchor='^\*\*Step 5 —'; m6_anchor='^\*\*Step 6 —'
+             mandate='A real-hardware line REQUIRES the `[칸 ③]` prefix marker' ;;
+    *)       m4_anchor='^\*\*4단계 —';   m5_anchor='^\*\*5단계 —';   m6_anchor='^\*\*6단계 —'
+             mandate='실장비 줄은 접두 표식 `[칸 ③]` 필수' ;;
+  esac
+  m4_line=$(grep -nE "$m4_anchor" "$f" | head -1 | cut -d: -f1)
+  m5_line=$(grep -nE "$m5_anchor" "$f" | head -1 | cut -d: -f1)
+  m6_line=$(grep -nE "$m6_anchor" "$f" | head -1 | cut -d: -f1)
+  [ -n "$m4_line" ] || { echo "  ✗ $f: 4단계 헤더 앵커 없음"; exit 1; }
+  [ -n "$m5_line" ] || { echo "  ✗ $f: 5단계 헤더 앵커 없음"; exit 1; }
+  [ -n "$m6_line" ] || { echo "  ✗ $f: 6단계 헤더 앵커 없음"; exit 1; }
+  m4_body=$(sed -n "${m4_line},${m5_line}p" "$f")
+  m5_body=$(sed -n "${m5_line},${m6_line}p" "$f")
+  # ⓐ 생산 쪽 — 4단계 형태 규율에 표식이 **강제**로 적혀 있어야 한다. 성격 규정("실장비면
+  #    TEST 워커 …")만 남으면 #309 의 출발점으로 되돌아간다.
+  printf '%s\n' "$m4_body" | grep -qF "$mandate" \
+    || { echo "  ✗ $f: 4단계 <LIVE_CHECKS> 형태 규율에 실장비 접두 표식 강제 문면('$mandate')이 없다 — 성격 규정은 형태 강제가 아니다 (#309)"; exit 1; }
+  # ⓑ 소비 쪽 — 5단계 실장비 판별이 **같은 표식**을 써야 한다. 표식이 여기 없으면 판별이
+  #    다시 문장 해석으로 돌아가고, 4단계와 갈라진다.
+  printf '%s\n' "$m5_body" | grep -qF "$live_marker" \
+    || { echo "  ✗ $f: 5단계 실장비 판별이 4단계와 같은 표식('$live_marker')을 안 쓴다 — 계산기가 둘이 된다 (#309)"; exit 1; }
+done
+# ⓒ 템플릿 — 실제로 발행되는 이슈 본문의 형태가 여기서 나온다. 여기가 표식을 안 가르치면
+#    4단계 규율이 아무리 강제여도 발행물엔 표식이 안 붙는다.
+grep -qF "$live_marker" skills/closeout/references/deploy-check-issue.md \
+  || { echo "  ✗ deploy-check-issue.md: 실장비 접두 표식('$live_marker') 안내 없음 — 발행되는 이슈에 표식이 안 붙는다 (#309)"; exit 1; }
+
 echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4)"
 # 1단계 검증자가 과거 오판 패턴(인용 오판·base 맹점 등)을 반복하지 않도록 lessons 를
 # 프롬프트에 주입한다 — 프롬프트가 유일한 전달 경로라는 기존 계약 유지.
