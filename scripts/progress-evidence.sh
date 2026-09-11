@@ -86,8 +86,13 @@ iso_to_epoch() {
 }
 
 # ── 증거 ① 커밋 신선도 ──────────────────────────────────────────────────
+# `none` 만 "커밋 없음(정상 입력)" 이다. **빈 문자열은 `none` 이 아니다** — 호출자가
+# 시각을 못 얻었다는 뜻이고, 그걸 증거 없음으로 접으면 조회 실패가 곧바로 되돌릴 수 없는
+# 쪽(timebox 는 stop, finish-classify 는 재디스패치)으로 흐른다(PR#139: 빈 결과와 실패를
+# 구분하라). 아래 iso_to_epoch 이 형식 불량으로 걸러 `unknown commit_at_invalid` 가 된다.
+# 호출자가 "커밋 증거 없음" 을 말하고 싶으면 **문자열 `none` 을 명시**해야 한다.
 commit_recent=0
-if [ "$commit_at" = none ] || [ -z "$commit_at" ]; then
+if [ "$commit_at" = none ]; then
   commit_field=none
 elif commit_epoch=$(iso_to_epoch "$commit_at"); then
   commit_age=$((now - commit_epoch))

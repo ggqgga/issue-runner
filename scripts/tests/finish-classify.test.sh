@@ -606,6 +606,20 @@ printf '%s\n' "2026-07-05T11:30:00 pid=11111 7ac1f0e9 대기열 2번째" > "$GT/
 : > "$GT/empty.log"
 printf '%s\n' "2026-07-05T11:30:00 pid=11111 7ac1f0e9 대기열 2번째" > "$GT/unreadable.log"
 chmod 000 "$GT/unreadable.log"
+# 소유권 필터 픽스처 — 우리 티켓이 대기열에 있고, **그 뒤에** 남의 옛 티켓이 폐기되며
+# 본문에 우리 SHA 를 언급한다(새 push 가 자기 티켓을 낸 흔한 형상). 그 줄을 우리 줄로
+# 세면 큐를 기다리는 살아 있는 워커가 `left` 로 읽혀 죽는다.
+G_OTHER="da323b67fedcba0987654321fedcba0987654321"
+printf '%s\n' \
+  "2026-07-05T11:30:00 pid=11111 7ac1f0e9 대기열 2번째" \
+  "2026-07-05T11:31:00 pid=22222 da323b67 폐기 — 실행 시점 HEAD 가 $G_SHA ≠ $G_OTHER" \
+  > "$GT/queued_then_foreign_discard.log"
+# 큐 이탈 픽스처 — 우리 SHA 의 **마지막 줄**이 pass 다(대기열 줄이 앞에 남아 있어도
+# 그건 이미 끝난 티켓이다).
+printf '%s\n' \
+  "2026-07-05T11:30:00 pid=11111 7ac1f0e9 대기열 2번째" \
+  "2026-07-05T11:40:00 pid=11111 7ac1f0e9 pass (487s) → /x/$G_SHA.result" \
+  > "$GT/queued_then_pass.log"
 
 # 시각 축 — NOW = 12:00:00Z.
 G_OLD="2026-07-05T10:00:00Z"    # 120분 전 — 커밋 오래됨(STALL_MIN 25·STALE_FINISH_MIN 30 둘 다 초과)
@@ -719,8 +733,16 @@ row "B1 CONFLICTING·반송마커·커밋신선" untouched \
 # 워커가 매번 재디스패치된다.
 row "B2 CONFLICTING·반송마커·커밋오래됨·CI큐티켓살아있음" untouched \
   CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/queued.log" ""
-# 큐에 그 SHA 줄이 없으면(=티켓 없음) 증거가 아니다 — A1 과 같은 결론으로 돌아온다.
-row "B3 CONFLICTING·반송마커·커밋오래됨·남의티켓만" redispatch \
+# 소유권 필터 — 우리 대기열 줄 **뒤에** 남의 폐기 줄이 우리 SHA 를 언급해도 그건 우리
+# 줄이 아니다. 필터가 없으면 마지막 줄이 폐기 줄이 되어 `left` → 재디스패치로 뒤집힌다.
+row "B3 CONFLICTING·반송마커·대기열+남의폐기줄이우리SHA언급" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/queued_then_foreign_discard.log" ""
+# 마지막 줄 규칙 — 우리 SHA 의 마지막 줄이 pass 면 큐를 떠난 것이다. "어딘가에 대기열
+# 줄이 있나" 로 재면 이미 끝난 티켓을 살아 있다고 읽는다.
+row "B3b CONFLICTING·반송마커·우리SHA마지막줄이pass(큐이탈)" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/queued_then_pass.log" ""
+# 큐에 그 SHA 줄이 아예 없으면 증거가 아니다 — A1 과 같은 결론으로 돌아온다.
+row "B3c CONFLICTING·반송마커·커밋오래됨·티켓없음" redispatch \
   CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
 
 # 진행 증거를 **판정하지 못하면**(queue.log 를 읽을 수 없음) 그건 "증거 없음" 이 아니다 —
