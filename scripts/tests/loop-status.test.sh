@@ -492,7 +492,11 @@ echo '[]' > "$tmp/fx/ggqgga_NoCompare.pr_closed.json"
 : > "$tmp/fx/ggqgga_NoCompare.release"   # .ahead 없음 → 스텁의 compare 가 실패
 
 # ── 픽스처: ggqgga/Big (big) — 목록이 --limit 200 상한에 닿았다 ─────────────
-jq -n --arg t "$NOW" '[range(1;201) | {number: ., title:"채움", createdAt:$t, labels:[]}]' \
+# 본문(#248 이 더한 `body` 필드)을 8KB × 200건 = 약 1.6MB 로 채운다 — 이 페이로드를
+# `--argjson` 으로 **커맨드라인**에 실으면 ARG_MAX(macOS 1MB)에 걸려 레포 블록 전체가
+# `집계 실패(jq)` 로 죽는다. 파일(`--slurpfile`) 경유라는 것을 이 픽스처가 문다.
+jq -n --arg t "$NOW" \
+  '[range(1;201) | {number: ., title:"채움", createdAt:$t, body: ("x" * 8000), labels:[]}]' \
   > "$tmp/fx/ggqgga_Big.issues.json"
 echo '[]' > "$tmp/fx/ggqgga_Big.pr_open.json"
 jq -n --arg t "$NOW" \
@@ -834,6 +838,11 @@ has_line "compare 실패: 승격 대기 —" "$tmp/out" "  승격 대기 —"
 # ── ⑧-c 목록 상한 200 도달 → 절단 warn ────────────────────────────────────
 run --repo ggqgga/Big --since 24h
 ck "목록 절단: exit 0" "$RC" 0
+# (#248) 큰 본문 페이로드(약 1.6MB)가 커맨드라인이 아니라 파일로 넘어간다 —
+# `--argjson` 이면 ARG_MAX 에 걸려 이 레포 블록이 통째로 `집계 실패(jq)` 가 된다.
+no_sub "(#248) 큰 body 페이로드가 ARG_MAX 로 집계 실패하지 않는다" "$tmp/out" \
+  "파이프라인 big — 조회 실패"
+has_sub "(#248) 큰 body 페이로드에서도 블록이 정상 렌더" "$tmp/out" "파이프라인 big — 열림 0"
 has_line "목록 절단: warn 2건" "$tmp/out" "  warn      2"
 has_sub "목록 절단: 이슈 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(이슈)"
 has_sub "목록 절단: 닫힌 PR 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(닫힌 PR)"

@@ -63,6 +63,9 @@
 #                  블로커 **상태**는 이미 받은 목록 안에서만 본다(추가 gh 호출 0): 같은 레포
 #                  열린 이슈에 있으면 `OPEN`(그 이슈의 버킷명이 곧 사유) · 열린 PR 에 있으면
 #                  `OPEN PR` · 둘 다 아니면 해제(닫힘·머지·미존재를 구분하지 않는다).
+#                  그래서 **목록 `--limit 200` 밖의 블로커는 해제로 보인다**(fail-open —
+#                  막힌 건이 `대기` 로 남는다 = 이 기능이 없던 때와 같은 상태이지 거짓
+#                  `막힘` 이 아니다). 그 신호는 기존 warn `목록 절단` 이 낸다.
 #                  다른 레포 번호는 지원하지 않는다(`eligible-issues.sh` 도 같은 레포만 본다).
 #                  표기: `#4986 ← #4985(사람대기)` · 둘 이상이면 번호 내림차순으로 잇는다
 #                  (`#4981 ← #4980(대기) #4965(구현중)`) · PR 이면 `#N ← PR #M`.
@@ -512,7 +515,12 @@ def bucket_ko($k):
    "verify":"검증대기","claimed":"구현중","waiting":"대기","blocked":"막힘",
    "outside":"루프 밖"}[$k];
 
-($issues | map({
+# 이슈 목록만 파일로 받는다(`--slurpfile` → 값 하나가 든 배열) — `body` 를 실으면서
+# 페이로드가 7배(실측 bodat 24KB → 176KB)가 됐고, 200건 상한까지 차면 `--argjson` 의
+# 커맨드라인 경로가 ARG_MAX(macOS 1MB, 인자+환경 합산)에 걸려 **레포 블록 전체가
+# '집계 실패(jq)'** 로 죽는다. PR 목록은 body 가 없어 종전 경로 그대로다.
+($issues_in[0]) as $issues
+| ($issues | map({
     number, title, createdAt,
     ln: [.labels[].name],
     blk: blockers_of(.body; [.labels[].name])
@@ -783,7 +791,6 @@ for repo in "${repos[@]}"; do
   short=$(short_name "$repo")
 
   fail_reason=""
-  issues_json=""
   prs_open_json=""
   prs_closed_json=""
 
@@ -791,7 +798,12 @@ for repo in "${repos[@]}"; do
   # 호출**이라 gh 예산이 늘지 않는다(개별 `gh issue view` 를 치면 N+1).
   if run_gh gh issue list --repo "$repo" --state open --limit 200 \
       --json number,title,labels,createdAt,body; then
-    issues_json=$GH_OUT
+    # 파일 경유 — 아래 build_snapshot 이 `--slurpfile` 로 읽는다(ARG_MAX 근거는 BUILD_JQ 주석).
+    # 쓰기 실패를 흘리면 **직전 레포의** 목록으로 집계해 부분 실패가 "성공(남의 데이터)" 으로
+    # 접힌다(아래 repo.pre.json mv 와 같은 규율) — 여기서 끊는다.
+    if ! printf '%s\n' "$GH_OUT" > "$tmpdir/issues.json"; then
+      fail_reason="이슈 목록 — 임시 파일 쓰기 실패($tmpdir/issues.json)"
+    fi
   else
     fail_reason="이슈 목록 — $GH_ERR"
   fi
@@ -839,7 +851,7 @@ for repo in "${repos[@]}"; do
   #                 <출력 파일> — BUILD_JQ 한 패스(순수 · 부작용 없음).
   build_snapshot() {
     jq -n \
-      --argjson issues "$issues_json" \
+      --slurpfile issues_in "$tmpdir/issues.json" \
       --argjson prs_open "$prs_open_json" \
       --argjson prs_closed "$prs_closed_json" \
       --argjson cutoff "$cutoff" \
