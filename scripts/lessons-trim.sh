@@ -19,6 +19,15 @@
 # 공유 상태를 줄이는 변경은 되돌릴 수 있어야 한다).
 #
 # 파일이 없으면(= 항목 0개, 캡 이하와 동치) no-op, exit 0, 무출력.
+#
+# 잠금: closeout 1단계와 verify-runner ③-3 이 같은 파일에 append 직후 이 스크립트를
+# 부르는 계약이라, 두 루프가 같은 레포에 동시에 걸리면 read(awk)→write(mv) 사이의
+# 창에서 서로의 append 를 밟을 수 있다(#208 사전 리뷰 지적). `mkdir` 원자성으로 그
+# 창을 막는다(ci-queue.sh 의 `.running` mkdir 토큰과 같은 관용구). 짧은 유한 대기 후
+# 실패하면 fail-closed(exit 3) — 조용히 잠금 없이 진행하지 않는다. 이 스크립트는
+# 수백 ms 안에 끝나므로 장기 보유·스테일 잠금 회수 로직은 두지 않는다(죽은 보유자가
+# 남기면 `rmdir <파일>.lock` 로 사람이 푼다 — claim-issue.sh 의 스테일 잠금 절충과
+# 같은 방향).
 set -euo pipefail
 
 file="${1:?usage: lessons-trim.sh <file> <cap>}"
@@ -37,10 +46,27 @@ esac
 
 [ -f "$file" ] || exit 0
 
+lockdir="$file.lock"
+lock_wait=${LESSONS_TRIM_LOCK_WAIT:-10}
+got_lock=0
+tries=0
+while [ "$tries" -le "$lock_wait" ]; do
+  if mkdir "$lockdir" 2>/dev/null; then
+    got_lock=1
+    break
+  fi
+  tries=$((tries + 1))
+  sleep 0.5
+done
+if [ "$got_lock" != 1 ]; then
+  echo "lessons-trim.sh: 잠금 획득 실패 — 다른 프로세스가 $file 를 정리 중이거나 죽은 채 $lockdir 를 쥐고 있다(수동 rmdir 필요할 수 있음)" >&2
+  exit 3
+fi
+
 out=$(mktemp)
 removed=$(mktemp)
 flag=$(mktemp)
-trap 'rm -f "$out" "$removed" "$flag"' EXIT
+trap 'rm -f "$out" "$removed" "$flag"; rmdir "$lockdir" 2>/dev/null' EXIT
 
 # awk 한 패스: 경계선(항목 시작) 인덱스를 모은 뒤, 초과분(오래된 쪽)만 removed_file 에
 # 첫 줄을 적고 본문에서는 통째로 건너뛰고, 나머지(프리앰블 + 유지 항목)는 그대로 stdout.

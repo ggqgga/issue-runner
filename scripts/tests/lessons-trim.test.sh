@@ -143,6 +143,54 @@ else
   bad "(수렴) 10개→캡2, 한 번에 8개 제거해 캡까지 내려가야 한다 — removed=$removed_lines remaining=$remaining"
 fi
 
+# ── 경계값: 항목 수 == 캡(등호 쪽) — 무변경이어야 한다 ─────────────────
+cat > "$tmp/eq.md" <<'EOF'
+# preamble
+---
+- [2026-03-01 PR#1] one
+- [2026-03-02 PR#2] two
+- [2026-03-03 PR#3] three
+EOF
+cp "$tmp/eq.md" "$tmp/eq.orig.md"
+out=$(bash "$SUT" "$tmp/eq.md" 3 2>/dev/null); rc=$?
+if [ "$rc" = 0 ] && [ -z "$out" ] && diff -q "$tmp/eq.md" "$tmp/eq.orig.md" >/dev/null; then
+  ok
+else
+  bad "(경계) 항목수==캡 무변경 — rc=$rc out=[$out]"
+fi
+
+# ── 잠금 — 다른 프로세스가 잠금을 쥐고 있으면 fail-closed, 원본 안 건드림 ──
+cat > "$tmp/lock.md" <<'EOF'
+# preamble
+---
+- [2026-04-01 PR#1] one
+- [2026-04-02 PR#2] two
+- [2026-04-03 PR#3] three
+- [2026-04-04 PR#4] four
+EOF
+cp "$tmp/lock.md" "$tmp/lock.orig.md"
+mkdir "$tmp/lock.md.lock"
+rc=0
+out=$(LESSONS_TRIM_LOCK_WAIT=1 bash "$SUT" "$tmp/lock.md" 2 2>/dev/null) || rc=$?
+if [ "$rc" = 3 ] && [ -z "$out" ] && diff -q "$tmp/lock.md" "$tmp/lock.orig.md" >/dev/null; then
+  ok
+else
+  bad "(잠금) 다른 보유자 있으면 exit 3·무출력·원본 무변경 — rc=$rc out=[$out]"
+fi
+rmdir "$tmp/lock.md.lock"
+
+# ── 잠금 — 정상 실행 후 잠금 디렉터리가 남지 않는다(멱등 경로·트리밍 경로 둘 다) ──
+out=$(bash "$SUT" "$tmp/lock.orig.md" 2 2>/dev/null)
+if [ ! -d "$tmp/lock.orig.md.lock" ]; then ok; else bad "(잠금) 트리밍 후 lock 디렉터리 잔존"; fi
+
+cat > "$tmp/nolockleak.md" <<'EOF'
+# preamble
+---
+- [2026-05-01 PR#1] one
+EOF
+bash "$SUT" "$tmp/nolockleak.md" 5 >/dev/null 2>&1
+if [ ! -d "$tmp/nolockleak.md.lock" ]; then ok; else bad "(잠금) 무변경(no-op) 경로 후 lock 디렉터리 잔존"; fi
+
 # ── 오류 경계 ────────────────────────────────────────────────────────
 rc=0
 out=$(bash "$SUT" 2>/dev/null) || rc=$?
