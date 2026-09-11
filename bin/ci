@@ -1211,6 +1211,35 @@ bash scripts/tests/resume-sweep.test.sh
 echo "[test] loop-status.sh 파이프라인 스냅샷 버킷·창 필터·warn·부분 실패 (#144)"
 bash scripts/tests/loop-status.test.sh
 
+echo "[test] epic-sweep.sh — leaf 전부 종료 에픽 자동 종료·전용 줄 판정·상한 보류·멱등 (#258)"
+# closeout ① 이 `"$SCRIPTS/epic-sweep.sh"` 로 직접 exec 하므로 실행 비트도 여기서 문다
+# (비트가 빠지면 조용히 exit 126 → 에픽 스윕이 매 틱 no-op 으로 degrade, PR#173 교훈과 동일 함정).
+[ -x scripts/epic-sweep.sh ] || { echo "  ✗ epic-sweep.sh 실행 비트 없음"; exit 1; }
+bash scripts/tests/epic-sweep.test.sh
+
+echo "[#258] closeout ① 이 epic-sweep.sh 를 \$SCRIPTS/ 절대경로로 부르고 이벤트 3종을 다 처리 (한/영)"
+# ⑴ closeout 은 대상 레포의 worktree 를 cwd 로 돌 수 있는데, 상대경로 `scripts/…` 는 그
+#    레포엔 없는 파일이다(스크립트는 ~/.claude/skills/issue-runner/scripts/ 에 산다) — #227
+#    이 lessons-trim.sh 에서 실제로 밟은 함정. 같은 문서의 기존 호출 형태에 맞춘다.
+# ⑵ 이벤트 이름이 문서에서 빠지면 그 이벤트는 프롬프트가 아예 안 읽어 조용히 버려진다
+#    (특히 warn — 판정 보류가 보고에서 사라지면 조용한 오판과 구분이 안 된다).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF '$SCRIPTS/epic-sweep.sh' "$f" \
+    || { echo "  ✗ $f: closeout ① 에 \$SCRIPTS/epic-sweep.sh 호출 없음"; exit 1; }
+  if grep -qE '(^|[^A-Za-z/])scripts/epic-sweep\.sh' "$f"; then
+    echo "  ✗ $f: epic-sweep.sh 를 상대경로로 부르는 줄이 있다"; exit 1
+  fi
+  # 이벤트 이름은 **epic-sweep 절 안에서** 찾는다 — 문서 어딘가에 같은 단어가 있다고
+  # 통과시키면(`closed` 는 ④ Report 카운터에도 있다) 가드가 고치려는 상태에서도 참이 된다(#218).
+  blk=$(grep -A 14 -F '$SCRIPTS/epic-sweep.sh' "$f")
+  for ev in '`closed`' '`note`' '`warn`'; do
+    printf '%s' "$blk" | grep -qF "$ev" \
+      || { echo "  ✗ $f: epic-sweep 절에 이벤트 $ev 처리 지시 없음"; exit 1; }
+  done
+  grep -qF '에픽 종료: #' "$f" \
+    || { echo "  ✗ $f: ④ Report 의 에픽 종료 보고 형식(에픽 종료: #N) 없음"; exit 1; }
+done
+
 echo "[#206] 진행 증거 술어는 progress-evidence.sh 한 자리 (#200 → #206)"
 # 커밋 신선도(STALL_MIN)와 CI 큐 티켓 판정을 다른 스크립트가 자기 벌로 들고 있으면 언젠가
 # 한쪽만 고쳐져 두 소비자(timebox-check · finish-classify)가 다른 수를 센다 — 반송 마커

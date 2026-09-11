@@ -103,6 +103,28 @@ resume):
 | 5 post | `✅ 스모크` comment / deploy issue CLOSED + verification·deploy-complete comment | if present, do not re-smoke (including when the human gate finished verification and closed it) |
 | 6 spinoff | created-issue number comment | if present, do not re-issue |
 
+**Epic sweep (end of ①, every tick)** — an epic whose leaves are all closed is closed by
+**no loop at all** (an epic is never picked up by a worker; it is a sub-issue rollup target).
+Run `"$SCRIPTS/epic-sweep.sh"` with no `cd` (the scope auto-applies from the loop session
+cwd's `.loop/repos`). It is a deterministic sweep that finds leaves by their dedicated
+`Epic #N` body line and closes only epics with **at least one leaf, all CLOSED**. Handle each
+event:
+
+- `closed` — the epic was closed (rationale comment + `--reason completed`). Report it in
+  ④ Report as `에픽 종료: #N(<repo short name>, leaf K)` (K = the length of `leaves`).
+- `note` — a line that **touched nothing** and is a normal state (an old epic with no
+  `Epic #N` lines · an epic carrying `deploy-wait`). **Do not report it** — the same line
+  every tick buries the real signals.
+- `warn` — the judgment was **deferred** (the leaf search hit its cap) or a read/write
+  failed. Copy `why` verbatim into ④ Report's warn lines. A deferral is not a failure, so
+  exit 0 is possible alongside it.
+
+exit 1 means this tick had a read/write **failure** — leave it alone, the next tick retries
+(the `<!-- epic-sweep -->` marker in the rationale comment keeps it idempotent, so comments
+never pile up). exit 64 means no scope (`.loop/repos` missing): call it once more naming the
+repos touched this tick with `--repo <owner/repo>`, and if there are none, leave one warn line
+`epic-sweep: 스코프 없음`.
+
 ## ①-b Stuck-PR sweep — lost-finish recovery (every tick)
 
 `closeout-eligible.sh` only surfaces PRs that carry a **`머지 판정: ✅` marker**. That ✅
@@ -959,6 +981,9 @@ each PR/issue went:
 `closed: PR #4795(bodat)←#4788 · spinoff: #4823(bodat)←PR #4788 · re-dispatched: #4770(bodat, stale_reverify)`.
 The repo short-name rule is the same as `loop-status.sh`'s (the repo part of `owner/repo`
 lowercased — bodat·bodac; `issue-runner` alone maps to `runner`).
+Epics closed by ①'s epic sweep are appended to the same line as
+`에픽 종료: #285(runner, leaf 4)` — omit that fragment entirely when none were closed
+(`note` is never reported).
 
 **Also report `승격 대기 N커밋` every tick (never omit it).** Do not drop it even on a tick
 with zero closeouts — it is the only number a human reads to see whether anything is waiting
