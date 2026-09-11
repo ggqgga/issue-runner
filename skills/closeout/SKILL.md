@@ -410,6 +410,11 @@ Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에
   그대로 읽고 고칠 수 있게 무엇이 왜 막혔는지로 쓴다(`redispatch` 채널의 고정 문구를
   빌려 쓰지 마라 — 이 갈래에서 "완결 유실" 은 거짓이고, 거짓 사유는 다음 틱의 판정
   입력이 된다).
+  **이 코멘트가 비0으로 끝나면(gh 실패·인자 오류) 전이를 하지 마라** — 이슈만
+  `agent-ready` 로 돌아가고 PR 에는 반송 마커가 없는 상태가 되어, 반송 안전망이 그 PR 을
+  못 보고 `closeout-eligible` 이 옛 ✅ 로 다시 집어 온다(이 갈래가 막으려던 바로 그 상태).
+  그때는 그 PR 의 종료 상태를 바꾸지 말고 ④ Report 에
+  `BLOCKED: 반송 코멘트 실패 PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
   이어서 `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` 로 연결 이슈를
   `agent-ready` 로 되돌린다(`agent:claimed`·단계 라벨·`needs-human`·`hold:*` 를 뗀다 —
   손으로 `gh issue edit` 하지 마라) → **`blocked` 종료**(머지하지 않는다. 새 종료 상태를
