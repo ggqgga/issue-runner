@@ -2151,4 +2151,35 @@ if grep -nF -- "ps -Ao pid,command | grep '[b]in/ci'" references/worker-template
   exit 1
 fi
 
+echo "[#292] loop-status 에픽 닫힌 leaf 조회 — 검색 쿼리 형태·단일 epic_of·헤더 계약"
+# ⑴ 상태는 **`--state closed` 플래그**로 준다. 쿼리 문자열의 `is:closed` 는 `gh` 가
+#    오파싱한 실측 전례가 있다(#236 — resume-sweep.sh 가 같은 이유로 플래그로 옮겼다).
+#    형태가 뒤집히면 조회가 열린 이슈까지 물어 닫힌 leaf 수가 통째로 틀린다.
+grep -qF -- "--state closed --search '\"Epic #\" in:body'" scripts/loop-status.sh \
+  || { echo "  ✗ scripts/loop-status.sh 의 에픽 닫힌 leaf 조회가 예상 형태가 아니다(--state closed 플래그 + \"Epic #\" in:body)"; exit 1; }
+#    검사 대상은 **코드 줄만**이다 — 헤더/인라인 주석이 왜 `is:closed` 를 안 쓰는지
+#    설명하면서 그 문자열을 인용하는데, 그것까지 잡으면 가드가 자기 근거를 금지한다.
+if grep -vE '^[[:space:]]*#' scripts/loop-status.sh | grep -nF -- 'is:closed'; then
+  echo "  ✗ scripts/loop-status.sh 검색 쿼리(코드)에 is:closed 가 들어갔다 — gh 가 오파싱한다(#236). --state closed 플래그로"
+  exit 1
+fi
+# ⑵ `epic_of` 정규식은 이 파일에 **한 벌**뿐이어야 한다(이슈 #292 개발 계획 3항).
+#    복제본이 생기면 두 계산기가 서로 다른 leaf 를 세고, 그 차이는 출력에 안 보인다.
+#    `-F` 로 고정 문자열 비교한다 — 이 패턴 자체가 정규식 메타문자 덩어리라 BRE 로 적으면
+#    이스케이프 하나가 어긋나도 **0벌**이 되어 가드가 조용히 통과한다(실제로 그렇게 틀렸다).
+#    `set -e` 아래라 `grep -c` 가 0매치로 exit 1 하면 스크립트가 죽으므로 `|| true` 로 받는다.
+epic_of_n=$(grep -cF -- 'capture("^[[:space:]]*epic[[:space:]]+#' scripts/loop-status.sh || true)
+[ "$epic_of_n" = 1 ] \
+  || { echo "  ✗ scripts/loop-status.sh 의 epic_of 정규식이 $epic_of_n 벌이다 — 한 벌이어야 한다(#292)"; exit 1; }
+# ⑶ 헤더 주석 계약이 코드와 같은 조건을 광고하는지 (#191 — 코드만 좁히면 헤더가 옛
+#    조건을 계속 가르친다). 닫힌 이슈 200건 절단 warn 은 없앴고, 새 자리는 EPIC_CLOSED_LIMIT 다.
+for tok in 'EPIC_CLOSED_LIMIT' '종료 미상' '에픽 닫힌 leaf'; do
+  grep -qF -- "$tok" scripts/loop-status.sh \
+    || { echo "  ✗ scripts/loop-status.sh 헤더/코드에 '$tok' 계약이 없다(#292)"; exit 1; }
+done
+if grep -nF -- '창 절단 가능(닫힌 이슈)' scripts/loop-status.sh; then
+  echo "  ✗ 최근 닫힌 200건의 절단 warn 이 되살아났다 — bodat 에서 매 틱 뜨는 상시 소음이다(#292/#190)"
+  exit 1
+fi
+
 echo "CI pass"

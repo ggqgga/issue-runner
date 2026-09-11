@@ -40,6 +40,14 @@
 #      아니라 **격자**(`ggqgga/Blockers` 픽스처 표)로 양방향을 전수 단언한다 — 근사가
 #      '더 많이 잡는' 쪽으로 틀리면(정상 `대기` 가 `막힘` 으로) 원래 버그보다 나쁘다.
 #      블로커 상태 판정에 **추가 gh 호출이 0** 이라는 것도 스텁 호출 로그로 못 박는다.
+#   ⑮ (#292) 에픽 닫힌 leaf 의 **창** — "최근 닫힌 200건" 이 아니라 검색 스코프 조회
+#      (`--state closed --search '"Epic #" in:body'`)에서 온다. 창 밖 leaf 픽스처
+#      (EpicWindow)가 `#100 2/3`·`#200 2/2`+`전부 종료` warn 을 문다 — 옛 경로로 되돌리면
+#      각각 `0/1`·`leaf 없음(Epic 줄 미부착)`+warn 0 이 되어 빨개진다(뮤테이션).
+#      **조회 실패는 빈 결과가 아니다** — ⑴ 종료코드 실패 ⑵ 빈 출력+exit 0(검색 2차 제한의
+#      실제 모양, core API 목록과 교차확인) ⑶ 배열 아닌 응답, 세 갈래 모두 `종료 미상` +
+#      warn 이고 `0/N` 으로 접히지 않는다. 상한 도달(EPIC_CLOSED_LIMIT)은 실패가 아니라
+#      절단 warn 이고, 열린 에픽이 0건인 레포는 이 조회를 **아예 안 한다**(호출 로그로 단언).
 #
 # 기대 줄은 **손으로 적는다** — SUT 의 jq 를 베껴 기대값을 만들면 공허하게 통과한다
 # (transition.test.sh 의 관행).
@@ -161,7 +169,27 @@ case "${1:-} ${2:-}" in
       if [ -f "$f.dash.num" ]; then cat "$f.dash.num"; fi
       exit 0 ;;
     esac
-    # 닫힌 이슈 목록(#260, 에픽 leaf 카운트용) — 열린 이슈 호출과 파일을 가른다.
+    # 에픽 닫힌 leaf 조회(#292) — 검색 스코프. 닫힌 이슈 목록보다 **먼저** 가른다
+    # (둘 다 `--state closed` 라 순서가 바뀌면 검색 호출이 최근-200 픽스처를 받는다).
+    # 호출을 로그에 남긴다 — "열린 에픽이 없으면 안 부른다" 를 실측으로 못 박기 위해서.
+    case "$args" in *"--search"*)
+      printf 'epic-closed %s\n' "$repo" >> "$STUB_CALL_LOG"
+      case "$args" in
+        *'--search "Epic #" in:body'*) ;;
+        *) echo "gh stub: 에픽 닫힌 leaf 조회의 쿼리가 예상 밖: $args" >&2; exit 1 ;;
+      esac
+      case "$args" in
+        *"--state closed"*) ;;
+        *) echo "gh stub: 에픽 닫힌 leaf 조회는 --state closed 플래그로 와야 한다(#236): $args" >&2; exit 1 ;;
+      esac
+      if [ -f "$f.epic_closed.fail" ]; then echo "gh: HTTP 403 rate limit" >&2; exit 1; fi
+      # 조용한 실패(빈 출력 + exit 0) 재현 — `gh` 검색 2차 제한의 실제 모양이다.
+      if [ -f "$f.epic_closed.silent" ]; then echo '[]'; exit 0; fi
+      if [ -f "$f.epic_closed.notarray" ]; then echo '{"message":"rate limited"}'; exit 0; fi
+      if [ -f "$f.epic_closed.json" ]; then cat "$f.epic_closed.json"; else echo '[]'; fi
+      exit 0 ;;
+    esac
+    # 닫힌 이슈 목록(#260, 색인 지연 보완·교차확인용) — 열린 이슈 호출과 파일을 가른다.
     case "$args" in *"--state closed"*) cat "$f.issues_closed.json"; exit 0 ;; esac
     cat "$f.issues.json"; exit 0 ;;
   "issue create")
@@ -524,6 +552,115 @@ FX
 echo '[]' > "$tmp/fx/ggqgga_EpicNoRefs.issues_closed.json"
 echo '[]' > "$tmp/fx/ggqgga_EpicNoRefs.pr_open.json"
 echo '[]' > "$tmp/fx/ggqgga_EpicNoRefs.pr_closed.json"
+
+# ── (#292) 에픽 닫힌 leaf 는 "최근 200건" 이 아니라 **검색 스코프 조회**에서 온다 ──────
+# Epics 레포는 회귀 대조군이다 — 검색 결과가 최근-200 목록과 같으면(합집합이 같은 집합)
+# 출력이 #260 때와 **한 글자도** 달라지지 않아야 한다.
+cp "$tmp/fx/ggqgga_Epics.issues_closed.json" "$tmp/fx/ggqgga_Epics.epic_closed.json"
+
+# ── 픽스처: ggqgga/EpicWindow (epicwindow) — **창 밖 leaf** (#292 의 본체) ──────────
+#   최근 닫힌 200건에는 무관한 #900 만 있다(에픽 줄 없음). 에픽 #100 의 닫힌 leaf 2건과
+#   에픽 #200 의 닫힌 leaf 2건은 **검색 스코프 조회로만** 잡힌다.
+#   want: `#100 2/3 · 대기 1` · `#200 2/2` + warn `에픽 leaf 전부 종료 #200`
+#   옛 경로(최근 200건)로 되돌리면: `#100 0/1` · `#200 leaf 없음(Epic 줄 미부착)` + warn 0
+#   — 그게 이 이슈가 신고한 두 실패 시나리오의 재현이다(뮤테이션 대상).
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicWindow.issues.json" <<'FX'
+[
+ {"number":100,"title":"오래 산 에픽 A","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":200,"title":"오래 산 에픽 B — leaf 전부 창 밖에서 종료","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":101,"title":"열린 leaf","createdAt":"@NOW@","body":"Epic #100","labels":[{"name":"agent-ready"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicWindow.issues_closed.json" <<'FX'
+[
+ {"number":900,"body":"에픽과 무관","closedAt":"@NOW@","labels":[]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicWindow.epic_closed.json" <<'FX'
+[
+ {"number":103,"body":"Epic #100","closedAt":"@NOW@","labels":[]},
+ {"number":104,"body":"Epic #100","closedAt":"@NOW@","labels":[]},
+ {"number":201,"body":"Epic #200","closedAt":"@NOW@","labels":[]},
+ {"number":202,"body":"Epic #200","closedAt":"@NOW@","labels":[]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_EpicWindow.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicWindow.pr_closed.json"
+
+# ── 픽스처: ggqgga/EpicFail (epicfail) — 조회 **실패**는 "닫힌 leaf 0건" 이 아니다 ────
+# PR#239 의 세 갈래 중 ⑴ 조회 실패. 에픽 #300 은 최근-200 에 닫힌 leaf(#302)가 있어
+# 합집합 덕에 수치가 종전으로 degrade 하지만, 그래도 비율을 찍지 않는다(못 셌으므로).
+# 에픽 #310 은 `전부 종료` warn 이 **실패 중에도 그대로 뜨는지**를 문다 — 그 판정은
+# "열린 leaf 0 + 닫힌 leaf ≥1" 이고 조회 실패는 닫힌 leaf 를 적게만 셀 수 있어 거짓 음성
+# 방향이다(뜨면 참). 헤더 ★에픽 절★ 이 이 조합을 명시한다.
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicFail.issues.json" <<'FX'
+[
+ {"number":300,"title":"에픽 F","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":310,"title":"에픽 G — 최근창 기준 전부 종료","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":301,"title":"열린 leaf","createdAt":"@NOW@","body":"Epic #300","labels":[{"name":"agent-ready"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicFail.issues_closed.json" <<'FX'
+[
+ {"number":302,"body":"Epic #300","closedAt":"@NOW@","labels":[]},
+ {"number":311,"body":"Epic #310","closedAt":"@NOW@","labels":[]}
+]
+FX
+: > "$tmp/fx/ggqgga_EpicFail.epic_closed.fail"
+echo '[]' > "$tmp/fx/ggqgga_EpicFail.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicFail.pr_closed.json"
+
+# ── 픽스처: ggqgga/EpicSilent (epicsilent) — **빈 출력 + exit 0** (조용한 실패) ───────
+# PR#239 의 갈래 ⑵. `gh` 의 검색 2차 레이트리밋이 실제로 이 모양이고 `rate_limit` 은 그때도
+# 초록이라 종료코드로는 안 걸린다. 교차확인은 **core API 목록**으로 한다 — 최근 닫힌 목록에
+# `Epic #N` 줄(#402)이 있는데 검색이 0행이면 "닫힌 leaf 가 없다" 가 아니라 검색이 접힌 것이다.
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicSilent.issues.json" <<'FX'
+[
+ {"number":400,"title":"에픽 H","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":401,"title":"열린 leaf","createdAt":"@NOW@","body":"Epic #400","labels":[{"name":"agent-ready"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicSilent.issues_closed.json" <<'FX'
+[
+ {"number":402,"body":"Epic #400","closedAt":"@NOW@","labels":[]}
+]
+FX
+: > "$tmp/fx/ggqgga_EpicSilent.epic_closed.silent"
+echo '[]' > "$tmp/fx/ggqgga_EpicSilent.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicSilent.pr_closed.json"
+
+# ── 픽스처: ggqgga/EpicBadJson (epicbadjson) — 배열이 아닌 응답 ────────────────────
+# PR#239 의 갈래 ⑶ 조회 대상 오식별/형식 밖. `gh` 는 에러 JSON 을 stdout 으로 흘리는
+# 전례가 있다(claim-issue.sh 와 같은 함정) — 그걸 `[]` 로 접으면 또 `0/N` 이다.
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicBadJson.issues.json" <<'FX'
+[
+ {"number":450,"title":"에픽 I","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":451,"title":"열린 leaf","createdAt":"@NOW@","body":"Epic #450","labels":[{"name":"agent-ready"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_EpicBadJson.issues_closed.json"
+: > "$tmp/fx/ggqgga_EpicBadJson.epic_closed.notarray"
+echo '[]' > "$tmp/fx/ggqgga_EpicBadJson.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicBadJson.pr_closed.json"
+
+# ── 픽스처: ggqgga/EpicCap (epiccap) — 새 조회가 **자기 상한**에 닿는다 ─────────────
+# `EPIC_CLOSED_LIMIT` 를 낮춰 1000행짜리 픽스처 없이 상한 경로를 재현한다
+# (epic-sweep.sh 의 `EPIC_SEARCH_PER_PAGE` 와 같은 관행).
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicCap.issues.json" <<'FX'
+[
+ {"number":500,"title":"에픽 J","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":501,"title":"열린 leaf","createdAt":"@NOW@","body":"Epic #500","labels":[{"name":"agent-ready"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_EpicCap.issues_closed.json"
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicCap.epic_closed.json" <<'FX'
+[
+ {"number":502,"body":"Epic #500","closedAt":"@NOW@","labels":[]},
+ {"number":503,"body":"Epic #500","closedAt":"@NOW@","labels":[]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_EpicCap.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicCap.pr_closed.json"
 
 # ── 픽스처: ggqgga/issue-runner (runner) — 깨끗함 + release 있음 ─────────────
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_issue-runner.issues.json" <<'FX'
@@ -910,9 +1047,14 @@ ck "목록 절단: exit 0" "$RC" 0
 no_sub "(#248) 큰 body 페이로드가 ARG_MAX 로 집계 실패하지 않는다" "$tmp/out" \
   "파이프라인 big — 조회 실패"
 has_sub "(#248) 큰 body 페이로드에서도 블록이 정상 렌더" "$tmp/out" "파이프라인 big — 열림 0"
-has_line "목록 절단: warn 3건(#260 닫힌 이슈 포함)" "$tmp/out" "  warn      3"
+has_line "목록 절단: warn 2건(#292 로 닫힌 이슈 목록이 빠졌다)" "$tmp/out" "  warn      2"
 has_sub "목록 절단: 이슈 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(이슈)"
-has_sub "(#260) 목록 절단: 닫힌 이슈 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(닫힌 이슈)"
+# (#292) 최근 닫힌 200건의 절단 warn 은 **없앴다**. 그 목록의 유일한 소비자였던 에픽 leaf
+# 카운트가 검색 스코프 조회로 옮겨 갔고, 남은 쓰임(색인 지연 보완·조용한 실패 교차확인)은
+# 최근 것만 있으면 되는 성질이라 상한 도달이 정상이다 — bodat 은 매 틱 닿아 교정 불가능한
+# 상시 소음이었다(#190 의 warn 정의 위반). 절단 신호는 새 조회의 상한으로 옮겼다.
+no_sub "(#292) 최근 닫힌 200건의 절단 warn 은 사라졌다" "$tmp/out" \
+  "목록 상한 200 도달 — 창 절단 가능(닫힌 이슈)"
 has_sub "목록 절단: 닫힌 PR 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(닫힌 PR)"
 no_sub "목록 절단: 상한 안 닿은 열린 PR 은 조용하다" "$tmp/out" "창 절단 가능(열린 PR)"
 
@@ -1105,9 +1247,79 @@ has_sub "leaf 없음 줄은 그대로" "$tmp/out" "    - #700 leaf 없음(Epic �
 has_line "무관한 파생은 에픽 병기 없이 그대로(실제 Epic #N 텍스트가 0건)" "$tmp/out"   "  파생      1  #701"
 no_sub "무관한 파생에 '(에픽 없음)' 이 잘못 붙지 않는다" "$tmp/out" "#701(에픽 없음)"
 
+# ── ★창 밖 leaf★ (#292) — 닫힌 leaf 는 "최근 200건" 이 아니라 검색 스코프 조회에서 온다 ──
+run --repo ggqgga/EpicWindow --since 24h
+ck "epicwindow: exit 0" "$RC" 0
+has_line "(#292) 에픽 2건" "$tmp/out" "  에픽      2"
+# 본체 — leaf 3건 중 2건이 최근 200건 **밖**이고 새 조회로만 잡힌다.
+has_sub "(#292) #100 — 창 밖 닫힌 leaf 2건이 세어진다(옛 경로면 0/1)" "$tmp/out" \
+  "    - #100 2/3 · 대기 1"
+# leaf 가 **전부** 창 밖인 에픽 — 옛 경로에서는 `leaf 없음(Epic 줄 미부착)` 이라는 사실과
+# 다른 줄이 나오고 `전부 종료` warn 이 **안 떴다**. 그 warn 이 존재하는 이유가 이 상태다.
+has_sub "(#292) #200 — leaf 전부 창 밖 종료: 2/2(옛 경로면 leaf 없음)" "$tmp/out" \
+  "    - #200 2/2"
+no_sub "(#292) #200 이 'leaf 없음' 으로 위장하지 않는다" "$tmp/out" "#200 leaf 없음"
+has_sub "(#292) #200 — 전부 종료 warn 이 뜬다(옛 경로면 안 떴다)" "$tmp/out" \
+  "    - 에픽 leaf 전부 종료 #200(epicwindow) — 닫아라(에픽 스윕 대상)"
+no_sub "(#292) 상한에 안 닿았으니 절단 warn 없음" "$tmp/out" "창 절단 가능(에픽 닫힌 leaf)"
+ck "(#292) 에픽이 있는 레포는 새 조회 1회(레포당 1회 — 에픽 수와 무관)" \
+  "$(grep -c '^epic-closed ' "$STUB_CALL_LOG")" 1
+
+# ── (#292) 조회 실패 3갈래 — 어느 것도 "닫힌 leaf 0건" 으로 접히지 않는다 ─────────
+run --repo ggqgga/EpicFail --since 24h
+ck "epicfail: 레포를 실패시키지 않는다(exit 0)" "$RC" 0
+has_sub "(#292)⑴ 조회 실패: 비율 대신 종료 미상" "$tmp/out" \
+  "    - #300 종료 미상(닫힌 leaf 조회 실패) · 대기 1"
+no_sub "(#292)⑴ 조회 실패를 0/N 으로 위장하지 않는다" "$tmp/out" "#300 0/"
+has_sub "(#292)⑴ 실패는 warn 으로 드러난다(사유 포함)" "$tmp/out" \
+  "    - 에픽 닫힌 leaf 조회 실패(epicfail) — 종료/전체 미상: gh: HTTP 403 rate limit"
+has_sub "(#292)⑴ 실패 중에도 전부 종료 warn 은 그대로(거짓 음성 방향이라 뜨면 참)" "$tmp/out" \
+  "    - 에픽 leaf 전부 종료 #310(epicfail) — 닫아라(에픽 스윕 대상)"
+has_sub "(#292)⑴ 실패 사유는 stderr 에도" "$tmp/err" "에픽 닫힌 leaf 조회 실패"
+
+run --repo ggqgga/EpicSilent --since 24h
+ck "epicsilent: exit 0" "$RC" 0
+has_sub "(#292)⑵ 빈 출력+exit 0 을 core API 대조로 실패로 가른다" "$tmp/out" \
+  "    - #400 종료 미상(닫힌 leaf 조회 실패) · 대기 1"
+has_sub "(#292)⑵ 조용한 실패 사유가 warn 에 적힌다" "$tmp/out" \
+  "검색 0행인데 최근 닫힌 목록엔 Epic 줄이 있다(조용한 실패)"
+
+run --repo ggqgga/EpicBadJson --since 24h
+ck "epicbadjson: exit 0" "$RC" 0
+has_sub "(#292)⑶ 배열이 아닌 응답도 실패다" "$tmp/out" \
+  "    - #450 종료 미상(닫힌 leaf 조회 실패) · 대기 1"
+has_sub "(#292)⑶ 사유: 응답이 배열이 아님" "$tmp/out" \
+  "    - 에픽 닫힌 leaf 조회 실패(epicbadjson) — 종료/전체 미상: 응답이 배열이 아님"
+
+# ── (#292) 새 조회가 자기 상한에 닿으면 절단 warn — 종전 `닫힌 이슈` warn 의 새 자리 ──
+: > "$STUB_CALL_LOG"
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" EPIC_CLOSED_LIMIT=2 \
+  "$SUT" --repo ggqgga/EpicCap --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "EPIC_CLOSED_LIMIT=2: exit 0" "$RC" 0
+has_sub "(#292) 새 조회 상한 도달 → 절단 warn(상한 수치를 문구에 싣는다)" "$tmp/out" \
+  "    - 목록 상한 2 도달 — 창 절단 가능(에픽 닫힌 leaf)"
+has_sub "(#292) 상한에 닿아도 받은 행은 그대로 센다" "$tmp/out" "    - #500 2/3 · 대기 1"
+no_sub "(#292) 상한 도달은 실패가 아니다(종료 미상 아님)" "$tmp/out" "#500 종료 미상"
+# 형식 오류는 조용한 기본값이 아니라 환경 실패(HANDOFF_GRACE_MIN 과 같은 규율).
+# `0` 은 "안 본다" 가 아니라 **0행을 돌려받는** 값이라 금지한다 — 이 이슈가 고친 증상을
+# 환경변수 하나로 되살리는 경로다.
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" EPIC_CLOSED_LIMIT=0 \
+  "$SUT" --repo ggqgga/EpicCap --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "EPIC_CLOSED_LIMIT=0: exit 1" "$RC" 1
+has_sub "EPIC_CLOSED_LIMIT=0: stdout 에도 사유" "$tmp/out" \
+  "파이프라인 — 스냅샷 실패: EPIC_CLOSED_LIMIT 형식 오류: 0"
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" EPIC_CLOSED_LIMIT=천 \
+  "$SUT" --repo ggqgga/EpicCap --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "EPIC_CLOSED_LIMIT 형식 오류: exit 1" "$RC" 1
+has_sub "EPIC_CLOSED_LIMIT 형식 오류: stdout 에도 사유" "$tmp/out" "EPIC_CLOSED_LIMIT 형식 오류: 천"
+
 # ── 무회귀 — bodat(`Epic #N` 이 하나도 없는 픽스처)은 에픽 절(0줄) 추가 외엔 그대로 ──
 run --repo ggqgga/BodaT --since 24h
 has_line "무회귀: bodat 에픽 0줄" "$tmp/out" "  에픽      0"
+# (#292) 열린 에픽이 0건인 레포는 새 조회를 **아예 안 한다** — 에픽 절이 없는 레포의 틱
+# 비용을 늘리지 않는다(방식 (가)의 "N=0 이면 0회" 성질을 O(1) 로 유지한 것).
+ck "(#292) 에픽 0건 레포: 추가 gh 호출 0회" \
+  "$(grep -c '^epic-closed ' "$STUB_CALL_LOG")" 0
 has_line "무회귀: 파생 줄은 에픽 병기 없이 종전 그대로(레포에 열린 에픽이 없다)" \
   "$tmp/out" "  파생      1  #4832"
 
