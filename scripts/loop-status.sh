@@ -48,10 +48,28 @@
 #     4. 마감대기 — `flow:ready`
 #     5. 검증대기 — `flow:verify`
 #     6. 구현중   — `agent:claimed`
-#     7. 대기     — `agent-ready` 만
+#     7. 대기     — `agent-ready` 만 · **OPEN 블로커가 없음**
+#     8. 막힘     — 7 의 조건인데 **OPEN 블로커가 하나 이상**(#248). 7 의 갈래라 `대기`
+#                  바로 아래 줄에 그린다. 다른 버킷(1~6)은 블로커와 무관하게 그대로다 —
+#                  루프가 이미 들고 있는 건에 "막혔다" 를 덧씌우면 신호가 겹친다.
+#                  블로커 = 본문에서 **줄 시작**의 `blocked[- ]by\s+#N`(대소문자 무시, 줄 앞
+#                  공백 허용, 매치 구간의 첫 번호만) ∪ 라벨 `blocked-by:<N>`(숫자만), OR·dedupe.
+#                  **이 규칙의 SSOT 는 `eligible-issues.sh`** (그 파일의 `body_blockers`/
+#                  `label_blockers` 주석) — 여기 jq 는 같은 규칙을 옮겨 적은 것이다. 한쪽을
+#                  고치면 다른 쪽도 같이 고쳐라(같은 계산을 두 곳에서 다르게 하면, 사람 눈에
+#                  안 보이는 두 번째 계산기가 생긴다). 줄 시작 앵커가 요점이다 — 산문 속
+#                  `… blocked by #N …` 까지 집으면 정상 `대기` 가 `막힘` 으로 내려가, 막으려던
+#                  것보다 나쁜 방향(더 많이 잡는 쪽)으로 틀린다.
+#                  블로커 **상태**는 이미 받은 목록 안에서만 본다(추가 gh 호출 0): 같은 레포
+#                  열린 이슈에 있으면 `OPEN`(그 이슈의 버킷명이 곧 사유) · 열린 PR 에 있으면
+#                  `OPEN PR` · 둘 다 아니면 해제(닫힘·머지·미존재를 구분하지 않는다).
+#                  다른 레포 번호는 지원하지 않는다(`eligible-issues.sh` 도 같은 레포만 본다).
+#                  표기: `#4986 ← #4985(사람대기)` · 둘 이상이면 번호 내림차순으로 잇는다
+#                  (`#4981 ← #4980(대기) #4965(구현중)`) · PR 이면 `#N ← PR #M`.
 #   사다리 라벨이 2개 이상이면 **가장 뒤 단계**로 분류하고 warn "단계 라벨 중복".
 #   위 어느 라벨도 없는 열린 이슈는 루프 밖 — 세지 않는다(무소속 PR 의 연결 이슈일 때만
-#   warn 문구에 등장). `열림 N` = 1~7 버킷의 합이지 레포의 열린 이슈 총수가 아니다.
+#   warn 문구에 등장). `열림 N` = 1~8 버킷의 합이지 레포의 열린 이슈 총수가 아니다
+#   (`막힘` 은 `대기` 에서 옮겨 온 것이라 이 합은 #248 앞뒤로 변하지 않는다).
 #
 #   창(`--since`) 안에서만 세는 세 줄 — 버킷이 아니라 교차 집계다(같은 이슈가 위 버킷과
 #   중복 등장할 수 있다):
@@ -118,6 +136,13 @@
 #                      된다(플랜 §2). 버킷 기준인 이유: `deploy-wait` 가 이겨 배포대기로 가는
 #                      needs-human 이슈는 루프 전이가 만든 게 아니라 사람이 손으로 붙인 것이라
 #                      이 불변식 밖이다.
+#   · 블로커 사람대기 — `막힘` 버킷의 블로커가 **사람대기 버킷**이면 한 줄 (#248).
+#                      `배포대기` 블로커도 같은 규칙으로 `블로커 배포대기 …` — 둘 다 사람이
+#                      답해야 풀리는 게이트라, 그때까지 하위는 루프가 아무리 돌아도 안 풀린다.
+#                      묶음 단위는 **블로커**다(하위마다 한 줄이 아니라) — 사람이 답할 것은
+#                      하나인데 줄이 여럿이면 같은 질문이 N번 울린다. 하위는 번호 내림차순.
+#                      `구현중`·`검증대기`·`마감대기`·`마감중`·`대기`·`막힘` 블로커와 PR
+#                      블로커는 warn 이 아니다 — 루프가 처리 중이라 사람이 할 일이 없다.
 #   · 단계 라벨 중복 — 이슈에 사다리 라벨 2개 이상.
 #   · 미러 불일치    — 이슈와 **열린** 연결 PR 의 {flow:verify, flow:ready, harvesting}
 #                      집합이 다름. 연결 PR 이 없으면 대조할 상대가 없으니 warn 아님.
@@ -159,7 +184,10 @@
 #   "레포 하나 조회 실패"(부분 실패)와 구분되지 않는다.
 #
 # gh 호출 예산: 레포당 이슈 목록 1 + PR 목록(open/closed) 2 + release 확인 1 + 기본 브랜치 1
-# + compare 1 = 최대 6. **예외 둘**. ①(#157) 사람대기 버킷에서 사유가 `policy`·`conflict` 인
+# + compare 1 = 최대 6. 블로커 판정(#248)은 이 예산을 **한 호출도 늘리지 않는다** — 이슈 목록
+# `--json` 에 `body` 필드를 더하고(같은 한 번의 호출) 블로커 상태는 이미 받은 열린 이슈·열린 PR
+# 목록의 멤버십으로만 본다. 블로커마다 `gh issue view` 를 치면 N+1 이라 이 기능의 요점이 깨진다.
+# **예외 둘**. ①(#157) 사람대기 버킷에서 사유가 `policy`·`conflict` 인
 # 이슈에 한해 질문 코멘트 조회 `gh issue view --json comments` 를 1건씩 더 쓴다 — 라벨만으론
 # 질문 유무를 알 수 없고, 대상은 "지금 사람을 기다리는 건" 이라 목록 전체가 아니라 한 줌이다.
 # ②(#177) 무소속 warn 중 **사망 의심 꼬리표가 붙는 후보**에 한해 이슈 타임라인
@@ -463,10 +491,31 @@ def stage_labels_of($l): $l | map(select(. as $x | pr_stage_labels | index($x) !
 # 금지 사유(`hold:dup`·`hold:hardware`)는 라벨을 아예 안 만드는 것으로 막는 게 SSOT
 # (setup-labels.sh) 이고, 여기서 또 걸러 내면 실수로 붙은 라벨이 화면에서 사라진다.
 def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | sort;
+# 블로커 번호 (#248) — 규칙의 SSOT 는 `eligible-issues.sh`(body_blockers/label_blockers).
+# 거기의 `grep -oiE '^[[:space:]]*blocked[- ]by[[:space:]]+#[0-9]+'` 를 줄 단위로 옮긴 것이다:
+#   · `split("\n")` 로 먼저 줄을 가른다 — jq(Oniguruma)의 `^` 는 grep 과 달리 **문자열 시작**만
+#     앵커한다(실측: `"배경\nBlocked by #900"` 을 통째로 걸면 0건). 안 가르면 본문 첫 비공백이
+#     블로커 줄일 때만 잡혀, 설명 한 줄 뒤에 적은 진짜 블로커를 통째로 놓친다.
+#   · `capture` 는 비전역이라 줄마다 **첫 매치**만 — 같은 줄 뒤쪽의 무관한 `#M`(참조 PR 등)을
+#     블로커로 오인하지 않는다(eligible 쪽 `-o` 주석의 #1457 실측과 같은 이유).
+#   · 라벨은 `blocked-by:` 접미가 **숫자일 때만**(eligible 의 `grep -E '^[0-9]+$'` 에 해당).
+# `unique` 가 수 기준 dedupe(본문 `#7` 과 라벨 `blocked-by:007` 은 같은 블로커) · 표기 순서는
+# 번호 내림차순.
+def blockers_of($body; $l):
+  ([($body // "") | split("\n")[]
+      | capture("^[[:space:]]*blocked[- ]by[[:space:]]+#(?<n>[0-9]+)"; "i") | .n]
+   + [$l[] | select(startswith("blocked-by:")) | ltrimstr("blocked-by:")
+      | select(test("^[0-9]+$"))])
+  | map(tonumber) | unique | reverse;
+def bucket_ko($k):
+  {"deploy_wait":"배포대기","human_wait":"사람대기","harvesting":"마감중","ready":"마감대기",
+   "verify":"검증대기","claimed":"구현중","waiting":"대기","blocked":"막힘",
+   "outside":"루프 밖"}[$k];
 
 ($issues | map({
     number, title, createdAt,
-    ln: [.labels[].name]
+    ln: [.labels[].name],
+    blk: blockers_of(.body; [.labels[].name])
   })
   | map(. + {ladder: ladder_of(.ln), holds: holds_of(.ln)})
   | map(. + {stage: (if (.ladder | length) == 0 then "none" else key_of(.ladder[-1]) end)})
@@ -479,9 +528,27 @@ def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | so
        elif .stage == "verify" then "verify"
        elif .stage == "claimed" then "claimed"
        elif has(.ln; "agent-ready") then "waiting"
-       else "outside" end)})) as $iss
-| ($iss | map(.number)) as $onums
-| ($prs_open | map({number, headRefName, createdAt, ln: [.labels[].name], issue: linked(.)})) as $po
+       else "outside" end)})) as $iss0
+| ($iss0 | map(.number)) as $onums
+| ($prs_open | map(.number)) as $prnums
+# 블로커 상태는 **멤버십**으로만 본다 (#248) — 추가 gh 호출 0. 이슈·PR 번호는 레포 안에서
+# 한 수열이라 둘 다에 들 수 없다. 어느 목록에도 없으면 해제(닫힘·머지·미존재를 구분하지
+# 않는다 — `eligible-issues.sh` 도 CLOSED/MERGED 를 한 덩어리로 본다).
+# 버킷 재지정은 `waiting` 에서만 한다: 블로커의 **표시용 버킷**은 재지정 뒤 값을 쓰므로
+# (블로커 자신이 막혔으면 `막힘` 으로 보인다) 막힌 사슬이 서로를 가리켜도 여기서 끝난다 —
+# 열림 여부는 버킷과 무관한 멤버십 판정이라 순환이 생기지 않는다.
+| ($iss0
+   | map(. + {openblk: [.blk[] | . as $b
+       | if ($onums | index($b)) != null then {n: $b, state: "OPEN"}
+         elif ($prnums | index($b)) != null then {n: $b, state: "OPEN PR"}
+         else empty end]})
+   | map(if .bucket == "waiting" and ((.openblk | length) > 0)
+         then .bucket = "blocked" else . end)) as $iss
+| def blocker_bucket($n):
+    ($iss | map(select(.number == $n)) | if length > 0 then bucket_ko(.[0].bucket) else null end);
+  def blk_label($b):
+    if $b.state == "OPEN PR" then "PR #\($b.n)" else "#\($b.n)(\(blocker_bucket($b.n)))" end;
+  ($prs_open | map({number, headRefName, createdAt, ln: [.labels[].name], issue: linked(.)})) as $po
 | ($prs_closed | map({number, headRefName, mergedAt, closedAt, ln: [.labels[].name], issue: linked(.)})) as $pc
 # 인계 전 창의 판정축은 `agent:claimed` **라벨**이 아니라 **구현중 버킷**이다.
 # 라벨로 걸면 `agent:claimed` 이 붙은 채 더 뒤 버킷으로 간 이슈(deploy-wait·flow:*·
@@ -533,6 +600,15 @@ def orphan_base:
     since: $since,
     buckets: {
       waiting:     bucket("waiting";     item(.; "#\(.number)")),
+      # 막힘 (#248) — 항목은 기존 item 필드 + `blockers: [{n, state, bucket|null}]`.
+      # 라벨과 blockers 는 **같은 목록**(openblk)에서 나온다 — 따로 적으면 드리프트한다.
+      blocked:     bucket("blocked";     . as $i
+                     | (item($i; "#\($i.number) ← "
+                                 + ($i.openblk | map(blk_label(.)) | join(" ")))
+                        + {blockers: ($i.openblk
+                            | map({n, state,
+                                   bucket: (if .state == "OPEN PR" then null
+                                            else blocker_bucket(.n) end)}))})),
       claimed:     bucket("claimed";     . as $i | handoff_pr_of($i.number) as $p
                      | (item($i; "#\($i.number)" + (if $p == null then "" else " ← PR #\($p.number)(인계 전)" end))
                         + {pr: (if $p == null then null else $p.number end),
@@ -638,6 +714,21 @@ def orphan_base:
       + ($po | map(select(. as $p | $p.issue != null and (($onums | index($p.issue)) == null)))
         | map({kind: "closed_issue_open_pr", repo_short: $rs, pr: .number, issue: .issue,
                text: "연결 이슈 종료 PR #\(.number)(\($rs)) — 연결 이슈 #\(.issue) 가 CLOSED(Refs 부분착지면 정상)"}))
+      # 블로커가 사람 게이트(사람대기·배포대기) — **블로커 기준으로 묶는다** (#248).
+      # 하위마다 한 줄이면 사람이 답할 것은 하나인데 같은 질문이 N번 울린다.
+      # 루프가 처리 중인 블로커(구현중·검증대기·마감대기·마감중)와 PR 블로커는 여기 없다 —
+      # 사람이 할 일이 없는 후보를 warn 에 얹으면 조치 불가능한 잡음이 된다(#188 과 같은 규율).
+      + ([$iss[] | select(.bucket == "blocked") | . as $i
+          | $i.openblk[] | select(.state == "OPEN")
+          | {b: .n, bk: blocker_bucket(.n), sub: $i.number}]
+         | map(select(.bk == "사람대기" or .bk == "배포대기"))
+         | group_by(.b)
+         | map(([.[].sub] | sort | reverse) as $subs
+             | {kind: "blocker_human_wait", repo_short: $rs,
+                blocker: .[0].b, bucket: .[0].bk, issues: $subs,
+                text: ("블로커 \(.[0].bk) #\(.[0].b)(\($rs)) — 하위 "
+                       + ($subs | map("#\(.)") | join(" ")) + " 정체")})
+         | sort_by(-.blocker))
     ),
     # 사람 세션 PR — $ohuman(무소속 후보 중 head 가 `agent/issue-*` 아닌 것). warn 이 아니라
     # note 로 강등한다: 루프가 못 집는 후보를 warn 에 얹으면 조치 불가능한 잡음이 상시화되고
@@ -650,8 +741,9 @@ def orphan_base:
                + " · 루프가 못 집어 warn 아님")}))
     )
   }
-| . + {open_total: ([.buckets.waiting, .buckets.claimed, .buckets.verify, .buckets.ready,
-                     .buckets.harvesting, .buckets.human_wait, .buckets.deploy_wait]
+| . + {open_total: ([.buckets.waiting, .buckets.blocked, .buckets.claimed, .buckets.verify,
+                     .buckets.ready, .buckets.harvesting, .buckets.human_wait,
+                     .buckets.deploy_wait]
                     | map(length) | add)}
 JQ
 )
@@ -660,7 +752,7 @@ JQ
 # 라벨 자리는 표시폭 10칸으로 맞춘 리터럴(한글 = 2칸). 계산 대신 적어 둔다.
 RENDER_JQ=$(cat <<'JQ'
 def padded($k):
-  {"waiting":"대기      ","claimed":"구현중    ","verify":"검증대기  ",
+  {"waiting":"대기      ","blocked":"막힘      ","claimed":"구현중    ","verify":"검증대기  ",
    "ready":"마감대기  ","harvesting":"마감중    ","human_wait":"사람대기  ",
    "deploy_wait":"배포대기  ","failed":"실패      ","dup_closed":"중복종료  ",
    "spinoff":"파생      "}[$k];
@@ -672,7 +764,7 @@ if .ok == false then
   "파이프라인 \(.repo_short) — 조회 실패: \(.error)"
 else
   ([ "파이프라인 \(.repo_short) — 열림 \(.open_total) · 스코프 \($scope) · 창 \(.since)",
-     row("waiting"), row("claimed"), row("verify"), row("ready"), row("harvesting"),
+     row("waiting"), row("blocked"), row("claimed"), row("verify"), row("ready"), row("harvesting"),
      row("human_wait"), row("deploy_wait"), row("failed"), row("dup_closed"), row("spinoff"),
      "  승격 대기 " + (if .promotion_ahead == null then "—" else "\(.promotion_ahead)커밋" end),
      "  warn      \(.warns | length)" ]
@@ -695,8 +787,10 @@ for repo in "${repos[@]}"; do
   prs_open_json=""
   prs_closed_json=""
 
+  # `body` 는 블로커 줄(`Blocked by #N`)을 읽으려고 더한 필드다 (#248) — **같은 한 번의
+  # 호출**이라 gh 예산이 늘지 않는다(개별 `gh issue view` 를 치면 N+1).
   if run_gh gh issue list --repo "$repo" --state open --limit 200 \
-      --json number,title,labels,createdAt; then
+      --json number,title,labels,createdAt,body; then
     issues_json=$GH_OUT
   else
     fail_reason="이슈 목록 — $GH_ERR"

@@ -35,6 +35,11 @@
 #      이슈는 라벨 이벤트만으로도 첫 페이지 밖으로 밀려 최근 claim 을 놓친다.
 #      못 얻으면(조회 실패·claim 이벤트 부재) **숫자를 지어내지 않고** `경과 미상 — 확인
 #      필요` 로 바꾸되 warn 은 유지한다. 조회는 꼬리표가 붙는 후보에만(틱 비용).
+#   ⑭ (#248) 대기/막힘 — `대기` 판정을 통과한 이슈 중 **OPEN 블로커**가 있는 건은 `막힘`
+#      으로 간다. 블로커 파싱 규칙은 `eligible-issues.sh` 와 같은 의미라 개별 반례가
+#      아니라 **격자**(`ggqgga/Blockers` 픽스처 표)로 양방향을 전수 단언한다 — 근사가
+#      '더 많이 잡는' 쪽으로 틀리면(정상 `대기` 가 `막힘` 으로) 원래 버그보다 나쁘다.
+#      블로커 상태 판정에 **추가 gh 호출이 0** 이라는 것도 스텁 호출 로그로 못 박는다.
 #
 # 기대 줄은 **손으로 적는다** — SUT 의 jq 를 베껴 기대값을 만들면 공허하게 통과한다
 # (transition.test.sh 의 관행).
@@ -405,6 +410,61 @@ cat > "$tmp/fx/ggqgga_Stale.comments.20.json" <<'FX'
 {"comments":[{"body":"사람 확인(conflict): 옛 홀드의 질문\n<!-- hold-note: conflict --><!-- bodat:worker -->"}]}
 FX
 
+# ── 픽스처: ggqgga/Blockers (blockers) — 대기/막힘 가르기 (#248) ─────────────
+# 블로커 파싱 규칙은 eligible-issues.sh 와 **같은 의미**여야 한다. 개별 반례만 막으면
+# 근사가 '더 많이 잡는' 쪽으로 틀리고(정상 `대기` 가 `막힘` 으로 내려간다 — 원래 버그보다
+# 나쁘다), 그래서 규칙을 통째로 옮긴 뒤 아래 격자로 **양방향**을 전수 단언한다.
+#
+#   번호  입력                                   want
+#   ────  ─────────────────────────────────────  ────────────────────────────
+#   #10   본문 2번째 줄에 `Blocked by #900`      막힘 ← #900(사람대기)  ← 줄 앞에 다른 줄이
+#                                                있어도 잡힌다(줄 단위 앵커)
+#   #11   라벨 `blocked-by:901`                  막힘 ← #901(구현중)
+#   #12   본문 `Blocked by #999`(열린 목록 밖)   대기 (닫힘 = 자동 해제)
+#   #13   본문 `Blocked by #950`(열린 PR)        막힘 ← PR #950
+#   #14   본문 + 라벨 둘 다 #902                 막힘 ← #902(대기) 하나로 dedupe
+#   #15   산문 속 `blocked by #900`(줄 시작 X)   대기 ← **과잉 포획 반증**
+#   #16   본문 `Blocked by #900`                 막힘 ← #900 (#10 과 한 warn 으로 묶인다)
+#   #17   `  blocked-by #903`(앞 공백·하이픈형)  막힘 ← #903(배포대기) → warn(사람 게이트)
+#   #18   라벨 `blocked-by:abc`(숫자 아님)       대기 ← 숫자만 블로커(eligible 의 grep 과 같다)
+#   #19   `Blocked by #901 — 참고 #902`          막힘 ← #901 만(뒤쪽 언급은 안 집는다, #1457)
+#   #20   `BLOCKED BY #902`(대문자)              막힘 ← #902(대소문자 무시)
+#   #21   `not blocked by #900`(줄 시작이지만    대기 ← **과잉 포획 반증**(앵커가 살아 있다)
+#         앞에 다른 낱말)
+#   #22   `blockedby #900`(구분자 없음)          대기 ← **과잉 포획 반증**
+#   #23   구현중 버킷인데 본문에 블로커          구현중 그대로(막힘은 `대기` 에서만 갈린다)
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Blockers.issues.json" <<'FX'
+[
+ {"number":900,"title":"사람이 답해야 풀리는 블로커","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:ladder"}]},
+ {"number":901,"title":"루프가 처리 중인 블로커","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":902,"title":"대기 중인 블로커","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"}]},
+ {"number":903,"title":"배포 게이트 블로커","createdAt":"@NOW@","body":"","labels":[{"name":"deploy-wait"}]},
+ {"number":10,"title":"본문 블로커 — 줄 앞에 다른 줄이 있다","createdAt":"@NOW@","body":"배경 설명 한 줄\nBlocked by #900","labels":[{"name":"agent-ready"}]},
+ {"number":11,"title":"라벨 블로커","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"blocked-by:901"}]},
+ {"number":12,"title":"닫힌 블로커 — 자동 해제","createdAt":"@NOW@","body":"Blocked by #999","labels":[{"name":"agent-ready"}]},
+ {"number":13,"title":"블로커가 열린 PR","createdAt":"@NOW@","body":"Blocked by #950","labels":[{"name":"agent-ready"}]},
+ {"number":14,"title":"본문+라벨 중복","createdAt":"@NOW@","body":"Blocked by #902","labels":[{"name":"agent-ready"},{"name":"blocked-by:902"}]},
+ {"number":15,"title":"산문 속 언급은 블로커 아님","createdAt":"@NOW@","body":"본문 첫 줄\n이 건은 blocked by #900 라고 산문에 적혀 있다","labels":[{"name":"agent-ready"}]},
+ {"number":16,"title":"같은 블로커의 두 번째 하위","createdAt":"@NOW@","body":"Blocked by #900","labels":[{"name":"agent-ready"}]},
+ {"number":17,"title":"앞 공백 + 하이픈형","createdAt":"@NOW@","body":"  blocked-by #903","labels":[{"name":"agent-ready"}]},
+ {"number":18,"title":"숫자 아닌 라벨 접미","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"blocked-by:abc"}]},
+ {"number":19,"title":"같은 줄 뒤쪽 언급은 안 집는다","createdAt":"@NOW@","body":"Blocked by #901 — 참고 #902","labels":[{"name":"agent-ready"}]},
+ {"number":20,"title":"대문자","createdAt":"@NOW@","body":"BLOCKED BY #902","labels":[{"name":"agent-ready"}]},
+ {"number":21,"title":"줄 시작이지만 앞에 낱말이 있다","createdAt":"@NOW@","body":"not blocked by #900","labels":[{"name":"agent-ready"}]},
+ {"number":22,"title":"구분자 없음","createdAt":"@NOW@","body":"blockedby #900","labels":[{"name":"agent-ready"}]},
+ {"number":23,"title":"구현중인데 블로커가 있다","createdAt":"@NOW@","body":"Blocked by #900","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]}
+]
+FX
+# PR #950 — 블로커로 지목되는 열린 PR. head 가 agent/issue-* 가 아니고 연결 이슈도 없어
+# 무소속 후보 자체가 아니다(이 레포의 warn 을 블로커 warn 둘로만 좁혀 둔다).
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Blockers.pr_open.json" <<'FX'
+[
+ {"number":950,"headRefName":"feat/블로커-PR","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[],"labels":[]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_Blockers.pr_closed.json"
+
 # ── 픽스처: ggqgga/issue-runner (runner) — 깨끗함 + release 있음 ─────────────
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_issue-runner.issues.json" <<'FX'
 [
@@ -454,6 +514,9 @@ has_line "헤더: 열림=버킷합(19) · 스코프 · 창" "$tmp/out" \
   "파이프라인 bodat — 열림 20 · 스코프 bodat·runner · 창 24h"
 has_line "대기 3(창 밖 파생건도 대기에는 남는다)" "$tmp/out" \
   "  대기      4  #4901 #4832 #4831 #4600"
+# (#248) 블로커가 없는 픽스처에서는 `막힘 0` 한 줄이 느는 것 말고 출력이 바뀌지 않는다 —
+# 위아래의 기존 기대값이 그대로 통과하는 것이 그 증거다.
+has_line "(#248) 비-막힘 픽스처는 막힘 0" "$tmp/out" "  막힘      0"
 # 인계 전 창(기본 90분) — #4854 는 60분 전이라 무소속 warn 이 아니라 구현중 줄에 붙는다.
 # #4701 의 PR #4855 는 200분 전이라 붙지 않는다(아래 warn 에서 잡힌다).
 has_line "구현중 2(좌초건 포함) — 창 안 PR 만 '인계 전' 으로 병기" "$tmp/out" \
@@ -854,6 +917,61 @@ ck "stale marker: --json note_missing 도 사유를 가린다" \
      | jq -c '[.repos[0].buckets.human_wait[] | {n:.number, h:.holds, m:.note_missing}]')" \
   '[{"n":24,"h":["conflict"],"m":true},{"n":23,"h":["conflict"],"m":false},{"n":22,"h":["policy"],"m":false},{"n":21,"h":["conflict","policy"],"m":false},{"n":20,"h":["policy"],"m":true}]'
 ck "stale marker: warn 0(사유 있는 홀드뿐)" "$(grep -c '질문 유무 미확인' "$tmp/out")" 0
+
+# ── ⑭ (#248) 대기/막힘 — 블로커가 열려 있으면 `대기` 가 아니라 `막힘` ────────
+run --repo ggqgga/Blockers --since 24h
+ck "blockers: exit 0" "$RC" 0
+has_line "blockers 헤더 — 열림 18(막힘은 대기에서 옮겨 온 것이라 총합 불변)" "$tmp/out" \
+  "파이프라인 blockers — 열림 18 · 스코프 blockers · 창 24h"
+# ③⑥ 과잉 포획 반증이 사는 자리 — 닫힌 블로커(#12)·산문(#15)·라벨 접미가 숫자 아님(#18)
+# ·앵커 앞 낱말(#21)·구분자 없음(#22)은 전부 `대기` 로 남는다.
+has_line "① 대기 6 — 블로커가 없거나 이미 해제된 것만" "$tmp/out" \
+  "  대기      6  #902 #22 #21 #18 #15 #12"
+has_line "② 막힘 8 — 항목마다 블로커와 그 버킷(PR 이면 PR #n)" "$tmp/out" \
+  "  막힘      8  #20 ← #902(대기) #19 ← #901(구현중) #17 ← #903(배포대기) #16 ← #900(사람대기) #14 ← #902(대기) #13 ← PR #950 #11 ← #901(구현중) #10 ← #900(사람대기)"
+# 다른 버킷은 블로커와 무관하게 그대로 — 막힘은 `대기` 판정을 통과한 것에서만 갈린다
+has_line "⑨ 구현중 이슈는 블로커가 있어도 구현중 그대로" "$tmp/out" "  구현중    2  #901 #23"
+has_line "blockers 사람대기 1" "$tmp/out" "  사람대기  1  #900(대기, ladder)"
+has_line "blockers 배포대기 1" "$tmp/out" "  배포대기  1  #903"
+# 개별 반례를 부분 문자열로도 못 박는다 — 줄 전체 비교가 다른 이유로 깨져도 무엇이
+# 틀렸는지 보이게(과잉 포획은 `막힘` 줄에 그 번호가 나타나는 것으로 드러난다).
+no_sub "③ 닫힌 블로커(#999)는 대기 유지 — 막힘으로 안 내려간다" "$tmp/out" "#12 ← "
+no_sub "⑥ 산문 속 blocked by 는 블로커 아님" "$tmp/out" "#15 ← "
+no_sub "숫자 아닌 라벨 접미(blocked-by:abc)는 블로커 아님" "$tmp/out" "#18 ← "
+no_sub "앵커: 앞에 낱말이 있는 줄은 블로커 아님" "$tmp/out" "#21 ← "
+no_sub "구분자 없는 blockedby 는 블로커 아님" "$tmp/out" "#22 ← "
+no_sub "같은 줄 뒤쪽 언급(#902)은 #19 의 블로커가 아니다" "$tmp/out" "#19 ← #901(구현중) #902"
+# ⑧ warn 은 **블로커 기준으로 묶는다** — 하위가 둘이어도 한 줄, 하위 번호는 내림차순.
+has_line "blockers warn 2건(사람 게이트 블로커만)" "$tmp/out" "  warn      2"
+has_sub "⑧ 블로커 사람대기 — 하위 둘이 한 줄로 묶이고 내림차순" "$tmp/out" \
+  "    - 블로커 사람대기 #900(blockers) — 하위 #16 #10 정체"
+has_sub "배포대기 블로커도 같은 규칙(사람 게이트)" "$tmp/out" \
+  "    - 블로커 배포대기 #903(blockers) — 하위 #17 정체"
+# 구현중·검증대기 블로커는 루프가 처리 중이라 warn 이 아니다
+no_sub "구현중 블로커(#901)는 warn 아님" "$tmp/out" "블로커 구현중"
+no_sub "대기 블로커(#902)는 warn 아님" "$tmp/out" "블로커 대기"
+no_sub "PR 블로커는 warn 아님" "$tmp/out" "블로커 #950"
+# 구현중 버킷의 #23 은 막힘이 아니므로 #900 warn 의 하위에도 안 들어간다
+no_sub "막힘이 아닌 이슈는 warn 하위에 안 섞인다" "$tmp/out" "하위 #23"
+# 추가 gh 호출 0 — 블로커 상태는 이미 받은 목록 안에서만 판정한다(개별 view 금지)
+ck "(#248) 블로커 판정에 개별 issue view 를 쓰지 않는다" \
+  "$(grep -c '^comments ' "$STUB_CALL_LOG")" 0
+ck "(#248) 타임라인 조회도 없다" "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 0
+
+# ⑦ --json — blocked[] 항목은 기존 item 필드 + blockers[{n,state,bucket}]
+run --repo ggqgga/Blockers --since 24h --json
+ck "⑦ --json: blocked[].blockers 형태" \
+  "$(jq -c '[.repos[0].buckets.blocked[] | {n:.number, b:.blockers}]' < "$tmp/out")" \
+  '[{"n":20,"b":[{"n":902,"state":"OPEN","bucket":"대기"}]},{"n":19,"b":[{"n":901,"state":"OPEN","bucket":"구현중"}]},{"n":17,"b":[{"n":903,"state":"OPEN","bucket":"배포대기"}]},{"n":16,"b":[{"n":900,"state":"OPEN","bucket":"사람대기"}]},{"n":14,"b":[{"n":902,"state":"OPEN","bucket":"대기"}]},{"n":13,"b":[{"n":950,"state":"OPEN PR","bucket":null}]},{"n":11,"b":[{"n":901,"state":"OPEN","bucket":"구현중"}]},{"n":10,"b":[{"n":900,"state":"OPEN","bucket":"사람대기"}]}]'
+ck "⑦ --json: blocked 항목에도 repo_short·label" \
+  "$(jq -c '[.repos[0].buckets.blocked[] | select(.repo_short=="blockers")] | length' < "$tmp/out")" 8
+ck "⑦ --json: open_total 에 blocked 가 든다" \
+  "$(jq '.repos[0].open_total' < "$tmp/out")" 18
+ck "⑦ --json: waiting 에는 막힘이 안 남는다" \
+  "$(jq -c '[.repos[0].buckets.waiting[].number]' < "$tmp/out")" '[902,22,21,18,15,12]'
+ck "⑦ --json: warn kind 는 blocker_human_wait" \
+  "$(jq -c '[.repos[0].warns[] | select(.kind=="blocker_human_wait") | {b:.blocker, k:.bucket, i:.issues}]' < "$tmp/out")" \
+  '[{"b":903,"k":"배포대기","i":[17]},{"b":900,"k":"사람대기","i":[16,10]}]'
 
 # ── --post 대시보드(#163) ──────────────────────────────────────────────────
 fx="$tmp/fx/ggqgga_issue-runner"
