@@ -17,6 +17,21 @@
 #                  최신 `머지 판정: ✅` 의 신선도를 **증명하지 못함**(head 커밋보다 이르거나,
 #                  두 시각 중 하나라도 못 얻음 — 반송 뒤 재디스패치된 새 커밋이 아직
 #                  검증 안 됨, #171) → 무접촉(새 판정을 기다림)
+#                  또는 **진행 증거가 있음**(#206 — 아래 참조)
+#
+# **진행 증거 게이트 (#206).** 🔄 계열 두 갈래(stale_inline·stale_reverify)는 "워커가 죽었다"
+# 는 주장이다. 그 주장을 내기 전에 `progress-evidence.sh` 에 워커가 살아 있다는 증거가
+# 있는지 묻고, 있으면 `active` 로 떨어뜨린다. 증거는 두 가지다 —
+#   ① 최신 커밋이 STALL_MIN 이내   ② 그 head SHA 의 CI 티켓이 큐에 살아 있음
+# ②가 특히 중요하다: 박스 전역 직렬 CI 큐(#127) 대기는 워커가 통제할 수 없는 시간이라
+# 커밋이 한 시간 넘게 멈춰 있어도 워커는 살아 있다(#200 실측 72분·64분). 술어는
+# `progress-evidence.sh` **한 자리**에 있다 — `timebox-check.sh`(#200)가 부르는 그 자리다.
+# 두 벌로 복제하면 사람 눈에 안 보이는 두 번째 계산기가 다른 수를 센다.
+#
+# 판정 실패(헬퍼가 `unknown` 이거나 아예 못 돔)는 "증거 없음" 이 **아니다** — 그 방향으로
+# 접으면 조회 실패 한 번에 살아 있는 워커의 브랜치를 채간다(되돌릴 수 없는 손해). 그래서
+# 여기선 증명 실패를 `active`(무접촉) 로 받는다. ✅ 갈래의 fail-closed 와 방향이 반대로
+# 보이지만 **같은 원리**다: 되돌릴 수 없는 쪽(머지·재디스패치)을 증명 없이 열지 않는다.
 #
 # 판별 근거: 살아있는 워커는 `검증자 리뷰:` 코멘트 직후 수초 내 최종 판정을 찍는다.
 # 최신 검증자가 CLEAN 인데 STALE_FINISH_MIN 넘게 최종 판정이 없으면 워커 사망 확실.
@@ -41,6 +56,9 @@
 #                      둘 다 미지정 시 pr-comments.sh 로 **페이지네이션 전량** 조회한다
 #                      (`gh pr view --json comments` 의 첫 100건 상한 회피, #171).
 #   FC_FAILING        실패 체크 수(정수) — statusCheckRollup 대체
+#   FC_HEAD_SHA       head 커밋 SHA — pr-head-at.sh --with-sha 실조회 대체(#206 진행 증거 ②).
+#                      미지정이면 `none`(큐 증거 없음)으로 본다.
+#   FC_QUEUE_LOG      queue.log 경로 — progress-evidence.sh 의 PE_QUEUE_LOG 로 전달(픽스처용).
 #   FC_HEAD_AT        head 커밋 시각(ISO8601) — pr-head-at.sh 실조회 대체.
 #                      빈 값/파싱 불가 = **못 얻음**. 🔄 계열 갈래(#110 스테일 클록)에선
 #                      종전대로 epoch 0 으로 degrade 하지만, `✅` 갈래(#171 머지 게이트)
@@ -94,6 +112,7 @@ fi
 
 if [ -n "${FC_HEAD_AT+x}" ]; then
   head_at="$FC_HEAD_AT"
+  head_sha="${FC_HEAD_SHA:-none}"
 else
   # head 시각은 **커밋 목록을 세지 않고** 얻는다(#171 반송 4회차 [P1-1]).
   # `gh pr view --json commits` 는 GraphQL commits(first:100) 이라 101번째부터 안 온다 —
@@ -101,7 +120,17 @@ else
   # `head <= verdict` 를 만족해 done_verdict 가 난다(코멘트 100건 상한과 같은 함정).
   # 조회 로직은 pr-head-at.sh **한 자리**에 있다(사유·계약은 그 파일 주석 참조).
   # 조회 실패는 빈 값으로 떨어뜨린다 — 아래 ✅ 갈래가 "증명 실패 = active" 로 받는다.
-  head_at=$("$SCRIPT_DIR/pr-head-at.sh" "$repo" "$pr" 2>/dev/null) || head_at=''
+  # `--with-sha` 로 **한 번의 조회에서** 시각과 SHA 를 함께 받는다(#206) — SHA 는 진행 증거
+  # ②(그 SHA 의 CI 티켓이 큐에 살아 있는가)에 쓴다. 따로 한 번 더 물으면 pr-head-at.sh 가
+  # 없애려던 "head 를 묻는 두 자리" 가 되살아난다.
+  head_raw=$("$SCRIPT_DIR/pr-head-at.sh" --with-sha "$repo" "$pr" 2>/dev/null) || head_raw=''
+  if [ -n "$head_raw" ]; then
+    head_sha="${head_raw%% *}"
+    head_at="${head_raw##* }"
+  else
+    head_sha=none
+    head_at=''
+  fi
 fi
 
 # ISO8601(...Z) → epoch. BSD(date -j -f) 우선, GNU(date -d) 폴백.
@@ -208,6 +237,40 @@ is_clean() {
   esac
 }
 
+# ── 진행 증거 게이트 (#206) ─────────────────────────────────────────────
+# `progress-evidence.sh` **한 자리**에 묻는다(#200 이 세운 술어 — timebox-check.sh 가
+# 부르는 그 자리). 여기 두 번째 계산기를 만들지 않는다.
+#
+# 아래 스테일 클록(max_epoch)과 역할이 다르다 — 스테일 클록은 *마지막 워커 활동 이후
+# 얼마나 지났나*(#110) 이고, 이 게이트는 *워커가 지금도 진행 중이라는 증거가 있나*(#200)
+# 다. 후자만 두 소비자를 갖는 술어라 한 자리로 묶었다.
+#
+# 반환: 0 = 진행 증거 있음(또는 **판정 불가**) → 살아 있다고 본다. 1 = 증거 없음.
+# 판정 불가를 "증거 없음" 으로 접지 않는 이유는 파일 머리 주석 참조(되돌릴 수 없는 쪽을
+# 증명 없이 열지 않는다).
+has_progress() {
+  local out rc=0
+  # 커밋 시각은 **이미 파싱에 성공한 것만** 넘긴다. head_epoch 가 비었다는 것은 시각을
+  # 못 얻었거나(빈 값) 형식이 아니라는(쓰레기 값) 뜻이고, 이 파일의 🔄 계열 갈래는 그걸
+  # 종전부터 "커밋 증거 없음(epoch 0 degrade)" 으로 다룬다 — 헬퍼에 그대로 넘겨 `unknown`
+  # 으로 만들면 쓰레기 값 하나가 모든 갈래를 active 로 덮어 완결 유실 회수가 통째로 멈춘다.
+  # 판정 술어는 그대로 헬퍼 한 자리이고, 여기서 하는 것은 그 입력 계약(`none`)으로의 정규화다.
+  out=$(PE_QUEUE_LOG="${FC_QUEUE_LOG:-${PE_QUEUE_LOG:-$HOME/.claude/.local-ci/queue.log}}" \
+    "$SCRIPT_DIR/progress-evidence.sh" --now "$now" \
+    --commit-at "${head_epoch:+$head_at}" --head-sha "${head_sha:-none}" 2>/dev/null) || rc=$?
+  case "${out%% *}" in
+    progress) return 0 ;;
+    none)     [ "$rc" = 0 ] && return 1; return 0 ;;
+    *)        return 0 ;;   # unknown·무출력·exec 실패(126/127) = 판정 불가
+  esac
+}
+
+# 시간버퍼를 넘긴 갈래를 낼 때 진행 증거를 한 번 더 묻는다 — 증거가 있으면 워커는
+# 살아 있으므로 `active`.
+emit_stale() {  # emit_stale <stale_inline|stale_reverify>
+  if has_progress; then echo active; else echo "$1"; fi
+}
+
 # 두 epoch 중 큰 값(가장 최신 워커 활동).
 max_epoch() {
   local a="${1:-0}" b="${2:-0}"
@@ -222,7 +285,7 @@ if [ -z "$verifier_body" ]; then
   # 판정을 안 찍은 창을 살아있음으로 인정).
   ref_epoch_nv=$(max_epoch "$verdict_epoch" "$head_epoch")
   age=$((now - ${ref_epoch_nv:-$now}))
-  if [ "$age" -gt "$stale_sec" ]; then echo stale_reverify; else echo active; fi
+  if [ "$age" -gt "$stale_sec" ]; then emit_stale stale_reverify; else echo active; fi
   exit 0
 fi
 
@@ -238,8 +301,8 @@ ref_epoch=$(max_epoch "$ref_epoch" "$head_epoch")
 age=$((now - ${ref_epoch:-$now}))
 if is_clean "$verifier_body"; then
   # 검증자 CLEAN — 최종 판정만 유실. 시간버퍼 초과면 인라인 대리 판정.
-  if [ "$age" -gt "$stale_sec" ]; then echo stale_inline; else echo active; fi
+  if [ "$age" -gt "$stale_sec" ]; then emit_stale stale_inline; else echo active; fi
 else
   # 검증자 미해결 BLOCKER — 코드품질 검증 미완. 시간버퍼 초과면 완결 에이전트 재디스패치.
-  if [ "$age" -gt "$stale_sec" ]; then echo stale_reverify; else echo active; fi
+  if [ "$age" -gt "$stale_sec" ]; then emit_stale stale_reverify; else echo active; fi
 fi
