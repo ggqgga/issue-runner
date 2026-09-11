@@ -11,7 +11,7 @@
 | 생산자 | 동반 라벨 | 실제 뜻 |
 |---|---|---|
 | `transition.sh` (verify-held · closeout-blocked · runner-held) | `hold:<사유>` 항상 | 기계가 멈췄다 |
-| closeout 4단계 배포 대기 | `deploy-wait` | 배포 게이트 — deploy-cycle 루프(무인 — dev 최신화·승격·배포·종료) |
+| closeout 4단계 배포 대기 | `deploy-wait` | deploy-cycle 루프(무인 — dev 최신화·승격·배포·종료) |
 | full-cycle §7 배포 대기 | 없음 — `deploy-wait` 미부착(2026-09-11 실측: 그날 발행된 BodaT #5064 도 없다). BodaT #5071 이 고친다 | 배포 게이트 |
 | closeout — 라이브 검증 이슈(`SKILL.md:530`) · 라벨 부착 실패 폴백(`:468`) | 없음 | 사람 호출 / 비정상 |
 
