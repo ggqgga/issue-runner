@@ -208,7 +208,8 @@ printf '#!/bin/sh\nexit 1\n' > "$tmp/nogh/gh"; chmod +x "$tmp/nogh/gh"
 # 자동으로 따라간다(가짜 마커를 하나 더해도 이 스모크는 그 형태를 그대로 받아들인다).
 for args in \
   "redispatch owner/r 1 2" \
-  "reverify-fail owner/r 1 2 3 사유"; do
+  "reverify-fail owner/r 1 2 3 사유" \
+  "closeout-blocker owner/r 1 2 사유"; do
   # shellcheck disable=SC2086
   out=$(PATH="$tmp/stub:$PATH" STUB_CAPTURE="$tmp/cap" scripts/bounce-comment.sh $args 2>&1)
   rc=$?
@@ -229,6 +230,42 @@ for args in \
     || { echo "  ✗ bounce-comment.sh $args 가 낸 본문을 bounce-state.sh 가 반송으로 못 읽는다(판정=[$state]): $(cat "$tmp/cap")"; rm -rf "$tmp"; exit 1; }
 done
 rm -rf "$tmp"
+
+echo "[closeout·verify-runner] 스킬 문서가 반송 마커를 손으로 게시하지 않는지 (#271 — #212 재발)"
+# #212 는 "SKILL 산문에 박힌 예시 문자열을 손으로 옮겨 적다 콜론·어순이 변형된다" 는
+# 사고였고, `bounce-comment.sh` 가 그 문구를 만드는 한 자리다. 그런데 **채널이 없는
+# 갈래**(closeout ③-1 마감 검증 BLOCKER 반송)가 남아 있어 2026-09-11 에 같은 마커를
+# 두 번 손으로 적었다(#271). 채널을 더하는 것만으로는 재발을 못 막는다 — 다음 편집자가
+# 산문에 게시 명령을 다시 적을 수 있다. 그래서 **게시 형태**를 금지한다.
+#
+# 판정선: 산문의 `--body` 값이 **반송 마커로 시작**하면 그건 손으로 적은 반송 코멘트다.
+# (`gh pr comment … --body "<마커>: …"`). 이 결은 바로 아래 `--reason` 없는 전이 호출·
+# 산문 `--add-label needs-human` 가드와 같다 — 금지하는 것은 어휘가 아니라 **명령**이다.
+# 어휘 자체는 못 막는다: 종료 보고 형식(`재디스패치: #4770(bodat, stale_reverify)`)·
+# 표·설명문에 같은 낱말이 정당하게 쓰인다.
+# 마커는 SSOT(`bounce-state.sh` 의 마커 배열)에서 **읽어 온다** — 여기 리터럴로 베껴
+# 두면 집합이 바뀔 때 가드가 낡은 채로 초록이다(#221 이 같은 자리에서 밟은 함정).
+bc_markers=$(sed -n "s/^BOUNCE_MARKERS='\(.*\)'\$/\1/p" scripts/bounce-state.sh | head -1 | jq -r '.[]') \
+  || { echo "  ✗ bounce-state.sh 의 반송 마커 집합을 파싱하지 못했다"; exit 1; }
+[ -n "$bc_markers" ] \
+  || { echo "  ✗ bounce-state.sh 에서 반송 마커를 하나도 못 읽었다 — 가드가 의미를 잃었다"; exit 1; }
+bc_hit=0
+for f in SKILL.md SKILL.en.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md \
+         skills/verify-runner/SKILL.md references/worker-template.md references/worker-template.en.md; do
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
+    for q in '"' "'"; do
+      if grep -nF -- "--body $q$m" "$f" | grep -q .; then
+        echo "  ✗ $f: 산문이 반송 마커('$m')를 --body 로 직접 게시한다 — \$SCRIPTS/bounce-comment.sh <채널> 을 쓰라 (#212 · #271)"
+        grep -nF -- "--body $q$m" "$f" | head -3
+        bc_hit=1
+      fi
+    done
+  done <<EOF
+$bc_markers
+EOF
+done
+[ "$bc_hit" = 0 ] || exit 1
 
 echo "[worker] 반송 해소 보고 접두가 마커 집합 밖인지 — 한/영 템플릿 (#251 ②)"
 # #251 ② 는 판정기가 아니라 **문안**으로 닫혔다: 워커의 반송 해소 보고가 반송 마커로
