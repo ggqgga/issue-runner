@@ -191,6 +191,83 @@ EOF
 bash "$SUT" "$tmp/nolockleak.md" 5 >/dev/null 2>&1
 if [ ! -d "$tmp/nolockleak.md.lock" ]; then ok; else bad "(잠금) 무변경(no-op) 경로 후 lock 디렉터리 잔존"; fi
 
+# ── append 서브커맨드 — 기본 동작 ────────────────────────────────────
+# (append-a) 파일이 없으면 append 가 새로 만든다.
+out=$(bash "$SUT" append "$tmp/append-new.md" 5 "- [2026-06-01 PR#1] new" 2>/dev/null); rc=$?
+if [ "$rc" = 0 ] && [ -z "$out" ] && grep -qF -- '- [2026-06-01 PR#1] new' "$tmp/append-new.md"; then
+  ok
+else
+  bad "(append-a) 파일 없음 → 생성 — rc=$rc out=[$out]"
+fi
+
+# (append-b) 캡 이하로 유지되면 트림 없음(무출력) — 기존 항목 + 새 항목 모두 남는다.
+cat > "$tmp/append-under.md" <<'EOF'
+# preamble
+---
+- [2026-06-01 PR#1] one
+EOF
+out=$(bash "$SUT" append "$tmp/append-under.md" 5 "- [2026-06-02 PR#2] two" 2>/dev/null); rc=$?
+if [ "$rc" = 0 ] && [ -z "$out" ] \
+  && grep -qF 'PR#1]' "$tmp/append-under.md" && grep -qF 'PR#2]' "$tmp/append-under.md"; then
+  ok
+else
+  bad "(append-b) 캡 이하 — 무트림·둘 다 잔존 — rc=$rc out=[$out]"
+fi
+
+# (append-c) 캡 초과 — append 직후 같은 호출 안에서 오래된 것부터 정리된다.
+cat > "$tmp/append-over.md" <<'EOF'
+# preamble
+---
+- [2026-06-01 PR#1] one
+- [2026-06-02 PR#2] two
+- [2026-06-03 PR#3] three
+EOF
+out=$(bash "$SUT" append "$tmp/append-over.md" 3 "- [2026-06-04 PR#4] four" 2>/dev/null); rc=$?
+if [ "$rc" = 0 ] && [ "$out" = "- [2026-06-01 PR#1] one" ] \
+  && ! grep -qF 'PR#1]' "$tmp/append-over.md" \
+  && grep -qF 'PR#2]' "$tmp/append-over.md" && grep -qF 'PR#3]' "$tmp/append-over.md" \
+  && grep -qF 'PR#4]' "$tmp/append-over.md"; then
+  ok
+else
+  bad "(append-c) 캡 초과 — append+정리 한 호출 — rc=$rc out=[$out] file=$(cat "$tmp/append-over.md")"
+fi
+
+# ── 동시성 — append 가 트림의 read→write 창에 끼어들어도 유실 안 된다(#208 BLOCKER②) ──
+# A(트림, 다른 세션을 흉내)가 잠금을 쥔 채 read(awk)까지 마치고 write(mv) 직전에
+# LESSONS_TRIM_TEST_HOLD_BEFORE_WRITE 로 멈춰 있는 동안, B(append, 다른 세션)가 같은
+# 파일에 새 항목을 넣으려 한다. append 가 잠금 **안**에서 일어나면 B 는 A 가 끝날 때까지
+# 자기 read 조차 시작 못 하므로 A 의 mv 가 B 의 값을 볼 수도 밟을 수도 없다 — 검증자
+# 리뷰가 지적한 "A 읽음→B append→A 의 mv 가 B 를 덮음" 유실 경로가 원천 차단되는지를
+# 실제 두 프로세스로 잰다(딜레이 훅으로 창을 인위적으로 벌려 타이밍 의존 없이 결정론적).
+cat > "$tmp/race.md" <<'EOF'
+- [2026-07-01 PR#1] one
+- [2026-07-02 PR#2] two
+- [2026-07-03 PR#3] three
+- [2026-07-04 PR#4] four
+EOF
+LESSONS_TRIM_TEST_HOLD_BEFORE_WRITE=1.5 bash "$SUT" "$tmp/race.md" 3 > "$tmp/raceA.out" 2>&1 &
+race_a_pid=$!
+# A 가 잠금을 쥘 때까지 짧게 폴링(최대 2초) — B 를 그 전에 쏘면 경합 자체가 안 걸린다.
+waited=0
+while [ ! -d "$tmp/race.md.lock" ] && [ "$waited" -lt 40 ]; do
+  sleep 0.05
+  waited=$((waited + 1))
+done
+race_b_rc=0
+bash "$SUT" append "$tmp/race.md" 3 "- [2026-07-05 PR#999] concurrent" > "$tmp/raceB.out" 2>&1 || race_b_rc=$?
+race_a_rc=0
+wait "$race_a_pid" || race_a_rc=$?
+if [ -d "$tmp/race.md.lock" ] && [ "$waited" -lt 40 ]; then
+  bad "(동시성) A 가 실제로 잠금을 쥔 채 창을 열었는지 못 확인(폴링 실패)"
+elif [ "$race_a_rc" != 0 ] || [ "$race_b_rc" != 0 ]; then
+  bad "(동시성) A 또는 B 비정상 종료 — a_rc=$race_a_rc b_rc=$race_b_rc a_out=[$(cat "$tmp/raceA.out")] b_out=[$(cat "$tmp/raceB.out")]"
+elif grep -qF 'PR#999]' "$tmp/race.md"; then
+  ok
+else
+  bad "(동시성) B(append) 의 항목이 유실됐다 — A 의 mv 가 덮어썼다: $(cat "$tmp/race.md")"
+fi
+if [ ! -d "$tmp/race.md.lock" ]; then ok; else bad "(동시성) 레이스 후 lock 디렉터리 잔존"; fi
+
 # ── 오류 경계 ────────────────────────────────────────────────────────
 rc=0
 out=$(bash "$SUT" 2>/dev/null) || rc=$?
@@ -207,6 +284,14 @@ if [ "$rc" = 2 ] && [ -z "$out" ]; then ok; else bad "cap=0 — rc=$rc out=[$out
 rc=0
 out=$(bash "$SUT" "$tmp/does-not-exist.md" 5 2>/dev/null) || rc=$?
 if [ "$rc" = 0 ] && [ -z "$out" ]; then ok; else bad "파일 없음 — rc=$rc out=[$out]"; fi
+
+rc=0
+out=$(bash "$SUT" append "$tmp/append-new.md" 5 2>/dev/null) || rc=$?
+if [ "$rc" != 0 ] && [ -z "$out" ]; then ok; else bad "append 줄 인자 누락 — rc=$rc out=[$out]"; fi
+
+rc=0
+out=$(bash "$SUT" append "$tmp/append-new.md" abc "- [2026-06-01 PR#1] x" 2>/dev/null) || rc=$?
+if [ "$rc" = 2 ] && [ -z "$out" ]; then ok; else bad "append cap 비숫자 — rc=$rc out=[$out]"; fi
 
 echo "lessons-trim.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]

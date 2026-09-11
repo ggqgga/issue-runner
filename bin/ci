@@ -1026,10 +1026,10 @@ echo "[test] timebox-check.sh 진행 증거 판정·queue.log 마지막 줄·유
 [ -x scripts/timebox-check.sh ] || { echo "  ✗ timebox-check.sh 실행 비트 없음"; exit 1; }
 bash scripts/tests/timebox-check.test.sh
 
-echo "[test] lessons-trim.sh lessons-verifier.md 캡 수렴 정리 — 항목 정의·오래된 순 삭제·멱등 (#208)"
-# closeout 1단계가 append 직후 `scripts/lessons-trim.sh <파일> 20` 한 자리로 부르는
-# 계약이므로 실행 비트도 여기서 문다(비트가 빠지면 exit 126 → 캡 정리가 조용히 no-op
-# 으로 degrade, PR#173 교훈과 동일 함정).
+echo "[test] lessons-trim.sh lessons-verifier.md 캡 수렴 정리 — 항목 정의·오래된 순 삭제·멱등·append 잠금 (#208)"
+# closeout 1·6단계가 append 직후 `$SCRIPTS/lessons-trim.sh append <파일> 20 "<줄>"`
+# 한 자리로 부르는 계약이므로 실행 비트도 여기서 문다(비트가 빠지면 exit 126 → 캡
+# 정리가 조용히 no-op 으로 degrade, PR#173 교훈과 동일 함정).
 [ -x scripts/lessons-trim.sh ] || { echo "  ✗ lessons-trim.sh 실행 비트 없음"; exit 1; }
 bash scripts/tests/lessons-trim.test.sh
 
