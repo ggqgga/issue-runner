@@ -48,6 +48,15 @@ for a in "$@"; do
   [ "$a" = "--paginate" ] && paginate=1
   prev="$a"
 done
+# 타임라인(#174) — 코멘트와 **다른** 엔드포인트다. 코멘트 갈래보다 먼저 가른다
+# (둘 다 --paginate 라 순서를 뒤집으면 타임라인 조회가 코멘트 배열을 받는다).
+# STUB_TIMELINE=fail → gh 비정상 종료(조회 실패 재현).
+case "$*" in
+  */timeline*)
+    [ "${STUB_TIMELINE:-[]}" = "fail" ] && exit 1
+    printf '%s' "${STUB_TIMELINE:-[]}" | jq -r "$jqf"
+    exit 0 ;;
+esac
 if [ "$paginate" = 1 ]; then
   # 픽스처는 GraphQL 형상(createdAt)이라 REST 형상(created_at)으로 되돌린 뒤
   # 실 gh 처럼 --jq 를 적용한다.
@@ -104,7 +113,7 @@ run_case() {
     STUB_PRS='[{"repo":"owner/repo","pr":5}]' \
     STUB_META="$meta" STUB_COMMENTS="$comments" STUB_HEAD_AT="$head_at" \
     STUB_CAPPED_AT="$capped_at" STUB_HEAD_SHA="${STUB_HEAD_SHA:-feed0070ab}" \
-    STUB_CAPTURE="${STUB_CAPTURE:-}" \
+    STUB_CAPTURE="${STUB_CAPTURE:-}" STUB_TIMELINE="${STUB_TIMELINE:-[]}" \
     STUB_ROLLUP="$stub_rollup" \
     bash "$SUT" 2>/dev/null)
   n=$(printf '%s' "$out" | grep -c . || true)
@@ -266,6 +275,132 @@ else
   sed 's/^/      /' "$STUB_CAPTURE"
 fi
 STUB_CAPTURE=""
+
+# ── #174: 사람이 보류를 풀면 다시 후보로 뜬다 ─────────────────────────────
+# 실측 형상(BodaT PR #4922): `머지 판정: ✅` 뒤에 `마감 검증: ⚠ 보류` 가 달리고
+# closeout-blocked 가 `needs-human`+`hold:policy` 를 붙였다. 운영자가 결정문을 코멘트로
+# 남기고(머신 마커 없음) 5초 뒤 두 라벨을 뗐다. 그 뒤 이 PR 은 **양쪽 큐 어디에도**
+# 안 떴다 — 라벨은 풀렸는데 (a) 낡은 `⚠ 보류` 가 최신 판정 형식 코멘트로 남아 있고
+# (b) 운영자 결정문이 "미해결 사람 코멘트" 로 집계됐기 때문이다.
+#
+# **뮤테이션 표적**: finish-classify 의 해제 시각 비교(`해제 > 보류`)를 되돌리면
+# 아래 첫 케이스가 후보에서 빠져 빨개진다.
+held_then_released='[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T05:52:21Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T06:16:01Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T06:16:02Z"},
+  {"body":"마감 검증: ⚠ 보류 — 계획 부합 게이트 BLOCKER(P1 1건)\n<!-- bodat:worker -->","createdAt":"2026-07-05T07:00:21Z"},
+  {"body":"사람 확인(policy): 빈 uid fail-closed 가드가 없다\n<!-- bodat:worker -->","createdAt":"2026-07-05T07:00:24Z"},
+  {"body":"사람 결정(운영자): **P1 기각 — 원안 그대로 머지.**","createdAt":"2026-07-05T08:18:51Z"}
+]'
+released_timeline='[
+  {"event":"labeled","label":{"name":"needs-human"},"created_at":"2026-07-05T07:00:26Z"},
+  {"event":"labeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T07:00:26Z"},
+  {"event":"unlabeled","label":{"name":"needs-human"},"created_at":"2026-07-05T08:18:56Z"},
+  {"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T08:18:56Z"}
+]'
+
+# 16) 보류 해제됨(해제 > 보류) + 결정문이 해제 **이전** → 후보로 뜬다.
+STUB_TIMELINE="$released_timeline"
+run_case "보류해제→후보로뜬다(#174)" yes "$held_then_released" "2026-07-05T05:00:00Z"
+
+# 17) 해제 이벤트 없음(사람이 아직 안 풀었다) → 후보 아님. `needs-human` 라벨이 이미
+#     떨어진 뒤에도 낡은 `⚠ 보류` 하나로 게이트가 닫혀 있어야 한다(라벨 편집만으로는
+#     열리지 않는 두 번째 자물쇠 — 해제 **시각**이 증명돼야 열린다).
+STUB_TIMELINE='[]'
+run_case "해제이벤트없음→후보아님" no "$held_then_released" "2026-07-05T05:00:00Z"
+
+# 18) 타임라인 조회 실패 → 후보 아님(fail-closed). 조회 실패가 머지 게이트를 여는
+#     방향으로 작동하면 안 된다.
+STUB_TIMELINE="fail"
+run_case "타임라인조회실패→후보아님" no "$held_then_released" "2026-07-05T05:00:00Z"
+
+# 19) 해제 **뒤에** 달린 사람 코멘트는 여전히 미해결이다 → 후보 아님.
+#     해제로 답해진 것은 해제 시점까지의 사람 코멘트뿐이다(#72 보호를 해제 이후로는
+#     그대로 유지한다 — 사람이 새 질문을 던졌는데 자동 머지가 지나가면 안 된다).
+after_release_comment='[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T06:16:02Z"},
+  {"body":"마감 검증: ⚠ 보류 — P1 1건\n<!-- bodat:worker -->","createdAt":"2026-07-05T07:00:21Z"},
+  {"body":"사람 결정(운영자): P1 기각 — 원안 그대로 머지.","createdAt":"2026-07-05T08:18:51Z"},
+  {"body":"잠깐, 이 부분은 다시 봐야 할 것 같다.","createdAt":"2026-07-05T09:30:00Z"}
+]'
+STUB_TIMELINE="$released_timeline"
+run_case "해제이후사람코멘트→후보아님" no "$after_release_comment" "2026-07-05T05:00:00Z"
+
+# 20) 해제 후 **새 커밋** — 사람이 방향을 정해 주고 워커가 고치는 중(반송 레인) →
+#     후보 아님. #171 규칙이 이어 걸린다(두 규칙의 순서 계약).
+STUB_TIMELINE="$released_timeline"
+run_case "해제후새커밋→후보아님(#171우선)" no "$held_then_released" "2026-07-05T09:00:00Z"
+
+# 21) 보류 코멘트보다 **앞선** 사람 코멘트는 그 해제로 답해진 것이 아니다 → 후보 아님.
+#     해제 시각 하나로 "그 이전 전부" 를 면제하면 그 보류와 무관한 옛 미결 질문까지
+#     삼킨다. 면제 창은 반개구간 `(보류 코멘트, 해제]` 다.
+pre_hold_comment='[
+  {"body":"이건 별개 건인데 확인 좀 부탁합니다.","createdAt":"2026-07-05T05:00:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T06:16:02Z"},
+  {"body":"마감 검증: ⚠ 보류 — P1 1건\n<!-- bodat:worker -->","createdAt":"2026-07-05T07:00:21Z"},
+  {"body":"사람 결정(운영자): P1 기각 — 원안 그대로 머지.","createdAt":"2026-07-05T08:18:51Z"}
+]'
+STUB_TIMELINE="$released_timeline"
+run_case "보류이전사람코멘트→후보아님(면제창 밖)" no "$pre_hold_comment" "2026-07-05T05:00:00Z"
+
+# 22) **무회귀 + 비용 계약** — `마감 검증: ⚠` 가 없는 평범한 PR 은 타임라인을 **아예
+#     호출하지 않는다**. 호출 여부를 STUB_CAPTURE 로 직접 잰다 — 스텁 응답으로 재려 하면
+#     이 형상은 해제 시각이 있든 없든 판정이 안 바뀌어(가릴 ⚠ 도 사람 코멘트도 없다)
+#     아무것도 못 재는 껍데기 픽스처가 된다.
+STUB_CAPTURE="$tmp/timeline-capture"; : > "$STUB_CAPTURE"
+STUB_TIMELINE='[]'
+run_case "평범한PR→후보맞음(기준선)" yes '[
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:10:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"}
+]' "2026-07-05T04:10:00Z"
+if grep -q -- '/timeline' "$STUB_CAPTURE"; then
+  fail=$((fail + 1))
+  echo "  ✗ 평범한PR→타임라인 미호출 — 호출됐다:"
+  grep -- '/timeline' "$STUB_CAPTURE" | sed 's/^/      /'
+else
+  pass=$((pass + 1))
+fi
+
+# 23) 반대쪽 — `마감 검증: ⚠` 가 있으면 **호출한다**(위 22 가 "영영 호출 안 함" 을 굳혀
+#     기능을 죽이는 뮤테이션을 잡는다).
+: > "$STUB_CAPTURE"
+STUB_TIMELINE="$released_timeline"
+run_case "보류있는PR→후보맞음(호출 확인용)" yes "$held_then_released" "2026-07-05T05:00:00Z"
+if grep -q -- '/timeline' "$STUB_CAPTURE"; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "  ✗ 보류있는PR→타임라인 호출돼야 한다 — 호출 기록 없음:"
+  sed 's/^/      /' "$STUB_CAPTURE"
+fi
+STUB_CAPTURE=""
+STUB_TIMELINE='[]'
+
+# ── #186 합류 — 무관한 후속 보류 사이클의 해제가 옛 사람 질문을 소급 면제하지 않는다 ──
+# #186 실측 형상: (1) closeout 이 보류A(hold:policy) → (2) 사람이 보류A 를 푼다(08:18:56)
+# → (3) 사람이 **새 질문**을 던진다(09:30:00, after_release_comment 와 동형) → (4) 그
+# 뒤 **무관한** 보류B(hold:conflict — closeout 의 `마감 검증: ⚠` 코멘트를 새로 찍지
+# 않는, 예컨대 verify-runner 쪽 별개 홀드 사이클)가 걸렸다 풀린다(11:00:00).
+# 고친 코드(since_at 앵커 = hold_at)는 "보류A **이후 첫** 해제"(08:18:56)만 보므로 3번
+# 질문(09:30)이 여전히 그 뒤(면제 창 밖)라 미해결로 남는다 → 후보 아님.
+# **뮤테이션 방증** — closeout-eligible.sh 의 `pr-hold-released-at.sh` 호출에서 3번째
+# 인자(`"$hold_at"`)를 빼면(전역 최신 해제로 되돌리면) `hold_released_at`=11:00:00 이
+# 되어 09:30 질문이 `(hold_at, 11:00]` 안에 들어가 소급 면제되고, 이 케이스가 잘못
+# "후보 맞음" 으로 바뀌며 **빨개진다**(PR 본문에 실측 로그 인용).
+cross_episode_timeline='[
+  {"event":"labeled","label":{"name":"needs-human"},"created_at":"2026-07-05T07:00:26Z"},
+  {"event":"labeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T07:00:26Z"},
+  {"event":"unlabeled","label":{"name":"needs-human"},"created_at":"2026-07-05T08:18:56Z"},
+  {"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T08:18:56Z"},
+  {"event":"labeled","label":{"name":"needs-human"},"created_at":"2026-07-05T10:00:00Z"},
+  {"event":"labeled","label":{"name":"hold:conflict"},"created_at":"2026-07-05T10:00:00Z"},
+  {"event":"unlabeled","label":{"name":"needs-human"},"created_at":"2026-07-05T11:00:00Z"},
+  {"event":"unlabeled","label":{"name":"hold:conflict"},"created_at":"2026-07-05T11:00:00Z"}
+]'
+STUB_TIMELINE="$cross_episode_timeline"
+run_case "무관한후속보류해제가옛질문을소급면제하지않는다(#186)" no "$after_release_comment" "2026-07-05T05:00:00Z"
+STUB_TIMELINE='[]'
 
 # 12) 코멘트 조회 자체가 실패(gh 비정상 종료) → 후보 아님.
 #     반송되지 않았음을 **증명하지 못한** 상태를 통과로 처리하지 않는다(fail-closed).

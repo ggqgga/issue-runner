@@ -14,13 +14,15 @@ NOW=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "2026-07-05T12:00:00Z" +%s 2>/dev/null 
 
 pass=0
 fail=0
-# assert <name> <expected> <comments-json> [head_at]
+# assert <name> <expected> <comments-json> [head_at] [hold_released_at]
 # head_at 미지정 시 FC_HEAD_AT="" 로 명시 고정 — 실호출(gh) 경로로 새지 않게(네트워크 무접속 유지).
+# hold_released_at 도 같은 이유로 항상 명시한다(미지정 = 해제 이벤트 못 얻음, #174).
 assert() {
-  local name="$1" expect="$2" comments="$3" head_at="${4:-}"
+  local name="$1" expect="$2" comments="$3" head_at="${4:-}" hold_at="${5:-}"
   local got
   got=$(FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
-    FC_COMMENTS_JSON="$comments" FC_HEAD_AT="$head_at" "$SUT" owner/repo 1 2>/dev/null)
+    FC_COMMENTS_JSON="$comments" FC_HEAD_AT="$head_at" \
+    FC_HOLD_RELEASED_AT="$hold_at" "$SUT" owner/repo 1 2>/dev/null)
   if [ "$got" = "$expect" ]; then
     pass=$((pass + 1))
   else
@@ -576,6 +578,410 @@ got=$(FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
   "$SUT" owner/repo 1 2>/dev/null)
 check_hc "FC_COMMENTS_FILE대용량→done_verdict" done_verdict "$got"
 rm -rf "$cf"
+
+# ── #174: 사람이 보류를 풀면 낡은 `마감 검증: ⚠ 보류` 를 최신 판정으로 세지 않는다 ──
+#
+# 형상(실측 BodaT PR #4922): `머지 판정: ✅` → `마감 검증: ⚠ 보류` → 사람이
+# `needs-human`·`hold:*` 를 뗌. 그 해제 시각이 보류 코멘트보다 **뒤**면 보류는 해소된
+# 것이고, 그 앞의 ✅ 가 살아나 종전 경로(#171 head SHA 대조)로 이어진다.
+#
+# 두 규칙의 **순서**가 계약이다: (1) 보류 해소 판정 → (2) #171 head 대조.
+# 1 이 통과해도 2 가 막으면 active 다(아래 174c).
+held_shape='[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:00:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:10:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:11:00Z"},
+  {"body":"마감 검증: ⚠ 보류 — 계획 부합 게이트 BLOCKER(P1 1건)\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:00:00Z"}
+]'
+
+# 174a) 해제 > 보류 — 사람이 판정을 내리고 라벨을 뗐다 → 보류 해소, ✅ 가 살아난다.
+assert "해제>보류→done_verdict" done_verdict "$held_shape" "2026-07-05T09:05:00Z" "2026-07-05T10:30:00Z"
+
+# 174b) 해제 < 보류 — 사람이 풀었다가 **다시 걸었다**(해제가 보류보다 이르다) → active.
+#       (닫힌 게이트를 여는 방향은 "해제가 보류 뒤"임이 증명될 때뿐이다.)
+#       판정이 `held` 가 아닌 이유: `held` 는 스윕에 closeout-blocked(= needs-human 부착)를
+#       시켜, 사람이 방금 뗀 보류를 루프가 다시 붙이는 경로가 된다(#151). `active` 는
+#       같은 방향(머지 안 함)이면서 부작용이 없다.
+assert "해제<보류→active" active "$held_shape" "2026-07-05T09:05:00Z" "2026-07-05T08:00:00Z"
+
+# 174c) 해제 뒤 **새 커밋** — 사람이 방향을 정해 주고 워커가 고치는 중(반송 레인).
+#       보류는 해소됐지만 #171 규칙이 이어 걸려 active 다(closeout 이 집지 않고
+#       워커의 새 판정을 기다린다). 두 규칙의 순서를 고정하는 케이스.
+assert "해제후새커밋→active(#171우선)" active "$held_shape" "2026-07-05T10:40:00Z" "2026-07-05T10:30:00Z"
+
+# 174d) **타임라인 조회 실패**(해제 시각을 못 얻음) → 종전 동작(보류 유지) 폴백 = active.
+#       조회 실패를 "해제됨" 으로 읽으면 머지 게이트가 증명 없이 열린다(fail-closed).
+assert "해제시각못얻음→active(fail-closed)" active "$held_shape" "2026-07-05T09:05:00Z" ""
+
+# 174e) 해제 시각 **파싱 실패**(쓰레기 값) → 역시 통과 없음(active). 빈 값만의 문제가 아니다
+#       (GNU date 는 느슨한 표현을 받아 그럴듯한 epoch 를 만든다 — iso_to_epoch 형식검사).
+assert "해제시각파싱실패→active" active "$held_shape" "2026-07-05T09:05:00Z" "not-a-real-timestamp"
+
+# 174f) 동초 경계 — 해제와 보류가 **같은 초**면 "뒤" 가 아니다 → active(fail-closed).
+assert "해제와보류동초→active(경계)" active "$held_shape" "2026-07-05T09:05:00Z" "2026-07-05T10:00:00Z"
+
+# 174g) **무회귀** — `마감 검증: ⚠ 보류` 가 최신 ✅ 보다 **앞**이면 그건 이미 지나간
+#       보류다(반송 후 재완결 형상). 해제 이벤트가 없어도 done_verdict 여야 한다.
+#       이 케이스가 없으면 "⚠ 가 있기만 하면 보류" 로 과잉 억제해 정상 재완결이 막힌다.
+assert "보류가✅보다앞→done_verdict(무회귀)" done_verdict '[
+  {"body":"마감 검증: ⚠ 보류 — BLOCKER 2건\n<!-- bodat:worker -->","createdAt":"2026-07-05T06:34:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T07:50:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능(재검증)\n<!-- bodat:worker -->","createdAt":"2026-07-05T07:55:00Z"}
+]' "2026-07-05T07:45:00Z"
+
+# 174h) **무회귀** — 최신 `마감 검증` 이 ✅ 면 보류가 아니다(해제 이벤트 없이 done_verdict).
+assert "마감검증✅→done_verdict(무회귀)" done_verdict '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:11:00Z"},
+  {"body":"마감 검증: ✅ CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:00:00Z"}
+]' "2026-07-05T09:05:00Z"
+
+# 174i) 영문 접두(Closeout verification) 도 같은 규칙 — 한/영 병행 루프 대비.
+assert "english-closeout-hold→active" active '[
+  {"body":"Merge verdict: ✅ mergeable\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:11:00Z"},
+  {"body":"Closeout verification: ⚠ hold — BLOCKER 1\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:00:00Z"}
+]' "2026-07-05T09:05:00Z" ""
+
+# ── pr-hold-released-at.sh 계약 — 빈 결과와 실패를 구분한다 ──────────────────
+# 이 헬퍼가 "실패했는데 빈 값" 을 내면 상류(finish-classify)가 그걸 '해제 이벤트 없음'
+# 과 구분 못 한다. 둘 다 fail-closed(보류 유지)로 수렴하지만, 종료코드가 사유를 담아야
+# 상류가 나중에 갈래를 나눌 수 있다(PR#168 교훈: 센티널 하나로 사유를 단정하지 마라).
+HELPER="$DIR/pr-hold-released-at.sh"
+hb=$(mktemp -d)
+mk_gh() { cat > "$hb/gh"; chmod +x "$hb/gh"; }
+run_helper() { PATH="$hb:$PATH" "$HELPER" owner/repo 1 2>/dev/null; }
+# since_at(3번째 인자, #186 합류) 붙은 호출 — 에피소드 스코프 해제 계약을 문다.
+run_helper_since() { PATH="$hb:$PATH" "$HELPER" owner/repo 1 "$1" 2>/dev/null; }
+check_h() {
+  local name="$1" want_rc="$2" want_out="$3" got_rc=0 got_out
+  got_out=$(run_helper) || got_rc=$?
+  if [ "$got_rc" = "$want_rc" ] && [ "$got_out" = "$want_out" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "  ✗ $name — 기대 rc=$want_rc out='$want_out' / 실제 rc=$got_rc out='$got_out'"
+  fi
+}
+check_h_since() {
+  local name="$1" since="$2" want_rc="$3" want_out="$4" got_rc=0 got_out
+  got_out=$(run_helper_since "$since") || got_rc=$?
+  if [ "$got_rc" = "$want_rc" ] && [ "$got_out" = "$want_out" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "  ✗ $name — 기대 rc=$want_rc out='$want_out' / 실제 rc=$got_rc out='$got_out'"
+  fi
+}
+
+# h1) gh 실패 → 아무것도 안 내고 exit 1 (부분 출력을 정상값으로 채택하지 않는다).
+mk_gh <<'STUB'
+#!/bin/sh
+exit 1
+STUB
+check_h "helper: gh실패→rc1·무출력" 1 ""
+
+# h2) 해제 이벤트 없음 → **정상**(exit 0) + 빈 출력. 실패와 구분된다.
+mk_gh <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+check_h "helper: 해제이벤트없음→rc0·무출력" 0 ""
+
+# h3) `hold:policy`·`hold:conflict` 의 `unlabeled` 중 **가장 최근** 시각을 낸다.
+#     (라벨 이벤트는 페이지네이션 대상이라 --paginate 로 전량을 읽어야 한다.)
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+printf '%s' '[
+  {"event":"labeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T07:00:00Z"},
+  {"event":"unlabeled","label":{"name":"hold:conflict"},"created_at":"2026-07-05T10:29:00Z"},
+  {"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"},
+  {"event":"unlabeled","label":{"name":"flow:verify"},"created_at":"2026-07-05T23:00:00Z"},
+  {"event":"closed","created_at":"2026-07-05T23:30:00Z"}
+]' | jq -r "$jqf"
+STUB
+check_h "helper: 최신 해제 시각(사람 몫 사유 라벨만)" 0 "2026-07-05T10:30:00Z"
+
+# h3b) **핵심 회귀 가드** — `needs-human`·`hold:ladder` 의 제거는 **사람 신호가 아니다**.
+#      `resume-sweep.sh:159,299` 가 사다리 자동 재개로 그 둘을 **기계가** 뗀다. 이걸 세면
+#      기계 동작이 "사람이 결정했다" 는 증명으로 둔갑해 가려진 ✅ 가 되살아난다
+#      (#174 「걸러선 안 되는 것」 1항의 거울상 fail-open). → 해제 이벤트 없음(rc0·무출력).
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+printf '%s' '[
+  {"event":"unlabeled","label":{"name":"needs-human"},"created_at":"2026-07-05T10:30:00Z"},
+  {"event":"unlabeled","label":{"name":"hold:ladder"},"created_at":"2026-07-05T10:30:00Z"}
+]' | jq -r "$jqf"
+STUB
+check_h "helper: 사다리 자동재개(needs-human·hold:ladder)는 해제 아님" 0 ""
+
+# h4) 형식이 깨진 시각만 온다 → 유효한 해제 시각을 못 얻은 것 = exit 1(빈 출력).
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"garbage"}]' | jq -r "$jqf"
+STUB
+check_h "helper: 시각형식깨짐→rc1·무출력" 1 ""
+
+# h5) **핵심 회귀 가드 (#174 재작업 — P1)** — `policy_review_due` 재심(issue-runner
+#     SKILL.md §policy_review_due)이 `hold:policy` 를 **스스로** 뗀다. 이 재심은
+#     `<!-- hold-note: policy -->`(이번 홀드의 질문) **이후**에 `<!-- policy-review:
+#     resumed -->` 마커 코멘트를 남기고 나서 `transition.sh verify-redispatch` 로
+#     라벨을 뗀다 — 그 unlabeled 이벤트는 사람이 아니라 루프가 낸 것이다. 세지 않으면
+#     h3b 가 막은 것(사다리 자동재개)의 거울상이 policy 재심 경로로 되살아난다(반송 사유
+#     P1). 마커가 있으면 그 hold:policy 해제는 **후보에서 빠진다** → 다른 해제 이벤트가
+#     없으므로 rc0·무출력(사람 해제를 증명 못 함 — h3b 와 같은 형).
+#     스텁은 URL 로 timeline/comments 를 가른다 — 이 헬퍼가 이제 `pr-comments.sh` 를
+#     통해 코멘트도 읽기 때문(마커는 코멘트에만 있다, 타임라인엔 없다).
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[
+      {"body":"사람 확인(policy): 질문 한 줄\n<!-- hold-note: policy --><!-- bodat:worker -->","created_at":"2026-07-05T09:00:00Z"},
+      {"body":"재심: 플랜에서 답을 찾음 — 그대로 진행\n<!-- policy-review: resumed --><!-- bodat:worker -->","created_at":"2026-07-05T10:29:50Z"}
+    ]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+check_h "helper: policy_review_due 재심 해제(마커있음)는 사람 신호 아님→rc0·무출력" 0 ""
+
+# h5b) **무회귀** — 같은 unlabeled(hold:policy) 이벤트라도 마커가 **없으면**(진짜 사람이
+#      GitHub UI 에서 라벨만 뗀 경우) 종전대로 해제 시각을 낸다. hold-note 는 있지만 그
+#      이후 재심 마커가 없다 = 재심을 거치지 않고 사람이 직접 뗀 것.
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[
+      {"body":"사람 확인(policy): 질문 한 줄\n<!-- hold-note: policy --><!-- bodat:worker -->","created_at":"2026-07-05T09:00:00Z"}
+    ]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+check_h "helper: 재심 마커 없는 해제는 종전대로 사람 신호→rc0·시각" 0 "2026-07-05T10:30:00Z"
+
+# h5c) **핵심 회귀 가드 (#174 재작업 attempt 3 — 반송 P1)** — `<!-- policy-review: kept -->`
+#      는 "사람 몫 유지 — 라벨은 안 뗀다" 는 뜻이다(SKILL.md 재심 절차: `kept` 는 라벨을
+#      건드리지 않는다). 그러니 hold-note 이후에 `kept` 마커가 있고 그 **뒤에** 오는
+#      `unlabeled(hold:policy)` 는 재심이 뗀 게 아니라 **사람이 뗀 것일 수밖에 없다** —
+#      `resumed`(기계가 직접 뗀다)와 정반대다. `kept` 를 `resumed` 와 같은 필터에 넣으면
+#      이 해제가 영구 억제된다(사람이 풀어도 새 hold-note 가 안 찍혀 에피소드 경계가
+#      전진하지 않으므로 다음 틱도, 그 다음 틱도 계속 걸린다). → rc0·**시각이 나와야 한다**.
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[
+      {"body":"사람 확인(policy): 질문 한 줄\n<!-- hold-note: policy --><!-- bodat:worker -->","created_at":"2026-07-05T09:00:00Z"},
+      {"body":"재심: 사람 몫 유지 — 판단 근거 부족\n<!-- policy-review: kept --><!-- bodat:worker -->","created_at":"2026-07-05T09:30:00Z"}
+    ]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+check_h "helper: kept 뒤 사람이 뗀 해제는 여전히 사람 신호→rc0·시각" 0 "2026-07-05T10:30:00Z"
+
+# h5d) **짝 — 무회귀** — `resumed` 마커(기계가 직접 뗀다)는 여전히 걸러져야 한다. h5 와
+#      같은 형이지만 h5c 와 나란히 두어 kept/resumed 가 한 쌍으로 갈리는지 못 박는다.
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[
+      {"body":"사람 확인(policy): 질문 한 줄\n<!-- hold-note: policy --><!-- bodat:worker -->","created_at":"2026-07-05T09:00:00Z"},
+      {"body":"재심: 플랜에서 답을 찾음 — 그대로 진행\n<!-- policy-review: resumed --><!-- bodat:worker -->","created_at":"2026-07-05T10:29:50Z"}
+    ]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+check_h "helper: resumed 뒤 기계 해제는 여전히 걸러짐→rc0·무출력(짝)" 0 ""
+
+# ── 규칙 1(사유 교체) — #174 재작업 4회차(반송 P1), 라벨명 무관 에피소드 키 ─────────
+# codex 가 짚은 정확한 형상: `transition.sh` 의 `hold_others()` 는 `--reason policy` 로
+# (재)보류할 때 `hold:conflict`(와 `hold:ladder`)를 **같은 `gh issue edit` 호출**로
+# 뗀다 — GitHub 타임라인엔 `unlabeled(hold:conflict)` 와 `labeled(hold:policy)` 가
+# **같은 시각**으로 찍힌다. attempt 3(반송 회차 이전)의 필터는 `hold:policy` 만 가려
+# `hold:conflict` 는 무조건 사람 해제로 셌다 — 그 해제가 곧 가려진 ✅ 를 되살리는
+# fail-open 이었다(codex 실측: transition.sh:130,147-148,159-160,131-135).
+#
+# **핵심 뮤테이션 대상** — 규칙 1(같은 시각 labeled(hold:R'≠R) 이면 empty) 을
+# 되돌리면(예: 그 if 분기를 항상 `else` 쪽으로 떨어뜨리면) 아래 h6 가 시각을 내며
+# 빨개진다(뮤테이션 로그는 PR 본문에 인용). comments 는 마커가 없어도 무관하다 —
+# 규칙 1 은 라벨 이벤트만으로 판정한다(마커 불필요가 핵심 — hold:conflict 엔
+# 애초에 마커 관용구가 없다).
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[
+      {"event":"labeled","label":{"name":"hold:conflict"},"created_at":"2026-07-05T09:00:00Z"},
+      {"event":"unlabeled","label":{"name":"hold:conflict"},"created_at":"2026-07-05T10:30:00Z"},
+      {"event":"labeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}
+    ]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+check_h "helper: hold_others 사유교체(conflict→policy, 같은 시각)는 사람 해제 아님→rc0·무출력(규칙1)" 0 ""
+
+# h6b) **짝 — 무회귀** — 같은 라벨(hold:conflict) 해제라도 새 hold:policy 가 **다른(더
+#      늦은) 시각**에 붙었다면 사유 교체가 아니라 "따로 떨어진 두 보류 사이클" 이다 —
+#      hold:conflict 는 사람이 그때 풀었고, 한참 뒤 별개의 hold:policy 사이클이 새로
+#      걸린 것뿐이다. 규칙 1 이 시각 일치를 요구하지 않으면(예: 라벨명만 다르면
+#      전부 배제) 이 무회귀가 깨진다.
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[
+      {"event":"unlabeled","label":{"name":"hold:conflict"},"created_at":"2026-07-05T10:30:00Z"},
+      {"event":"labeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T12:00:00Z"}
+    ]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+check_h "helper: 시각 다른 별개 사이클은 여전히 사람 해제→rc0·시각(규칙1 짝)" 0 "2026-07-05T10:30:00Z"
+
+# ── since_at(3번째 인자) — 에피소드 스코프 해제 (#186 합류) ────────────────────────
+# closeout-eligible.sh·finish-classify.sh 는 판정 대상 보류의 앵커(`마감 검증: ⚠ 보류`
+# 코멘트 시각)를 이미 갖고 있다 — 그걸 넘기면 "그 시각 이후 **첫** 사람 해제" 를 낸다.
+# **핵심 뮤테이션 대상** — `$since == "" then …last… else …first…` 의 `first` 를
+# `last` 로 되돌리면(= 항상 전역 최신을 낸다) 아래 h7 이 09:00 대신 11:00 을 내며
+# 빨개진다(#186 이 막으려던 소급 면제의 헬퍼-레벨 재현).
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[
+      {"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T08:00:00Z"},
+      {"event":"unlabeled","label":{"name":"hold:conflict"},"created_at":"2026-07-05T09:00:00Z"},
+      {"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T11:00:00Z"}
+    ]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+# h7) 앵커(08:30) 이전(08:00)은 스코프 밖, 이후 둘(09:00·11:00) 중 **가장 이른** 것을 낸다.
+check_h_since "helper: since_at 있음→앵커 이후 첫 해제(전역 최신 아님)" "2026-07-05T08:30:00Z" 0 "2026-07-05T09:00:00Z"
+# h8) 앵커(11:30)가 모든 해제보다 뒤 → 그 보류를 닫는 해제가 아직 없다 → rc0·무출력.
+check_h_since "helper: since_at 이후 해제 없음→rc0·무출력(fail-closed)" "2026-07-05T11:30:00Z" 0 ""
+# h9) 무회귀 — since_at 생략(2-인자 호출)은 종전대로 전역 최신을 낸다(호환 유지).
+check_h "helper: since_at 생략→종전대로 전역 최신" 0 "2026-07-05T11:00:00Z"
+
+# ── 실조회 배선 — FC_HOLD_RELEASED_AT 미지정 시 finish-classify 가 헬퍼를 실제로 부른다 ──
+# 위 h1~h4 는 헬퍼 **단독** 계약이고, 아래 둘은 finish-classify → 헬퍼 **배선**을 문다.
+# 이 배선이 끊기면(경로 오타·실행 비트 누락 → exit 126) 프로덕션에선 해제 시각이 항상
+# 빈 값이라 사람이 푼 보류가 **영영** 안 풀리는데, env 를 항상 주입하는 다른 픽스처는
+# 그걸 하나도 못 잰다. gh 를 PATH 스텁으로 갈아 네트워크 없이 끝까지 돌린다.
+wired_shape='[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T09:11:00Z"},
+  {"body":"마감 검증: ⚠ 보류 — P1 1건\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:00:00Z"}
+]'
+run_wired() {  # FC_HOLD_RELEASED_AT 를 **안** 넘긴다(실조회 갈래).
+  PATH="$hb:$PATH" FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
+    FC_COMMENTS_JSON="$wired_shape" FC_HEAD_AT="2026-07-05T09:05:00Z" \
+    "$SUT" owner/repo 1 2>/dev/null
+}
+check_wired() {
+  local name="$1" expect="$2" got
+  got=$(run_wired)
+  if [ "$got" = "$expect" ]; then pass=$((pass + 1)); else
+    fail=$((fail + 1)); echo "  ✗ $name — 기대=$expect 실제=$got"; fi
+}
+
+# w1) 헬퍼가 보류보다 늦은 해제 시각을 내면 → done_verdict (배선이 살아 있다).
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}]' | jq -r "$jqf"
+STUB
+check_wired "실조회 배선: 해제 읽힘→done_verdict" done_verdict
+
+# w2) 같은 배선에서 gh 가 실패하면 → active (조회 실패가 게이트를 열지 않는다).
+mk_gh <<'STUB'
+#!/bin/sh
+exit 1
+STUB
+check_wired "실조회 배선: gh실패→active(fail-closed)" active
+
+# w3) **반송 사유의 핵심 시나리오 (#174 재작업 — P1)** — `policy_review_due` 재심이
+#     `hold:policy` 를 뗀 뒤에도 낡은 `머지 판정: ✅`(가려진 채) 가 남아 있으면 분류는
+#     `done_verdict` 가 **아니어야** 한다. 재심 마커(`<!-- policy-review: resumed -->`)가
+#     hold-note 이후·unlabeled 이전에 있어 그 해제는 기계 해제로 걸러지고, 다른 해제
+#     이벤트가 없으므로 헬퍼가 rc0·무출력을 내 finish-classify 는 보류가 해소됐음을
+#     증명 못 한 것으로 보고 active 로 떨어진다(#174 「걸러선 안 되는 것」 1항의 거울상
+#     fail-open — 이걸 막는 게 이번 반송의 요지).
+mk_gh <<'STUB'
+#!/bin/sh
+jqf='.'; prev=''
+for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
+url=''
+for a in "$@"; do case "$a" in repos/*) url="$a" ;; esac; done
+case "$url" in
+  *timeline*)
+    printf '%s' '[{"event":"unlabeled","label":{"name":"hold:policy"},"created_at":"2026-07-05T10:30:00Z"}]' | jq -r "$jqf"
+    ;;
+  *comments*)
+    printf '%s' '[
+      {"body":"사람 확인(policy): 질문 한 줄\n<!-- hold-note: policy --><!-- bodat:worker -->","created_at":"2026-07-05T09:30:00Z"},
+      {"body":"재심: 플랜에서 답을 찾음 — 그대로 진행\n<!-- policy-review: resumed --><!-- bodat:worker -->","created_at":"2026-07-05T10:29:50Z"}
+    ]' | jq -r "$jqf"
+    ;;
+esac
+STUB
+check_wired "실조회 배선: policy_review_due 재심 해제는 기계 해제→active(무회귀)" active
+rm -rf "$hb"
 
 echo "finish-classify.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]

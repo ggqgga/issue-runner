@@ -154,6 +154,41 @@ rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/pr-head-at.sh owner/r 123 2>/dev/null
   || { echo "  ✗ pr-head-at: 커밋 조회 빈값 rc=$rc out='$out' (기대 rc=1·무출력)"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] pr-hold-released-at 헬퍼 fail-closed·실행비트·페이지네이션 스모크 (#174)"
+# 해제 시각을 못 얻으면 **아무것도 안 내고 exit 1** 이어야 한다 — 빈 결과를 유효값으로
+# 둔갑시키면 상류가 "해제됨" 과 구분 못 해 머지 게이트가 사람 판단 없이 열린다.
+# 소비자가 `"$SCRIPT_DIR/pr-hold-released-at.sh"` 로 직접 exec 하므로 실행 비트도 함께 문다
+# (비트가 빠지면 조용히 exit 126 → 해제 시각이 항상 빈 값 = 사람이 푼 보류가 영영 안 풀린다).
+[ -x scripts/pr-hold-released-at.sh ] || { echo "  ✗ pr-hold-released-at.sh 실행 비트 없음"; exit 1; }
+# 타임라인도 기본 30건이라 `--paginate` 없이 부르면 반송을 여러 번 돈 PR 의 해제 이벤트가
+# 첫 페이지 밖으로 밀린다(코멘트·커밋 100건 상한과 같은 함정의 세 번째 자리).
+# **주석을 걷어내고** 본다 — 파일 주석에 그 문자열이 있어 통짜 grep 은 플래그가 실제로
+# 빠져도 통과한다(가드가 표적을 못 무는 형상).
+grep -v '^[[:space:]]*#' scripts/pr-hold-released-at.sh | grep -qF -- '--paginate' \
+  || { echo "  ✗ pr-hold-released-at.sh 의 gh 호출에 --paginate 없음 (타임라인 첫 페이지 상한)"; exit 1; }
+# 사람 몫 사유 라벨만 센다 — `needs-human`·`hold:ladder` 는 resume-sweep 이 **자동으로**
+# 떼므로(scripts/resume-sweep.sh:159,299) 그걸 세면 기계 동작이 사람 결정으로 둔갑한다.
+# (#174 재작업 4회차: hold:ladder 는 이제 "release-candidate 허용목록(hold:policy·
+# hold:conflict)에 없다" 는 형태로 막혀 있다 — 그 허용목록에 없는 라벨은 문자열로도
+# 안 나온다, pr-hold-released-at.sh 헤더 "★규칙★" 절 참조.)
+grep -v '^[[:space:]]*#' scripts/pr-hold-released-at.sh | grep -qF -- 'hold:policy' \
+  || { echo "  ✗ pr-hold-released-at.sh 가 hold:policy 를 안 본다"; exit 1; }
+if grep -v '^[[:space:]]*#' scripts/pr-hold-released-at.sh | grep -qE 'needs-human|hold:ladder'; then
+  echo "  ✗ pr-hold-released-at.sh 가 자동 제거 라벨(needs-human·hold:ladder)을 센다 — 기계 동작이 사람 결정으로 둔갑한다"
+  exit 1
+fi
+tmp=$(mktemp -d); mkdir "$tmp/stub"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/stub/gh"; chmod +x "$tmp/stub/gh"
+rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/pr-hold-released-at.sh owner/r 123 2>/dev/null) || rc=$?
+[ "$rc" = 1 ] && [ -z "$out" ] \
+  || { echo "  ✗ pr-hold-released-at: gh 실패 시 rc=$rc out='$out' (기대 rc=1·무출력)"; rm -rf "$tmp"; exit 1; }
+# 해제 이벤트 0건은 **정상**(rc=0·무출력) — 실패와 구분돼야 상류가 사유를 구분할 수 있다.
+printf '#!/bin/sh\nexit 0\n' > "$tmp/stub/gh"; chmod +x "$tmp/stub/gh"
+rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/pr-hold-released-at.sh owner/r 123 2>/dev/null) || rc=$?
+[ "$rc" = 0 ] && [ -z "$out" ] \
+  || { echo "  ✗ pr-hold-released-at: 해제이벤트 0건 rc=$rc out='$out' (기대 rc=0·무출력)"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
 echo "[closeout] bounce-state 헬퍼 fail-closed·실행비트 스모크 (#196)"
 # 반송 판정을 못 하면 **아무것도 안 내고 exit≠0** 이어야 한다 — 빈 결과를 유효값으로
 # 둔갑시키면 CONFLICTING 입양 게이트가 증명 없이 열린다(PR#139 교훈).

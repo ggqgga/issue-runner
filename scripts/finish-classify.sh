@@ -16,7 +16,9 @@
 #   active         위 어디에도 안 걸림(진행 중·시간버퍼 미도달·우리 형상 아님) 또는
 #                  최신 `머지 판정: ✅` 의 신선도를 **증명하지 못함**(head 커밋보다 이르거나,
 #                  두 시각 중 하나라도 못 얻음 — 반송 뒤 재디스패치된 새 커밋이 아직
-#                  검증 안 됨, #171) → 무접촉(새 판정을 기다림)
+#                  검증 안 됨, #171) 또는 그 ✅ 를 **더 뒤에 달린 `마감 검증: ⚠ 보류`** 가
+#                  가리고 있고 사람이 그 뒤에 보류를 풀었음을 증명 못 함(#174)
+#                  → 무접촉(새 판정을 기다림)
 #
 # 판별 근거: 살아있는 워커는 `검증자 리뷰:` 코멘트 직후 수초 내 최종 판정을 찍는다.
 # 최신 검증자가 CLEAN 인데 STALE_FINISH_MIN 넘게 최종 판정이 없으면 워커 사망 확실.
@@ -45,6 +47,12 @@
 #                      빈 값/파싱 불가 = **못 얻음**. 🔄 계열 갈래(#110 스테일 클록)에선
 #                      종전대로 epoch 0 으로 degrade 하지만, `✅` 갈래(#171 머지 게이트)
 #                      에선 증명 실패이므로 done_verdict 를 내지 않고 active 다.
+#   FC_HOLD_RELEASED_AT  사람이 사람 몫 사유 라벨(`hold:policy`·`hold:conflict`)을 뗀
+#                      최근 시각(ISO8601) —
+#                      pr-hold-released-at.sh 실조회 대체. 빈 값/파싱 불가 = **못 얻음**
+#                      → 보류가 해소됐음을 증명 못 한 것이므로 held(fail-closed, #174).
+#                      미지정 시엔 `마감 검증: ⚠` 가 최신 ✅ 를 가릴 때에만 실조회한다
+#                      (흔한 경로에 페이지네이션 호출을 얹지 않는다).
 #   FC_NOW            현재 epoch(초) — date 대체
 #   STALE_FINISH_MIN  시간버퍼(분, 기본 30)
 set -uo pipefail
@@ -137,14 +145,99 @@ last_matching() {
     | last | if . == null then "" else .[$f] end'
 }
 
+# 접두 매칭 코멘트의 **마지막 인덱스**(없으면 -1). 선후는 createdAt 이 아니라 배열
+# 인덱스로 잰다 — GitHub 코멘트 시각은 초 단위라 같은 초에 달린 두 코멘트의 순서를
+# 시각으로는 못 가린다(closeout-eligible 의 반송 마커 안전망과 같은 규율).
+last_index() {
+  local prefix_ko="$1" prefix_en="$2"
+  printf '%s' "$comments" | jq -r --arg pk "$prefix_ko" --arg pe "$prefix_en" '
+    ([ to_entries[] | select((.value.body|startswith($pk)) or (.value.body|startswith($pe))) | .key ]
+     | last) // -1' 2>/dev/null
+}
+
 verdict_body=$(last_matching "머지 판정" "Merge verdict" body)
 verdict_at=$(last_matching "머지 판정" "Merge verdict" createdAt)
 head_epoch=$(iso_to_epoch "${head_at:-}")
 verdict_epoch=$(iso_to_epoch "$verdict_at")
 
+# ── #174: `마감 검증: ⚠ 보류` 가 최신 판정 형식 코멘트인가 ──────────────────
+# closeout ③-1 게이트가 BLOCKER 를 내면 `마감 검증: ⚠ 보류` 를 찍고 `closeout-blocked`
+# 전이가 `needs-human`+`hold:*` 를 붙인다. 그 보류가 **그 앞의 `머지 판정: ✅` 보다 뒤**면
+# 최신 판정은 ✅ 가 아니라 보류다. 사람이 라벨을 떼도 이 코멘트는 남으므로, 코멘트만
+# 읽는 판정은 "풀렸는지" 를 알 방법이 없다 — 그래서 아래 ✅ 갈래가 해제 시각을 본다.
+#
+# 보류가 최신 ✅ 보다 **앞**이면 이미 지나간 보류다(반송 → 재디스패치 → 새 검증 → 새 ✅
+# 형상). 그때는 아무것도 가리지 않는다 — 안 그러면 정상 재완결이 영구 억제된다.
+closeout_body=$(last_matching "마감 검증" "Closeout verification" body)
+closeout_at=$(last_matching "마감 검증" "Closeout verification" createdAt)
+closeout_idx=$(last_index "마감 검증" "Closeout verification")
+verdict_idx=$(last_index "머지 판정" "Merge verdict")
+closeout_hold=0
+case "$closeout_body" in
+  *⚠*)
+    # ⚠ 보류 코멘트가 **있다**는 것까지는 확인된 상태다. 그게 최신 ✅ 를 가리는지는
+    # 인덱스 비교로 가르는데, jq 가 실패하면(빈 출력) 그 비교를 못 한다 — 그때는
+    # **가린다**(닫는 쪽)로 떨어뜨린다. 이 갈래에서 "모르니까 안 가린다" 로 열면 보류
+    # 코멘트가 있는데도 해제 증명 없이 done_verdict 가 나온다(이 PR 이 없애려는 그것).
+    # 닫는 쪽 오차의 대가는 한 틱 지연뿐이다(다음 틱이 다시 잰다).
+    if [ -z "$closeout_idx" ] || [ -z "$verdict_idx" ]; then
+      closeout_hold=1
+    elif [ "$closeout_idx" -gt "$verdict_idx" ] 2>/dev/null; then
+      closeout_hold=1
+    fi
+    ;;
+esac
+
+# 해제 시각은 **필요할 때만** 조회한다(타임라인은 페이지네이션이라 비싸다).
+# `$closeout_at`(판정 대상인 `마감 검증: ⚠ 보류` 코멘트 시각, 위에서 이미 계산됨)를
+# 3번째 인자로 넘긴다 — 헬퍼가 "그 시각 이후 첫 사람 해제" 만 답하게 해 무관한 후속
+# 보류 사이클의 해제가 소급으로 끼어들지 않게 한다(#186 합류: 에피소드 스코프 해제).
+hold_released_at() {
+  if [ -n "${FC_HOLD_RELEASED_AT+x}" ]; then
+    printf '%s' "$FC_HOLD_RELEASED_AT"
+    return 0
+  fi
+  "$SCRIPT_DIR/pr-hold-released-at.sh" "$repo" "$pr" "$closeout_at" 2>/dev/null || return 1
+}
+
 # ── 최종 판정이 이미 있는 경우(4a) ──
 case "$verdict_body" in
   *✅*)
+    # #174 **먼저** — 그 ✅ 를 더 뒤에 달린 `마감 검증: ⚠ 보류` 가 가리고 있으면, 사람이
+    # 그 뒤에 보류를 풀었음을 **증명**했을 때만 ✅ 가 살아난다. 두 규칙은 순서대로 걸린다:
+    # 여기(보류 해소)를 통과해야 아래(#171 head 대조)로 간다.
+    #
+    # 게이트 방향은 아래 #171 과 같다 — **증명되지 않으면 열지 않는다.** 해제 시각을 못
+    # 얻거나(타임라인 조회 실패·해제 이벤트 없음) 파싱 못 하면 통과시키지 않는다. 조회
+    # 실패를 "해제됨" 으로 읽으면 머지 게이트가 사람 판단 없이 열린다.
+    #
+    # 동초는 "뒤" 가 아니다(`-gt`) — GitHub 시각은 초 단위라 같은 초면 선후를 모른다.
+    # 모르는 것은 닫는 쪽으로 떨어뜨린다.
+    #
+    # **왜 `held` 가 아니라 `active` 인가.** 둘 다 머지 게이트를 닫지만 후속 조치가 다르다:
+    # `held` 는 ①-b 스윕에 `closeout-blocked` 전이(= `needs-human`+`hold:*` **부착**)를
+    # 시키고, 그 스윕의 대상 필터는 `needs-human` 이 붙은 PR 을 이미 제외한다. 즉 여기서
+    # `held` 를 내면 **라벨이 떨어져 있는 PR** 에만 그 전이가 걸린다 — 사람이 방금 뗀
+    # 보류를 타임라인 조회 실패 한 번으로 루프가 **다시 붙이는** 경로가 된다(#151 이
+    # 금지한 그것, 그리고 이 이슈 「걸러선 안 되는 것」의 거울상).
+    # `active` 는 "증명 못 함 → 무접촉, 새 판정을 기다림" 으로 아래 #171 갈래와 뜻이
+    # 같고 부작용이 없다. 보류는 그대로 유지되고(머지 안 됨) 다음 틱이 다시 잰다.
+    #
+    # 루프가 `hold:*` 를 **스스로 떼는 경로는 없다** — 여기서 하는 것은 사람이 뗀 사실을
+    # 읽는 것뿐이다. 사람 결정문의 *내용* 판정(재게이트할 것인가)은 closeout SKILL ③-1.
+    if [ "$closeout_hold" = 1 ]; then
+      released_at=$(hold_released_at) || released_at=''
+      released_epoch=$(iso_to_epoch "${released_at:-}")
+      closeout_epoch=$(iso_to_epoch "$closeout_at")
+      if [ -n "$released_epoch" ] && [ -n "$closeout_epoch" ] \
+         && [ "$released_epoch" -gt "$closeout_epoch" ] 2>/dev/null; then
+        : # 보류 해소 — 아래 #171 갈래로 이어간다.
+      else
+        echo active
+        exit 0
+      fi
+    fi
+
     # #171: ✅ 를 head 커밋과 묶는다. 반송(재디스패치) 뒤 새 커밋이 올라왔는데 그
     # 커밋 **이전**에 찍힌 ✅ 를 근거로 머지 후보 삼지 않는다.
     #
