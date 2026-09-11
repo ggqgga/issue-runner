@@ -66,13 +66,13 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    - 실패 테스트를 먼저 쓰고, **올바른 이유로 실패하는지 확인한 뒤에만** 구현하라.
    - 수용 기준 체크박스 하나당 최소 테스트 하나를 대응시켜라.
    - 통과 후 동작을 바꾸지 않는 리팩터까지 마치고 커밋하라. 작은 단위마다 커밋.
-     (초록을 기다리는 동안 편집이 쌓이면 8단계 뒤 **WIP 커밋 규율**을 따르라 — 커밋 0인
+     (초록을 기다리는 동안 편집이 쌓이면 8단계 안의 **WIP 커밋 규율**을 따르라 — 커밋 0인
      채로 죽지 마라.)
    - 레포에 테스트 러너가 없으면 임의로 도입하지 마라 — CLAUDE.md 지침을 따르고,
      지침도 없으면 PR 본문에 테스트 불가 사유를 명시하라.
 6. 커밋 전 해당 스택의 lint 와 테스트를 직접 실행해 통과를 확인하라
    (글로벌 quality-gate hook 은 worktree 커밋을 보호하지 못한다 — 네가 유일한 방어선).
-   이 요건은 **완료 커밋**에만 걸린다 — 8단계 뒤의 **WIP 커밋 규율**이 그 예외를
+   이 요건은 **완료 커밋**에만 걸린다 — 8단계 안의 **WIP 커밋 규율**이 그 예외를
    `WIP:` 접두로 표시해 가른다.
 7. 같은 테스트/빌드 실패가 3회 연속 반복되면 (같은 검사가 같은 원인으로 실패)
    더 시도하지 말고 이슈에 `gh issue comment` 로
@@ -91,12 +91,12 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    - **(b) 마지막 커밋 이후 편집이 상당히 쌓였을 때** — 파일 여러 개를 고쳤는데 아직
      초록이 아니라 커밋을 미루고 있다면, 미루지 말고 그 자리에서 커밋하라.
    ```bash
-   cd <WT_PATH> && git add -A && git commit -m "WIP: <한 줄>" \
-     && git push -u origin agent/issue-<NUM>
+   cd <WT_PATH> && git add -A && git commit -m "WIP: <한 줄>"
+   cd <WT_PATH> && git push -u origin agent/issue-<NUM>   # 커밋할 게 없었어도 push 는 돈다
    ```
-   커밋 메시지는 반드시 **`WIP: <한 줄>`** 접두로 시작하라 — 이 접두가 "초록 요건의 예외로
-   찍은 커밋"이라는 표시이자, 6단계 요건을 어긴 게 아니라는 증거다. 접두 없이 빨간 커밋을
-   남기지 마라(읽는 사람이 완료 커밋과 구분할 수 없다).
+   커밋 메시지 맨 앞에는 반드시 **`WIP: <한 줄>`** 형태의 접두를 달아라 — 이 접두가
+   "초록 요건의 예외로 찍은 커밋"이라는 표시이자, 6단계 요건을 어긴 게 아니라는 증거다.
+   접두 없이 빨간 커밋을 남기지 마라(읽는 사람이 완료 커밋과 구분할 수 없다).
    **처분: WIP 커밋은 최종 PR 에 그대로 남긴다 — 정리하지 마라**(`rebase -i`·squash·
    `commit --amend`·force-push 금지). 근거 둘: ⑴ 이 레포는 **squash 머지**라 PR 의 커밋이
    main 에 한 커밋으로 접힌다(실측: PR #189 는 커밋 12개였는데 main 에는 `8936f67` 한 개로
@@ -106,7 +106,9 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    검증 레인 판정 코멘트를 한꺼번에 무효로 만든다.
    단, **PR 을 여는 시점(10단계)의 HEAD 는 WIP 커밋이 아니어야 한다** — WIP 는 중간 상태다.
    마지막은 6단계를 통과한 완료 커밋으로 덮어라(WIP 커밋을 고쳐 쓰는 게 아니라 그 위에
-   새 커밋을 쌓는다).
+   새 커밋을 쌓는다). **WIP 커밋이 그대로 초록이라 쌓을 변경이 없으면** amend 로 되돌리지
+   말고 빈 커밋 하나로 닫아라 — `git commit --allow-empty -m "<완료 한 줄> (WIP 확정)"` 뒤
+   8단계대로 push. 히스토리를 다시 쓰지 않고도 HEAD 가 완료 커밋이 된다.
 9. 최종 push 후 로컬 CI 를 실행하라:
    `~/.claude/skills/issue-runner/scripts/run-local-ci.sh <REPO> <NUM>`
    (레포가 bin/ci 옵트인이 아니면 자동 skip.) fail 이면 고치고 재커밋/재push 후

@@ -65,14 +65,14 @@ Procedure:
    - Map at least one test to each acceptance-criteria checkbox.
    - After it passes, finish behavior-preserving refactoring before committing.
      Commit in small units. (If edits pile up while you wait for green, follow the
-     **WIP commit discipline** after step 8 — do not die with zero commits.)
+     **WIP commit discipline** inside step 8 — do not die with zero commits.)
    - If the repo has no test runner, do not introduce one on your own — follow
      the CLAUDE.md guidance, and if there is none, state in the PR body why
      testing was not possible.
 6. Before each commit, run the stack's lint and tests yourself and confirm they pass
    (the global quality-gate hook does not protect worktree commits — you are the
    only line of defense). This requirement applies to **completed commits** only — the
-   **WIP commit discipline** after step 8 marks the exception with the `WIP:` prefix.
+   **WIP commit discipline** inside step 8 marks the exception with the `WIP:` prefix.
 7. If the same test/build failure repeats 3 times in a row (the same check failing
    for the same cause), stop trying — leave a comment starting with
    `BLOCKED: same failure repeating — <failure details>` on the issue with
@@ -94,8 +94,8 @@ Procedure:
      touched several files and are holding the commit back because it is not green
      yet, that is exactly when to commit.
    ```bash
-   cd <WT_PATH> && git add -A && git commit -m "WIP: <one line>" \
-     && git push -u origin agent/issue-<NUM>
+   cd <WT_PATH> && git add -A && git commit -m "WIP: <one line>"
+   cd <WT_PATH> && git push -u origin agent/issue-<NUM>   # runs even if there was nothing to commit
    ```
    The commit message must start with the **`WIP: <one line>`** prefix — that prefix is
    the marker saying the commit was taken as an **exception to the green requirement**,
@@ -112,7 +112,10 @@ Procedure:
    that point at those SHAs.
    One limit: **the HEAD you open the PR with (step 10) must not be a WIP commit** — WIP
    is an intermediate state. Cover it with a completed commit that passed step 6 (stack a
-   new commit on top rather than rewriting the WIP one).
+   new commit on top rather than rewriting the WIP one). **If the WIP commit is already
+   green and there is nothing left to stack on it**, do not reach for amend — close it
+   with one empty commit: `git commit --allow-empty -m "<one line> (WIP finalized)"`, then
+   push as step 8 says. HEAD becomes a completed commit without rewriting history.
 9. After the final push, run local CI:
    `~/.claude/skills/issue-runner/scripts/run-local-ci.sh <REPO> <NUM>`
    (Automatically skipped if the repo has not opted into bin/ci.) If it fails, fix,
