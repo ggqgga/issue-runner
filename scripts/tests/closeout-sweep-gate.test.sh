@@ -40,8 +40,20 @@ fail=0
 #     영향을 받지 않는다. 아래 (e) 가 그 대조군이다.)
 sweep_decide() {
   local mergeable="$1" bounce_file="$2" fc_json="$3" fc_now="$4" fc_head_at="$5"
-  local bstate rc=0
+  local bstate rc=0 fc
   bstate=$(BOUNCE_COMMENTS_FILE="$bounce_file" bash "$DIR/bounce-state.sh" owner/repo 9 2>/dev/null) || rc=$?
+  # #206 예외 갈래 — `bounced` **이면서 CONFLICTING** 인 한 칸만 무접촉에서 열린다.
+  # (반송 뒤 교체 워커가 커밋까지 하고 ✅ 직전에 죽은 PR 이 세 레인 모두에서 빠지는
+  #  정체. 재디스패치 갈래만 열고 입양은 어느 출력에서도 안 연다.)
+  if [ "$rc" = 0 ] && [ "$bstate" = "bounced" ] && [ "$mergeable" = "CONFLICTING" ]; then
+    fc=$(FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
+      FC_CLAIMED_AT=none bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null)
+    case "$fc" in
+      stale_reverify|stale_inline) echo "redispatch" ;;
+      *)                           echo "active" ;;
+    esac
+    return
+  fi
   if [ "$rc" != 0 ] || [ "$bstate" != "ok" ]; then
     echo "active"
     return
@@ -51,6 +63,7 @@ sweep_decide() {
     return
   fi
   FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
+    FC_CLAIMED_AT=none \
     bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null
 }
 
@@ -74,6 +87,7 @@ sweep_decide_pre_c() {
     return
   fi
   FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
+    FC_CLAIMED_AT=none \
     bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null
 }
 
@@ -100,6 +114,7 @@ sweep_decide_pre218() {
     return
   fi
   FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
+    FC_CLAIMED_AT=none \
     bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null
 }
 
@@ -224,6 +239,20 @@ printf '%s' "$human_released_then_resumed" > "$tmp/human_released.json"
 run "(h) 사람이 held 를 풀고 교체 워커가 🔄 로 재개→무접촉(보류가 되살아나지 않는다)" sweep_decide \
   MERGEABLE "$tmp/human_released.json" "$human_released_then_resumed" "$now_epoch" "$head_at" active
 
+# ── #206 예외 갈래 — 반송 뒤 ✅ 직전 사망 + CONFLICTING ──────────────────────
+# (i) CONFLICTING + bounced + stale_reverify 형상 → **재디스패치**. (a) 와 코멘트가 같고
+#     mergeable 만 다르다 — 즉 이 한 칸만 무접촉에서 열린다는 것의 직접 대조다.
+run "(i) CONFLICTING·stale_reverify 형상+bounced→재디스패치(#206 예외)" sweep_decide \
+  CONFLICTING "$tmp/bounced.json" "$stale_reverify_comments" "$now_epoch" "$head_at" redispatch
+
+# (j) 같은 CONFLICTING 이라도 `held`(반송 뒤 워커 ⚠) 면 예외가 열리지 않는다 — 무접촉.
+run "(j) CONFLICTING·held 형상+bounced→무접촉(예외는 held 에 안 열린다)" sweep_decide \
+  CONFLICTING "$tmp/held_bounced.json" "$held_bounced_comments" "$now_epoch" "$head_at" active
+
+# (k) CONFLICTING + 판정 실패(exit 1) → 무접촉(fail-closed 무회귀 — 예외가 여기도 안 연다).
+run "(k) CONFLICTING·판정 실패(exit 1)→무접촉" sweep_decide \
+  CONFLICTING "$tmp/does-not-exist.json" "$stale_reverify_comments" "$now_epoch" "$head_at" active
+
 # ── 뮤테이션 방증 3 — `$p_after` 를 후보에서 빼면 (h) 가 held 로 되살아난다 ──
 # bounce-state.sh 사본에서 해제 경로 후보 한 줄(MUT-P)만 지워 attempt 3 상태로 되돌리고,
 # 같은 ①-b 규칙(`sweep_decide`)을 그 사본으로 돌린다. 기대: (h) 만 `held` 로 뒤집히고
@@ -244,6 +273,7 @@ sweep_decide_attempt3() {
   if [ "$rc" != 0 ] || [ "$bstate" != "ok" ]; then echo "active"; return; fi
   if [ "$mergeable" = "CONFLICTING" ]; then echo "adopt_conflict"; return; fi
   FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
+    FC_CLAIMED_AT=none \
     bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null
 }
 mut3_pass=0

@@ -137,7 +137,8 @@ head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify`
 사람이 라벨을 떼기 전엔 절대 집지 않는다. **`flow:verify` PR 은 verify-runner 가 검증 중(소유)이라 여기서 절대 집지
 않는다** — 이걸 빠뜨리면 finish-classify 가 `🔄`(verify-runner 가 아직 ✅ 안 찍음)를
 `stale_reverify` 로 오분류해 재디스패치하고, verify-runner 의 검증과 충돌한다(양쪽이
-같은 PR 을 물어뜯음). 검증 단계의 완결 유실 회수는 verify-runner 의 매 틱 재집(flow:verify
+같은 PR 을 물어뜯음). 이 배제는 1) CONFLICTING 갈래에도 그대로 적용된다 — 대상 필터가
+먼저다(#206). 검증 단계의 완결 유실 회수는 verify-runner 의 매 틱 재집(flow:verify
 라벨 잔존)이 소유한다 — closeout ①-b 는 **검증 이후**(✅+flow:ready 인데 closeout 머지가
 죽은 경우)와 CONFLICTING 입양만 맡는다.
 
@@ -148,14 +149,32 @@ mergeable 값을 보기 **전에** `$SCRIPTS/bounce-state.sh <repo> <pr>` 를 �
 결과를 정한다** — ✅ 면 `ok`, ⚠ 면 `held`, `🔄` 면 `bounced`(교체 워커가 지금 일하는
 중이라는 가장 강한 증거라 워커 레인 소유다, #218 attempt 4).
 
-- `held` 이거나 `bounced` 이거나 **출력이 없으면(exit 1 — 판정 실패)** → `active` 취급
-  **무접촉**, 여기서 멈춘다(mergeable 도 안 보고 2) finish-classify 도 안 부른다).
-  진행 중인 반송 회차는 워커 레인 소유다(fail-closed — 반송되지 않았음을 *증명*했을
-  때만 연다, #171 과 같은 방향).
+- `held` 이거나 **출력이 없으면(exit 1 — 판정 실패)** → `active` 취급 **무접촉**, 여기서
+  멈춘다(mergeable 도 안 보고 2) finish-classify 도 안 부른다). 진행 중인 반송 회차는
+  워커 레인 소유다(fail-closed — 반송되지 않았음을 *증명*했을 때만 연다, #171 과 같은
+  방향).
   **`held` 도 스윕은 needs-human 으로 승격하지 않는다**(#218 두 번째 회차 — 사람 결정
-  (c), 아래 "왜 `held` 를 스윕이 더 이상 승격하지 않는가" 절). **사람이 `held` 를 풀어
-  라벨을 뗀 뒤 교체 워커가 `머지 판정: 🔄` 를 찍고 재개한 PR 도 여기로 온다** — 그게
-  `bounced` 쪽 해제 경로다(#218 attempt 4).
+  (c), 아래 "왜 `held` 를 스윕이 더 이상 승격하지 않는가" 절).
+- `bounced` 면 → **원칙은 같은 무접촉**이다(진행 중인 반송 회차는 워커 레인 소유).
+  **사람이 `held` 를 풀어 라벨을 뗀 뒤 교체 워커가 `머지 판정: 🔄` 를 찍고 재개한 PR 도
+  여기로 온다** — 그게 `bounced` 쪽 해제 경로다(#218 attempt 4). 그 무접촉에
+  **예외 갈래 하나**만 연다(#206, 아래 "그 좁힘이 남긴 정체" 절):
+  - `gh pr view <pr> --repo <repo> --json mergeable` 이 **CONFLICTING** 일 때만 2) 의
+    `$SCRIPTS/finish-classify.sh <repo> <pr> [<이슈>]` 로 분류하고, 출력이
+    `stale_reverify` 또는 `stale_inline` 이면 **재디스패치**한다(2) 표의 `stale_reverify`
+    행과 같은 조치 — `closeout-redispatch` 전이 + 멱등 마커). 반송 회차 워커가 커밋까지
+    하고 ✅ 직전에 죽은 형상이다.
+  - **`stale_inline` 도 입양(머지)하지 않고 재디스패치로 보낸다.** 반송된 PR 에 남아
+    있는 `검증자 리뷰: CLEAN` 은 **반송 이전 회차**의 것일 수 있어, 입양하면 방금 반려된
+    코드를 머지한다(#196 이 막은 바로 그 방향). 그렇다고 무접촉으로 두면 이 절이 없애려는
+    정체가 옆 칸에 그대로 남는다 — 머지하지 않고 재디스패치하는 것이 두 요구를 동시에
+    만족하는 유일한 조치다.
+  - **MERGEABLE 인 `bounced` 는 전부 무접촉**이다 — 여기까지 열면 #218 이 막은 오분류
+    (방금 반송된 MERGEABLE PR 을 `stale_reverify`= "검증 전 사망" 으로 오진하고 사실과
+    다른 멱등 마커를 원장에 남김)가 그대로 되살아난다. 예외는 CONFLICTING 한 갈래뿐이다.
+  - CONFLICTING 이어도 그 밖의 출력(`active`·`done_verdict`·`held`)은 **무접촉**이다.
+    `done_verdict` 는 ✅ 정상 경로라 `closeout-eligible.sh` 가 자기 반송 안전망과 함께
+    소유한다.
 - 출력이 정확히 `ok` 일 때만 → `gh pr view <pr> --repo <repo> --json mergeable` 로
   갈라라:
   - CONFLICTING 이면 → **입양(rebase 경로)**: ② Pick 후보로 넘기고 ③ 2단계에서
@@ -240,18 +259,63 @@ finish-classify 를 건너뛰는 CONFLICTING 갈래는 반송 마커를 볼 자�
 살아 있는 워커의 PR 을 입양해 `harvesting` 을 붙이고 그 워크트리에서
 `git rebase origin/main` 까지 돌렸다(원격은 push 전이라 무손상).
 
+**그 좁힘이 남긴 정체 (#206).** `bounced` 를 **무조건** 무접촉으로 두면 새 정체 계급이
+생긴다 — ⑴ PR 반송 → ⑵ 교체 워커가 붙어 고치고 커밋 → ⑶ 그 워커가 ✅ 직전에 죽어
+`handoff-verify` 미호출(단계 라벨 없음) → ⑷ 그 사이 main 이 움직여 CONFLICTING. 이
+PR 은 closeout ①-b(반송 마커가 최신)·verify-runner(`flow:verify` 없음)·issue-runner ②
+(CI green·미해결 코멘트 없음) **세 레인 모두**에서 빠져 사람이 눈으로 찾을 때까지
+영구 정체한다. 정체는 손상보다 낫지만(그래서 `ok` 만 입양하는 판별식은 그대로 둔다),
+**감지 가능**하게 만들지 않으면 안전망이 조용한 누락으로 바뀐다. 그래서 `bounced` 를
+버리지 않고 finish-classify 에 태워 "죽은 반송 회차" 만 골라 재디스패치로 보낸다.
+
+**살아 있는 워커는 finish-classify 가 막는다.** 반송 마커가 최신이어도 그 뒤 커밋이
+최근이면 attempt N+1 워커는 **살아 있다** — 이 레포의 반복 오탐이다. finish-classify 는
+🔄 계열 갈래를 내기 전에 `progress-evidence.sh`(#200 이 세운 진행 증거 술어 — ① 최신 커밋이
+`STALL_MIN` 이내 ② 그 head SHA 의 CI 티켓이 큐에 살아 있음)에 물어 증거가 있으면 `active`
+를 낸다. ②가 특히 중요하다: 박스 전역 직렬 CI 큐(#127) 대기는 워커가 통제할 수 없는
+시간이라, 커밋이 한 시간 넘게 멈춰 있어도 워커는 살아 있다(#200 실측 72분·64분).
+**술어는 그 파일 한 자리다** — `timebox-check.sh` 가 부르는 바로 그 자리이고, 여기에
+두 번째 계산기를 만들지 않는다(`bin/ci` 가 `^STALL_MIN=`·`^queue_alive()` 정의의 중복을
+막는다). 진행 증거를 **판정하지 못한 경우**도 `active` 다 — 조회 실패 한 번으로 살아 있는
+워커의 브랜치를 채가는 것은 되돌릴 수 없다. 판정 불가에는 queue.log 를 못 읽은 경우와
+**head 조회(`pr-head-at.sh`)가 실패한 경우**가 모두 들어간다: 조회 실패(`unknown`)와 커밋
+증거의 부재(`none`)는 다른 상태이고, 전자를 후자로 접으면 gh 가 한 번 흔들린 것만으로
+살아 있는 반송 회차가 재디스패치된다.
+
 판정은 `bounce-state.sh` **한 자리**다 — 마커 집합(`재디스패치`·`재검증 실패`, 콜론
 리터럴을 요구하지 않되 마커 뒤 형태로 가르는 첫 줄 매칭 — #212 · #221 · #251)도, 선후를
 `createdAt` 이 아니라 **코멘트 배열의 마지막 매칭 인덱스**로 재는 규칙도 거기 있고
 `closeout-eligible.sh` 가 같은 자리를 부른다(로직 두 벌 금지).
 
-**`agent:claimed` 는 보조 게이트로 쓰지 않는다**(#196 3항 결정, 실측 근거):
+**`agent:claimed` 의 *존재*는 보조 게이트로 쓰지 않는다**(#196 3항 결정, 실측 근거):
 `reconcile.sh` 는 열린 PR 이 있는 이슈에서 `agent:claimed` 를 **떼지 않는다**(worktree 가
 사라지고 열린 PR 도 없을 때만 stale 로 뗀다). 그래서 ①-b 가 집어야 할 *진짜* 좌초
 CONFLICTING PR 도 그 라벨을 그대로 달고 있다 — 배제 조건으로 걸면 CONFLICTING 입양 레인이
 통째로 닫힌다. 반대 방향으로도 못 쓴다: 반송 직후 `closeout-redispatch`/`verify-redispatch`
 가 `agent:claimed` 를 뗀 뒤 디스패처가 새 워커를 붙일 때까지의 창에서는 **워커 레인
-소유인데 라벨이 없다**. 두 방향 모두 틀리므로 코멘트 마커 하나로 판정한다.
+소유인데 라벨이 없다**. 두 방향 모두 틀리므로 **입양·배제 판정은** 코멘트 마커 하나로 한다.
+
+**다만 그 라벨의 *부착 시각*은 쓴다 — 그건 다른 신호다**(#206 attempt 3, codex BLOCKER).
+존재는 "누군가 언젠가 집었다" 밖에 말하지 않지만, 부착 시각은 **이번 회차가 언제
+시작됐나**를 말한다. 반송 직후 디스패처가 붙인 claim 은 몇 분 전이고 좌초한 회차의
+claim 은 몇 시간 전이다. 이 신호가 필요한 이유: 진행 증거 ①(커밋 신선도)·②(CI 큐 티켓)는
+워커가 **이미 뭔가 남긴 뒤에만** 존재해서, 반송 직후 교체 워커가 디스패치됐지만 **첫 푸시
+전**인 창을 못 덮는다 — 그 창에서 `finish-classify.sh` 가 보는 값은 전부 *이전* attempt 의
+것이라 `stale_reverify` 가 나고, `closeout-redispatch` 가 **지금 일하고 있는 워커의
+`agent:claimed` 를 떼어낸다.** 그래서 진행 증거 ③ 은 `agent:claimed` 가 **지금 붙어 있고**
+마지막 부착이 `ISSUE_TIMEBOX_HOURS` 안이면 커밋이 없어도 `active` 다. 조회는
+`$SCRIPTS/claim-at.sh <repo> <이슈>` **한 자리**(타임라인의 마지막 매칭 인덱스로 부착 여부
+판정 — `bounce-state.sh` 와 같은 규율)이고, 그래서 2) 의 분류 호출이 이슈 번호를 함께 받는다
+(`finish-classify.sh <repo> <pr> [<이슈>]` — 안 주면 한 번 묻되, **head 의 `agent/issue-N` 이 1순위**이고
+`closingIssuesReferences` 는 폴백이다). 그 순서가 중요한 이유: 여기서 필요한 것은 "이 PR 이 닫는
+이슈" 가 아니라 **"이 브랜치의 워커가 집어간 이슈"** 이다 — `[0]` 은 닫는 이슈가 둘
+이상일 때 **남의 이슈**를 가리킨다(실측 PR #113 head=`agent/issue-109` refs=`[108,109]` — `[0]` 은
+#108). 그 이슈를 물으면 claim 이 `none` 으로 나와 증거 ③ 이 조용히 꺼지고, 지금 일하는
+워커가 재디스패치된다.
+상한이 `ISSUE_TIMEBOX_HOURS` 인 이유: 그 시간을 넘긴 claim 은 ① Reconcile 의
+`timebox-check.sh` 가 이미 회수 대상으로 보는 구간이라 여기서 살릴 이유가 없다 — 두 자리가
+같은 상수를 읽어 같은 경계를 쓴다. 조회 실패는 `none` 이 아니라 `unknown` 이다(조회 실패
+한 번으로 살아 있는 워커의 claim 을 떼는 것은 되돌릴 수 없다).
 
 **2) 위 1) 의 반송 게이트를 `ok` 로 통과했으면 `$SCRIPTS/finish-classify.sh <repo> <pr>` 로
 결정적 분류** — 이 헬퍼가 최신
@@ -262,10 +326,10 @@ CONFLICTING PR 도 그 라벨을 그대로 달고 있다 — 배제 조건으로
 | finish-classify 출력 | 뜻 | 조치 |
 |---|---|---|
 | `done_verdict` | 최신 `머지 판정: ✅` **이고 그 판정이 현재 head 커밋 이후임이 증명됨**(#171) | eligible.sh 정상 경로가 처리 — 스윕은 skip |
-| `stale_inline` | 🔄 + 검증자 CLEAN + 버퍼 초과 (검증까지 도달·최종판정만 유실, #970형) | **입양(머지)** — ② Pick 후보로. ③ 1단계가 **독립 재검증** 후 마감. **새 이슈 안 만듦**(완료된 일 재수행 금지). |
-| `stale_reverify` | 🔄 + 검증자 부재/미해결 BLOCKER + 버퍼 초과 (검증 전 사망·구현 미완 가능, #971형) | **재디스패치** — 미완 코드를 codex 재검증 하나로 자동 머지하지 않는다(사용자 결정). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (연결 이슈를 `agent-ready` 로 되돌리고 `agent:claimed`·단계 라벨을 뗀다) → 새 워커가 같은 브랜치서 검증자 재실행→체크박스→최종판정으로 완결. 멱등 마커(아래). — head 커밋이 신선하면(#110, 스테일 클록에 커밋 시각 합류) 코멘트가 낡았어도 `active` 로 떨어져 살아있는 attempt N+1 워커를 오분류하지 않는다. |
+| `stale_inline` | 🔄 + 검증자 CLEAN + 버퍼 초과 (검증까지 도달·최종판정만 유실, #970형) | **입양(머지)** — ② Pick 후보로. ③ 1단계가 **독립 재검증** 후 마감. **새 이슈 안 만듦**(완료된 일 재수행 금지). 단 위 1) 의 `bounced` 갈래에서 나온 `stale_inline` 은 **입양하지 않고 재디스패치**한다(그 CLEAN 이 반송 이전 회차의 것일 수 있다). |
+| `stale_reverify` | 🔄 + 검증자 부재/미해결 BLOCKER + 버퍼 초과 + **진행 증거 없음**(#206) (검증 전 사망·구현 미완 가능, #971형). CONFLICTING + 반송 마커 최신인 PR 이 여기로 오면 그게 위 1) 의 "반송 뒤 ✅ 직전 사망" 계급이다 | **재디스패치** — 미완 코드를 codex 재검증 하나로 자동 머지하지 않는다(사용자 결정). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (연결 이슈를 `agent-ready` 로 되돌리고 `agent:claimed`·단계 라벨을 뗀다) → 새 워커가 같은 브랜치서 검증자 재실행→체크박스→최종판정으로 완결. 멱등 마커(아래). — head 커밋이 신선하면(#110, 스테일 클록에 커밋 시각 합류) 코멘트가 낡았어도 `active` 로 떨어져 살아있는 attempt N+1 워커를 오분류하지 않는다. |
 | `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (PR 과 연결 이슈 **양쪽**에 `needs-human` + `hold:policy` 부착 + 단계 라벨 정리 — 연결 이슈가 없어도 PR 에 사람 신호가 남는다), closeout 무접촉(자동 진행 안 함). |
-| `active` | 진행 중·버퍼 미도달·우리 형상 아님, 또는 **✅ 의 신선도를 증명 못 함**(✅ 가 head 커밋보다 이르거나 두 시각 중 하나를 못 얻음, #171). (CONFLICTING 이든 MERGEABLE 이든 반송 회차 진행 중이거나 판정 실패면 1) 게이트에서 이미 `active` 로 걸러져 여기까지 오지 않는다 — #218, #196) | **무접촉**(다음 틱). |
+| `active` | 진행 중·버퍼 미도달·우리 형상 아님, 또는 **✅ 의 신선도를 증명 못 함**(✅ 가 head 커밋보다 이르거나 두 시각 중 하나를 못 얻음, #171), 또는 **진행 증거가 있음**(커밋이 `STALL_MIN` 이내 · head SHA 의 CI 티켓이 큐에 살아 있음 · **현재 회차의 `agent:claimed` 가 타임박스 안에 붙었음** — 또는 그 판정 자체가 불가: queue.log 를 못 읽음·head 조회 실패·claim 조회 실패(`unknown`≠`none`), #206 · `progress-evidence.sh`). MERGEABLE 인 반송 회차는 1) 게이트에서 이미 무접촉으로 걸러져 여기까지 오지 않는다(#218) — 여기로 오는 반송 회차는 1) 의 **CONFLICTING 예외 갈래**로 들어온 것뿐이고(#206), 판정 실패도 거기서 이미 걸러졌다(#196) | **무접촉**(다음 틱). |
 
 **flow:\* 보조 신호**: finish-classify 가 코멘트로 판정하지만, `flow:ready` 없이
 `flow:codex`/`flow:ci` 만 있고 오래된 PR 은 그 자체로 "검증 중 워커 사망"의 방증이다

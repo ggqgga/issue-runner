@@ -12,15 +12,26 @@ SUT="$DIR/finish-classify.sh"
 NOW=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "2026-07-05T12:00:00Z" +%s 2>/dev/null \
   || date -u -d "2026-07-05T12:00:00Z" +%s)
 
+# **네트워크 무접속 기본값** — `#206` 진행 증거 ③(claim 부착 시각)은 주입이 없으면 실 gh
+# (`gh pr view --json closingIssuesReferences` → `claim-at.sh`)를 부른다. 이 파일의 모든
+# 호출 자리가 그 주입을 개별로 적으면 한 자리만 빠져도 조용히 네트워크를 탄다 — 그래서
+# 기본값을 여기 한 번 export 하고, claim 축을 무는 행만 호출 앞에서 덮어쓴다
+# (`VAR=... cmd` 접두가 export 값을 이긴다). `none` = "claim 증거 없음" 이라 이 파일의
+# 기존 기대값은 전부 그대로다.
+export FC_CLAIMED_AT=none
+
 pass=0
 fail=0
 # assert <name> <expected> <comments-json> [head_at]
 # head_at 미지정 시 FC_HEAD_AT="" 로 명시 고정 — 실호출(gh) 경로로 새지 않게(네트워크 무접속 유지).
+# `FC_CLAIMED_AT=none` 도 같은 이유다(#206 진행 증거 ③) — 주지 않으면 claim 조회가 실 gh 로
+# 샌다. `none` = "claim 증거 없음" 이므로 이 아래 기존 단언들의 기대값은 그대로다.
 assert() {
   local name="$1" expect="$2" comments="$3" head_at="${4:-}"
   local got
   got=$(FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
-    FC_COMMENTS_JSON="$comments" FC_HEAD_AT="$head_at" "$SUT" owner/repo 1 2>/dev/null)
+    FC_COMMENTS_JSON="$comments" FC_HEAD_AT="$head_at" FC_CLAIMED_AT=none \
+    "$SUT" owner/repo 1 2>/dev/null)
   if [ "$got" = "$expect" ]; then
     pass=$((pass + 1))
   else
@@ -297,14 +308,19 @@ got=$(PATH="$stub:$PATH" STUB_CAPTURE="$capture" STUB_HEAD_AT="2026-07-05T11:20:
 if [ "$got" = stale_reverify ]; then pass=$((pass + 1)); else
   fail=$((fail + 1)); echo "  ✗ 실수집경로·커밋스테일→stale_reverify — 기대=stale_reverify 실제=$got"
 fi
-# (d) gh 가 빈 값을 주는 경우(권한·네트워크 실패 등) → 기존 판정으로 degrade, 크래시 없음.
+# (d) gh 가 실패하는 경우(권한·네트워크 등) → **판정 불가 = active**(무접촉), 크래시 없음.
+#     #206 회차2 에서 계약이 바뀐 자리다. 옛 단언은 "기존 판정으로 degrade(stale_reverify)"
+#     였다 — 즉 조회 실패 한 번이 "커밋 증거 없음" 으로 둔갑해 재디스패치까지 갔다. 되돌릴
+#     수 없는 쪽(재디스패치·머지)은 증명 없이 열지 않는다는 이 파일의 규율(#171 ✅ 갈래와
+#     같은 방향)로 통일한다. 회수는 조회가 성공하는 다음 틱에 그대로 일어난다 — (c) 가
+#     그것을 문다(같은 실 경로·조회 성공·커밋 스테일 → stale_reverify).
 : > "$capture"
 got=$(PATH="$stub:$PATH" STUB_CAPTURE="$capture" STUB_HEAD_AT="" \
   FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
   FC_COMMENTS_JSON='[{"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}]' \
   "$SUT" owner/repo 1 2>/dev/null)
-if [ "$got" = stale_reverify ]; then pass=$((pass + 1)); else
-  fail=$((fail + 1)); echo "  ✗ 실수집경로·gh빈값→기존판정 — 기대=stale_reverify 실제=$got"
+if [ "$got" = active ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ 실수집경로·gh조회실패→active(판정불가) — 기대=active 실제=$got"
 fi
 rm -rf "$stub"
 
@@ -350,7 +366,7 @@ assert_gnu() {
   local name="$1" expect="$2" comments="$3" head_at="$4" got
   got=$(PATH="$gnu:$PATH" GNU_MIDNIGHT="$GNU_MIDNIGHT" \
     FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
-    FC_COMMENTS_JSON="$comments" FC_HEAD_AT="$head_at" "$SUT" owner/repo 1 2>/dev/null)
+    FC_COMMENTS_JSON="$comments" FC_HEAD_AT="$head_at" FC_CLAIMED_AT=none "$SUT" owner/repo 1 2>/dev/null)
   if [ "$got" = "$expect" ]; then
     pass=$((pass + 1))
   else
@@ -576,6 +592,702 @@ got=$(FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
   "$SUT" owner/repo 1 2>/dev/null)
 check_hc "FC_COMMENTS_FILE대용량→done_verdict" done_verdict "$got"
 rm -rf "$cf"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# #206 격자 — ①-b 라우팅 전수 단언 (mergeable × 최신 판정 × 단계 라벨 × 커밋 신선도)
+#
+# 왜 개별 케이스가 아니라 격자인가(PR#202 교훈): 이 축은 지적된 반례만 하나씩 닫으면
+# 같은 자리가 여러 회차를 돈다. `want` 열을 가진 표로 전수 단언한다.
+#
+# `route_1b` 는 skills/closeout/SKILL.md ①-b 산문을 **그대로 옮긴 드라이버**다 —
+# 결함이 단위(finish-classify 한 개)가 아니라 **조합**(어느 PR 이 어느 헬퍼를 지나는가)
+# 에 있었으므로 조합을 재현해야 격자가 의미를 갖는다. 산문과 벌어지지 않게 bin/ci 가
+# 같은 문서에 `progress-evidence.sh`·`bounced`+`finish-classify` 배선을 함께 문다.
+#
+# want 값(= ①-b 가 그 PR 에 취하는 조치):
+#   adopt_rebase   CONFLICTING 입양(rebase 경로) — ② Pick 후보
+#   adopt_merge    stale_inline 입양(머지) — ② Pick 후보
+#   redispatch     closeout-redispatch 전이(issue-runner 가 같은 브랜치로 재투입)
+#   needs_human    closeout-blocked 전이
+#   eligible_path  done_verdict — eligible.sh 정상 경로 소유, 스윕은 skip
+#   untouched      무접촉(다음 틱)
+# ══════════════════════════════════════════════════════════════════════════════
+
+GT=$(mktemp -d)
+
+# queue.log 픽스처 — `$G_SHA` 티켓이 큐에 **살아 있는** 로그와, 아무 줄도 없는 로그.
+G_SHA="7ac1f0e91234567890abcdef1234567890abcdef"   # short = 7ac1f0e9
+printf '%s\n' "2026-07-05T11:30:00 pid=11111 7ac1f0e9 대기열 2번째" > "$GT/queued.log"
+: > "$GT/empty.log"
+printf '%s\n' "2026-07-05T11:30:00 pid=11111 7ac1f0e9 대기열 2번째" > "$GT/unreadable.log"
+chmod 000 "$GT/unreadable.log"
+# 소유권 필터 픽스처 — 우리 티켓이 대기열에 있고, **그 뒤에** 남의 옛 티켓이 폐기되며
+# 본문에 우리 SHA 를 언급한다(새 push 가 자기 티켓을 낸 흔한 형상). 그 줄을 우리 줄로
+# 세면 큐를 기다리는 살아 있는 워커가 `left` 로 읽혀 죽는다.
+G_OTHER="da323b67fedcba0987654321fedcba0987654321"
+printf '%s\n' \
+  "2026-07-05T11:30:00 pid=11111 7ac1f0e9 대기열 2번째" \
+  "2026-07-05T11:31:00 pid=22222 da323b67 폐기 — 실행 시점 HEAD 가 $G_SHA ≠ $G_OTHER" \
+  > "$GT/queued_then_foreign_discard.log"
+# 큐 이탈 픽스처 — 우리 SHA 의 **마지막 줄**이 pass 다(대기열 줄이 앞에 남아 있어도
+# 그건 이미 끝난 티켓이다).
+printf '%s\n' \
+  "2026-07-05T11:30:00 pid=11111 7ac1f0e9 대기열 2번째" \
+  "2026-07-05T11:40:00 pid=11111 7ac1f0e9 pass (487s) → /x/$G_SHA.result" \
+  > "$GT/queued_then_pass.log"
+
+# 시각 축 — NOW = 12:00:00Z.
+G_OLD="2026-07-05T10:00:00Z"    # 120분 전 — 커밋 오래됨(STALL_MIN 25·STALE_FINISH_MIN 30 둘 다 초과)
+G_FRESH="2026-07-05T11:50:00Z"  # 10분 전 — 커밋 신선
+G_15M="2026-07-05T11:45:00Z"    # 15분 전 — STALL_MIN(25) 이내이지만 버퍼 10분은 넘김
+G_40M="2026-07-05T11:20:00Z"    # 40분 전 — STALL_MIN 밖
+# claim 축 — ISSUE_TIMEBOX_HOURS=1(run_fc 가 고정)이므로 경계는 60분이다.
+G_CLAIM_5M="2026-07-05T11:55:00Z"    # 5분 전 — 방금 디스패치된 교체 워커(첫 푸시 전)
+G_CLAIM_60M="2026-07-05T11:00:00Z"   # 정확히 60분 전 — 타임박스 경계(포함)
+G_CLAIM_61M="2026-07-05T10:59:00Z"   # 61분 전 — 타임박스 밖
+# WARN 3(회차3) 교락 해소 축 — 위 네 값은 전부 "반송 이후 = 타임박스 안 / 반송 이전 =
+# 타임박스 밖" 으로 붙어 다녀서, 신선도 술어가 **반송 시각을 보는지 타임박스만 보는지**를
+# 가르지 못한다. 아래 두 값은 `bounced_recent.json`(반송 11:20)과 짝지어 그 교락을 푼다.
+G_CLAIM_50M="2026-07-05T11:10:00Z"   # 50분 전 — 반송(11:20) **이전**이지만 타임박스 **안**
+G_CLAIM_100M="2026-07-05T10:20:00Z"  # 100분 전 — 반송 이전이고 타임박스 **밖**(대조군)
+
+# 코멘트 픽스처 (본문은 실제 워커·verify-runner 가 찍는 접두를 그대로 쓴다).
+cat > "$GT/bounced_noverifier.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: E2E 1건 실패 — 반송\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:35:00Z"}
+]
+J
+# 반송 마커가 **최근**인 판(11:20 — STALE_FINISH_MIN 30 은 넘겼다). 위 픽스처는 반송이
+# 10:35 라 "반송 이전 · 타임박스 안" 칸이 아예 도달 불가다(반송 이전 = 10:35 이전 =
+# 타임박스 경계 11:00 보다 이르다). 이 픽스처가 그 칸을 연다.
+cat > "$GT/bounced_recent.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: E2E 1건 실패 — 반송\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:20:00Z"}
+]
+J
+cat > "$GT/bounced_verifier_clean.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:31:00Z"},
+  {"body":"재검증 실패: E2E 1건 실패 — 반송\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:35:00Z"}
+]
+J
+cat > "$GT/verdict_ok.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:31:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:32:00Z"}
+]
+J
+cat > "$GT/verifier_clean.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:31:00Z"}
+]
+J
+cat > "$GT/held.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:32:00Z"}
+]
+J
+
+# run_fc <comments-file> <head_at> <head_sha> <queue.log> [STALE_FINISH_MIN] [claimed_at]
+run_fc() {
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN="${5:-30}" STALL_MIN=25 \
+    ISSUE_TIMEBOX_HOURS=1 \
+    FC_COMMENTS_FILE="$1" FC_HEAD_AT="$2" FC_HEAD_SHA="$3" FC_QUEUE_LOG="$4" \
+    FC_CLAIMED_AT="${6:-none}" \
+    "$SUT" owner/repo 1 2>/dev/null
+}
+
+# map_1b <branch: bounced|plain> <finish-classify 출력> → ①-b 조치
+# SKILL ①-b 산문의 **분기표 한 자리**. route_1b(주입 입력)와 아래 스텁 경로(실호출 자리)
+# 가 같은 표를 쓴다 — 두 벌로 적으면 한쪽만 고쳐질 때 격자가 산문과 조용히 갈린다.
+map_1b() {
+  case "$1" in
+    bounced)
+      # `bounced` 갈래는 **재디스패치만** 연다. 입양(머지)은 어느 출력에서도 열지 않는다 —
+      # 반송된 PR 에 남은 `검증자 리뷰: CLEAN` 은 반송 *이전* 회차의 것일 수 있다(#196).
+      # `stale_inline` 도 여기선 입양이 아니라 재디스패치다: 교체 워커가 커밋만 하고 ✅
+      # 직전에 죽은 형상이라(이 이슈가 없애려는 바로 그 좌초), 무접촉으로 두면 같은 정체가
+      # 옆 칸에 그대로 남는다(회차1 검증자 WARN).
+      case "$2" in
+        stale_reverify|stale_inline) printf 'redispatch\n' ;;
+        *)                           printf 'untouched\n' ;;
+      esac ;;
+    *)
+      case "$2" in
+        done_verdict)   printf 'eligible_path\n' ;;
+        stale_inline)   printf 'adopt_merge\n' ;;
+        stale_reverify) printf 'redispatch\n' ;;
+        held)           printf 'needs_human\n' ;;
+        *)              printf 'untouched\n' ;;
+      esac ;;
+  esac
+}
+
+# gate_1b <mergeable> <comments-file> — ①-b 1) 절(반송 마커 게이트)을 그대로 옮긴 드라이버.
+# **#218(PR #225) 이후 게이트는 갈래를 가르기 전**이다 — mergeable 을 보기 전에 먼저 돈다.
+# stdout 한 값:
+#   untouched         무접촉으로 끝 (held · MERGEABLE 인 bounced · 판정 실패)
+#   adopt_rebase      ok + CONFLICTING → 입양(rebase 경로)
+#   classify:bounced  bounced + CONFLICTING → #206 예외 갈래(재디스패치만 연다)
+#   classify:plain    ok + MERGEABLE 등 → 2) finish-classify 결과를 그대로 조치로
+gate_1b() {
+  local mergeable="$1" cfile="$2" bs rc=0
+  bs=$(BOUNCE_COMMENTS_FILE="$cfile" "$DIR/bounce-state.sh" owner/repo 1 2>/dev/null) || rc=$?
+  # 판정 실패(exit≠0·무출력)는 `bounced` 와 같은 방향 — 무접촉(fail-closed, #196·#171).
+  if [ "$rc" != 0 ] || [ -z "$bs" ]; then printf 'untouched\n'; return 0; fi
+  case "$bs" in
+    ok)
+      if [ "$mergeable" = CONFLICTING ]; then printf 'adopt_rebase\n'
+      else printf 'classify:plain\n'; fi ;;
+    bounced)
+      # #206 예외 갈래는 **CONFLICTING 한 칸뿐**이다. MERGEABLE 인 bounced 까지 열면
+      # #218 이 막은 오분류(방금 반송된 PR 을 "검증 전 사망" 으로 오진·재디스패치)가
+      # 그대로 되살아난다.
+      if [ "$mergeable" = CONFLICTING ]; then printf 'classify:bounced\n'
+      else printf 'untouched\n'; fi ;;
+    held)
+      # #218 두 번째 회차(사람 결정 (c)) — 스윕은 held 를 needs-human 으로 승격하지
+      # 않는다. #206 예외도 여기엔 열리지 않는다(반송 뒤 워커가 명시적으로 올린 보류다).
+      printf 'untouched\n' ;;
+    *) printf 'untouched\n' ;;
+  esac
+}
+
+# route_1b <mergeable> <comments-file> <head_at> <head_sha> <queue.log> <labels(csv)> [STALE_FINISH_MIN] [claimed_at]
+route_1b() {
+  local mergeable="$1" cfile="$2" head_at="$3" head_sha="$4" qlog="$5" labels="$6"
+  local sfm="${7:-30}" claim="${8:-none}"
+  local fc g
+
+  # 대상 필터 — `flow:verify`(verify-runner 소유)·`harvesting`(이미 입양)·`needs-human`
+  # (사람 대기)은 ①-b 가 애초에 판정하지 않는다. 게이트보다 **앞**이다(대상 필터가 먼저).
+  case ",$labels," in
+    *,flow:verify,*|*,harvesting,*|*,needs-human,*) printf 'untouched\n'; return 0 ;;
+  esac
+
+  g=$(gate_1b "$mergeable" "$cfile")
+  case "$g" in
+    untouched|adopt_rebase) printf '%s\n' "$g"; return 0 ;;
+  esac
+  fc=$(run_fc "$cfile" "$head_at" "$head_sha" "$qlog" "$sfm" "$claim")
+  map_1b "${g#classify:}" "$fc"
+}
+
+# row <이름> <want> <mergeable> <comments-file> <head_at> <head_sha> <queue.log> <labels>
+row() {
+  local name="$1" want="$2" got
+  shift 2
+  got=$(route_1b "$@")
+  if [ "$got" = "$want" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "  ✗ [격자] $name — want=$want got=$got"
+  fi
+}
+
+echo "  [#206 격자] CONFLICTING × 반송마커 최신 × 단계 라벨 × 커밋 신선도"
+
+# ── A. 이 이슈가 여는 칸 — 반송 뒤 워커가 ✅ 직전에 죽고 커밋이 오래됨 ──────────
+row "A1 CONFLICTING·반송마커·라벨없음·커밋오래됨" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+
+# ── B. 살아 있는 워커 보호(#196 무회귀) — 신선도 두 갈래 모두 무접촉 ───────────
+row "B1 CONFLICTING·반송마커·커밋신선" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_FRESH" "$G_SHA" "$GT/empty.log" ""
+# 커밋은 120분 전이지만 그 head SHA 의 CI 티켓이 **큐에 살아 있다** — 박스 전역 직렬 큐
+# 대기는 워커가 통제 못 하는 시간이다(#200 실측 72분). 이 칸이 없으면 CI 를 기다리는
+# 워커가 매번 재디스패치된다.
+row "B2 CONFLICTING·반송마커·커밋오래됨·CI큐티켓살아있음" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/queued.log" ""
+# 소유권 필터 — 우리 대기열 줄 **뒤에** 남의 폐기 줄이 우리 SHA 를 언급해도 그건 우리
+# 줄이 아니다. 필터가 없으면 마지막 줄이 폐기 줄이 되어 `left` → 재디스패치로 뒤집힌다.
+row "B3 CONFLICTING·반송마커·대기열+남의폐기줄이우리SHA언급" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/queued_then_foreign_discard.log" ""
+# 마지막 줄 규칙 — 우리 SHA 의 마지막 줄이 pass 면 큐를 떠난 것이다. "어딘가에 대기열
+# 줄이 있나" 로 재면 이미 끝난 티켓을 살아 있다고 읽는다.
+row "B3b CONFLICTING·반송마커·우리SHA마지막줄이pass(큐이탈)" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/queued_then_pass.log" ""
+# 큐에 그 SHA 줄이 아예 없으면 증거가 아니다 — A1 과 같은 결론으로 돌아온다.
+row "B3c CONFLICTING·반송마커·커밋오래됨·티켓없음" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+
+# 진행 증거를 **판정하지 못하면**(queue.log 를 읽을 수 없음) 그건 "증거 없음" 이 아니다 —
+# 그 방향으로 접으면 파일 하나 깨진 박스가 살아 있는 워커를 전부 재디스패치한다.
+row "B4 CONFLICTING·반송마커·커밋오래됨·큐로그읽기실패" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/unreadable.log" ""
+
+# 커밋 신선도 축을 **독립적으로** 문다. 기본값에서는 시간버퍼(STALE_FINISH_MIN 30) >
+# 신선도 임계(STALL_MIN 25) 라 "커밋이 신선" 한 칸이 스테일 클록에도 걸려 두 보호가
+# 겹친다 — 겹치면 격자가 커밋 축을 실제로는 안 무는 것이다(뮤테이션으로 확인: 커밋
+# 시각을 헬퍼에 안 넘겨도 기본값 행은 전부 초록이었다). 두 상수는 독립 knob 이므로
+# 버퍼를 10분으로 좁혀 그 겹침을 풀면, 커밋 15분 전(= STALL_MIN 이내)인 워커를 살리는
+# 것은 **오직 신선도 술어**다.
+row "B5 CONFLICTING·반송마커·버퍼10분·커밋15분전(STALL_MIN 이내)" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_15M" "$G_SHA" "$GT/empty.log" "" 10
+# 같은 버퍼에서 커밋이 STALL_MIN 밖(40분 전)이면 보호는 사라진다 — 위 칸이 "항상 untouched"
+# 가 아니라 신선도 때문에 untouched 임을 고정한다.
+row "B6 CONFLICTING·반송마커·버퍼10분·커밋40분전(STALL_MIN 밖)" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_40M" "$G_SHA" "$GT/empty.log" "" 10
+
+# ── C. #196 입양 판별식 무회귀 — 최신 판정이 ✅ 면 신선도와 무관하게 입양 ───────
+row "C1 CONFLICTING·✅최신·커밋오래됨" adopt_rebase \
+  CONFLICTING "$GT/verdict_ok.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+row "C2 CONFLICTING·✅최신·커밋신선" adopt_rebase \
+  CONFLICTING "$GT/verdict_ok.json" "$G_FRESH" "$G_SHA" "$GT/empty.log" ""
+
+# ── D. 반송 뒤 CLEAN 검증자 코멘트가 남아 있어도 **입양하지 않는다** ──────────
+# (그 CLEAN 은 반송 *이전* 회차의 것이다 — 입양하면 반송된 코드를 머지한다.)
+# 대신 재디스패치로 보낸다(회차1 검증자 WARN): 교체 워커가 고쳐 커밋까지 하고 ✅ 직전에
+# 죽은 형상이 `stale_inline` 로도 나오는데, 이걸 무접촉으로 두면 이 이슈가 없애려는
+# 영구 정체가 옆 칸에 그대로 남는다. want=redispatch 는 "머지 안 한다"(adopt_merge 가
+# 아니다)와 "정체시키지 않는다"를 **동시에** 문다.
+row "D1 CONFLICTING·반송마커+검증자CLEAN·커밋오래됨" redispatch \
+  CONFLICTING "$GT/bounced_verifier_clean.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+# 같은 칸에서 커밋이 신선하면 워커는 살아 있다 — 재디스패치 갈래도 진행 증거 게이트를
+# 그대로 통과해야 한다(D1 이 "항상 redispatch" 가 아님을 고정).
+row "D2 CONFLICTING·반송마커+검증자CLEAN·커밋신선" untouched \
+  CONFLICTING "$GT/bounced_verifier_clean.json" "$G_FRESH" "$G_SHA" "$GT/empty.log" ""
+row "D3 CONFLICTING·반송마커+검증자CLEAN·CI큐티켓살아있음" untouched \
+  CONFLICTING "$GT/bounced_verifier_clean.json" "$G_OLD" "$G_SHA" "$GT/queued.log" ""
+
+# ── E. 반송 판정 실패는 통과가 아니다(fail-closed) ─────────────────────────────
+row "E1 CONFLICTING·반송판정실패(코멘트입력부재)" untouched \
+  CONFLICTING "$GT/does-not-exist.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+
+# 반송 마커 **뒤에 워커 `⚠ 보류`** 가 오면 bounce-state 는 `held` 다 — #206 예외 갈래는
+# 그 값에는 열리지 않는다(워커가 명시적으로 올린 사람 대기 신호라 워커/사람 레인 소유).
+cat > "$GT/bounced_then_held.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: E2E 1건 실패 — 반송\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:35:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:40:00Z"}
+]
+J
+row "E2 CONFLICTING·반송마커 뒤 ⚠(held)·커밋오래됨" untouched \
+  CONFLICTING "$GT/bounced_then_held.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+
+# ── F. 단계 라벨이 있으면 ①-b 대상이 아니다 ───────────────────────────────────
+row "F1 CONFLICTING·반송마커·flow:verify"  untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" "flow:verify"
+row "F2 CONFLICTING·반송마커·harvesting"   untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" "harvesting"
+row "F3 CONFLICTING·반송마커·needs-human"  untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" "needs-human"
+
+# ── G. MERGEABLE 축 무회귀 — 같은 신선도 규칙이 2) 경로에도 그대로 적용된다 ────
+# #218(PR #225)로 **want 가 뒤집힌 칸**이다 — 반송 게이트가 갈래 앞으로 올라가면서
+# MERGEABLE 인 `bounced` 는 finish-classify 를 아예 안 탄다(그게 #218 이 고친 사고:
+# 방금 반송된 MERGEABLE PR 이 `stale_reverify`= "검증 전 사망" 으로 오진돼 재디스패치되고
+# 사실과 다른 멱등 마커가 원장에 남았다). #206 의 예외 갈래는 CONFLICTING 한 칸뿐이므로
+# 이 칸은 열리지 않는다.
+row "G1 MERGEABLE·반송마커·커밋오래됨(#218 게이트가 갈래 앞)" untouched \
+  MERGEABLE "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+row "G2 MERGEABLE·반송마커·커밋신선"            untouched \
+  MERGEABLE "$GT/bounced_noverifier.json" "$G_FRESH" "$G_SHA" "$GT/empty.log" ""
+row "G3 MERGEABLE·✅최신(head 이후)"            eligible_path \
+  MERGEABLE "$GT/verdict_ok.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+row "G4 MERGEABLE·검증자CLEAN+🔄·커밋오래됨"    adopt_merge \
+  MERGEABLE "$GT/verifier_clean.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+row "G5 MERGEABLE·검증자CLEAN+🔄·커밋신선"      untouched \
+  MERGEABLE "$GT/verifier_clean.json" "$G_FRESH" "$G_SHA" "$GT/empty.log" ""
+# G4 와 같은데 CI 티켓만 살아 있음 — 자동 머지(입양)를 막아야 한다. 살아 있는 워커가
+# 곧 ✅ 를 찍을 PR 을 closeout 이 먼저 가져가면 그게 #196 이 막은 사고의 머지판이다.
+row "G6 MERGEABLE·검증자CLEAN+🔄·CI큐티켓살아있음" untouched \
+  MERGEABLE "$GT/verifier_clean.json" "$G_OLD" "$G_SHA" "$GT/queued.log" ""
+row "G7 MERGEABLE·⚠ 최신"                       needs_human \
+  MERGEABLE "$GT/held.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+
+# ══════════════════════════════════════════════════════════════════════════════
+# #206 회차2 — head **조회 실패**(unknown) ≠ 커밋 증거 **부재**(none)
+#
+# 회차1 반송 사유(검증자 [P1]): `pr-head-at.sh` 가 일시적으로 실패하면 finish-classify 가
+# **종료코드를 버리고** `head_sha=none`·`head_at=''` 로 정규화해, 하류(progress-evidence)
+# 에 "커밋 증거가 없다"고 말했다. 반송된 CONFLICTING PR 에 오래된 코멘트만 있으면 그
+# 결론으로 **살아 있는 워커가 재디스패치**된다 — `progress-evidence.sh:35` 이 못박은
+# `unknown ≠ none` 계약 위반이다(PR#139: 빈 결과와 실패를 구분하라 · PR#168: 탈출 사유를
+# 공유 센티널 하나에 싣지 말고 별도 플래그로 하류가 읽게 하라).
+#
+# 위 격자는 전부 `FC_HEAD_AT` **주입** 경로를 쓴다 — 그 경로만 무는 테스트는 실호출
+# 자리(:130 부근)가 회귀해도 초록이다. 그래서 여기서는 주입을 쓰지 않고 **실제 호출
+# 자리**를 스텁으로 물린다: `SCRIPT_DIR` 은 `dirname $0` 이므로 임시 디렉터리에
+# finish-classify.sh·progress-evidence.sh 를 심링크하고 그 옆에 스텁 `pr-head-at.sh` 를
+# 두면 head 조회만 갈아끼울 수 있다(네트워크 무접속은 그대로 — 코멘트는
+# `FC_COMMENTS_FILE`, CI 는 `FC_FAILING` 으로 주입).
+# ══════════════════════════════════════════════════════════════════════════════
+
+ST=$(mktemp -d)
+ln -s "$DIR/finish-classify.sh"   "$ST/finish-classify.sh"
+ln -s "$DIR/progress-evidence.sh" "$ST/progress-evidence.sh"
+ln -s "$DIR/pr-comments.sh"       "$ST/pr-comments.sh"
+
+# write_head_stub <exit코드> <stdout 한 줄(빈 문자열이면 무출력)>
+write_head_stub() {
+  cat > "$ST/pr-head-at.sh" <<EOF
+#!/usr/bin/env bash
+[ -n '$2' ] && printf '%s\n' '$2'
+exit $1
+EOF
+  chmod +x "$ST/pr-head-at.sh"
+}
+
+# run_stub <comments-file> <queue.log> — **FC_HEAD_AT 를 주지 않는다**(실호출 경로).
+run_stub() {
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 STALL_MIN=25 \
+    FC_COMMENTS_FILE="$1" FC_QUEUE_LOG="$2" \
+    "$ST/finish-classify.sh" owner/repo 1 2>/dev/null
+}
+
+# route_stub <mergeable> <comments-file> <stub-rc> <stub-stdout> <queue.log>
+route_stub() {
+  local mergeable="$1" cfile="$2" srepo_rc="$3" sout="$4" qlog="$5" g
+  write_head_stub "$srepo_rc" "$sout"
+  # 게이트는 route_1b 와 **같은 함수**를 쓴다 — 두 드라이버가 갈래 구조를 따로 들고
+  # 있으면 한쪽만 #218/#206 을 반영해 격자가 서로 다른 산문을 재현한다.
+  g=$(gate_1b "$mergeable" "$cfile")
+  case "$g" in
+    untouched|adopt_rebase) printf '%s\n' "$g"; return 0 ;;
+  esac
+  map_1b "${g#classify:}" "$(run_stub "$cfile" "$qlog")"
+}
+
+# row_stub <이름> <want> <mergeable> <comments-file> <stub-rc> <stub-stdout> <queue.log>
+row_stub() {
+  local name="$1" want="$2" got
+  shift 2
+  got=$(route_stub "$@")
+  if [ "$got" = "$want" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "  ✗ [조회실패] $name — want=$want got=$got"
+  fi
+}
+
+echo "  [#206 회차2] pr-head-at.sh 종료코드 — unknown(조회 실패) vs none(부재)"
+
+# H1 ⑴ 조회 **실패**(비0 종료) → 판정 불가 → 재디스패치 라우트로 가지 않는다(fail-closed).
+#     이 행이 회차1 코드에서 빨갛다: 종료코드를 버리면 head_sha=none 이 되어 증거 없음이
+#     되고, 오래된 반송 코멘트뿐인 이 형상은 곧바로 redispatch 로 떨어진다.
+row_stub "H1 CONFLICTING·반송마커·head조회실패(exit 1)" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" 1 "" "$GT/empty.log"
+
+# H2 ⑵ 조회는 **성공**했고 커밋이 오래됨 → 진짜 증거 부재 → 종전대로 재디스패치.
+row_stub "H2 CONFLICTING·반송마커·head조회성공·커밋오래됨" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" 0 "$G_SHA $G_OLD" "$GT/empty.log"
+
+# H3 ⑶ 조회 성공 + 커밋 신선 → 종전대로 무접촉.
+row_stub "H3 CONFLICTING·반송마커·head조회성공·커밋신선" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" 0 "$G_SHA $G_FRESH" "$GT/empty.log"
+
+# H3b 조회 성공 + 커밋 오래됨인데 그 SHA 의 CI 티켓이 큐에 살아 있음 → 무접촉.
+#     (스텁이 낸 SHA 가 실제로 큐 판정에 쓰이는지 — SHA 축이 전달되는지 — 를 문다.)
+row_stub "H3b CONFLICTING·반송마커·head조회성공·CI큐티켓살아있음" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" 0 "$G_SHA $G_OLD" "$GT/queued.log"
+
+# H4 종료코드 0 인데 **출력이 빔** = 헬퍼 계약 위반(PR 에는 반드시 head 커밋이 있다).
+#    "커밋이 없다" 로 읽을 수 없으므로 조회 실패와 같게 받는다.
+row_stub "H4 CONFLICTING·반송마커·head조회 exit0 무출력" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" 0 "" "$GT/empty.log"
+
+# H5 같은 조회 실패를 **머지 방향**에서도 문다 — 검증자 CLEAN + 🔄 형상에서 조회가 실패하면
+#    회차1 코드는 `stale_inline`(=입양/머지)을 냈다. 되돌릴 수 없는 쪽은 증명 없이 안 연다.
+row_stub "H5 MERGEABLE·검증자CLEAN+🔄·head조회실패(exit 1)" untouched \
+  MERGEABLE "$GT/verifier_clean.json" 1 "" "$GT/empty.log"
+
+# H6 ⑷ 과잉 보수 반증 — 조회가 성공한 같은 형상은 여전히 입양으로 간다(전부 unknown 으로
+#    접지 않는다). H5 와 H6 의 차이는 오직 스텁의 종료코드다.
+row_stub "H6 MERGEABLE·검증자CLEAN+🔄·head조회성공·커밋오래됨" adopt_merge \
+  MERGEABLE "$GT/verifier_clean.json" 0 "$G_SHA $G_OLD" "$GT/empty.log"
+
+# H7 ✅ 갈래 무회귀(#171) — 조회 실패면 "판정이 head 이후"를 증명 못 하므로 done_verdict 를
+#    내지 않고(=eligible_path 아님) 무접촉이다. 같은 형상에서 조회가 성공하면 종전대로 통과.
+row_stub "H7 MERGEABLE·✅최신·head조회실패(exit 1)" untouched \
+  MERGEABLE "$GT/verdict_ok.json" 1 "" "$GT/empty.log"
+row_stub "H7b MERGEABLE·✅최신·head조회성공(✅보다 이른 커밋)" eligible_path \
+  MERGEABLE "$GT/verdict_ok.json" 0 "$G_SHA 2026-07-05T10:31:30Z" "$GT/empty.log"
+
+rm -rf "$ST"
+
+# ── I. 현재 회차 시작 증거 — `agent:claimed` 부착 시각 (#206 attempt 3) ────────
+# attempt 2 의 codex BLOCKER: 반송 직후 교체 워커가 디스패치됐지만 **첫 푸시 전**이면
+# 커밋도 CI 티켓도 없다. 그때 이 파일이 보는 값(옛 판정 시각·옛 head 시각)은 전부 이전
+# attempt 의 것이라 `stale_reverify` 가 나고, `closeout-redispatch` 가 **지금 일하고 있는
+# 워커의 `agent:claimed` 를 떼어낸다.** ①② 는 워커가 이미 뭔가 남긴 뒤에만 존재하는
+# 증거라 이 창을 못 덮는다 — 덮는 것은 "이번 회차가 언제 시작됐나" 하나뿐이다.
+#
+# 아래 행들은 **커밋 증거를 전부 없앤 채**(head_at 빈 값 + head_sha none + 빈 queue.log)
+# claim 축만 움직인다 — 그래야 격자가 claim 축을 실제로 문다(커밋 축과 겹치면 무엇이
+# 살렸는지 알 수 없다, B5/B6 와 같은 규율).
+echo "  [#206 격자·I] 현재 회차 시작 증거 — agent:claimed 부착 시각"
+
+# I1 **이번 회차 핵심** — 반송 뒤 claim 이 방금(5분 전) 붙었고 커밋·CI 증거가 하나도 없다.
+#    attempt 2 코드로 돌리면 `stale_reverify` → redispatch 로 빨개진다(살아있는 워커 사망).
+row "I1 CONFLICTING·반송마커·증거전무·claim 5분전(첫 푸시 전)" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "" none "$GT/empty.log" "" 30 "$G_CLAIM_5M"
+
+# I2 과잉 보수 반증 — 같은 형상에서 claim 이 타임박스 밖(120분 전)이면 종전대로 회수한다.
+#    I1↔I2 는 **claim 시각 하나만** 다르다.
+row "I2 CONFLICTING·반송마커·증거전무·claim 120분전(타임박스 밖)" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" "" none "$GT/empty.log" "" 30 "$G_OLD"
+
+# I3 경계 — 정확히 60분 전(= ISSUE_TIMEBOX_HOURS) 은 **안쪽**이다(`<=`).
+row "I3 CONFLICTING·반송마커·claim 60분전(경계=타임박스 안)" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "" none "$GT/empty.log" "" 30 "$G_CLAIM_60M"
+
+# I4 경계 바깥 — 61분 전이면 회수한다(경계가 `<` 로 밀리거나 `<=` 가 사라지면 I3/I4 가 갈린다).
+row "I4 CONFLICTING·반송마커·claim 61분전(경계 밖)" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" "" none "$GT/empty.log" "" 30 "$G_CLAIM_61M"
+
+# I5 claim 이 **붙어 있지 않음**(`none` — 뗐거나 이력 없음) → 증거가 아니다. A1 과 같은 결론.
+row "I5 CONFLICTING·반송마커·claim none(미부착)" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" "" none "$GT/empty.log" "" 30 none
+
+# I6 claim **조회 실패**(`unknown`) → "증거 없음" 이 아니다(unknown≠none, 회차2 와 같은 규율).
+#    조회 실패 한 번으로 살아 있는 워커의 claim 을 떼는 것은 되돌릴 수 없다.
+row "I6 CONFLICTING·반송마커·claim 조회실패(unknown)" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "" none "$GT/empty.log" "" 30 unknown
+
+# I7 **머지 방향에서도** 같은 보호 — 검증자 CLEAN + 🔄 인데 claim 이 방금 붙었으면
+#    `stale_inline` 입양(머지)도 열지 않는다. 되돌릴 수 없는 쪽은 증명 없이 안 연다.
+row "I7 MERGEABLE·검증자CLEAN+🔄·claim 5분전" untouched \
+  MERGEABLE "$GT/verifier_clean.json" "" none "$GT/empty.log" "" 30 "$G_CLAIM_5M"
+
+# I8 그 대조군 — 같은 형상에서 claim 이 타임박스 밖이면 종전대로 입양이 열린다(G4 무회귀).
+row "I8 MERGEABLE·검증자CLEAN+🔄·claim 120분전" adopt_merge \
+  MERGEABLE "$GT/verifier_clean.json" "" none "$GT/empty.log" "" 30 "$G_OLD"
+
+
+# ── I9·I10 (회차3 WARN 3) — claim 축의 **교락을 푼다** ────────────────────────
+# I1~I8 의 claim 값 네 개는 "반송 이후 = 타임박스 안(I1·I3) / 반송 이전 = 타임박스 밖
+# (I2·I5 계열)" 으로 완전히 붙어 다닌다. 그래서 신선도 술어가 ⒜ **반송보다 나중인가**를
+# 보는지 ⒝ **타임박스 안인가**만 보는지 그 격자로는 못 가른다 — 나중에 ⒜ 를 넣거나 빼도
+# I1~I8 은 전부 그대로 초록이다. 아래 두 행은 반송이 **최근**(11:20)인 픽스처에서
+# claim 을 반송 **이전**에 두어 그 두 축을 갈라놓는다.
+#
+# I9 의 `want=untouched` 는 **지금 구현이 ⒝ 만 본다**는 사실을 못박은 것이다(⒜ 미구현).
+# 그 선택의 근거: 반송 전이(`transition.sh:148` verify-redispatch · `:160`
+# closeout-redispatch)는 이슈에서 `agent:claimed` 를 **뗀다**(`iss_rm` 에 들어 있다).
+# `claim-at.sh` 는 부착 여부를 **마지막 매칭 이벤트**로 재므로 그 해제 뒤에는 `none` 을
+# 낸다 — 즉 반송을 거친 이슈가 claim 시각을 되돌려 주는 유일한 경우는 디스패처가 **다시
+# 붙인** 것이고, 그 부착은 정의상 반송보다 나중이다. ⒜ 는 구조적으로 함의된다.
+# 남는 구멍은 **전이 스크립트를 안 거친 손 반송**뿐이고, 그 손해는 타임박스 상한
+# (`ISSUE_TIMEBOX_HOURS`) 안의 **지연**이라 영구 정체가 아니다.
+# 이 행이 있으면 나중에 ⒜ 를 실제로 넣는 사람은 I9 가 빨개지는 것을 보고 **의도한
+# 변경인지** 판단하게 된다 — 교락된 격자에서는 그 신호가 아예 안 뜬다.
+row "I9 CONFLICTING·반송최근(11:20)·claim 50분전(반송 이전·타임박스 안)" untouched \
+  CONFLICTING "$GT/bounced_recent.json" "" none "$GT/empty.log" "" 30 "$G_CLAIM_50M"
+
+# I10 대조군 — 같은 픽스처에서 claim 이 타임박스 **밖**이면 종전대로 회수한다.
+#     I9↔I10 은 claim 시각 하나만 다르다(둘 다 반송 이전이라 ⒜ 축은 고정돼 있다).
+row "I10 CONFLICTING·반송최근(11:20)·claim 100분전(반송 이전·타임박스 밖)" redispatch \
+  CONFLICTING "$GT/bounced_recent.json" "" none "$GT/empty.log" "" 30 "$G_CLAIM_100M"
+
+chmod 644 "$GT/unreadable.log" 2>/dev/null || true
+rm -rf "$GT"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# #206 attempt3 — claim 축의 **두 자리**를 따로 문다
+#   (1) `claim-at.sh` 자신의 계약(타임라인 → 부착 여부·부착 시각)
+#   (2) `finish-classify.sh` 의 **실호출 자리**(`claimed_arg`) — 위 격자는 전부
+#       `FC_CLAIMED_AT` 주입 경로라, 주입만 무는 테스트는 그 자리가 회귀해도 초록이다
+#       (회차2 가 `pr-head-at.sh` 에서 정확히 그 사각지대를 맞았다).
+# ══════════════════════════════════════════════════════════════════════════════
+echo "  [#206 attempt3] claim-at.sh 계약 — 부착 여부는 마지막 매칭 인덱스로"
+
+CA="$DIR/claim-at.sh"
+ca() {  # ca <name> <expected-stdout> <expected-rc> <timeline-json>
+  local name="$1" want="$2" want_rc="$3" json="$4" got rc=0
+  got=$(CA_TIMELINE_JSON="$json" "$CA" owner/repo 9 2>/dev/null) || rc=$?
+  if [ "$got" = "$want" ] && [ "$rc" = "$want_rc" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "  ✗ [claim-at] $name — 기대=[$want] rc=$want_rc 실제=[$got] rc=$rc"
+  fi
+}
+
+ca "부착 이력 없음→none" none 0 '[{"event":"labeled","label":{"name":"agent-ready"},"created_at":"2026-07-05T11:00:00Z"}]'
+ca "부착됨→그 시각" "2026-07-05T11:55:00Z" 0 \
+  '[{"event":"labeled","label":{"name":"agent:claimed"},"created_at":"2026-07-05T11:55:00Z"}]'
+# **핵심** — 마지막 이벤트가 해제면 지금은 안 붙어 있다. 부착 이벤트만 세면 이미 떼어진
+# claim 이 "살아있는 워커" 로 읽혀 회수가 영영 안 돈다(반대 방향의 사고).
+ca "부착 뒤 해제→none" none 0 \
+  '[{"event":"labeled","label":{"name":"agent:claimed"},"created_at":"2026-07-05T10:00:00Z"},
+    {"event":"unlabeled","label":{"name":"agent:claimed"},"created_at":"2026-07-05T10:30:00Z"}]'
+# 해제 뒤 **재부착**(반송 → 디스패처 재투입)이 현실의 정상 형상이다 — 마지막 매칭이 이긴다.
+ca "해제 뒤 재부착→나중 시각" "2026-07-05T11:50:00Z" 0 \
+  '[{"event":"labeled","label":{"name":"agent:claimed"},"created_at":"2026-07-05T10:00:00Z"},
+    {"event":"unlabeled","label":{"name":"agent:claimed"},"created_at":"2026-07-05T10:30:00Z"},
+    {"event":"labeled","label":{"name":"agent:claimed"},"created_at":"2026-07-05T11:50:00Z"}]'
+# 다른 라벨의 이벤트는 섞이지 않는다(`agent-ready` 해제가 claim 해제로 읽히면 안 된다).
+ca "다른 라벨 이벤트는 무시" "2026-07-05T11:50:00Z" 0 \
+  '[{"event":"labeled","label":{"name":"agent:claimed"},"created_at":"2026-07-05T11:50:00Z"},
+    {"event":"unlabeled","label":{"name":"agent-ready"},"created_at":"2026-07-05T11:55:00Z"}]'
+# 조회 실패는 `none` 이 아니다 — 빈 출력 + exit 2(unknown≠none, 회차2 와 같은 규율).
+# (빈 문자열 주입은 **실조회로 새므로** 쓰지 않는다 — 파싱 불가·파일 부재 두 갈래로 문다.)
+ca "타임라인 JSON 파싱 불가→조회 실패(exit 2)" "" 2 'not-json'
+ca_file_rc=0
+CA_TIMELINE_FILE="$DIR/does-not-exist.json" "$CA" owner/repo 9 >/dev/null 2>&1 || ca_file_rc=$?
+if [ "$ca_file_rc" = 2 ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [claim-at] CA_TIMELINE_FILE 부재→exit 2 (실제 rc=$ca_file_rc)"; fi
+# 이벤트는 있는데 시각이 빈 응답 = 계약 위반. "부착 안 됨" 으로 접지 않는다.
+ca "labeled 인데 시각 없음→조회 실패(exit 2)" "" 2 \
+  '[{"event":"labeled","label":{"name":"agent:claimed"}}]'
+
+echo "  [#206 attempt3] claimed_arg 실호출 자리 — 스텁 claim-at.sh 로"
+
+CT=$(mktemp -d)
+ln -s "$DIR/finish-classify.sh"   "$CT/finish-classify.sh"
+ln -s "$DIR/progress-evidence.sh" "$CT/progress-evidence.sh"
+ln -s "$DIR/pr-comments.sh"       "$CT/pr-comments.sh"
+cat > "$CT/bounced.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: E2E 1건 실패 — 반송\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:35:00Z"}
+]
+J
+: > "$CT/empty.log"
+
+# write_claim_stub <exit코드> <stdout 한 줄(빈 문자열이면 무출력)>
+write_claim_stub() {
+  cat > "$CT/claim-at.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$CT/args"
+[ -n '$2' ] && printf '%s\n' '$2'
+exit $1
+EOF
+  chmod +x "$CT/claim-at.sh"
+}
+
+# run_claim <stub-rc> <stub-stdout> — FC_CLAIMED_AT 를 **주지 않는다**(실호출 경로).
+#  FC_HEAD_AT="" + FC_HEAD_SHA=none 으로 커밋·큐 증거는 전부 없앤다 → claim 축만 남는다.
+run_claim() {
+  write_claim_stub "$1" "$2"
+  env -u FC_CLAIMED_AT FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 STALL_MIN=25 \
+    ISSUE_TIMEBOX_HOURS=1 FC_ISSUE=9 \
+    FC_COMMENTS_FILE="$CT/bounced.json" FC_HEAD_AT="" FC_HEAD_SHA=none \
+    FC_QUEUE_LOG="$CT/empty.log" \
+    "$CT/finish-classify.sh" owner/repo 1 2>/dev/null
+}
+
+check_claim() {  # check_claim <name> <expected> <actual>
+  if [ "$3" = "$2" ]; then pass=$((pass + 1)); else
+    fail=$((fail + 1)); echo "  ✗ [claim 실호출] $1 — 기대=$2 실제=$3"; fi
+}
+
+: > "$CT/args"
+check_claim "claim 5분전→active(첫 푸시 전 창)" active "$(run_claim 0 "$G_CLAIM_5M")"
+# 인자 계약 — `<repo> <issue>` 로 불렀는지. 배선이 끊기면(인자 순서·개수 변경) 여기서 빨개진다.
+if grep -qx 'owner/repo 9' "$CT/args"; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [claim 실호출] claim-at.sh 인자 계약 — 실제=[$(cat "$CT/args")]"; fi
+check_claim "claim 120분전→stale_reverify(회수 무회귀)" stale_reverify "$(run_claim 0 "$G_OLD")"
+check_claim "claim none(미부착)→stale_reverify" stale_reverify "$(run_claim 0 none)"
+# 헬퍼가 비0으로 죽으면 판정 불가 → active. 실행 비트 누락(126)·부재(127)도 같은 갈래다.
+check_claim "claim-at.sh exit 1→active(fail-closed)" active "$(run_claim 1 "")"
+check_claim "claim-at.sh exit 0·무출력→active(fail-closed)" active "$(run_claim 0 "")"
+
+# FC_ISSUE 도 위치 인자도 없으면 연결 이슈를 **한 번 묻는다** — 그 호출 계약을 고정한다.
+# (조회 실패는 unknown, 빈 결과는 none 으로 갈라야 한다.)
+#
+# 스텁은 **가공된 번호가 아니라 실제 응답 JSON** 을 낸다 — SUT 가 그 JSON 에서 브랜치
+# 이슈를 고르는 술어 자체를 물어야 하기 때문이다(가공된 번호를 주면 `[0]` 이든 head
+# 파싱이든 똑같이 초록이라 회귀에 눈먼다).
+cat > "$CT/gh" <<'STUB'
+#!/bin/sh
+printf '%s
+' "$*" >> "$GH_CAPTURE"
+case "$*" in
+  *closingIssuesReferences*)
+    [ -n "$STUB_ISSUE_FAIL" ] && exit 1
+    [ -n "$STUB_META_EMPTY" ] && exit 0
+    printf '%s
+' "{\"headRefName\":\"$STUB_HEAD\",\"closingIssuesReferences\":$STUB_REFS}"
+    ;;
+  *) exit 0 ;;
+esac
+STUB
+chmod +x "$CT/gh"
+
+# 이슈 번호별로 다른 답을 내는 claim 스텁 — **어느 이슈를 물었는지가 판정을 가른다**.
+# (109 = 이 브랜치의 이슈, 방금 claim / 108 = 같은 PR 이 닫는 남의 이슈, claim 없음)
+write_claim_stub_byissue() {
+  cat > "$CT/claim-at.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$CT/args"
+case "\$2" in
+  109) printf '%s\n' '$G_CLAIM_5M' ;;
+  *)   printf 'none\n' ;;
+esac
+exit 0
+EOF
+  chmod +x "$CT/claim-at.sh"
+}
+
+# run_iss <STUB_HEAD> <STUB_REFS> [추가 env 이름=값 …] — 이슈 인자를 **생략**한 실호출.
+run_iss() {
+  local head="$1" refs="$2"; shift 2
+  env -u FC_CLAIMED_AT PATH="$CT:$PATH" GH_CAPTURE="$CT/ghargs" \
+    STUB_HEAD="$head" STUB_REFS="$refs" \
+    FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 STALL_MIN=25 ISSUE_TIMEBOX_HOURS=1 \
+    FC_COMMENTS_FILE="$CT/bounced.json" FC_HEAD_AT="" FC_HEAD_SHA=none \
+    FC_QUEUE_LOG="$CT/empty.log" "$@" \
+    "$CT/finish-classify.sh" owner/repo 1 2>/dev/null
+}
+
+write_claim_stub 0 "$G_CLAIM_5M"
+: > "$CT/ghargs"
+got=$(run_iss "session/issues-110-109-108" '[{"number":9}]')
+check_claim "이슈 미지정·head 가 agent/issue-* 아님→closingIssuesReferences 폴백" active "$got"
+if grep -q 'closingIssuesReferences' "$CT/ghargs"; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [claim 실호출] 연결 이슈 조회 계약 — 실제=[$(cat "$CT/ghargs")]"; fi
+# 같은 한 번의 조회로 head 도 받아와야 한다 — 라운드트립을 늘리지 않는다.
+if grep -q 'headRefName' "$CT/ghargs"; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [claim 실호출] head 를 같은 조회에서 안 받는다 — 실제=[$(cat "$CT/ghargs")]"; fi
+# 연결 이슈 **조회 실패** → unknown(판정 불가) → active. 빈 결과와 섞지 않는다.
+got=$(run_iss "agent/issue-9" '[{"number":9}]' STUB_ISSUE_FAIL=1)
+check_claim "연결 이슈 조회 실패→active(unknown≠none)" active "$got"
+# gh 가 exit 0 인데 **무출력** 인 것도 조회 실패다 — 빈 응답을 "연결 이슈 없음" 으로 접으면
+# 조회 한 번 헛돈 것이 살아있는 워커의 claim 을 떼는 근거가 된다(unknown≠none 같은 규율).
+got=$(run_iss "agent/issue-9" '[{"number":9}]' STUB_META_EMPTY=1)
+check_claim "연결 이슈 조회 무출력→active(unknown≠none)" active "$got"
+# 연결 이슈가 **없는** PR(빈 결과)은 조회 실패가 아니다 — claim 증거 없음(none)으로 진행.
+got=$(run_iss "fix/사람이-연-브랜치" '[]')
+check_claim "연결 이슈 없음(빈 결과)→stale_reverify(증거 없음)" stale_reverify "$got"
+
+# ── 회차3 BLOCKER — `closingIssuesReferences[0]` 은 **브랜치 이슈가 아니다** ──────
+# 이 레포 실데이터: PR #113 head=`agent/issue-109` refs=`[108, 109]` — `[0]` 은 #108(남의
+# 이슈)이다. 이슈를 **닫는** 것과 이 브랜치의 워커가 **집어간** 것은 다른 축인데, `[0]` 은
+# 전자의 순서(GitHub 이 본문의 `Closes` 를 만난 순서)를 후자로 오독한다.
+#
+# 실패 경로: 이 PR 이 새로 여는 ①-b `bounced` 예외 갈래로 CONFLICTING 반송 PR 이 들어오고,
+# 교체 워커는 5분 전 claim 됐지만 첫 푸시 전이다 → `[0]` 이 **#108** 을 물어 claim 이 `none`
+# → 증거 ③ 이 조용히 꺼짐 → `stale_reverify` → `closeout-redispatch` 가 **지금 일하고 있는
+# 워커의 `agent:claimed` 를 뗀다** → 같은 브랜치에 두 워커(워크트리 경합).
+# 이 PR 이 없애려던 사고가 이 PR 이 새로 연 경로에서 재발한다.
+write_claim_stub_byissue
+got=$(run_iss "agent/issue-109" '[{"number":108},{"number":109}]')
+check_claim "head=agent/issue-109·refs=[108,109]→109 로 묻는다(브랜치 이슈)" active "$got"
+# 어느 이슈를 물었는지까지 못박는다 — 결과만 보면 우연히 맞을 수 있다.
+if grep -qx 'owner/repo 109' "$CT/args"; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [claim 실호출] 브랜치 이슈 인자 — 기대=[owner/repo 109] 실제=[$(cat "$CT/args")]"; fi
+# 대조군(실데이터 PR #112) — head 가 `agent/issue-N` 이 **아니면** 폴백 그대로 `[0]`=108 이라
+# claim 이 `none` 이다. 이 행이 초록이어야 위 행을 살린 것이 **head 파싱**임이 증명된다
+# (둘 다 refs 는 같다 — 다른 것은 head 하나뿐).
+: > "$CT/args"
+got=$(run_iss "session/issues-110-109-108" '[{"number":108},{"number":109}]')
+check_claim "head 가 agent/issue-* 아님·refs=[108,109]→폴백 [0]=108(claim 없음)" stale_reverify "$got"
+if grep -qx 'owner/repo 108' "$CT/args"; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [claim 실호출] 폴백 인자 — 기대=[owner/repo 108] 실제=[$(cat "$CT/args")]"; fi
+
+rm -rf "$CT"
 
 echo "finish-classify.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]
