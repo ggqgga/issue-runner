@@ -6,11 +6,13 @@
 # 반송 마커 판정 자체의 SSOT 테스트다(closeout-eligible.test.sh 는 그 판정이 후보
 # 필터에 **배선돼 있는지**를 잰다 — 두 층을 일부러 나눠 둔다).
 #
-# 이 헬퍼가 답하는 질문은 두 개다: "최신 반송 마커가 최신 `머지 판정: ✅` 보다 뒤인가"
-# 그리고(#218 attempt 2) "그 마커보다 뒤에 새 `머지 판정: ⚠ 보류` 가 있는가."
-#   ok      = 반송 마커가 없거나, 그 뒤에 새 ✅ 가 찍혔다 → 마감 레인이 만져도 된다
-#   bounced = 반송이 최신이고, 그 뒤에 새 ⚠ 도 없다 → **워커 레인 소유**(closeout 무접촉)
-#   held    = 반송이 최신이지만 그 뒤에 새 ⚠ 가 찍혔다 → needs-human 승격 대상
+# 이 헬퍼가 답하는 질문은 하나다: **최신 반송 마커 뒤에 오는 판정 코멘트 중 가장 늦은
+# 것이 무엇인가**(#218 attempt 3 이 규칙으로 옮기고, attempt 4 가 후보에 `🔄` 를 더했다).
+#   ok      = 반송 마커가 없거나, 그 뒤 마지막 판정이 `머지 판정: ✅` → 마감 레인이 만져도 된다
+#   bounced = 반송 뒤 판정이 하나도 없거나, 그 뒤 마지막 판정이 `머지 판정: 🔄`(교체 워커가
+#             재개했다) → **워커 레인 소유**(closeout 무접촉). `🔄` 가 후보라는 것이
+#             `held` 의 **해제 경로**다 — 사람이 보류를 풀고 워커가 재개하면 여기로 온다
+#   held    = 반송 뒤 마지막 판정이 `머지 판정: ⚠ 보류` → needs-human 승격 대상
 #             (재디스패치로는 가지 않는다 — 살아있는 교체 워커와 충돌하는 건 그 갈래다)
 #   exit 1  = 판정 못 함 → 호출자가 fail-closed 로 받는다(증명 실패는 통과가 아니다)
 #
@@ -359,6 +361,7 @@ fi
 # ── held(#218 attempt 2 — codex BLOCKER) ─────────────────────────────────
 # attempt 1 은 bounced 를 무조건 조기 종료해, 반송 뒤 교체 워커가 새로 올린
 # `머지 판정: ⚠ 보류` 를 영원히 못 봤다. ✅ 와 대칭으로 ⚠ 도 마지막 매칭 인덱스로 잰다.
+# (해제 방향 — `held` 가 어떻게 풀리는가 — 은 아래 "해제 경로 격자(#218 attempt 4)".)
 
 # 13) 반송 마커 → 그 뒤 새 `⚠ 보류` → held. #218 attempt 2 가 닫는 바로 그 구멍
 #     (bodat PR #225 검증자 리뷰 재현: "a later ⚠ verdict never becomes held").
@@ -475,6 +478,146 @@ run_case "격자·반송→✅→✅→ok(반복)" ok '[
   {"body":"머지 판정: ✅ 머지 가능(재검증 1)\n<!-- bodat:worker -->","createdAt":"2026-09-11T03:30:00Z"},
   {"body":"머지 판정: ✅ 머지 가능(재검증 2)\n<!-- bodat:worker -->","createdAt":"2026-09-11T04:00:00Z"}
 ]'
+
+# ── 해제 경로 격자(#218 attempt 4) — `머지 판정: 🔄` 도 후보다 ───────────────
+# 규칙은 attempt 3 이 적은 그대로 한 줄이다: **반송 마커 이후에 오는 판정 코멘트 중
+# 가장 늦은 것이 결과를 정한다.** 그런데 후보 집합이 ✅·⚠ 둘뿐이라 `머지 판정: 🔄` 가
+# 빠져 있었고, 그래서 새 종결 상태 `held` 에 **진입만 있고 해제가 없었다**:
+#   ⑴ 반송 마커  ⑵ 워커 `머지 판정: ⚠ 보류` → closeout 이 `held` → `closeout-blocked`
+#   로 `needs-human`+`hold:policy` 부착  ⑶ **사람이 그 보류를 풀어 라벨을 뗀다**
+#   ⑷ 교체 워커가 `머지 판정: 🔄` 를 찍고 일을 재개한다  ⑸ 다음 closeout 틱:
+#   `needs-human` 이 없으니 PR 이 다시 스윕 대상 → 판정이 **여전히 `held`** → 게이트가
+#   `closeout-blocked` 를 **다시** 부른다 → 사람이 방금 푼 보류가 되살아나고, 연결 이슈의
+#   단계 라벨이 정리되면서 **살아있는 교체 워커가 끊긴다.** 워커가 `✅` 에 도달해야만
+#   풀리는데 끊기니까 도달할 수 없다 — 매 틱 반복되는 영구 정체다.
+# 이 레포가 명시적으로 막아 온 "루프 대 사람 싸움"(#151: 스윕이 방금 건 사람 대기를
+# 되돌린다)이 방향만 바뀐 형태고, 게이트가 **closeout 매 틱**에 도는 자리라 조용히 반복된다.
+#
+# 해소는 규칙을 그대로 두고 **후보 집합만 대칭으로 채우는 것**이다 — `🔄` 를 넣되
+# 결과값은 `ok` 가 아니라 `bounced`(= 워커 레인 소유). `ok` 로 두면 attempt 1 이 막은
+# "CONFLICTING 갈래가 살아있는 워커 PR 을 입양·rebase" 가 되돌아온다.
+# (PR#202 교훈: 짚힌 반례 하나만 막지 말고 규칙을 옮긴 뒤 `want` 열 격자로 전수 단언하라.
+#  그래서 아래는 해제 방향뿐 아니라 **과잉 해제 반증**까지 같은 격자에 넣는다.)
+
+# seq_case <name> <want> <토큰열>
+#   B=`재디스패치`(반송 마커) · V=`머지 판정: ✅` · H=`머지 판정: ⚠ 보류` ·
+#   P=`머지 판정: 🔄` · R=`검증자 리뷰:`(판정 코멘트가 아닌 잡음 — 후보 아님) ·
+#   소문자 v/h/p = 같은 값의 **영문** 변종(`Merge verdict: …`)
+#   코멘트는 토큰 순서대로 배열에 담긴다 — 선후는 인덱스로 재므로 createdAt 은 형식만 맞춘다.
+#   주입 경로(BOUNCE_COMMENTS_FILE)를 쓰므로 네트워크·gh 무접속이다.
+seq_ran=0
+seq_case() {
+  local name="$1" want="$2" toks="$3" t b bodies=""
+  for t in $toks; do
+    case "$t" in
+      B) b='재디스패치: #218 — 완결 유실(검증 전 사망)' ;;
+      V) b='머지 판정: ✅ 머지 가능(재검증)' ;;
+      H) b='머지 판정: ⚠ 보류 — 정책 질문' ;;
+      P) b='머지 판정: 🔄 진행 중 — attempt 4' ;;
+      R) b='검증자 리뷰: CLEAN' ;;
+      v) b='Merge verdict: ✅ ready to merge' ;;
+      h) b='Merge verdict: ⚠ hold — policy question' ;;
+      p) b='Merge verdict: 🔄 in progress' ;;
+      *) fail=$((fail + 1)); echo "  ✗ seq_case 알 수 없는 토큰: [$t] ($name)"; return ;;
+    esac
+    bodies="$bodies$b
+"
+  done
+  printf '%s' "$bodies" | jq -Rs 'split("\n") | map(select(length > 0)) | to_entries
+    | map({body: (.value + "\n<!-- bodat:worker -->"),
+           createdAt: "2026-09-11T0\(.key):00:00Z"})' > "$tmp/seq.json" \
+    || { fail=$((fail + 1)); echo "  ✗ seq_case 픽스처 생성 실패: $name"; return; }
+  seq_ran=$((seq_ran + 1))
+  run_file_case "$name" "$want" "$tmp/seq.json"
+}
+
+# 격자 행은 **fd 3** 으로 읽는다 — 루프 본문이 stdin 을 먹으면 남은 행이 조용히 사라지고
+# 스위트는 초록이 된다(안 돌린 테스트는 CI 를 못 빨갛게 한다 — PR#219 교훈). 아래 실행
+# 건수 단언이 그 사각지대의 두 번째 자물쇠다.
+while IFS='|' read -r s_want s_toks s_label <&3; do
+  [ -n "$s_want" ] || continue
+  seq_case "해제격자·$s_label" "$s_want" "$s_toks"
+done 3<<'SEQ'
+bounced|B H P|반송→⚠→🔄(사람이 풀고 교체워커 재개)→bounced ✱BLOCKER 방증: 되살아나지 않는다
+bounced|B H P R|반송→⚠→🔄→검증자 리뷰→bounced(검증자까지 돌아도 마지막 판정은 🔄)
+bounced|B H p|영문 🔄 변종도 같은 후보(한/영 병행 워커)
+held|B H|과잉해제 반증⑴ 🔄 없이 ⚠ 만이면 여전히 held
+ok|B V|과잉해제 반증⑵ 반송 뒤 ✅ 는 종전대로 ok(무회귀)
+held|B V H|과잉해제 반증⑵ 반송→✅→⚠ 는 attempt 3 대로 held(무회귀)
+held|P B H|과잉해제 반증⑶ 반송 **전** 옛 🔄 는 해제 근거가 아니다(시점 비교)
+held|B P H|🔄 뒤에 다시 ⚠ 가 오면 다시 held(양방향)
+bounced|B P|반송 뒤 🔄 만→bounced(9 번과 같은 축, 무회귀)
+bounced|B R|판정 코멘트가 아닌 잡음(검증자 리뷰)은 후보가 아니다→bounced 유지
+bounced|B V P|반송→✅→🔄 는 워커가 다시 붙은 것→bounced(워커 레인 소유)
+ok|B H P V|교체 워커가 끝내면 정상 복귀→ok(해제 경로가 열려도 완결은 막히지 않는다)
+ok|B P V|반송→🔄→✅ 정상 완결(무회귀)
+ok|H P|반송 마커가 없으면 $bi==null 이라 즉시 ok(🔄 가 있어도)
+SEQ
+
+# 격자가 **실제로 다 돌았는지** 를 센다(PR#219: 안 돌린 테스트는 CI 를 못 빨갛게 한다).
+seq_expected=14
+if [ "$seq_ran" = "$seq_expected" ]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "  ✗ 해제 경로 격자 실행 건수 — 기대=$seq_expected 실제=$seq_ran"
+fi
+
+# ── 뮤테이션 방증(#218 attempt 4) — `$p_after` 를 후보에서 빼면 해제가 다시 막힌다 ──
+# SUT 사본에서 후보 배열의 `$p_after` 줄 하나만 지우고(= attempt 3 상태) 같은 격자를
+# 다시 돌린다. 기대: **🔄 가 마지막 판정인 행만** 옛 값으로 뒤집히고, 나머지는 그대로다
+# (대조군이 전부 어긋나는 게 아니라는 증거 — 새 가드가 자기가 막겠다는 회귀를 실제로 문다).
+mut_sut="$tmp/mut-bounce-state.sh"
+sed '/MUT-P: 해제 경로 후보(#218 attempt 4)/d' "$SUT" > "$mut_sut"
+if ! cmp -s "$SUT" "$mut_sut"; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "  ✗ 뮤테이션 앵커(MUT-P) 를 못 찾았다 — 방증이 아무것도 안 바꾼다"
+fi
+mut_pass=0
+mut_fail=0
+mut_run() {
+  local name="$1" want="$2" toks="$3" t b bodies="" out rc=0
+  for t in $toks; do
+    case "$t" in
+      B) b='재디스패치: #218 — 완결 유실(검증 전 사망)' ;;
+      V) b='머지 판정: ✅ 머지 가능(재검증)' ;;
+      H) b='머지 판정: ⚠ 보류 — 정책 질문' ;;
+      P) b='머지 판정: 🔄 진행 중 — attempt 4' ;;
+      *) echo "  ✗ mut_run 알 수 없는 토큰: [$t]"; mut_fail=$((mut_fail + 1)); return ;;
+    esac
+    bodies="$bodies$b
+"
+  done
+  printf '%s' "$bodies" | jq -Rs 'split("\n") | map(select(length > 0)) | to_entries
+    | map({body: (.value + "\n<!-- bodat:worker -->"),
+           createdAt: "2026-09-11T0\(.key):00:00Z"})' > "$tmp/mut.json"
+  out=$(PATH="$tmp/bin:$PATH" STUB_FAIL_COMMENTS=1 BOUNCE_COMMENTS_FILE="$tmp/mut.json" \
+    bash "$mut_sut" owner/repo 5 2>/dev/null) || rc=$?
+  if [ "$rc" = 0 ] && [ "$out" = "$want" ]; then
+    mut_pass=$((mut_pass + 1))
+  else
+    mut_fail=$((mut_fail + 1))
+    echo "  ✗ 뮤테이션 대조 — $name 기대=$want 실제 rc=$rc out=[$out]"
+  fi
+}
+# 뒤집히는 행(옛 결함이 정확히 되살아난다): 🔄 가 반송 뒤 마지막 판정인 형상
+mut_run "반송→⚠→🔄(뒤집힘)"   held    "B H P"
+mut_run "반송→✅→🔄(뒤집힘)"   ok      "B V P"
+mut_run "반송→🔄(불변)"        bounced "B P"
+# 대조군(안 뒤집힌다): 🔄 가 결과를 정하지 않는 행들
+mut_run "반송→⚠(대조군)"        held    "B H"
+mut_run "반송→✅(대조군)"        ok      "B V"
+mut_run "반송→✅→⚠(대조군)"     held    "B V H"
+mut_run "반송→⚠→🔄→✅(대조군)"  ok      "B H P V"
+if [ "$mut_fail" = 0 ]; then
+  pass=$((pass + 1))
+  echo "  ✓ 뮤테이션 방증: \$p_after 를 후보에서 빼면 🔄 가 마지막인 두 행만 옛 값으로 뒤집힌다(mut_pass=$mut_pass)"
+else
+  fail=$((fail + 1))
+  echo "  ✗ 뮤테이션 방증 실패 — mut_pass=$mut_pass mut_fail=$mut_fail"
+fi
 
 # 12) 인자 누락 — 호출자 실수를 조용한 `ok` 로 만들지 않는다.
 rc=0

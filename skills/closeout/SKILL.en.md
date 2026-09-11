@@ -161,9 +161,12 @@ that hold (#151) — never pick it until a human removes the label:
 **1) Bounce-marker gate first — before the branch splits, common to CONFLICTING and
 MERGEABLE** (#218): run `$SCRIPTS/bounce-state.sh <repo> <pr>` once, **before** looking at
 `mergeable` at all. Output is one of three values — `ok`/`bounced`/`held` (#218 attempt 2 —
-`held` is new).
+`held` is new). The rule is one line: **among the verdict comments that come after the latest
+bounce marker (`머지 판정: ✅`/`⚠ 보류`/`🔄`), the latest one decides** — ✅ → `ok`,
+⚠ → `held`, `🔄` → `bounced` (a `🔄` is the strongest evidence that a replacement worker is
+working right now, so the worker lane owns it — #218 attempt 4).
 
-- `held` (a new `머지 판정: ⚠ 보류` was posted **after** the latest bounce marker) →
+- `held` (the **last** verdict after the bounce marker is `머지 판정: ⚠ 보류`) →
   **needs-human** — same action as the `held` row of the table in 2) below:
   `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note
   "<one-line question>"`, closeout leaves it alone. Stop here (do not check `mergeable`, and
@@ -172,7 +175,9 @@ MERGEABLE** (#218): run `$SCRIPTS/bounce-state.sh <repo> <pr>` once, **before** 
 - If it is `bounced`, or **there is no output (exit 1 — undecidable)** → treat as `active`,
   **leave it right here** (do not even check `mergeable`, do not call 2) finish-classify).
   A bounce round in flight is owned by the worker lane (fail-closed — open only once "not
-  bounced" is *proven*, same direction as #171).
+  bounced" is *proven*, same direction as #171). **A PR whose `held` a human just released
+  (labels removed) and whose replacement worker resumed with `머지 판정: 🔄` lands here too**
+  — that is how `held` is released (#218 attempt 4).
 - Only when the output is exactly `ok` → branch on
   `gh pr view <pr> --repo <repo> --json mergeable`:
   - CONFLICTING → **Adopt (rebase path)**: hand to ② Pick; ③ step 2 has closeout rebase
@@ -213,6 +218,24 @@ createdAt) applied to ⚠ as well, yielding a third output value `held` (see
 promoted while `bounced` — ⓐ is already proven non-regressing above, and promoting those
 values while `bounced` would resurrect exactly the incident #218 attempt 1 closed (misclassifying
 bounced code as finished).
+
+**attempt 4 — how `held` gets *released*** (closeout-verification BLOCKER, PR #225): the `held`
+built in attempts 2·3 had **an entry path but no exit.** The candidate set was ✅ and ⚠ only,
+leaving `머지 판정: 🔄` out, so this sequence repeated every tick: ⑴ bounce marker ⑵ worker
+posts `⚠ 보류` → `held` → `needs-human`+`hold:policy` ⑶ **a human clears the hold and removes
+the labels** ⑷ the replacement worker resumes with `🔄` ⑸ next tick: `needs-human` is gone so
+the PR is swept again, but the verdict is **still `held`** → `closeout-blocked` fires **again**,
+**resurrecting the hold the human just cleared and cutting off the live replacement worker**
+(only a `✅` releases it, and it can never get there once cut off). That is the repo's
+"loop vs. human" failure (#151) with the direction flipped, and this gate runs on **every**
+tick, so the regression repeats silently. The fix keeps the rule and only fills the candidate
+set symmetrically — add `🔄`, but map it to `bounced`, **not** `ok` (mapping it to `ok` would
+bring back the incident attempt 1 closed: the CONFLICTING branch adopting/rebasing a live
+worker's PR).
+
+**Discipline (bitten three times at this spot)**: when you introduce a new terminal state, do
+not design only its entry path — build the **exit path in the same change.** Entry-only means
+that state undoes the human's release every tick.
 
 Why CONFLICTING originally needed it (#196, measured: bodat PR #5009 / issue #4973): a bounced
 PR has no `머지 판정: ✅`, so it never shows up in `closeout-eligible.sh`, and the
