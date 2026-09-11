@@ -1451,6 +1451,77 @@ check "미러 ⑨: 이슈 조회조차 안 한다"        "$(none 'issue view 30
 check "미러 ⑩(hold:<새사유>): 접두로 잡는다" "$([ "$(mpl 210)" = "" ] && echo ok || echo no)"
 check "미러 ⑩: removed 에 새 사유"           "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==210) | .removed=="hold:manual"' >/dev/null 2>&1 && echo ok || echo no)"
 
+# ── (#265 재검증) 짝은 **head 의 N 이 closes 안에 있을 때만** · 편집은 closes 전건이 깨끗할 때만 ──
+# 위 격자의 PR 은 전부 closes 가 한 건이라 `[0]` 과 브랜치의 N 이 우연히 같았다. 이 레포
+# 실데이터엔 **순서가 뒤집힌** PR 이 있다(PR #113 head=`agent/issue-109` refs=`[108,109]`) —
+# `[0]` 을 무조건 짝으로 쓰면 브랜치의 이슈가 아닌 쪽을 보고 **살아 있는 사람 게이트를 벗긴다**.
+# 그리고 짝 인정만으로는 **묶음 디스패치**가 안 닫힌다: `Closes #A`·`Closes #B` 를 단 PR 에
+# 전이는 이슈 인자를 하나만 받아(`transition.sh`) #B 에만 정지가 붙을 수 있으므로, 편집은
+# **closes 전건이 정지 라벨 0개일 때만** 한다(짝은 메시지·이벤트의 대표 번호일 뿐이다).
+#
+#   PR / head / closes             이슈                         want
+#   ─────────────────────────────  ──────────────────────────  ────────────────────────────
+#   220 agent/issue-342 [399,342]  399 깨끗 · 342 정지 有       무편집 — #113 모양(순서 역전)
+#   221 agent/issue-343 [395]      브랜치의 N 이 closes 밖      무편집 · 이슈 조회조차 안 함
+#   222 agent/issue-344 [398,344]  둘 다 깨끗                   **편집** · 짝은 398 이 아니라 344
+#   223 agent/issue-345 [345,397]  345 깨끗 · 397 정지 有       무편집 — 묶음 디스패치 갈래
+#   224 agent/issue-346 [346]      346 이 `hold:policy` **만**  무편집 — has_stop 접두 갈래
+setup "needs-human,hold:policy" 10 0
+mirror_prs '[
+ {"number":220,"headRefName":"agent/issue-342","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
+  "closingIssuesReferences":[{"number":399},{"number":342}]},
+ {"number":221,"headRefName":"agent/issue-343","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
+  "closingIssuesReferences":[{"number":395}]},
+ {"number":222,"headRefName":"agent/issue-344","labels":[{"name":"hold:policy"},{"name":"flow:verify"}],
+  "closingIssuesReferences":[{"number":398},{"number":344}]},
+ {"number":223,"headRefName":"agent/issue-345","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
+  "closingIssuesReferences":[{"number":345},{"number":397}]},
+ {"number":224,"headRefName":"agent/issue-346","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
+  "closingIssuesReferences":[{"number":346}]}
+]'
+mirror_issue 399 OPEN "agent-ready"
+mirror_issue 395 OPEN "agent-ready"
+mirror_issue 398 OPEN "agent-ready"
+mirror_issue 397 OPEN "agent-ready,hold:policy"
+mirror_issue 342 OPEN "agent-ready,needs-human,hold:conflict"
+mirror_issue 343 OPEN "agent-ready"
+mirror_issue 344 OPEN "agent-ready"
+mirror_issue 345 OPEN "agent-ready"
+mirror_issue 346 OPEN "agent-ready,hold:policy"
+run
+check "미러 격자2: exit 0"                      "$([ "$RC" = 0 ] && echo ok || echo no)"
+# ① 순서 역전(#113 모양) — `[0]`(#399)만 보면 깨끗해 보이지만 브랜치의 이슈 #342 는 정지 중이다
+check "미러 ⑪(closes 순서 역전): 무편집"        "$(none 'pr edit 220')"
+check "미러 ⑪: PR 라벨 그대로"                  "$([ "$(mpl 220)" = "needs-human,hold:policy" ] && echo ok || echo no)"
+check "미러 ⑪: 이벤트 없음"                     "$([ -z "$(mev 220)" ] && echo ok || echo no)"
+# ② 브랜치의 N 이 closes 에 없다 → 짝이 성립 안 함(무편집·무조회). `Refs #N` 전용 PR 과
+#    같은 자리다 — 짝이 증명 안 된 채 남은 정지는 정상일 수 있다.
+check "미러 ⑫(브랜치 N 이 closes 밖): 무편집"   "$(none 'pr edit 221')"
+check "미러 ⑫: 이슈 조회조차 안 한다(343)"      "$(none 'issue view 343')"
+check "미러 ⑫: 다른 closes 도 조회 안 한다(395)" "$(none 'issue view 395')"
+# ③ 전부 깨끗하면 종전대로 정리된다 — 짝은 `[0]`(#398)이 아니라 **브랜치의 이슈 #344** 다
+check "미러 ⑬(둘 다 깨끗): 정리된다"            "$([ "$(mpl 222)" = "flow:verify" ] && echo ok || echo no)"
+check "미러 ⑬: 이벤트의 짝은 [0] 이 아니라 344" "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==222) | .number==344' >/dev/null 2>&1 && echo ok || echo no)"
+# ④ 묶음 디스패치 — 짝(#345)은 깨끗해도 같은 PR 이 닫는 #397 에 사람 게이트가 살아 있다
+check "미러 ⑭(묶음 디스패치의 딴 이슈 정지): 무편집" "$(none 'pr edit 223')"
+check "미러 ⑭: PR 라벨 그대로"                  "$([ "$(mpl 223)" = "needs-human,hold:policy" ] && echo ok || echo no)"
+# ⑤ has_stop 의 **접두 갈래 단독** — `needs-human` 없이 `hold:policy` 만 남은 이슈.
+#    이 칸이 없으면(#244 로 needs-human 이 기계 정지에서 빠진 뒤) 접두 갈래를 열거로
+#    되돌리는 리팩터가 전건 초록인 채로 살아 있는 홀드의 PR 미러를 떼기 시작한다.
+check "미러 ⑮(이슈가 hold: 접두만): 무편집"     "$(none 'pr edit 224')"
+check "미러 ⑮: PR 라벨 그대로"                  "$([ "$(mpl 224)" = "needs-human,hold:policy" ] && echo ok || echo no)"
+check "미러 ⑮: 이벤트 없음"                     "$([ -z "$(mev 224)" ] && echo ok || echo no)"
+
+# 묶음 디스패치의 **딴** closes 이슈 조회가 실패해도 떼지 않는다(fail-safe 는 짝과 같다)
+setup "needs-human,hold:policy" 10 0
+mirror_prs '[{"number":225,"headRefName":"agent/issue-347","labels":[{"name":"needs-human"}],
+  "closingIssuesReferences":[{"number":347},{"number":396}]}]'
+mirror_issue 347 OPEN "agent-ready"
+mirror_issue 396 __FAIL__ ""
+run
+check "미러 묶음 조회 실패: 무편집"             "$(none 'pr edit 225')"
+check "미러 묶음 조회 실패: warn"               "$(saysl '이슈 #396 라벨 조회 실패')"
+
 # 이슈 조회 실패 → **떼지 않고** warn (fail-safe: 사람 게이트를 벗겨내는 방향으로 틀리지 않는다)
 setup "needs-human,hold:policy" 10 0
 mirror_prs '[{"number":211,"headRefName":"agent/issue-311","labels":[{"name":"needs-human"}],
