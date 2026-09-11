@@ -15,6 +15,10 @@
 #      단 배포 대기 라벨(deploy-wait·full-cycle)이면 **정상 상태**라 warn 이 아니라 note (#190).
 #   ⑦ 조회 실패는 "없음" 으로 위장되지 않는다(exit 2) · 상수 오타는 쓰기 전에 exit 64.
 #   ⑧ 사람 조작 경합은 **쓰기 전** 재조회로 잡는다(사후 readback 으론 원리적으로 불가).
+#   ⑨ (#265) 정지 미러 정리 — 이슈엔 정지 라벨이 없고 연결된 **열린** PR 에만 남은 사본을
+#      뗀다. 격자(이슈 정지 有/無 × PR 정지 有/無)로 편집 유무를 각 칸에서 단언하고,
+#      이슈에 정지가 **남아 있으면** 절대 떼지 않는 것(사람 게이트 보존)을 함께 못 박는다.
+#      조회·편집 실패는 라벨을 안 떼고 warn / 쓰기 뒤 실패는 warn_after_edit 으로 갈린다.
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -92,6 +96,21 @@ case "${1:-} ${2:-}" in
     esac
     exit 0 ;;
   "issue view")
+    # (#265) 정지 미러 정리 갈래는 **다른 이슈 번호**를 읽는다 — 미러 픽스처에 등록된
+    # 번호면 그 라벨을 돌려준다(기존 42번 픽스처와 번호로 갈린다). `__FAIL__` 은 조회 실패.
+    if [ -f "${STUB_MIRROR_ISSUES:-/dev/null}" ]; then
+      mline=$(grep "^${3:-} " "$STUB_MIRROR_ISSUES" || true)
+      if [ -n "$mline" ]; then
+        mrest=${mline#* }
+        mstate=${mrest%% *}
+        mlabels=${mrest#* }
+        [ "$mstate" = "__FAIL__" ] && exit 1
+        [ "$mlabels" = "__NONE__" ] && mlabels=""
+        jq -n --arg l "$mlabels" --arg s "$mstate" \
+          '{labels: ($l|split(",")|map(select(length>0)|{name:.})), state: $s}'
+        exit 0
+      fi
+    fi
     case "$*" in
       *comments*)
         [ -z "${STUB_COMMENTS_FAIL:-}" ] || exit 1
@@ -127,6 +146,13 @@ case "${1:-} ${2:-}" in
       && mv "$STUB_COMMENTS.tmp" "$STUB_COMMENTS"
     exit 0 ;;
   "pr list")
+    # (#265) 정지 미러 정리 갈래의 목록 조회 — 재개 미러(`--head agent/issue-N`)와
+    # **인자로** 갈린다(이쪽만 closingIssuesReferences 를 요구한다).
+    case "$*" in
+      *closingIssuesReferences*)
+        [ -z "${STUB_MIRROR_LIST_FAIL:-}" ] || { echo "gh: mirror pr list boom" >&2; exit 1; }
+        cat "$STUB_MIRROR_PRS"; exit 0 ;;
+    esac
     [ -z "${STUB_PR_FAIL:-}" ] || { echo "gh: pr list boom" >&2; exit 1; }
     prnum=$(cat "$STUB_PR_NUM")
     if [ -z "$prnum" ]; then echo '[]'; exit 0; fi
@@ -134,10 +160,34 @@ case "${1:-} ${2:-}" in
       '[{number: $n, labels: ($l|split(",")|map(select(length>0)|{name:.}))}]'
     exit 0 ;;
   "pr edit")
+    # 미러 픽스처에 든 PR 이면 그 배열 안의 라벨을 실제로 갱신한다 — 안 그러면 readback
+    # 단언이 스텁의 고정 응답을 확인하는 공회전이 된다(이 스위트의 기존 규율).
+    if [ -f "${STUB_MIRROR_PRS:-/dev/null}" ] \
+       && jq -e --arg n "${3:-}" 'any(.number == ($n|tonumber))' "$STUB_MIRROR_PRS" >/dev/null 2>&1; then
+      [ -z "${STUB_MIRROR_EDIT_FAIL:-}" ] || exit 1
+      jq -r --arg n "${3:-}" '.[] | select(.number == ($n|tonumber)) | [.labels[].name] | join(",")' \
+        "$STUB_MIRROR_PRS" > "$STUB_MIRROR_ONE"
+      edit_labels "$STUB_MIRROR_ONE" "$@"
+      jq --arg n "${3:-}" --arg l "$(cat "$STUB_MIRROR_ONE")" \
+        'map(if .number == ($n|tonumber)
+             then .labels = ($l|split(",")|map(select(length>0)|{name:.})) else . end)' \
+        "$STUB_MIRROR_PRS" > "$STUB_MIRROR_PRS.tmp" && mv "$STUB_MIRROR_PRS.tmp" "$STUB_MIRROR_PRS"
+      exit 0
+    fi
     [ -z "${STUB_PR_EDIT_FAIL:-}" ] || exit 1
     edit_labels "$STUB_PR_LABELS" "$@"
     exit 0 ;;
   "pr view")
+    if [ -f "${STUB_MIRROR_PRS:-/dev/null}" ] \
+       && jq -e --arg n "${3:-}" 'any(.number == ($n|tonumber))' "$STUB_MIRROR_PRS" >/dev/null 2>&1; then
+      v="${STUB_MIRROR_READBACK:-}"
+      [ "$v" = "__FAIL__" ] && exit 1
+      if [ -z "$v" ]; then
+        v=$(jq -r --arg n "${3:-}" '.[] | select(.number == ($n|tonumber)) | [.labels[].name] | join(",")' \
+          "$STUB_MIRROR_PRS")
+      fi
+      labels_json "$v"; exit 0
+    fi
     labels_json "$(cat "$STUB_PR_LABELS")"; exit 0 ;;
   "search issues")
     [ -z "${STUB_SEARCH_FAIL:-}" ] || { echo "gh: search boom" >&2; exit 1; }
@@ -191,11 +241,14 @@ setup() {
   printf '' > "$tmp/pr.num"        # 기본: 연결 PR 없음
   printf '' > "$tmp/pr.labels"
   printf 'owner/repo\n' > "$tmp/search"
+  echo '[]' > "$tmp/mirror.prs.json"   # (#265) 기본: 정지 미러 정리 대상 없음
+  : > "$tmp/mirror.issues"
   : > "$tmp/gh.log"
   # unset 하면 export 속성이 날아가 이후 대입이 스텁에 안 전달된다 — 빈 값으로 되돌린다.
   STUB_LADDER_FAIL=""; STUB_HUMAN_FAIL=""; STUB_LABEL_EDIT_FAIL=""; STUB_COMMENT_FAIL=""
   STUB_COMMENTS_FAIL=""; STUB_SEARCH_FAIL=""; STUB_PR_FAIL=""; STUB_PR_EDIT_FAIL=""
   STUB_STATE_LABELS=""; STUB_READBACK_LABELS=""; STUB_UPDATED_LIVE=""; STUB_JQ_FAIL_PAT=""
+  STUB_MIRROR_LIST_FAIL=""; STUB_MIRROR_EDIT_FAIL=""; STUB_MIRROR_READBACK=""
   WORKDIR="$tmp/work"; RA=120; RL=2; LL=200
 }
 
@@ -221,6 +274,9 @@ export STUB_PR_NUM="$tmp/pr.num" STUB_PR_LABELS="$tmp/pr.labels"
 export STUB_LADDER_FAIL="" STUB_HUMAN_FAIL="" STUB_LABEL_EDIT_FAIL="" STUB_COMMENT_FAIL=""
 export STUB_COMMENTS_FAIL="" STUB_SEARCH_FAIL="" STUB_PR_FAIL="" STUB_PR_EDIT_FAIL=""
 export STUB_STATE_LABELS="" STUB_READBACK_LABELS="" STUB_UPDATED_LIVE="" STUB_JQ_FAIL_PAT=""
+export STUB_MIRROR_PRS="$tmp/mirror.prs.json" STUB_MIRROR_ISSUES="$tmp/mirror.issues"
+export STUB_MIRROR_ONE="$tmp/mirror.one"
+export STUB_MIRROR_LIST_FAIL="" STUB_MIRROR_EDIT_FAIL="" STUB_MIRROR_READBACK=""
 WORKDIR="$tmp/work"
 RC=0
 out=""
@@ -1287,6 +1343,129 @@ grid_check "h2 대칭: 백틱 펜스 안 단독 물결 줄" \
 
 grid_check "h3 CRLF 본문의 정상 닫힌 펜스 뒤 맨몸 마커" \
   true "$(printf '```\r\ncode\r\n```\r\n%s' "$GRID_MARKER")"
+
+# ── (#265) 정지 미러 정리 — 사람이 이슈에서만 푼 홀드의 PR 사본을 뗀다 ──────
+# 기계 정지는 이슈와 PR **양쪽**에 붙는데(#244 가 보존 대상으로 적은 규약) 사람이 푸는
+# 경로엔 PR 사본을 되돌리는 자리가 없었다 — 그 PR 은 네 게이트(#242·#262)에서 확정적으로
+# 빠지고 이슈는 이미 깨끗해 사람대기 칸에도 안 뜬다. 격자를 **한 번의 실행**으로 돌려
+# 칸끼리 새지 않는 것까지 함께 본다.
+#
+#   PR / 이슈            want
+#   ──────────────────   ────────────────────────────────────────────────
+#   201 / 301 정지 無    무편집 (뗄 것이 없다)
+#   202 / 302 정지 無    **편집** — PR 정지 라벨만 빠지고 flow:verify 는 남는다
+#   203 / 303 정지 有    무편집 — 살아 있는 사람 게이트를 벗겨내지 않는다
+#   204 / 304 정지 有    무편집 (PR 에 뗄 것도 없다)
+#   205 / 305 CLOSED     **편집** — 이슈만 닫힌 경로도 같은 정리 대상
+#   206 / (연결 없음)    무편집 — 대조할 이슈가 없다(transition.sh 의 `issue=-` 홀드)
+#   207 / 307 정지 無    **편집** — closingIssuesReferences 가 비면 head 로 잇는다
+mirror_prs() { printf '%s' "$1" > "$tmp/mirror.prs.json"; }
+mirror_issue() { printf '%s %s %s\n' "$1" "$2" "$3" >> "$tmp/mirror.issues"; }
+mpl() {  # mpl <PR번호> — 그 PR 의 현재 라벨 콤마목록
+  jq -r --arg n "$1" '.[] | select(.number == ($n|tonumber)) | [.labels[].name] | join(",")' \
+    "$tmp/mirror.prs.json"
+}
+mev() {  # mev <PR번호> — 그 PR 의 mirror_cleared 이벤트(없으면 빈 문자열)
+  printf '%s' "$out" | jq -c --arg n "$1" 'select(.event=="mirror_cleared" and .pr==($n|tonumber))' 2>/dev/null
+}
+
+setup "needs-human,hold:policy" 10 0
+mirror_prs '[
+ {"number":201,"headRefName":"agent/issue-301","labels":[{"name":"flow:verify"}],
+  "closingIssuesReferences":[{"number":301}]},
+ {"number":202,"headRefName":"agent/issue-302","labels":[{"name":"needs-human"},{"name":"hold:policy"},{"name":"flow:verify"}],
+  "closingIssuesReferences":[{"number":302}]},
+ {"number":203,"headRefName":"agent/issue-303","labels":[{"name":"needs-human"},{"name":"hold:conflict"}],
+  "closingIssuesReferences":[{"number":303}]},
+ {"number":204,"headRefName":"agent/issue-304","labels":[{"name":"flow:verify"}],
+  "closingIssuesReferences":[{"number":304}]},
+ {"number":205,"headRefName":"agent/issue-305","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
+  "closingIssuesReferences":[{"number":305}]},
+ {"number":206,"headRefName":"feat/사람이-연-브랜치","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
+  "closingIssuesReferences":[]},
+ {"number":207,"headRefName":"agent/issue-307","labels":[{"name":"hold:ladder"}],
+  "closingIssuesReferences":[]}
+]'
+mirror_issue 301 OPEN "agent-ready,flow:verify"
+mirror_issue 302 OPEN "agent-ready,flow:verify"
+mirror_issue 303 OPEN "agent-ready,needs-human,hold:conflict"
+mirror_issue 304 OPEN "agent-ready,needs-human,hold:ladder"
+mirror_issue 305 CLOSED "__NONE__"
+mirror_issue 307 OPEN "agent-ready"
+run
+check "미러 격자: exit 0"                    "$([ "$RC" = 0 ] && echo ok || echo no)"
+check "미러 ①(둘 다 없음): 무편집"           "$(none 'pr edit 201')"
+check "미러 ①: 이벤트 없음"                  "$([ -z "$(mev 201)" ] && echo ok || echo no)"
+check "미러 ②(PR 에만 남음): 정지 라벨 제거" "$([ "$(mpl 202)" = "flow:verify" ] && echo ok || echo no)"
+check "미러 ②: mirror_cleared 이벤트"        "$([ -n "$(mev 202)" ] && echo ok || echo no)"
+check "미러 ②: 이벤트에 이슈·PR·제거 목록"   "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==202) | .number==302 and .issue_state=="OPEN" and .removed=="needs-human,hold:policy"' >/dev/null 2>&1 && echo ok || echo no)"
+check "미러 ③(이슈에 정지 잔존): 무편집"     "$(none 'pr edit 203')"
+check "미러 ③: PR 라벨 그대로"               "$([ "$(mpl 203)" = "needs-human,hold:conflict" ] && echo ok || echo no)"
+check "미러 ③: 이벤트 없음"                  "$([ -z "$(mev 203)" ] && echo ok || echo no)"
+check "미러 ④(이슈에만 정지): 무편집"        "$(none 'pr edit 204')"
+check "미러 ⑤(이슈 CLOSED): 정리된다"        "$([ "$(mpl 205)" = "" ] && echo ok || echo no)"
+check "미러 ⑤: 이벤트에 CLOSED 가 실린다"    "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==205) | .issue_state=="CLOSED"' >/dev/null 2>&1 && echo ok || echo no)"
+check "미러 ⑥(연결 이슈 없음): 무편집"       "$(none 'pr edit 206')"
+check "미러 ⑥: PR 라벨 그대로"               "$([ "$(mpl 206)" = "needs-human,hold:policy" ] && echo ok || echo no)"
+check "미러 ⑦(head 폴백): 정리된다"          "$([ "$(mpl 207)" = "" ] && echo ok || echo no)"
+check "미러 ⑦: needs-human 없이 hold 만도 대상" "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==207) | .removed=="hold:ladder"' >/dev/null 2>&1 && echo ok || echo no)"
+# 없는 라벨을 --remove-label 로 넘기면 gh 가 편집 **전체**를 실패시킨다(transition.sh:67) —
+# PR 이 실제로 달고 있는 정지 라벨만 인자에 싣는지 호출 로그로 못 박는다.
+check "미러: 안 달린 정지 라벨은 remove 인자에 없다" \
+  "$(grep -q 'pr edit 207 .*--remove-label needs-human' "$tmp/gh.log" && echo no || echo ok)"
+
+# 이슈 조회 실패 → **떼지 않고** warn (fail-safe: 사람 게이트를 벗겨내는 방향으로 틀리지 않는다)
+setup "needs-human,hold:policy" 10 0
+mirror_prs '[{"number":211,"headRefName":"agent/issue-311","labels":[{"name":"needs-human"}],
+  "closingIssuesReferences":[{"number":311}]}]'
+mirror_issue 311 __FAIL__ ""
+run
+check "미러 이슈 조회 실패: 무편집"          "$(none 'pr edit 211')"
+check "미러 이슈 조회 실패: 라벨 그대로"     "$([ "$(mpl 211)" = "needs-human" ] && echo ok || echo no)"
+check "미러 이슈 조회 실패: warn"            "$(saysl '연결 이슈 #311 라벨 조회 실패')"
+check "미러 이슈 조회 실패: warn_after_edit 아님" "$(no_ev warn_after_edit)"
+
+# PR 편집 실패 → 아직 아무것도 안 바뀌었다 → warn (warn_after_edit 아님)
+setup "needs-human,hold:policy" 10 0
+mirror_prs '[{"number":212,"headRefName":"agent/issue-312","labels":[{"name":"needs-human"}],
+  "closingIssuesReferences":[{"number":312}]}]'
+mirror_issue 312 OPEN "agent-ready"
+STUB_MIRROR_EDIT_FAIL=1
+run
+check "미러 편집 실패: 라벨 그대로"          "$([ "$(mpl 212)" = "needs-human" ] && echo ok || echo no)"
+check "미러 편집 실패: warn"                 "$(saysl 'PR #212 정지 미러 해제 실패')"
+check "미러 편집 실패: warn_after_edit 아님" "$(no_ev warn_after_edit)"
+
+# readback 조회 실패 → 쓰기는 이미 나갔다 → warn_after_edit
+setup "needs-human,hold:policy" 10 0
+mirror_prs '[{"number":213,"headRefName":"agent/issue-313","labels":[{"name":"needs-human"}],
+  "closingIssuesReferences":[{"number":313}]}]'
+mirror_issue 313 OPEN "agent-ready"
+STUB_MIRROR_READBACK="__FAIL__"
+run
+check "미러 readback 실패: warn_after_edit"  "$(has_ev warn_after_edit)"
+check "미러 readback 실패: mirror_cleared 아님" "$([ -z "$(mev 213)" ] && echo ok || echo no)"
+
+# readback 에 정지 라벨이 남아 있다 → warn_after_edit (성공으로 위장하지 않는다)
+setup "needs-human,hold:policy" 10 0
+mirror_prs '[{"number":214,"headRefName":"agent/issue-314","labels":[{"name":"needs-human"}],
+  "closingIssuesReferences":[{"number":314}]}]'
+mirror_issue 314 OPEN "agent-ready"
+STUB_MIRROR_READBACK="needs-human"
+run
+check "미러 readback 불일치: warn_after_edit" "$(saysl 'PR #214 정지 미러 readback 불일치')"
+check "미러 readback 불일치: mirror_cleared 아님" "$([ -z "$(mev 214)" ] && echo ok || echo no)"
+
+# 목록 조회 실패 → "정리 대상 없음" 으로 위장하지 않는다(exit 2 + stderr)
+setup "needs-human,hold:policy" 10 0
+mirror_prs '[{"number":215,"headRefName":"agent/issue-315","labels":[{"name":"needs-human"}],
+  "closingIssuesReferences":[{"number":315}]}]'
+mirror_issue 315 OPEN "agent-ready"
+STUB_MIRROR_LIST_FAIL=1
+run
+check "미러 목록 조회 실패: exit 2"          "$([ "$RC" = 2 ] && echo ok || echo no)"
+check "미러 목록 조회 실패: stderr 한 줄"    "$(grep -q '정지 미러' "$tmp/err" && echo ok || echo no)"
+check "미러 목록 조회 실패: 무편집"          "$(none 'pr edit 215')"
 
 # ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
 # 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는
