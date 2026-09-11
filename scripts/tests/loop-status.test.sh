@@ -161,6 +161,8 @@ case "${1:-} ${2:-}" in
       if [ -f "$f.dash.num" ]; then cat "$f.dash.num"; fi
       exit 0 ;;
     esac
+    # 닫힌 이슈 목록(#260, 에픽 leaf 카운트용) — 열린 이슈 호출과 파일을 가른다.
+    case "$args" in *"--state closed"*) cat "$f.issues_closed.json"; exit 0 ;; esac
     cat "$f.issues.json"; exit 0 ;;
   "issue create")
     printf 'dash-create %s\n' "$repo" >> "$STUB_CALL_LOG"
@@ -276,6 +278,9 @@ sed "s/@NOW@/$NOW/g; s/@OLD@/$OLD/g" > "$tmp/fx/ggqgga_BodaT.pr_closed.json" <<'
   "closingIssuesReferences":[],"labels":[]}
 ]
 FX
+# 닫힌 이슈 목록(#260) — bodat 은 에픽을 쓰지 않는다(무회귀 픽스처, `Epic #N` 이 하나도
+# 없다). `epic` 라벨 이슈가 없으니 파생 줄 병기도 트리거되지 않아야 한다(§무회귀).
+echo '[]' > "$tmp/fx/ggqgga_BodaT.issues_closed.json"
 
 # ── 질문(hold-note) 코멘트 픽스처 (#157) ────────────────────────────────────
 # #4780(policy) 은 질문이 있다 → 표시 없음. #4770(conflict) 은 코멘트 파일이 없어
@@ -329,6 +334,7 @@ sed "s/@AGO240@/$AGO240/g" > "$tmp/fx/ggqgga_Reclaim.pr_open.json" <<'FX'
 ]
 FX
 echo '[]' > "$tmp/fx/ggqgga_Reclaim.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_Reclaim.issues_closed.json"
 # #31 — 1쪽엔 **옛** claim(200분 전), 2쪽에 지금의 claim(5분 전). `--paginate` 를 빠뜨리면
 # 1쪽만 오므로 200분이 나온다 — 세 값(240/200/5)이 다 달라 무엇을 재고 있는지가 드러난다.
 sed "s/@AGO240@/$AGO240/g; s/@AGO200@/$AGO200/g" > "$tmp/fx/ggqgga_Reclaim.timeline.31.p1.json" <<'FX'
@@ -372,6 +378,7 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Capped.issues.json" <<'FX'
 FX
 echo '[]' > "$tmp/fx/ggqgga_Capped.pr_open.json"
 echo '[]' > "$tmp/fx/ggqgga_Capped.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_Capped.issues_closed.json"
 # `--json comments` 는 페이지네이션 없이 첫 100건만 준다 — 마커가 그 밖으로 밀린 홀드를
 # `질문 없음` 으로 찍으면 없는 결함을 사람에게 들이민다. 상한에 닿았으면 "모른다" 다.
 jq -n '{comments: [range(0;100) | {body: "잡담 \(.)"}]}' > "$tmp/fx/ggqgga_Capped.comments.10.json"
@@ -394,6 +401,7 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Stale.issues.json" <<'FX'
 FX
 echo '[]' > "$tmp/fx/ggqgga_Stale.pr_open.json"
 echo '[]' > "$tmp/fx/ggqgga_Stale.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_Stale.issues_closed.json"
 cat > "$tmp/fx/ggqgga_Stale.comments.24.json" <<'FX'
 {"comments":[{"body":"사람 확인(policy): 옛 홀드의 질문\n<!-- hold-note: policy --><!-- bodat:worker -->"}]}
 FX
@@ -464,6 +472,44 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Blockers.pr_open.json" <<'FX'
 ]
 FX
 echo '[]' > "$tmp/fx/ggqgga_Blockers.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_Blockers.issues_closed.json"
+
+# ── 픽스처: ggqgga/Epics (epics) — 에픽 절 (#260) ───────────────────────────
+#   번호  구성                                        want
+#   ────  ──────────────────────────────────────────  ────────────────────────
+#   #100  leaf 열림 2(구현중·대기)+닫힘 1              `1/3 · 진행 1 · 대기 1`
+#   #200  leaf 전부 닫힘(2/2)                          `2/2`, warn `닫아라`
+#   #300  열린 leaf P1+P2 · 닫힌 leaf 는 P0(무시)      `1/3 · 대기 2 · P1 1 P2 1`,
+#                                                       warn `P 혼재 — P1 1 · P2 1`
+#   #400  leaf 참조 없음                               `leaf 없음(Epic 줄 미부착)`, warn 없음
+#   #500  산문 속 `epic #100`(줄 시작 아님)             leaf 아님 — #100 총합에 안 낀다
+#   #600  파생 + `Epic #999`(에픽 목록에 없어도 병기)  파생 줄 `(Epic #999)`
+#   #601  파생 + 에픽 줄 없음                           파생 줄 `(에픽 없음)`
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Epics.issues.json" <<'FX'
+[
+ {"number":100,"title":"에픽 A","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":200,"title":"에픽 B — leaf 전부 종료","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":300,"title":"에픽 C — P 혼재","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":400,"title":"에픽 D — leaf 없음","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":101,"title":"leaf 구현중","createdAt":"@NOW@","body":"Epic #100","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":102,"title":"leaf 대기","createdAt":"@NOW@","body":"Epic #100","labels":[{"name":"agent-ready"}]},
+ {"number":301,"title":"leaf P1","createdAt":"@NOW@","body":"Epic #300","labels":[{"name":"agent-ready"},{"name":"P1"}]},
+ {"number":302,"title":"leaf P2","createdAt":"@NOW@","body":"Epic #300","labels":[{"name":"agent-ready"},{"name":"P2"}]},
+ {"number":500,"title":"산문 속 언급 — leaf 아님","createdAt":"@NOW@","body":"본문 첫 줄\n이 문서는 epic #100 이야기를 지나가며 한다","labels":[]},
+ {"number":600,"title":"파생 + 에픽 있음","createdAt":"@NOW@","body":"Epic #999","labels":[{"name":"agent-ready"},{"name":"spinoff"}]},
+ {"number":601,"title":"파생 + 에픽 없음","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"spinoff"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Epics.issues_closed.json" <<'FX'
+[
+ {"number":103,"body":"Epic #100","closedAt":"@NOW@","labels":[]},
+ {"number":201,"body":"Epic #200","closedAt":"@NOW@","labels":[]},
+ {"number":202,"body":"Epic #200","closedAt":"@NOW@","labels":[]},
+ {"number":303,"body":"Epic #300","closedAt":"@NOW@","labels":[{"name":"P0"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_Epics.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_Epics.pr_closed.json"
 
 # ── 픽스처: ggqgga/issue-runner (runner) — 깨끗함 + release 있음 ─────────────
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_issue-runner.issues.json" <<'FX'
@@ -473,6 +519,7 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_issue-runner.issues.json" <<'FX'
 FX
 echo '[]' > "$tmp/fx/ggqgga_issue-runner.pr_open.json"
 echo '[]' > "$tmp/fx/ggqgga_issue-runner.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_issue-runner.issues_closed.json"
 : > "$tmp/fx/ggqgga_issue-runner.release"
 echo '7' > "$tmp/fx/ggqgga_issue-runner.ahead"
 
@@ -484,11 +531,13 @@ echo '7' > "$tmp/fx/ggqgga_issue-runner.ahead"
 printf '%s' '{이건 JSON 이 아니다' > "$tmp/fx/ggqgga_Broken.issues.json"
 echo '[]' > "$tmp/fx/ggqgga_Broken.pr_open.json"
 echo '[]' > "$tmp/fx/ggqgga_Broken.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_Broken.issues_closed.json"
 
 # ── 픽스처: ggqgga/NoCompare (nocompare) — release 는 있는데 compare 가 실패 ──
 echo '[]' > "$tmp/fx/ggqgga_NoCompare.issues.json"
 echo '[]' > "$tmp/fx/ggqgga_NoCompare.pr_open.json"
 echo '[]' > "$tmp/fx/ggqgga_NoCompare.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_NoCompare.issues_closed.json"
 : > "$tmp/fx/ggqgga_NoCompare.release"   # .ahead 없음 → 스텁의 compare 가 실패
 
 # ── 픽스처: ggqgga/Big (big) — 목록이 --limit 200 상한에 닿았다 ─────────────
@@ -503,6 +552,10 @@ jq -n --arg t "$NOW" \
   '[range(1;201) | {number: ., headRefName:"fix/채움", state:"CLOSED", mergedAt:$t,
                     closedAt:$t, createdAt:$t, closingIssuesReferences:[], labels:[]}]' \
   > "$tmp/fx/ggqgga_Big.pr_closed.json"
+# 닫힌 이슈 목록도 200건(#260) — 이 상한도 `body` 가 있으니 같은 ARG_MAX 근거로 파일 경유.
+jq -n --arg t "$NOW" \
+  '[range(1;201) | {number: ., body: ("x" * 8000), closedAt: $t, labels: []}]' \
+  > "$tmp/fx/ggqgga_Big.issues_closed.json"
 
 run() {  # run <인자...> — 출력은 $tmp/out, exit 는 RC
   : > "$STUB_CALL_LOG"   # 호출 로그는 런 단위 — 앞선 런의 호출이 건수 단언에 새지 않게
@@ -843,8 +896,9 @@ ck "목록 절단: exit 0" "$RC" 0
 no_sub "(#248) 큰 body 페이로드가 ARG_MAX 로 집계 실패하지 않는다" "$tmp/out" \
   "파이프라인 big — 조회 실패"
 has_sub "(#248) 큰 body 페이로드에서도 블록이 정상 렌더" "$tmp/out" "파이프라인 big — 열림 0"
-has_line "목록 절단: warn 2건" "$tmp/out" "  warn      2"
+has_line "목록 절단: warn 3건(#260 닫힌 이슈 포함)" "$tmp/out" "  warn      3"
 has_sub "목록 절단: 이슈 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(이슈)"
+has_sub "(#260) 목록 절단: 닫힌 이슈 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(닫힌 이슈)"
 has_sub "목록 절단: 닫힌 PR 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(닫힌 PR)"
 no_sub "목록 절단: 상한 안 닿은 열린 PR 은 조용하다" "$tmp/out" "창 절단 가능(열린 PR)"
 
@@ -981,6 +1035,59 @@ ck "⑦ --json: waiting 에는 막힘이 안 남는다" \
 ck "⑦ --json: warn kind 는 blocker_human_wait" \
   "$(jq -c '[.repos[0].warns[] | select(.kind=="blocker_human_wait") | {b:.blocker, k:.bucket, i:.issues}]' < "$tmp/out")" \
   '[{"b":903,"k":"배포대기","i":[17]},{"b":900,"k":"사람대기","i":[16,10]}]'
+
+# ── ★에픽 절★ (#260) — 종료/전체·leaf 버킷·P 분포, warn 2종, 파생 병기 ─────────
+run --repo ggqgga/Epics --since 24h
+ck "epics: exit 0" "$RC" 0
+has_line "epics 헤더 — 열림 6(에픽 이슈 자신은 루프 밖이라 안 낀다)" "$tmp/out" \
+  "파이프라인 epics — 열림 6 · 스코프 epics · 창 24h"
+has_line "epics 대기 5(파생건도 대기엔 남는다)" "$tmp/out" \
+  "  대기      5  #601 #600 #302 #301 #102"
+has_line "epics 구현중 1" "$tmp/out" "  구현중    1  #101"
+# 파생 병기 — 이 레포는 열린 epic 라벨 이슈가 있어 `(Epic #N)`/`(에픽 없음)` 이 붙는다.
+# #999 는 실존하는 에픽 목록에 없어도(참조만 있으면) 그대로 병기된다.
+has_line "① 파생 2 — 에픽 병기(있으면 Epic #N, 없으면 에픽 없음)" "$tmp/out" \
+  "  파생      2  #600(Epic #999) #601(에픽 없음)"
+has_line "에픽 4건" "$tmp/out" "  에픽      4"
+has_sub "① #100 — leaf 열림 2(구현중·대기)+닫힘 1 → 1/3, 버킷 분포(P 없음)" "$tmp/out" \
+  "    - #100 1/3 · 진행 1 · 대기 1"
+has_sub "② #200 — leaf 전부 닫힘 → 2/2, 버킷·P 분포 없음" "$tmp/out" \
+  "    - #200 2/2"
+has_sub "③ #300 — 열린 leaf P1+P2, 닫힌 leaf(P0)는 무시" "$tmp/out" \
+  "    - #300 1/3 · 대기 2 · P1 1 P2 1"
+has_sub "④ #400 — leaf 0 → leaf 없음(Epic 줄 미부착), 비율 없음" "$tmp/out" \
+  "    - #400 leaf 없음(Epic 줄 미부착)"
+# ⑤ 산문 속 `epic #100`(줄 시작 아님)은 leaf 가 아니다 — #500 이 잡혔다면 #100 이 1/4 로 나온다
+no_sub "⑤ 산문 속 언급이 leaf 로 잡히면 #100 총합이 1/4 가 된다(반증)" "$tmp/out" "#100 1/4"
+no_sub "⑤ #500 자신도 에픽 절 어디에도 안 나온다" "$tmp/out" "#500"
+has_line "warn 2건(전부 종료·P 혼재)" "$tmp/out" "  warn      2"
+has_sub "② warn 에픽 leaf 전부 종료" "$tmp/out" \
+  "    - 에픽 leaf 전부 종료 #200(epics) — 닫아라(에픽 스윕 대상)"
+has_sub "③ warn 에픽 내 P 혼재(닫힌 leaf 의 P0 는 안 낀다)" "$tmp/out" \
+  "    - 에픽 내 P 혼재 #300(epics) — P1 1 · P2 1"
+no_sub "④ leaf 없는 에픽은 warn 없음" "$tmp/out" "전부 종료 #400"
+no_sub "① 정상 진행 에픽은 warn 없음" "$tmp/out" "전부 종료 #100"
+ck "epics: 추가 gh 호출 0(닫힌 이슈 목록에서 이미 받은 본문으로만 판정)" \
+  "$(grep -c '^comments \|^timeline ' "$STUB_CALL_LOG")" 0
+
+run --repo ggqgga/Epics --since 24h --json
+ck "⑦ --json: epics[] 형태 — #100(진행 중)" \
+  "$(jq -c '.repos[0].epics[] | select(.number==100) | {n:.number,ti:.title,t:.total,c:.closed,b:.buckets,p:.priorities}' < "$tmp/out")" \
+  '{"n":100,"ti":"에픽 A","t":3,"c":1,"b":{"progress":1,"waiting":1},"p":{}}'
+ck "⑦ --json: epics[] 형태 — #300(P 혼재)" \
+  "$(jq -c '.repos[0].epics[] | select(.number==300) | {n:.number,t:.total,c:.closed,b:.buckets,p:.priorities}' < "$tmp/out")" \
+  '{"n":300,"t":3,"c":1,"b":{"waiting":2},"p":{"P1":1,"P2":1}}'
+ck "⑦ --json: epics[] 형태 — #400(leaf 없음)" \
+  "$(jq -c '.repos[0].epics[] | select(.number==400) | {n:.number,t:.total,c:.closed,b:.buckets,p:.priorities}' < "$tmp/out")" \
+  '{"n":400,"t":0,"c":0,"b":{},"p":{}}'
+ck "⑦ --json: 항목마다 repo_short" \
+  "$(jq '[.repos[0].epics[] | select(.repo_short=="epics")] | length' < "$tmp/out")" 4
+
+# ── 무회귀 — bodat(`Epic #N` 이 하나도 없는 픽스처)은 에픽 절(0줄) 추가 외엔 그대로 ──
+run --repo ggqgga/BodaT --since 24h
+has_line "무회귀: bodat 에픽 0줄" "$tmp/out" "  에픽      0"
+has_line "무회귀: 파생 줄은 에픽 병기 없이 종전 그대로(레포에 열린 에픽이 없다)" \
+  "$tmp/out" "  파생      1  #4832"
 
 # ── --post 대시보드(#163) ──────────────────────────────────────────────────
 fx="$tmp/fx/ggqgga_issue-runner"
