@@ -1139,6 +1139,15 @@ has_line "무회귀: 파생 줄은 에픽 병기 없이 종전 그대로(레포�
 #   #80 無 / PR #180 有   warn 없음 — head 는 `agent/issue-80` 인데 `closingIssuesReferences`
 #                          가 비었다(`Refs #N` 전용). 짝이 **증명되지 않았으므로** 대상 밖 —
 #                          그 PR 의 홀드는 `issue=-` 로 붙은 정상 상태일 수 있다
+#
+# 짝짓기는 `closingIssuesReferences[0]` 이 아니라 **head 의 `agent/issue-N` ∩ closes** 다
+# (이 레포 실데이터: PR #113 head=`agent/issue-109` refs=`[108,109]` — `[0]` 은 #108 이다).
+# 그리고 경보는 **closes 전건이 깨끗할 때만** 낸다 — 교정(resume-sweep ④)이 그 조건에서만
+# 편집하므로, 여기서 더 울리면 조치 불가능한 잡음이고 덜 울리면 교정이 몰래 돈다.
+#   #90 無 / PR #190 有   **warn** — closes 가 `[99, 90]`(순서 역전). 짝은 `[0]`(#99)이
+#                          아니라 브랜치의 이슈 #90 이다
+#   #91 無 / PR #191 有   warn 없음 — 같은 PR 이 닫는 #98 에 `hold:policy` 가 살아 있다
+#                          (묶음 디스패치 — 전이는 이슈 인자를 하나만 받는다)
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.issues.json" <<'FX'
 [
  {"number":10,"title":"둘 다 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
@@ -1147,7 +1156,11 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.issues.json" <<'FX'
  {"number":40,"title":"이슈에만 정지","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:ladder"}]},
  {"number":50,"title":"PR 에 hold 만 남았다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
  {"number":70,"title":"사람 세션 PR 이 달린 이슈","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
- {"number":80,"title":"Refs 전용 PR 이 달린 이슈","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]}
+ {"number":80,"title":"Refs 전용 PR 이 달린 이슈","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":90,"title":"closes 순서 역전 PR 의 브랜치 이슈","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":99,"title":"같은 PR 이 닫는 딴 이슈 — 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"}]},
+ {"number":91,"title":"묶음 디스패치의 브랜치 이슈 — 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":98,"title":"묶음 디스패치의 딴 이슈 — 사람 게이트가 살아 있다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"hold:policy"}]}
 ]
 FX
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.pr_open.json" <<'FX'
@@ -1167,14 +1180,19 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.pr_open.json" <<'FX'
  {"number":170,"headRefName":"feat/사람이-연-정지","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
   "closingIssuesReferences":[{"number":70}],"labels":[{"name":"flow:verify"},{"name":"needs-human"}]},
  {"number":180,"headRefName":"agent/issue-80","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
-  "closingIssuesReferences":[],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]}
+  "closingIssuesReferences":[],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]},
+ {"number":190,"headRefName":"agent/issue-90","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":99},{"number":90}],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]},
+ {"number":191,"headRefName":"agent/issue-91","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":91},{"number":98}],"labels":[{"name":"flow:verify"},{"name":"needs-human"}]}
 ]
 FX
 echo '[]' > "$tmp/fx/ggqgga_Mirror.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_Mirror.issues_closed.json"
 
 run --repo ggqgga/Mirror --since 24h
 ck "(#265) 격자: exit 0" "$RC" 0
-has_line "(#265) 새 판정이 낸 줄은 정확히 2건(오탐 0)" "$tmp/out" "  warn      2"
+has_line "(#265) 새 판정이 낸 줄은 정확히 3건(오탐 0)" "$tmp/out" "  warn      3"
 has_line "(#265) PR 에만 정지 라벨 → warn" "$tmp/out" \
   "    - 정지 미러 불일치 #20(mirror) ↔ PR #120(mirror) — 이슈 없음 · PR hold:policy needs-human"
 has_line "(#265) needs-human 없이 hold:* 만 남아도 warn (#244 대비)" "$tmp/out" \
@@ -1187,6 +1205,14 @@ no_sub "(#265) 연결 이슈 없는 held PR #160 은 대조 상대가 없다" "$
 # "고쳐 준다" 고 말해 놓고 안 고치는 줄이 상시로 남는다.
 no_sub "(#265) 사람 세션 PR #170 은 루프가 뗄 것이 아니라 warn 도 아니다" "$tmp/out" "↔ PR #170"
 no_sub "(#265) Refs 전용(closes 링크 없음) PR #180 은 짝이 증명 안 됐다" "$tmp/out" "↔ PR #180"
+# 짝은 `closes[0]` 이 아니라 **head 의 N** 이다 — 순서가 역전된 PR 에서 갈린다.
+has_line "(#265) closes 순서 역전 — 짝은 브랜치의 이슈(#90)" "$tmp/out" \
+  "    - 정지 미러 불일치 #90(mirror) ↔ PR #190(mirror) — 이슈 없음 · PR hold:policy"
+no_sub "(#265) [0] 쪽(#99)을 짝으로 고르지 않는다" "$tmp/out" "불일치 #99"
+# 묶음 디스패치 — 짝(#91)이 깨끗해도 같은 PR 이 닫는 #98 의 사람 게이트가 살아 있다.
+# 여기서 울리면 교정(resume-sweep ④)이 안 하는 일을 경보가 하라고 말하는 꼴이다.
+no_sub "(#265) 묶음 디스패치의 딴 이슈에 정지가 있으면 조용하다" "$tmp/out" "불일치 #91"
+no_sub "(#265) 정지가 남은 #98 자신도 후보가 아니다" "$tmp/out" "불일치 #98"
 # 단계 미러 판정은 정지 라벨에 오염되지 않는다 — 정지 라벨을 mirror_labels 에 밀어 넣었다면
 # #20·#50 이 **단계** 미러 불일치로도 울렸을 자리다(별도 판정이라는 것의 실측).
 no_sub "(#265) 정지 라벨이 단계 미러 판정을 깨뜨리지 않는다" "$tmp/out" "- 미러 불일치 #20"
@@ -1195,7 +1221,7 @@ no_sub "(#265) 정지 라벨이 단계 미러 판정을 깨뜨리지 않는다(#
 run --repo ggqgga/Mirror --since 24h --json
 ck "(#265) --json: kind·issue·pr·labels" \
   "$(jq -c '[.repos[0].warns[] | select(.kind=="hold_mirror_mismatch") | {i:.issue, p:.pr, l:.labels}]' < "$tmp/out")" \
-  '[{"i":20,"p":120,"l":["hold:policy","needs-human"]},{"i":50,"p":150,"l":["hold:conflict"]}]'
+  '[{"i":20,"p":120,"l":["hold:policy","needs-human"]},{"i":50,"p":150,"l":["hold:conflict"]},{"i":90,"p":190,"l":["hold:policy"]}]'
 
 # ── --post 대시보드(#163) ──────────────────────────────────────────────────
 fx="$tmp/fx/ggqgga_issue-runner"

@@ -156,8 +156,10 @@
 #                      확정적으로 빠진 채 이슈도 깨끗해 어느 칸에도 안 뜬다.
 #                      **해제 방향만** 본다 — 반대(이슈에 있고 PR 에 없음)는 부착 축이라
 #                      이 루프에 교정 수단이 없어 warn 정의(#190)를 벗어난다.
-#                      짝은 **head `agent/issue-*` + `closingIssuesReferences` 로 증명된 링크**
-#                      뿐이다(사람 세션 PR·`Refs` 전용 PR 은 대상 밖 — 근거는 BUILD_JQ 주석).
+#                      짝은 **head `agent/issue-N` 의 그 `N` 이 `closingIssuesReferences` 안에
+#                      있을 때**뿐이다(사람 세션 PR·`Refs` 전용 PR 은 대상 밖 — 근거는 BUILD_JQ
+#                      주석). 그리고 그 PR 이 닫는 이슈가 **전부** 깨끗할 때만 낸다 — 묶음
+#                      디스패치(`Closes #A`·`Closes #B`)는 정지가 한쪽에만 붙을 수 있다.
 #                      단계 미러와 달리 짝이 되는 열린 PR 을 **전부** 대조한다(교정 갈래가
 #                      전부를 고치므로). 교정: `resume-sweep.sh` 의 정지 미러 정리 갈래.
 #   · 좌초형(#117)   — 이슈에 사다리 라벨은 있는데 `agent-ready` 가 없음(디스패치 자격 상실).
@@ -510,11 +512,19 @@ def key_of($s):
   else "none" end;
 def ko_of($k):
   {"none":"대기","claimed":"구현중","verify":"검증대기","ready":"마감대기","harvesting":"마감중"}[$k];
+# head 의 `agent/issue-N` 은 **먼저 교차 검증**에 쓴다(#265 재검증): 닫는 이슈가 둘 이상인
+# PR 에서 `[0]` 이 브랜치의 이슈가 아닐 수 있다(이 레포 실데이터 — PR #113
+# head=`agent/issue-109` refs=`[108,109]`). head 의 N 이 목록 안에 있으면 그것이 짝이고,
+# 없을 때만 종전 순서(`[0]` → head 폴백)로 내려간다.
 def linked($p):
-  if ($p.closingIssuesReferences | length) > 0 then $p.closingIssuesReferences[0].number
-  elif ($p.headRefName | test("^agent/issue-[0-9]+")) then
-    ($p.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber)
-  else null end;
+  ([(($p.closingIssuesReferences // [])[].number)]) as $c
+  | (if (($p.headRefName // "") | test("^agent/issue-[0-9]+"))
+     then ($p.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber)
+     else null end) as $hn
+  | if $hn != null and (($c | index($hn)) != null) then $hn
+    elif ($c | length) > 0 then $c[0]
+    elif $hn != null then $hn
+    else null end;
 def epoch($t): if $t == null then null else ($t | fromdateiso8601) end;
 def mins_since($t): (($now - epoch($t)) / 60 | floor);
 # 이슈 번호 → 가장 최근 `agent:claimed` 부착 시각(ISO) 또는 null (#177).
@@ -859,18 +869,35 @@ def orphan_base:
       #      warn 이 #188 로 세운 경계, resume-sweep ②갈래의 "사람이 붙였을 수 있으니
       #      손대지 않는다" 와 같은 규율). 그래서 warn 도 안 낸다 — 교정 못 하는 후보를
       #      얹으면 조치 불가능한 잡음이다.
-      #   ⑵ `closingIssuesReferences` 로 **증명된** 링크만. `linked()` 의 head 폴백은 여기서
-      #      쓰지 않는다: 브랜치 이름이 `agent/issue-N` 이라는 사실은 "이 홀드가 이슈 #N 과
-      #      한 쌍으로 붙었다" 를 증명하지 못한다. `Refs #N`(Closes 아님) PR 은 전이가
-      #      `issue=-` 로 걸려 **PR 에만** 정지가 남는 것이 정상인데, head 로 이으면 그
-      #      정상 상태가 불일치로 둔갑해 사람 게이트를 벗겨내는 교정을 부른다.
+      #   ⑵ `closingIssuesReferences` 로 **증명된** 링크 **이면서** head 의 `agent/issue-N` 의
+      #      그 `N` 이 그 목록 안에 있을 때만. `linked()` 의 head 폴백(refs 가 비었을 때)은
+      #      여기서 쓰지 않는다: 브랜치 이름이 `agent/issue-N` 이라는 사실만으로는 "이 홀드가
+      #      이슈 #N 과 한 쌍으로 붙었다" 를 증명하지 못한다. `Refs #N`(Closes 아님) PR 은
+      #      전이가 `issue=-` 로 걸려 **PR 에만** 정지가 남는 것이 정상인데, head 로 이으면
+      #      그 정상 상태가 불일치로 둔갑해 사람 게이트를 벗겨내는 교정을 부른다.
+      #      하지만 **교차 검증**에는 쓴다 — `closes[0]` 을 무조건 짝으로 보면 닫는 이슈가
+      #      둘 이상인 PR 에서 브랜치의 이슈가 아닌 쪽을 본다(이 레포 실데이터: PR #113
+      #      head=`agent/issue-109` refs=`[108,109]`). 둘의 교집합이라 `Refs` 전용 PR 은
+      #      종전대로 짝이 안 선다.
+      #   ⑶ 그 PR 이 닫는 이슈가 **전부** 깨끗할 때만 낸다. 묶음 디스패치(`Closes #A`·
+      #      `Closes #B`)는 전이가 이슈 인자를 하나만 받아 정지가 #B 에만 붙을 수 있고,
+      #      교정 갈래는 그 경우 편집하지 않는다 — 여기서만 울리면 "고쳐 준다" 고 말해 놓고
+      #      안 고치는 줄이 상시로 남는다. 판정은 **이미 받은 열린 이슈 목록 안에서만**
+      #      한다(추가 gh 호출 0). 그래서 닫는 이슈 중 열린 목록에 없는 것(CLOSED·목록
+      #      절단)이 있으면 "못 봤다" 이므로 warn 을 내지 않는다 — 그 조합의 정리는 스윕이
+      #      맡고(위 `연결 이슈 종료` warn 이 이미 한 줄로 말한다), 경보는 조용한 쪽으로
+      #      틀린다(조치 불가능한 잡음을 안 만든다).
       #
       # 이슈가 CLOSED 인 경우는 여기 안 걸린다 — `$iss` 는 OPEN 이슈 목록이다. 그 조합은
       # 기존 `연결 이슈 종료` warn 이 이미 한 줄로 말하고, 교정은 스윕이 한다.
       + ([$iss[] | select((stops_of(.ln) | length) == 0) | . as $i
           | $po[] | . as $p
-          | select(($p.headRefName // "") | test("^agent/issue-"))
-          | select((($p.closes // []) | length) > 0 and $p.closes[0] == $i.number)
+          | select(($p.headRefName // "") | test("^agent/issue-[0-9]+"))
+          | select(($p.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber) == $i.number)
+          | select((($p.closes // []) | index($i.number)) != null)
+          | select([$p.closes[] | . as $cn
+                    | ($iss | map(select(.number == $cn))
+                       | if length > 0 then (stops_of(.[0].ln) | length) == 0 else false end)] | all)
           | stops_of($p.ln) as $b
           | select(($b | length) > 0)
           | {kind: "hold_mirror_mismatch", repo_short: $rs, issue: $i.number, pr: $p.number,
