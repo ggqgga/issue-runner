@@ -1643,4 +1643,35 @@ grep -qF -- '같은 SHA(지금 HEAD)로' references/worker-template.md \
 grep -qF -- 're-queue the same SHA (current HEAD)' references/worker-template.en.md \
   || { echo "  ✗ references/worker-template.en.md 에 same-SHA 재큐잉 지시 없음"; exit 1; }
 
+echo "[#185] 사람 결정(2026-09-11) 재개 4항목 — 툴 타임아웃 시 살아있는 실행부터 찾기 검사 — 워커 템플릿 한/영"
+# 재심 정정 코멘트 — 툴 타임아웃은 bin/ci 를 죽이지 않는다, 끊기는 것은 기다리던
+# 툴 호출뿐이다. 워커가 곧바로 재큐하지 말고 TaskList/TaskOutput 또는 ps 로 살아있는
+# 실행을 먼저 찾아 kill -0 폴링으로 회수해야 한다(재큐 금지) — 살아있지 않고 결과
+# 파일도 없을 때만 재큐 1회. 네 토큰(①②③④) + 사전 게이트 아님(#189 리뷰) 혼동 금지
+# 문구가 한/영 템플릿 양쪽에 있어야 한다.
+grep -qF -- '툴 타임아웃 ≠ 작업 중단' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 '툴 타임아웃 ≠ 작업 중단' 명시 문구 없음"; exit 1; }
+grep -qF -- 'Tool timeout ≠ work stopped' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 'Tool timeout ≠ work stopped' 명시 문구 없음"; exit 1; }
+grep -qF -- 'TaskList' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 TaskList 확인 지시 없음"; exit 1; }
+grep -qF -- "ps -Ao pid,command | grep '[b]in/ci'" references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 ps 로 bin/ci PID 찾기 지시 없음"; exit 1; }
+grep -qF -- "ps -Ao pid,command | grep '[b]in/ci'" references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 ps 로 bin/ci PID 찾기 지시 없음"; exit 1; }
+grep -qF -- 'kill -0 $PID' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 kill -0 폴링 지시 없음"; exit 1; }
+grep -qF -- 'kill -0 $PID' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 kill -0 폴링 지시 없음"; exit 1; }
+grep -qF -- '재큐하지 말고 회수하라' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 '살아있으면 재큐 금지' 지시 없음"; exit 1; }
+grep -qF -- 'do not re-queue — recover it' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 '살아있으면 재큐 금지' 미러 없음"; exit 1; }
+# PID 검사는 "이미 띄운 내 실행 회수" 용이지 "돌리기 전 사전 게이트" 가 아니다(#189 리뷰로
+# 기각된 형상) — 이 구분이 문서에서 흐려지면 큐에 줄서는 것조차 막는 회귀가 되살아난다.
+grep -qF -- '사전 게이트' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 'ps 는 사전 게이트가 아니다' 구분 문구 없음"; exit 1; }
+grep -qF -- 'pre-check for whether someone else is running before you start' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 'ps 는 사전 게이트가 아니다' 구분 미러 없음"; exit 1; }
+
 echo "CI pass"

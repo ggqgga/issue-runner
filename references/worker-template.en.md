@@ -106,11 +106,31 @@ Procedure:
    - **Always call it in the foreground with a long timeout** — the "no background
      execution" rule at the top of this document already names `run-local-ci.sh`: raise
      the Bash tool's `timeout` to **up to 600000ms (10 minutes)**.
-   - If it still has not finished and the tool call was cut off (the box-wide queue is
-     badly backed up), do not immediately re-issue it — first do a lightweight check for
-     whether the `<sha>.result` file (its path is printed by `run-local-ci.sh` itself —
-     `~/.claude/.local-ci/<repo slug>/<sha>.result`) already exists (another session
-     working the same SHA may have finished it first).
+   - **"Tool timeout ≠ work stopped"** (#185 re-review, observed 2026-09-11
+     `bodat#5046`). Even if this call is cut off by the Bash tool's 10-minute cap, the
+     underlying `run-local-ci.sh`/`bin/ci` process usually keeps running — what gets
+     cut off is only **the tool call you were waiting on**. So do not conclude "it
+     never ran" and re-queue just because you hit a tool timeout. Look for a **live
+     execution** first, in this order:
+     1. Check `TaskList`/`TaskOutput(block: true, timeout: 600000)` first for whether it
+        got backgrounded. If that is empty (you are a subagent without access) or shows
+        nothing, look for the `bin/ci` process directly with
+        `PID=$(ps -Ao pid,command | grep '[b]in/ci' | awk '{print $1}' | head -1)` — this
+        is **not** a pre-check for whether someone else is running before you start (see
+        the "do not police overlap yourself" bullet below) — it is only for **recovering
+        an execution you already launched**.
+     2. **If the PID is alive (`kill -0 $PID` succeeds), do not re-queue — recover it** —
+        poll inside that tool call with `while kill -0 $PID 2>/dev/null; do sleep 10;
+        done`, and if it has not finished in 10 minutes, re-enter the same poll in your
+        next tool call (each call under 600s, so it is eventually recovered no matter how
+        many calls it takes). Once it finishes, read `<sha>.result` (its path is printed
+        by `run-local-ci.sh` itself — `~/.claude/.local-ci/<repo slug>/<sha>.result`) and
+        judge from that.
+     3. **Only when the PID is already dead and `<sha>.result` does not exist** was there
+        no execution — only then follow the "non-execution" verdict below (discard /
+        abort / ghost-ticket reclaim) and re-queue the same SHA once. (Another session
+        working the same SHA may have finished it first, so do a lightweight check of the
+        result file again before re-queuing.)
    - **Do not police overlap yourself — the queue does it.** Never scan with `ps` for
      another running CI and conclude "one is running, so I should not queue": that check
      also matches `bin/ci` in **another worktree or another repo**, so it stops you from
