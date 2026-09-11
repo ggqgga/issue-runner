@@ -2,7 +2,14 @@
 # 계정 전체에서 디스패치 가능한 이슈를 우선순위 정렬 JSON 배열로 출력.
 # 자격: open + agent-ready + ¬agent:claimed + ¬needs-human + ¬hold:*(접두, #242) +
 #       모든 블로커가 CLOSED (블로커 = 본문 "Blocked by #N" 라인의 N ∪ blocked-by:<N> 라벨의 N, OR·dedupe)
-# 정렬: P0 > P1 > P2 > 없음, 동순위는 오래된 순.
+# 정렬: P0 > P1 > P2 > 없음 → **같은 P 안에서** 시작한 에픽의 leaf 를 먼저(finish-first, #257)
+#       → 같은 칸 안에서는 오래된 순. 에픽 축은 **P 경계를 넘지 않는다** — P1 단발 이슈가
+#       P2 에픽 leaf 보다 뒤로 가지 않는다(우선순위 상속은 문서 규약 #259 몫이지 여기가 아니다).
+# `Epic #N` 줄: 이슈 본문 **줄 시작**(앞 공백 허용)의 `epic\s+#N`(대소문자 무시)의 첫 매치 하나
+#       (이슈당 에픽 하나). 산문 속 `… epic #N …` 은 줄 시작이 아니라 안 잡힌다.
+#       이 줄은 **loop-issues 생성 모드·closeout 파생 발행이 쓴다**(그쪽이 붙이고 여기가 읽는다).
+#       같은 판정을 `scripts/loop-status.sh` 의 `epic_of`(#260)가 jq `capture` 로 갖고 있다 —
+#       한쪽만 고치면 디스패치 순서와 대시보드 에픽 절이 조용히 갈린다(둘 다 고쳐라).
 # 주의: search API는 인덱스 지연이 있다 — 최종 재확인은 claim-issue.sh가 직접 API로 한다.
 #
 # 출력 갈래 (#247) — 두 스트림이 섞이지 않는다:
@@ -51,7 +58,7 @@ SEARCH_WINDOW_SOFT=40
 resp=$(gh api -X GET search/issues \
   -f q="user:$me is:open is:issue label:agent-ready -label:needs-human" \
   -f per_page="$SEARCH_WINDOW" -f sort=created -f order=asc \
-  -q '{total_count: .total_count, items: [.items[] | {repository: {nameWithOwner: (.repository_url | sub(".*/repos/"; ""))}, number, title, labels: [.labels[] | {name}], createdAt: .created_at}]}')
+  -q '{total_count: .total_count, items: [.items[] | {repository: {nameWithOwner: (.repository_url | sub(".*/repos/"; ""))}, number, title, labels: [.labels[] | {name}], createdAt: .created_at, body: (.body // "")}]}')
 cands=$(printf '%s' "$resp" | jq -c '.items')
 total=$(printf '%s' "$resp" | jq -r '.total_count')
 
@@ -86,6 +93,96 @@ blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
     *",harvesting,"*)    printf '마감중' ;;
     *)                   printf '대기' ;;
   esac
+}
+
+# ── 에픽 시작 집합 (#257) ──────────────────────────────────────────────────
+# finish-first 정렬의 입력. "이미 시작한 에픽"의 leaf 를 같은 P 안에서 먼저 집어
+# 주제가 끝나게 한다 — 새 이슈가 진행 중인 주제의 꼬리를 계속 밀어내지 않도록.
+#
+# ★파싱 규칙은 `scripts/loop-status.sh` 의 `epic_of`(#260)와 **같은 판정**이어야 한다:
+#   줄 시작(앞 공백 허용)의 `epic\s+#N`, 대소문자 무시, 이슈당 **첫 매치 하나만**.
+#   저쪽은 jq `capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)"; "i")` 를 줄 단위로 걸고,
+#   여기는 같은 문자열을 `grep -oiE` 로 건다(문자 클래스·앵커·대소문자 무시가 동일).
+#   **끝 앵커(`$`)는 양쪽 다 없다** — `Epic #12 (읽기 모델)` 같은 꼬리표를 허용하는 현행
+#   판정이고, 채택 여부는 #259 범위라 여기서 바꾸지 않는다.
+#   블로커 파싱(`^…blocked[- ]by…`)과 같은 자리·같은 방식이다(둘 다 `-o` 로 매치 구간만).
+epic_of() {  # epic_of <본문> → 에픽 번호 또는 빈 문자열
+  printf '%s' "$1" \
+    | grep -oiE '^[[:space:]]*epic[[:space:]]+#[0-9]+' \
+    | head -n 1 \
+    | grep -oE '[0-9]+$' || true
+}
+
+# 집합 원소는 **same-repo 키** `owner/repo#<에픽번호>` — 레포가 다르면 같은 번호라도 다른 에픽이다.
+started_epics=""
+
+# (a) 진행 중인 leaf — 후보 검색 결과(`cands`, 필터 전) 중 진행 라벨이 붙은 row.
+#     이 row 들은 아래 후보 루프에서 `continue` 로 빠져 `gh issue view` 를 **안 부른다** →
+#     본문은 검색 item 의 `body` 필드를 쓴다(추가 gh 호출 0). 진행 라벨 목록은 여기 한 자리뿐.
+inflight_idx=$(printf '%s' "$cands" | jq -r '
+  to_entries[]
+  | select([.value.labels[].name]
+      | any(. == "agent:claimed" or . == "flow:verify" or . == "flow:ready" or . == "harvesting"))
+  | .key') || inflight_idx=""
+# 이 jq 가 죽는 경우는 `cands` 가 배열이 아닐 때뿐이고, 그러면 아래 `count=` 가 같은 이유로
+# 죽어 스크립트가 멈춘다(빈 큐 위장 없음). 여기서 실패를 삼키는 게 아니라 — stderr 는 그대로
+# 흐른다 — (a) 는 **정렬 힌트**이지 게이트가 아니라서 `set -e` 로 큐 전체를 죽이지 않을 뿐이다.
+for idx in $inflight_idx; do
+  i_repo=$(printf '%s' "$cands" | jq -r ".[$idx].repository.nameWithOwner")
+  i_epic=$(epic_of "$(printf '%s' "$cands" | jq -r ".[$idx].body")")
+  if [ -n "$i_epic" ]; then
+    started_epics="${started_epics}${i_repo}#${i_epic}
+"
+  fi
+done
+
+# body 는 (a) 에서만 쓴다 — 후보 루프가 도는 `cands` 는 종전 형상으로 되돌린다(행마다
+# 본문을 재파싱하면 창 상한(#277 이후 실질 250)에서 스캔이 눈에 띄게 느려진다).
+cands=$(printf '%s' "$cands" | jq -c 'map(del(.body))')
+
+# (b) 최근 닫힌 leaf — 추가 검색 **한 번**(이 스크립트가 늘리는 gh 호출은 이것뿐).
+#     닫힌 leaf 가 있다는 건 그 에픽이 이미 진행됐다는 뜻이라 시작 집합에 든다.
+epic_scan_ok=false
+closed_leaves='[]'
+since=$(date -u -v-14d +%Y-%m-%d 2>/dev/null || date -u -d '14 days ago' +%Y-%m-%d 2>/dev/null || true)
+if [ -n "$since" ]; then
+  if scan_out=$(gh api -X GET search/issues \
+      -f q="user:$me is:issue is:closed closed:>=$since \"Epic #\" in:body" \
+      -f per_page=100 \
+      -q '[.items[] | {repo: (.repository_url | sub(".*/repos/"; "")), body: (.body // "")}]' 2>&1); then
+    # 종료코드 0 이어도 배열이 아니면 **값 미상**이다 — 빈 결과와 실패를 구분한다(PR#139).
+    if printf '%s' "$scan_out" | jq -e 'type == "array"' >/dev/null 2>&1; then
+      epic_scan_ok=true
+      closed_leaves="$scan_out"
+    fi
+  fi
+fi
+if [ "$epic_scan_ok" = "true" ]; then
+  leaf_repos=$(printf '%s' "$closed_leaves" | jq -r '.[].repo')
+  k=0
+  if [ -n "$leaf_repos" ]; then
+    while IFS= read -r c_repo; do
+      c_epic=$(epic_of "$(printf '%s' "$closed_leaves" | jq -r ".[$k].body")")
+      k=$((k + 1))
+      if [ -n "$c_epic" ]; then
+        started_epics="${started_epics}${c_repo}#${c_epic}
+"
+      fi
+    done <<EOF
+$leaf_repos
+EOF
+  fi
+else
+  # 조회 실패를 **빈 큐로 위장하지 않는다** — 말하고 계속 진행한다. 시작 집합은 통째로
+  # 비운다((a) 만 남기면 "일부만 finish-first" 라는 미상 상태가 되고, 그 순서는 아무도
+  # 재현할 수 없다). 정렬은 종전(P → 생성일)으로 떨어진다.
+  started_epics=""
+  echo "warn: 에픽 시작 집합 조회 실패 — finish-first 없이 정렬" >&2
+fi
+
+epic_started_of() {  # epic_started_of <owner/repo> <에픽 번호 또는 빈 문자열> → true|false
+  if [ -z "$2" ]; then printf 'false'; return 0; fi
+  if printf '%s' "$started_epics" | grep -qxF "$1#$2"; then printf 'true'; else printf 'false'; fi
 }
 
 blocked_n=0
@@ -209,12 +306,18 @@ while [ "$i" -lt "$count" ]; do
     *",P2,"*) prio=2 ;;
   esac
 
+  # 에픽은 이미 받아 둔 `$body` 에서 읽는다 — `gh issue view` 호출 수 변화 0.
+  epic=$(epic_of "$body")
+  epic_started=$(epic_started_of "$repo" "$epic")
+
   title=$(printf '%s' "$row" | jq -r '.title')
   created=$(printf '%s' "$row" | jq -r '.createdAt')
   out=$(printf '%s' "$out" | jq -c \
     --arg repo "$repo" --argjson num "$num" --arg title "$title" \
     --argjson prio "$prio" --arg created "$created" \
-    '. + [{repo:$repo, number:$num, title:$title, priority:$prio, createdAt:$created}]')
+    --argjson epic "${epic:-null}" --argjson epic_started "$epic_started" \
+    '. + [{repo:$repo, number:$num, title:$title, priority:$prio, createdAt:$created,
+           epic:$epic, epic_started:$epic_started}]')
 done
 
 # 요약은 stderr 로 (stdout 은 후보 JSON 전용). 0 건도 말한다 — 침묵과 "막힌 게 없다"는
@@ -225,4 +328,7 @@ else
   echo "blocked-summary: 막힘 ${blocked_n}건 (사람대기 블로커 ${blocked_human}건)" >&2
 fi
 
-printf '%s' "$out" | jq 'sort_by(.priority, .createdAt)'
+# 정렬 키 = (우선순위, 시작한 에픽 먼저, 오래된 순). 가운데 칸은 `epic_started` 를
+# true→0 / false→1 로 접어 **오름차순 그대로** 내림차순 효과를 낸다(jq 에 역순 키가 없다).
+# P 가 첫 키라 에픽 축은 같은 P 안에서만 움직인다.
+printf '%s' "$out" | jq 'sort_by(.priority, (if .epic_started then 0 else 1 end), .createdAt)'

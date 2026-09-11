@@ -1218,6 +1218,7 @@ echo "[test] 네 게이트의 needs-human·hold:* 배제 — 격자 한 벌을 �
 bash scripts/tests/hold-gate.test.sh
 
 echo "[test] eligible-issues.sh 막힘 stderr 보고·블로커 상태 표기·검색 창 warn·stdout 불변 (#247)"
+echo "       + 에픽 finish-first 정렬·Epic #N 파싱·시작 집합 두 출처·loop-status 정규식 동기 (#257)"
 bash scripts/tests/eligible-issues.test.sh
 
 echo "[test] bounce-state.sh 반송 판정 — ①-b 입양 안전망·해제 경로 격자 (#196 · #218)"
