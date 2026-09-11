@@ -500,6 +500,101 @@ srow "번호 목록 표식(1.)은 '끝난 문장' 이 아니다 — 미산출(�
 1. REVIEW_STATUS: reviewed'
 srow "표식 뒤 끝난 문장 + 인라인 계약 줄 = 판정 유지(표식만은 아니다)" CLEAN \
   '- 검토를 마쳤습니다. REVIEW_STATUS: reviewed'
+
+# ── 렌더 헤더는 **뒤에 진짜 항목이 따라올 때만** 경계다 (#283 반송 회차 3) ──────────
+# 앞 회차는 헤더 문자열을 보면 **무조건** 거기서 구역을 끊었다. 그런데 그 줄을 누가 썼는지는
+# 검사하지 않는다 — 모델이 자기 총평 안에 그 문자열을 한 줄로 적으면 그때부터 뒤가 통째로
+# "모델 통제 밖"이 되어 **면책 문단이 판정에서 사라진다.** 검증자 실측(3형태, main 은 전부
+# 미산출): 계약 줄 → 헤더 → "diff 를 못 열었다" 문단이 `CLEAN` 으로 샜다. 수용 기준 2항
+# (fail-open 0) 위반이자 main 대비 회귀다.
+# 처방은 **존재 단독 조건을 동반 조건으로 바꾸는 것**이다(PR#225 계열 — 있는 것이 아니라
+# 없는 것을 놓쳤다): 헤더가 경계이려면 그 **뒤에 codex 가 렌더한 항목이 실제로 따라와야**
+# 한다. 여기서 '항목' 은 verdict 를 세는 그 정의 그대로다(p1·p2·p3 카운트 정규식을 그대로
+# 재사용 — 두 자리에 적으면 갈라진다). 판별 입력은 여전히 산문이 아니라 구조다.
+#   헤더를 찾았다 && 그 뒤에 항목이 없다  →  경계가 아니다(자르지 않는다 = 문서 전체가 모델 구역)
+# 이 술어는 검증자가 못박은 조건(`헤더 발견 && p1+p2+p3 == 0 → 경계 아님`)을 **포함한다**:
+# 문서 전체 항목이 0이면 어떤 헤더도 뒤에 항목을 못 갖는다. 더해서 "가짜 헤더 뒤에 진짜
+# 렌더가 이어지는" 끼임 형태(항목 ≥1 이라 그 조건만으로는 안 걸린다)까지 같은 술어로 닫힌다.
+# 잘리는 경우는 정의상 항목이 ≥1 이므로 **잘린 판정이 CLEAN 으로 나오는 경로는 구조적으로
+# 없다** — 창이 틀리면 미산출(폴백)로 접힌다.
+echo "[gate] 4b-2g) 렌더 헤더는 뒤에 항목이 따라올 때만 경계 (#283 검증자 실측 3형태 + W3 비대칭)"
+srow "①(검증자 실측) 계약 줄 + 모델이 적은 단수 헤더 + 면책 문단 = 미산출" NONE \
+  'REVIEW_STATUS: reviewed
+Review comment:
+I could not inspect the diff.'
+srow "②(검증자 실측) 같은 형태 + 빈 줄(렌더 모양을 흉내 내도 항목이 없다) = 미산출" NONE \
+  'REVIEW_STATUS: reviewed
+
+Review comment:
+
+I could not inspect the diff.
+'
+srow "③(검증자 실측) 복수 헤더 + 면책 문단 = 미산출" NONE \
+  '총평.
+REVIEW_STATUS: reviewed
+
+Full review comments:
+
+I could not inspect the diff because the execution tool was unavailable.'
+srow "④(검증자 실측) 진짜 렌더 — 헤더 + 불릿 [P1] 항목 = BLOCKER(무회귀, 본 축)" BLOCKER \
+  '총평. REVIEW_STATUS: reviewed
+
+Review comment:
+
+- [P1] 무언가 — a.sh:1
+  본문.'
+# W3(검증자 WARN, 같은 술어로 함께 닫힌다) — codex 가 항목을 번호 목록으로 렌더하면 카운트
+# 정규식(`^- [Pn]`)이 0을 세는데, 헤더를 무조건 믿으면 구역이 잘려 총평의 계약 줄이 채택되고
+# **진짜 [P1] 이 은폐된 CLEAN** 이 난다. 항목이 안 따라오면 경계가 아니므로 미산출로 접힌다.
+srow "W3 — 헤더 + 번호 목록 항목(카운트 0) = 미산출(진짜 [P1] 은폐 방지)" NONE \
+  '총평.
+REVIEW_STATUS: reviewed
+
+Full review comments:
+
+1. [P1] 진짜 결함 — g.sh:1
+   본문'
+# 끼임형 — 모델이 총평에 헤더를 적고 면책을 쓴 **뒤에** 진짜 렌더가 이어진다. 문서 전체
+# 항목 수는 1이라 "항목 0" 조건만으로는 안 걸리는 자리다(그 조건만 쓰면 첫 헤더에서 잘려
+# 면책이 사라진다). 헤더별로 뒤를 보므로 진짜 렌더 헤더에서만 잘리고, 그 앞 구역의 마지막
+# 줄은 면책 문단이라 미산출이다.
+srow "끼임형 — 가짜 헤더 + 면책 + 진짜 헤더 + [P1] 항목 = 미산출" NONE \
+  '총평.
+REVIEW_STATUS: reviewed
+
+Review comment:
+
+I could not inspect the diff.
+
+Full review comments:
+
+- [P1] 무언가 — a.sh:1
+  본문.'
+# 과잉 차단 반증 — 헤더 문자열이 모델 산문 안에 있어도 항목이 안 따라오면 구역이 안 잘린다.
+# 그때 문서 전체가 모델 구역이므로 **문서 마지막 줄의 계약 줄이 그대로 판정**이다.
+srow "헤더 문자열이 총평 인용이고 계약 줄이 문서 끝 = 판정 유지(구역 미절단)" CLEAN \
+  '게이트가 보는 헤더 문자열은 다음과 같습니다.
+Review comment:
+이 줄은 codex 렌더가 아니라 모델 산문입니다.
+REVIEW_STATUS: reviewed'
+srow "헤더 직후 빈 줄 없이 바로 항목 = 경계 유지(BLOCKER 무회귀)" BLOCKER \
+  '총평.
+REVIEW_STATUS: reviewed
+Review comment:
+- [P1] 무언가 — a.sh:1
+  본문.'
+srow "헤더 뒤 항목이 [P2] 뿐 = 경계 유지(WARN 무회귀)" WARN \
+  '총평.
+REVIEW_STATUS: reviewed
+
+Full review comments:
+
+- [P2] 사소한 편차 — a.sh:1
+  본문.'
+# CRLF(검증 보강이 짚은 격자 공백) — 값 뒤의 `\r` 는 형식 위반이라 미산출이다. 방향은
+# fail-closed(폴백행)이고 main 과 같다 — 조용한 통과로는 새지 않는다.
+srow "CRLF 줄바꿈 — 값 뒤 \\r 는 형식 위반(미산출, fail-closed)" NONE \
+  "$(printf '총평.\r\nREVIEW_STATUS: reviewed\r\n')"
 unset -f srow
 
 echo "[gate] 4b-3) 계약 줄은 프롬프트로 실제로 요구된다 — 파서가 읽는 형식과 같은 문자열(한 자리 정의)"
