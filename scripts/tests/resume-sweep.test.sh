@@ -86,6 +86,32 @@ edit_labels() {  # edit_labels <상태파일> <인자…>
 }
 
 case "${1:-} ${2:-}" in
+  "api repos/"*)
+    # (#265 ⑷) 라벨 이벤트 이력 — "사람이 뗐다" 의 양성 증거 관문이 읽는다.
+    # 기본값은 **정상 해제 이력**(이슈의 unlabeled 가 PR 의 labeled 보다 늦다) — 그래야
+    # 기존 격자 칸들이 이 관문이 아니라 각자의 이유로 갈린다. 픽스처에 줄이 있으면 그것만
+    # 쓴다(부분 실패·옛 에피소드 재현). 줄 형식: `<번호> <ev>|<라벨>|<시각>;<ev>|…`
+    enum=${2#*/issues/}; enum=${enum%%/*}
+    case ",${STUB_MIRROR_EVENTS_FAIL:-}," in *",$enum,"*) echo "gh: events boom" >&2; exit 1 ;; esac
+    eline=$(grep "^$enum " "${STUB_MIRROR_EVENTS:-/dev/null}" 2>/dev/null || true)
+    if [ -n "$eline" ]; then
+      erest=${eline#* }
+      [ "$erest" = "__NONE__" ] || printf '%s\n' "$erest" | tr ';' '\n' | tr '|' '\t'
+      exit 0
+    fi
+    if [ -f "${STUB_MIRROR_PRS:-/dev/null}" ] \
+       && jq -e --arg n "$enum" 'any(.number == ($n|tonumber))' "$STUB_MIRROR_PRS" >/dev/null 2>&1; then
+      # PR 쪽 기본 — 지금 달고 있는 정지 라벨을 T0 에 붙였다
+      jq -r --arg n "$enum" '.[] | select(.number == ($n|tonumber)) | .labels[].name
+             | select(. == "needs-human" or startswith("hold:"))
+             | "labeled\t" + . + "\t2026-01-01T00:00:00Z"' "$STUB_MIRROR_PRS"
+    else
+      # 이슈 쪽 기본 — 알려진 정지 라벨을 T1(T0 보다 늦게) 뗐다
+      for l in needs-human hold:policy hold:conflict hold:ladder hold:manual; do
+        printf 'unlabeled\t%s\t2026-01-02T00:00:00Z\n' "$l"
+      done
+    fi
+    exit 0 ;;
   "issue list")
     case "$*" in
       *hold:ladder*)
@@ -252,13 +278,14 @@ setup() {
   printf 'owner/repo\n' > "$tmp/search"
   echo '[]' > "$tmp/mirror.prs.json"   # (#265) 기본: 정지 미러 정리 대상 없음
   : > "$tmp/mirror.issues"
+  : > "$tmp/mirror.events"            # (#265 ⑷) 기본: 이력 픽스처 없음(스텁이 정상 해제로 답한다)
   : > "$tmp/gh.log"
   # unset 하면 export 속성이 날아가 이후 대입이 스텁에 안 전달된다 — 빈 값으로 되돌린다.
   STUB_LADDER_FAIL=""; STUB_HUMAN_FAIL=""; STUB_LABEL_EDIT_FAIL=""; STUB_COMMENT_FAIL=""
   STUB_COMMENTS_FAIL=""; STUB_SEARCH_FAIL=""; STUB_PR_FAIL=""; STUB_PR_EDIT_FAIL=""
   STUB_STATE_LABELS=""; STUB_READBACK_LABELS=""; STUB_UPDATED_LIVE=""; STUB_JQ_FAIL_PAT=""
   STUB_MIRROR_LIST_FAIL=""; STUB_MIRROR_EDIT_FAIL=""; STUB_MIRROR_READBACK=""
-  STUB_MIRROR_RACE=""; rm -f "$tmp/mirror.edited"
+  STUB_MIRROR_RACE=""; rm -f "$tmp/mirror.edited"; STUB_MIRROR_EVENTS_FAIL=""
   WORKDIR="$tmp/work"; RA=120; RL=2; LL=200
 }
 
@@ -288,6 +315,7 @@ export STUB_MIRROR_PRS="$tmp/mirror.prs.json" STUB_MIRROR_ISSUES="$tmp/mirror.is
 export STUB_MIRROR_ONE="$tmp/mirror.one"
 export STUB_MIRROR_LIST_FAIL="" STUB_MIRROR_EDIT_FAIL="" STUB_MIRROR_READBACK=""
 export STUB_MIRROR_RACE="" STUB_MIRROR_EDITED="$tmp/mirror.edited"
+export STUB_MIRROR_EVENTS="$tmp/mirror.events" STUB_MIRROR_EVENTS_FAIL=""
 WORKDIR="$tmp/work"
 RC=0
 out=""
@@ -1378,6 +1406,8 @@ grid_check "h3 CRLF 본문의 정상 닫힌 펜스 뒤 맨몸 마커" \
 #                        네 게이트가 접두로 보므로(#242) 여기만 열거면 그 PR 이 조용히 좌초한다
 mirror_prs() { printf '%s' "$1" > "$tmp/mirror.prs.json"; }
 mirror_issue() { printf '%s %s %s\n' "$1" "$2" "$3" >> "$tmp/mirror.issues"; }
+# (#265 ⑷) 라벨 이벤트 이력 픽스처 — `<ev>|<라벨>|<시각>` 을 `;` 로 잇는다. `__NONE__` = 이력 없음.
+mirror_events() { printf '%s %s\n' "$1" "$2" >> "$tmp/mirror.events"; }
 mpl() {  # mpl <PR번호> — 그 PR 의 현재 라벨 콤마목록
   jq -r --arg n "$1" '.[] | select(.number == ($n|tonumber)) | [.labels[].name] | join(",")' \
     "$tmp/mirror.prs.json"
@@ -1514,7 +1544,7 @@ check "미러 ⑮: 이벤트 없음"                     "$([ -z "$(mev 224)" ] 
 
 # 묶음 디스패치의 **딴** closes 이슈 조회가 실패해도 떼지 않는다(fail-safe 는 짝과 같다)
 setup "needs-human,hold:policy" 10 0
-mirror_prs '[{"number":225,"headRefName":"agent/issue-347","labels":[{"name":"needs-human"}],
+mirror_prs '[{"number":225,"headRefName":"agent/issue-347","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
   "closingIssuesReferences":[{"number":347},{"number":396}]}]'
 mirror_issue 347 OPEN "agent-ready"
 mirror_issue 396 __FAIL__ ""
@@ -1524,29 +1554,29 @@ check "미러 묶음 조회 실패: warn"               "$(saysl '이슈 #396 �
 
 # 이슈 조회 실패 → **떼지 않고** warn (fail-safe: 사람 게이트를 벗겨내는 방향으로 틀리지 않는다)
 setup "needs-human,hold:policy" 10 0
-mirror_prs '[{"number":211,"headRefName":"agent/issue-311","labels":[{"name":"needs-human"}],
+mirror_prs '[{"number":211,"headRefName":"agent/issue-311","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
   "closingIssuesReferences":[{"number":311}]}]'
 mirror_issue 311 __FAIL__ ""
 run
 check "미러 이슈 조회 실패: 무편집"          "$(none 'pr edit 211')"
-check "미러 이슈 조회 실패: 라벨 그대로"     "$([ "$(mpl 211)" = "needs-human" ] && echo ok || echo no)"
+check "미러 이슈 조회 실패: 라벨 그대로"     "$([ "$(mpl 211)" = "needs-human,hold:policy" ] && echo ok || echo no)"
 check "미러 이슈 조회 실패: warn"            "$(saysl '연결 이슈 #311 라벨 조회 실패')"
 check "미러 이슈 조회 실패: warn_after_edit 아님" "$(no_ev warn_after_edit)"
 
 # PR 편집 실패 → 아직 아무것도 안 바뀌었다 → warn (warn_after_edit 아님)
 setup "needs-human,hold:policy" 10 0
-mirror_prs '[{"number":212,"headRefName":"agent/issue-312","labels":[{"name":"needs-human"}],
+mirror_prs '[{"number":212,"headRefName":"agent/issue-312","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
   "closingIssuesReferences":[{"number":312}]}]'
 mirror_issue 312 OPEN "agent-ready"
 STUB_MIRROR_EDIT_FAIL=1
 run
-check "미러 편집 실패: 라벨 그대로"          "$([ "$(mpl 212)" = "needs-human" ] && echo ok || echo no)"
+check "미러 편집 실패: 라벨 그대로"          "$([ "$(mpl 212)" = "needs-human,hold:policy" ] && echo ok || echo no)"
 check "미러 편집 실패: warn"                 "$(saysl 'PR #212 정지 미러 해제 실패')"
 check "미러 편집 실패: warn_after_edit 아님" "$(no_ev warn_after_edit)"
 
 # readback 조회 실패 → 쓰기는 이미 나갔다 → warn_after_edit
 setup "needs-human,hold:policy" 10 0
-mirror_prs '[{"number":213,"headRefName":"agent/issue-313","labels":[{"name":"needs-human"}],
+mirror_prs '[{"number":213,"headRefName":"agent/issue-313","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
   "closingIssuesReferences":[{"number":313}]}]'
 mirror_issue 313 OPEN "agent-ready"
 STUB_MIRROR_READBACK="__FAIL__"
@@ -1556,7 +1586,7 @@ check "미러 readback 실패: mirror_cleared 아님" "$([ -z "$(mev 213)" ] && 
 
 # readback 에 정지 라벨이 남아 있다 → warn_after_edit (성공으로 위장하지 않는다)
 setup "needs-human,hold:policy" 10 0
-mirror_prs '[{"number":214,"headRefName":"agent/issue-314","labels":[{"name":"needs-human"}],
+mirror_prs '[{"number":214,"headRefName":"agent/issue-314","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
   "closingIssuesReferences":[{"number":314}]}]'
 mirror_issue 314 OPEN "agent-ready"
 STUB_MIRROR_READBACK="needs-human"
@@ -1568,7 +1598,7 @@ check "미러 readback 불일치: mirror_cleared 아님" "$([ -z "$(mev 214)" ] 
 # 이슈엔 아직" 인 창이 있고, 편집 **전** 재조회로는 그 창을 못 닫는다(그때 이슈는 정말
 # 깨끗하다). 편집 뒤 한 번 더 읽어 정지가 생겼으면 성공으로 위장하지 않는다.
 setup "needs-human,hold:policy" 10 0
-mirror_prs '[{"number":216,"headRefName":"agent/issue-316","labels":[{"name":"needs-human"}],
+mirror_prs '[{"number":216,"headRefName":"agent/issue-316","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
   "closingIssuesReferences":[{"number":316}]}]'
 mirror_issue 316 OPEN "agent-ready"
 STUB_MIRROR_RACE="agent-ready,needs-human,hold:conflict"
@@ -1578,7 +1608,7 @@ check "미러 경합: warn_after_edit"           "$(saysl '이슈 #316 에 정�
 
 # 편집 뒤 이슈 재조회 실패 → 경합 여부를 모른다(성공으로 접지 않는다)
 setup "needs-human,hold:policy" 10 0
-mirror_prs '[{"number":217,"headRefName":"agent/issue-317","labels":[{"name":"needs-human"}],
+mirror_prs '[{"number":217,"headRefName":"agent/issue-317","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
   "closingIssuesReferences":[{"number":317}]}]'
 mirror_issue 317 OPEN "agent-ready"
 STUB_MIRROR_RACE="__FAIL__"
@@ -1588,7 +1618,7 @@ check "미러 경합 재조회 실패: warn_after_edit"     "$(saysl '이슈 #31
 
 # 목록 조회 실패 → "정리 대상 없음" 으로 위장하지 않는다(exit 2 + stderr)
 setup "needs-human,hold:policy" 10 0
-mirror_prs '[{"number":215,"headRefName":"agent/issue-315","labels":[{"name":"needs-human"}],
+mirror_prs '[{"number":215,"headRefName":"agent/issue-315","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
   "closingIssuesReferences":[{"number":315}]}]'
 mirror_issue 315 OPEN "agent-ready"
 STUB_MIRROR_LIST_FAIL=1
@@ -1596,6 +1626,95 @@ run
 check "미러 목록 조회 실패: exit 2"          "$([ "$RC" = 2 ] && echo ok || echo no)"
 check "미러 목록 조회 실패: stderr 한 줄"    "$(grep -q '정지 미러' "$tmp/err" && echo ok || echo no)"
 check "미러 목록 조회 실패: 무편집"          "$(none 'pr edit 215')"
+
+# ── (#265 재검증 attempt 3) 두 관문: 맨몸 needs-human · **양성 증거**(라벨 이벤트 이력) ──
+# 지금까지의 술어는 전부 *부재*(이슈에 정지 라벨이 없다)였는데, 부재는 셋을 구분 못 한다:
+# ⓐ 사람이 뗐다 ⓑ 기계가 뗐다 ⓒ **애초에 못 붙었다**. ⓒ 는 `transition.sh` 의 적용 순서가
+# 만드는 실재 상태다(PR 먼저·이슈 나중 → 이슈 편집 실패). 그 칸을 그대로 떼면 살아 있는
+# 홀드를 기계가 벗기고, `verify-held`·`closeout-blocked` 는 단계 라벨도 이미 뗀 뒤라 어느
+# 루프도 못 집는 좌초가 된다. 그래서 이력으로 증명한다 — 존재가 아니라 **시각 비교**로
+# (#225: 가장 늦은 것이 이긴다 · 같은 PR 이 두 번 홀드되면 옛 해제가 새 부분 실패를 위장).
+# 한 번의 실행으로 `want` 열 전수 단언 — 칸끼리 새지 않는 것까지 함께 본다.
+#
+#   PR / 이슈 / 이력                              want
+#   ────────────────────────────────────────────  ───────────────────────────────────────
+#   230 / 330  PR 라벨이 맨몸 `needs-human`       무편집 + warn · 이슈 **조회조차 안 함**
+#   231 / 331  이슈에 `unlabeled` 이력 없음(ⓒ)    무편집 + warn(부분 실패 의심)
+#   232 / 332  이슈 해제가 PR 부착보다 **이르다**  무편집 + warn(옛 에피소드)
+#   233 / 333  이슈 해제가 PR 부착보다 **늦다**    **편집** — 종전대로 정리된다
+#   234 / 334  이슈 이력 조회 실패                무편집 + warn
+#   235 / 335  PR 이력 조회 실패                  무편집 + warn
+#   236 / 336  PR 에 `labeled` 이력 없음          무편집 + warn(이력 미상)
+#   237 / 337  이슈 해제 == PR 부착(같은 초)      무편집 + warn(동시각은 증명이 아니다)
+setup "needs-human,hold:policy" 10 0
+mirror_prs '[
+ {"number":230,"headRefName":"agent/issue-330","labels":[{"name":"needs-human"},{"name":"flow:ready"}],
+  "closingIssuesReferences":[{"number":330}]},
+ {"number":231,"headRefName":"agent/issue-331","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
+  "closingIssuesReferences":[{"number":331}]},
+ {"number":232,"headRefName":"agent/issue-332","labels":[{"name":"hold:conflict"}],
+  "closingIssuesReferences":[{"number":332}]},
+ {"number":233,"headRefName":"agent/issue-333","labels":[{"name":"hold:policy"},{"name":"flow:verify"}],
+  "closingIssuesReferences":[{"number":333}]},
+ {"number":234,"headRefName":"agent/issue-334","labels":[{"name":"hold:policy"}],
+  "closingIssuesReferences":[{"number":334}]},
+ {"number":235,"headRefName":"agent/issue-335","labels":[{"name":"hold:policy"}],
+  "closingIssuesReferences":[{"number":335}]},
+ {"number":236,"headRefName":"agent/issue-336","labels":[{"name":"hold:policy"}],
+  "closingIssuesReferences":[{"number":336}]},
+ {"number":237,"headRefName":"agent/issue-337","labels":[{"name":"hold:ladder"}],
+  "closingIssuesReferences":[{"number":337}]}
+]'
+mirror_issue 330 OPEN "agent-ready"
+mirror_issue 331 OPEN "agent-ready"
+mirror_issue 332 OPEN "agent-ready"
+mirror_issue 333 OPEN "agent-ready"
+mirror_issue 334 OPEN "agent-ready"
+mirror_issue 335 OPEN "agent-ready"
+mirror_issue 336 OPEN "agent-ready"
+mirror_issue 337 OPEN "agent-ready"
+# 이력 픽스처가 없는 번호는 스텁이 **정상 해제**로 답한다(PR labeled 2026-01-01 < 이슈
+# unlabeled 2026-01-02) — 233 이 그 기본을 그대로 쓴다.
+mirror_events 331 "__NONE__"                               # ⓒ — 이슈는 그 라벨을 받은 적이 없다
+mirror_events 332 "unlabeled|hold:conflict|2025-12-01T00:00:00Z"   # 옛 에피소드의 해제
+mirror_events 236 "__NONE__"                               # PR 쪽 부착 이력이 없다
+mirror_events 337 "unlabeled|hold:ladder|2026-01-01T00:00:00Z"     # PR 부착과 **같은 초**
+STUB_MIRROR_EVENTS_FAIL="334,235"
+run
+check "이력 격자: exit 0"                        "$([ "$RC" = 0 ] && echo ok || echo no)"
+# ⑯ 맨몸 needs-human — 기계는 이 모양을 만들 수 없다(세 홀드 전이는 --reason 필수라 언제나
+#    hold:<사유> 와 쌍이다). 사람이 머지 직전에 PR 에만 세운 브레이크를 루프가 떼면
+#    closeout-eligible 의 유일한 제동이 풀린다. ②갈래가 이슈에 세운 규율과 같은 자리다.
+check "⑯ 맨몸 needs-human: 무편집"               "$(none 'pr edit 230')"
+check "⑯ PR 라벨 그대로"                         "$([ "$(mpl 230)" = "needs-human,flow:ready" ] && echo ok || echo no)"
+check "⑯ warn 문구(사유 없음)"                   "$(saysl 'PR #230 정지 미러 — needs-human 사유 없음')"
+check "⑯ mirror_cleared 아님"                    "$([ -z "$(mev 230)" ] && echo ok || echo no)"
+check "⑯ 이슈 조회조차 안 한다"                  "$(none 'issue view 330')"
+# ⑰ 양성 증거 없음 = 전이 부분 실패(ⓒ) — 이 칸이 이번 반송의 BLOCKER 다
+check "⑰ 이력 없음(부분 실패): 무편집"           "$(none 'pr edit 231')"
+check "⑰ PR 라벨 그대로"                         "$([ "$(mpl 231)" = "needs-human,hold:policy" ] && echo ok || echo no)"
+#    보고되는 라벨은 결정적이다 — `mirror_row` 의 jq 가 정지 라벨을 `sort` 해서 넘기므로
+#    `hold:policy` < `needs-human`(사전순) 이라 언제나 `hold:policy` 가 먼저 걸린다.
+check "⑰ warn 문구(붙었다 떨어진 이력 없다)"     "$(saysl '이슈 #331 의 hold:policy: 붙었다 떨어진 이력이 없다')"
+check "⑰ mirror_cleared 아님"                    "$([ -z "$(mev 231)" ] && echo ok || echo no)"
+# ⑱ 존재만 보면 통과하는 칸 — 옛 에피소드의 해제가 새 부분 실패를 ⓐ 로 위장한다(#225)
+check "⑱ 옛 에피소드 해제: 무편집"               "$(none 'pr edit 232')"
+check "⑱ warn 문구(PR 부착보다 이르다)"          "$(saysl '해제(2025-12-01T00:00:00Z)가 PR 부착(2026-01-01T00:00:00Z)보다 이르다')"
+check "⑱ mirror_cleared 아님"                    "$([ -z "$(mev 232)" ] && echo ok || echo no)"
+# ⑲ 증거가 서면 종전대로 정리된다 — 새 관문이 정상 경로를 막지 않는다는 대조군
+check "⑲ 정상 해제 이력: 정리된다"               "$([ "$(mpl 233)" = "flow:verify" ] && echo ok || echo no)"
+check "⑲ mirror_cleared 이벤트"                  "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==233) | .number==333 and .removed=="hold:policy"' >/dev/null 2>&1 && echo ok || echo no)"
+# ⑳㉑ 이력 조회 실패는 **증명 실패**다 — fail-safe 방향(떼지 않는다)은 이 갈래 전체와 같다
+check "⑳ 이슈 이력 조회 실패: 무편집"            "$(none 'pr edit 234')"
+check "⑳ warn 문구"                              "$(saysl '이슈 #334 라벨 이력 조회 실패')"
+check "㉑ PR 이력 조회 실패: 무편집"              "$(none 'pr edit 235')"
+check "㉑ warn 문구"                              "$(saysl 'PR #235 정지 미러 — PR 라벨 이력 조회 실패')"
+check "㉒ PR 부착 이력 없음: 무편집"              "$(none 'pr edit 236')"
+check "㉒ warn 문구"                              "$(saysl 'PR 의 hold:policy: 붙은 이력이 없다')"
+check "㉓ 동시각은 증명이 아니다: 무편집"         "$(none 'pr edit 237')"
+check "㉓ warn 문구(이르다 갈래로 접는다)"        "$(saysl '해제(2026-01-01T00:00:00Z)가 PR 부착(2026-01-01T00:00:00Z)보다 이르다')"
+# 이력 관문은 전부 **편집 전** 실패다 — warn 이지 warn_after_edit 이 아니다
+check "이력 관문: warn_after_edit 0건"           "$(no_ev warn_after_edit)"
 
 # ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
 # 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는

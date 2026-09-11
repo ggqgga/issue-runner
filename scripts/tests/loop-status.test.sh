@@ -625,12 +625,15 @@ has_line "승격 대기 — release 없는 레포" "$tmp/out" \
 no_sub "루프 밖 이슈 #4900 미집계" "$tmp/out" "#4900"
 
 # ③ warn 5종 + 사유 없음 + 인계 지연(+ #188 회귀 대조 PR #4991 1건 + #265 정지 미러 1건)
-has_line "warn 12건(질문 유무 미확인 1 · #188 대조 #4991 · #265 정지 미러 #4852)" "$tmp/out" "  warn      12"
-# (#265) PR #4852 는 `needs-human` 을 단 채 열려 있는데 연결 이슈 #4832 는 깨끗하다 —
-# 종전엔 무소속 warn 에서도 빠지고(PR 자신이 needs-human) 이슈도 사람대기 칸에 안 떠
-# **어느 줄에도 안 나타났다**. 네 게이트(#242·#262)는 그 PR 을 확정적으로 제외한다.
-has_sub "warn 정지 미러 불일치(PR 에만 정지 라벨)" "$tmp/out" \
-  "    - 정지 미러 불일치 #4832(bodat) ↔ PR #4852(bodat) — 이슈 없음 · PR needs-human"
+has_line "warn 11건(질문 유무 미확인 1 · #188 대조 #4991)" "$tmp/out" "  warn      11"
+# (#265) PR #4852 는 `needs-human` 을 **맨몸으로**(= `hold:` 접두 0개) 단 채 열려 있고 연결
+# 이슈 #4832 는 깨끗하다. 기계는 이 모양을 만들 수 없다 — `needs-human` 을 붙이는 자리는
+# `transition.sh` 하나뿐이고 기계 정지 세 전이는 `--reason` 이 필수라 언제나 `hold:<사유>`
+# 와 쌍으로 붙인다. 그러니 사람이 손으로 세운 브레이크이고, 교정 갈래(resume-sweep ④)도
+# 떼지 않는다 → 교정 못 하는 후보를 경보에 얹으면 상시 잡음이다(#190 의 warn 정의).
+# 기계 미러(=`hold:*` 동반) 쪽 양성 커버리지는 아래 `ggqgga/Mirror` 격자가 전담한다.
+no_sub "(#265) 맨몸 needs-human PR #4852 는 정지 미러 warn 이 아니다" "$tmp/out" \
+  "정지 미러 불일치 #4832"
 has_sub "warn 무소속 PR" "$tmp/out" \
   "    - 무소속 PR #4850(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4832 는 needs-human 아님"
 has_sub "warn 단계 라벨 중복" "$tmp/out" \
@@ -1148,6 +1151,16 @@ has_line "무회귀: 파생 줄은 에픽 병기 없이 종전 그대로(레포�
 #                          아니라 브랜치의 이슈 #90 이다
 #   #91 無 / PR #191 有   warn 없음 — 같은 PR 이 닫는 #98 에 `hold:policy` 가 살아 있다
 #                          (묶음 디스패치 — 전이는 이슈 인자를 하나만 받는다)
+#
+# 맨몸 `needs-human`(= `hold:` 접두가 **하나도 없음**)은 짝짓기·전건 게이트를 다 통과해도
+# 대상 밖이다. 기계는 그 모양을 만들 수 없다 — `needs-human` 을 붙이는 자리는
+# `transition.sh` 하나뿐이고 기계 정지 세 전이는 `--reason` 이 **필수**라 언제나
+# `hold:<사유>` 와 쌍으로 붙인다. 그러니 PR 에만 맨몸으로 있다 = 사람이 머지 직전에 손으로
+# 세운 브레이크이고, 교정 갈래(resume-sweep ④)는 그것을 떼지 않는다. 여기서만 울리면
+# "고쳐 준다" 고 말해 놓고 안 고치는 줄이 상시로 남는다(#190).
+#   #92 無 / PR #192 有   warn 없음 — 짝도 서고 closes 전건도 깨끗한데 PR 정지가 맨몸
+#                          `needs-human` 뿐이다. 위 #170 과 달리 head 는 `agent/issue-92` 라
+#                          **이 관문 하나만** 이 칸을 조용하게 만든다(짝짓기로는 안 걸린다)
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.issues.json" <<'FX'
 [
  {"number":10,"title":"둘 다 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
@@ -1160,7 +1173,8 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.issues.json" <<'FX'
  {"number":90,"title":"closes 순서 역전 PR 의 브랜치 이슈","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
  {"number":99,"title":"같은 PR 이 닫는 딴 이슈 — 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"}]},
  {"number":91,"title":"묶음 디스패치의 브랜치 이슈 — 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
- {"number":98,"title":"묶음 디스패치의 딴 이슈 — 사람 게이트가 살아 있다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"hold:policy"}]}
+ {"number":98,"title":"묶음 디스패치의 딴 이슈 — 사람 게이트가 살아 있다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"hold:policy"}]},
+ {"number":92,"title":"맨몸 needs-human 이 PR 에만 — 사람이 손으로 세운 브레이크","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:ready"}]}
 ]
 FX
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.pr_open.json" <<'FX'
@@ -1184,7 +1198,9 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.pr_open.json" <<'FX'
  {"number":190,"headRefName":"agent/issue-90","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
   "closingIssuesReferences":[{"number":99},{"number":90}],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]},
  {"number":191,"headRefName":"agent/issue-91","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
-  "closingIssuesReferences":[{"number":91},{"number":98}],"labels":[{"name":"flow:verify"},{"name":"needs-human"}]}
+  "closingIssuesReferences":[{"number":91},{"number":98}],"labels":[{"name":"flow:verify"},{"name":"needs-human"}]},
+ {"number":192,"headRefName":"agent/issue-92","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":92}],"labels":[{"name":"flow:ready"},{"name":"needs-human"}]}
 ]
 FX
 echo '[]' > "$tmp/fx/ggqgga_Mirror.pr_closed.json"
@@ -1213,6 +1229,10 @@ no_sub "(#265) [0] 쪽(#99)을 짝으로 고르지 않는다" "$tmp/out" "불일
 # 여기서 울리면 교정(resume-sweep ④)이 안 하는 일을 경보가 하라고 말하는 꼴이다.
 no_sub "(#265) 묶음 디스패치의 딴 이슈에 정지가 있으면 조용하다" "$tmp/out" "불일치 #91"
 no_sub "(#265) 정지가 남은 #98 자신도 후보가 아니다" "$tmp/out" "불일치 #98"
+# 맨몸 `needs-human` — 짝짓기(⑴⑵)·전건 게이트(⑶)를 다 통과하는 칸이라 **이 관문만**이
+# 조용하게 만든다. 교정 갈래가 안 떼는 것을 경보만 울리면 상시 잡음이다(#190).
+no_sub "(#265) 맨몸 needs-human(PR #192)은 warn 이 아니다 — 기계가 못 만드는 모양" \
+  "$tmp/out" "불일치 #92"
 # 단계 미러 판정은 정지 라벨에 오염되지 않는다 — 정지 라벨을 mirror_labels 에 밀어 넣었다면
 # #20·#50 이 **단계** 미러 불일치로도 울렸을 자리다(별도 판정이라는 것의 실측).
 no_sub "(#265) 정지 라벨이 단계 미러 판정을 깨뜨리지 않는다" "$tmp/out" "- 미러 불일치 #20"
