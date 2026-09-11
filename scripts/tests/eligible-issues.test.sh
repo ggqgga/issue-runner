@@ -107,13 +107,13 @@ mkfx() {  # mkfx <이름> <total_count> → 픽스처 디렉터리 경로(빈 it
   printf '{"total_count":%s,"items":[]}\n' "$2" > "$fx/search.json"
   printf '%s' "$fx"
 }
-add_issue() {  # add_issue <fx> <num> <라벨 JSON 배열(문자열)> <제목> <본문>
-  local fx="$1" num="$2" labels="$3" title="$4" body="$5"
-  jq --argjson n "$num" --argjson l "$labels" --arg t "$title" \
+add_issue() {  # add_issue <fx> <num> <라벨 JSON 배열(문자열)> <제목> <본문> [생성시각]
+  local fx="$1" num="$2" labels="$3" title="$4" body="$5" created="${6:-2026-01-01T00:00:00Z}"
+  jq --argjson n "$num" --argjson l "$labels" --arg t "$title" --arg c "$created" \
     '.items += [{repository_url: "https://api.github.com/repos/owner/repo",
                  number: $n, title: $t,
                  labels: [$l[] | {name: .}],
-                 created_at: "2026-01-01T00:00:00Z"}]' "$fx/search.json" > "$fx/s.tmp"
+                 created_at: $c}]' "$fx/search.json" > "$fx/s.tmp"
   mv "$fx/s.tmp" "$fx/search.json"
   jq -n --arg b "$body" '{body: $b}' > "$fx/body.$num.json"
 }
@@ -153,7 +153,10 @@ cat > "$tmp/want.a" <<'WANT'
   }
 ]
 WANT
-ck "① stdout 바이트 동일(진단이 stdout 으로 새지 않는다)" "$(cat "$OUT")" "$(cat "$tmp/want.a")"
+# `$( )` 대조는 양 끝 개행을 잘라 먹는다 — 후행 개행이 생기거나 사라져도 통과한다.
+# 이 이슈의 심장이 "stdout 이 한 바이트도 안 바뀐다" 이므로 여기는 cmp 로 바이트를 맞댄다.
+if cmp -s "$OUT" "$tmp/want.a"; then pass=$((pass + 1))
+else fail=$((fail + 1)); echo "  ✗ ① stdout 바이트 동일(진단이 stdout 으로 새지 않는다)"; diff "$tmp/want.a" "$OUT" | sed 's/^/      /'; fi
 no_line "① blocked: 줄 없음" "$ERR" "blocked: "
 has_line "① 요약 — 막힘 0건" "$ERR" "blocked-summary: 막힘 0건"
 ck "① 블로커 조회 0회" "$(count_of "$LOG" 'blocker ')" "0"
@@ -169,10 +172,10 @@ add_issue "$fx" 13 '["agent-ready"]' '검증대기 블로커' 'Blocked by #902'
 add_issue "$fx" 14 '["agent-ready"]' '마감대기 블로커' 'Blocked by #903'
 add_issue "$fx" 15 '["agent-ready"]' '마감중 블로커' 'Blocked by #904'
 add_issue "$fx" 16 '["agent-ready"]' '라벨 없는 블로커' 'Blocked by #905'
-add_issue "$fx" 17 '["agent-ready"]' 'CLOSED 블로커' 'Blocked by #906'
-add_issue "$fx" 18 '["agent-ready"]' 'MERGED PR 블로커' 'Blocked by #907'
+add_issue "$fx" 17 '["agent-ready"]' 'CLOSED 블로커' 'Blocked by #906' '2026-01-01T00:00:17Z'
+add_issue "$fx" 18 '["agent-ready"]' 'MERGED PR 블로커' 'Blocked by #907' '2026-01-01T00:00:18Z'
 add_issue "$fx" 19 '["agent-ready"]' '조회 실패 블로커' 'Blocked by #908'
-add_issue "$fx" 20 '["agent-ready"]' '미존재 블로커' 'Blocked by #909'
+add_issue "$fx" 20 '["agent-ready"]' '미존재 블로커' 'Blocked by #909' '2026-01-01T00:00:20Z'
 add_blocker "$fx" 900 OPEN   '["needs-human","hold:policy"]'
 add_blocker "$fx" 901 OPEN   '["agent-ready","agent:claimed"]'
 add_blocker "$fx" 902 OPEN   '["agent-ready","flow:verify"]'
@@ -200,7 +203,9 @@ ck "③ 미존재 블로커는 blocked 줄 없음(게이트 무시)" "$(count_of
 has_line "③ 미존재는 이유를 warn 으로 남긴다" "$ERR" \
   "warn: owner/repo#20 blocked-by #909 미존재 — 영구 정체 방지 위해 게이트 무시(통과)"
 # 통과한 셋만 stdout 에 남는다 — 번호를 손으로 적는다.
-ck "②③ stdout 통과분" \
+# 통과분의 createdAt 을 서로 다르게 줬으므로 이 순서는 sort_by 의 안정성이 아니라
+# **정렬 자체**가 근거다(셋 다 우선순위 없음 = 3).
+ck "②③ stdout 통과분(오래된 순)" \
   "$(jq -c '[.[].number]' "$OUT")" '[17,18,20]'
 no_line "② 진단이 stdout 으로 새지 않는다" "$OUT" "blocked"
 has_line "⑦ 요약 — 막힘 7건 · 사람대기 1건" "$ERR" "blocked-summary: 막힘 7건 (사람대기 블로커 1건)"
@@ -254,6 +259,13 @@ fx=$(mkfx w40 40); run_sut "$fx"
 no_line "⑥ 40 → 침묵(soft 와 같음)" "$ERR" "warn: 검색 창"
 fx=$(mkfx w34 34); run_sut "$fx"
 no_line "⑥ 34 → 침묵" "$ERR" "warn: 검색 창"
+# 창 크기를 **못 읽은** 경우는 침묵이 아니다 — 침묵은 "창에 여유가 있다"는 주장이고,
+# 모르는 것을 안다고 말하면 큐가 죽는 신호가 그대로 사라진다(PR#139 의 빈 결과≠실패).
+fx=$(mkfx wnull null); run_sut "$fx"
+ck "⑥ 미상이어도 exit 0" "$RC" "0"
+has_line "⑥ total_count 미상 → 침묵이 아니라 warn" "$ERR" \
+  "warn: 검색 창 크기 미상 — total_count 를 못 읽었다(창 절단 여부 판정 불가): [null]"
+ck "⑥ 미상이어도 stdout 은 후보 JSON 뿐" "$(cat "$OUT")" "[]"
 
 echo "eligible-issues.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]

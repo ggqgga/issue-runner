@@ -59,7 +59,8 @@ case "$total" in
   ''|*[!0-9]*)
     # total_count 를 못 읽었다 — 창 상태 **미상**이다. 빈 결과·실패를 정상으로 둔갑시키지
     # 않는다(PR#139): 침묵은 "창에 여유가 있다"는 주장이라 여기선 거짓말이 된다.
-    echo "warn: 검색 창 크기 미상 — total_count 를 못 읽었다(창 절단 여부 판정 불가): [$total]" >&2 ;;
+    # 읽은 값은 한 줄로 접어 싣는다 — ④ Report 가 옮기는 warn 은 **한 줄**이어야 한다.
+    echo "warn: 검색 창 크기 미상 — total_count 를 못 읽었다(창 절단 여부 판정 불가): [$(printf '%s' "$total" | tr '\n' ' ')]" >&2 ;;
   *)
     if [ "$total" -gt "$SEARCH_WINDOW" ]; then
       echo "warn: 검색 창 절단 — agent-ready 후보 ${total}건 > 창 $SEARCH_WINDOW, 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)" >&2
