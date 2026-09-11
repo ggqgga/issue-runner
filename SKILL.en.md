@@ -308,7 +308,12 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
    **Backlog backpressure**: if the total number of open PRs (regardless of
    state) is ≥ `MAX_OPEN_PRS`, skip new dispatches and raise a
    "merge backlog: N PRs" warn in ④ Report (maintenance keeps running in ②).
-2. Run `$SCRIPTS/eligible-issues.sh` → priority-sorted candidates.
+2. Run `$SCRIPTS/eligible-issues.sh` → priority-sorted candidates (**stdout**).
+   **Carry its stderr `blocked:` / `blocked-summary:` / `warn:` lines into ④ Report** (#247):
+   each `blocked: <repo>#<num> ← #<b>(<state>)` becomes a `blocked` item, the N in
+   `blocked-summary:` becomes the `blocked N` count, and the search-window `warn:` goes
+   into Report's `warn` verbatim. Gate rejections leave through a silent `continue`, so if
+   you do not carry them nothing anywhere says why N waiting issues never move.
 3. **LLM judgment (only toward picking less)**: if two or more candidates look
    like they will touch the same repo and the same module, pick only one this
    tick. If you cannot tell, pick it (a conflict gets resolved by the next tick's
@@ -382,11 +387,16 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
 
 ## ④ Report
 
-One-line summary: `reconciled N · maintained N · new N · resumed N · escalated N · waiting(human review) N · warn N`
-(`resumed`/`escalated` are the counts of ①'s resume-sweep `resumed`/`escalated` events).
+One-line summary: `reconciled N · maintained N · new N · resumed N · escalated N · blocked N · waiting(human review) N · warn N`
+(`resumed`/`escalated` are the counts of ①'s resume-sweep `resumed`/`escalated` events;
+`blocked` is the count from the ③-2 eligible scan's `blocked-summary:` — candidates dropped
+by an OPEN blocker. Print it even when it is 0).
 Below it, **name the numbers item by item** — counts alone do not tell the next tick where
 each issue/PR went:
-`reconciled: #4801(bodat, PR #4810 merged) · maintained: PR #4812(bodat, rebase) · new: #4818(bodat) · resumed: #4772(bodat, 2/2) · escalated: #4803(bodat, hold:policy) · warn: #4799(bodat) dirty worktree`.
+`reconciled: #4801(bodat, PR #4810 merged) · maintained: PR #4812(bodat, rebase) · new: #4818(bodat) · resumed: #4772(bodat, 2/2) · escalated: #4803(bodat, hold:policy) · blocked: #4986(bodat ← #4985 human-wait) · warn: #4799(bodat) dirty worktree`.
+Copy the search-window `warn:` lines (`검색 창 절단` / `검색 창 임박`) into the warn list as
+they are — once the window fills, the **newest** issues silently drop out of the candidate
+list, so losing that signal means a dying queue looks exactly like a healthy one.
 The repo short-name rule is the same as `loop-status.sh`'s (the repo part of `owner/repo`
 lowercased — bodat·bodac; `issue-runner` alone maps to `runner`).
 If there are warns, list the paths and reasons below it.
@@ -396,7 +406,8 @@ Also copy that worker report's `pre-review: <value>` as one line `pre-review: <r
 cumulative = the same issue's `tokens:` figures from previous tick Reports visible in
 context + this count (none visible → just this count). If it exceeds `SOFT_TOKEN_BUDGET_PER_ISSUE`,
 state **"soft budget exceeded — recommend escalating to needs-human"** on that line (report only — never auto-label or stop workers).
-If every count is 0, output the single line "quiet".
+If every count is 0, output the single line "quiet" — `blocked N` is one of those counts.
+A tick with blocked issues is not a quiet tick (that silence is why the item exists).
 
 **Pipeline snapshot (required every tick).** After the lines above, run
 `$SCRIPTS/loop-status.sh --post issue-runner --delta "<this tick's one-line summary>"` (it also overwrites the per-repo pinned dashboard issue `루프 현황` — label `loop-dashboard` — so GitHub alone shows who holds what and when each loop last ticked, #163) and paste its output **verbatim** — the counters only say "what
