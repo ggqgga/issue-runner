@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# closeout-sweep-gate.test.sh — ①-b 스윕 판정 픽스처 6종 (#218).
+# closeout-sweep-gate.test.sh — ①-b 스윕 판정 픽스처 8종 (#218 a~h).
 #
 # ①-b 의 최종 조치는 SKILL.md 프로즈(LLM 워커가 읽고 따른다)지 셸 함수가 아니다.
 # 그래서 이 파일은 "생산 로직" 이 아니라 SKILL.md ①-b 가 문서화한 결정 규칙을
@@ -188,6 +188,85 @@ printf '%s' "$marker_then_held_comments" > "$tmp/marker_then_held.json"
 
 run "(g) MERGEABLE·반송 마커 뒤 새 ⚠ 보류→held(needs-human, #218 attempt 2)" sweep_decide \
   MERGEABLE "$tmp/marker_then_held.json" "$marker_then_held_comments" "$now_epoch" "$head_at" held
+
+# ── #218 attempt 4 픽스처 — 새 종결 상태 `held` 의 **해제 경로** ─────────────
+# (h): 마감 검증 BLOCKER 의 5단계를 그대로 재현한다.
+#   ⑴ 반송 마커 ⑵ 워커 `⚠ 보류` → closeout 이 (g) 대로 `held` → `closeout-blocked` 로
+#   `needs-human`+`hold:policy` 부착 ⑶ **사람이 그 보류를 풀어 라벨을 뗀다**
+#   ⑷ 교체 워커가 `머지 판정: 🔄` 를 찍고 일을 재개한다 ⑸ **다음 closeout 틱** —
+#   `needs-human` 이 없으니 PR 이 다시 스윕 대상이 된다. 여기서 판정이 또 `held` 면
+#   `closeout-blocked` 가 **다시** 걸려 사람이 방금 푼 보류가 되살아나고, 단계 라벨이
+#   정리되면서 **살아있는 교체 워커가 끊긴다**(그리고 `✅` 에 도달해야만 풀리는데
+#   끊기니까 도달할 수 없다 — 매 틱 반복되는 영구 정체).
+#   그래서 ⑸ 의 옳은 조치는 **무접촉(active)** 이다 — 워커 레인이 소유한 상태다.
+human_released_then_resumed='[
+  {"body":"재검증 실패: #218 — codex BLOCKER (attempt 1)\n<!-- bodat:worker -->","createdAt":"2026-09-11T00:50:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 반송 게이트 갈래 확정 필요\n<!-- bodat:worker -->","createdAt":"2026-09-11T01:00:00Z"},
+  {"body":"머지 판정: 🔄 진행 중 — attempt 2, 사람 판단 반영해 재개\n<!-- bodat:worker -->","createdAt":"2026-09-11T01:30:00Z"}
+]'
+printf '%s' "$human_released_then_resumed" > "$tmp/human_released.json"
+
+run "(h) 사람이 held 를 풀고 교체 워커가 🔄 로 재개→무접촉(보류가 되살아나지 않는다)" sweep_decide \
+  MERGEABLE "$tmp/human_released.json" "$human_released_then_resumed" "$now_epoch" "$head_at" active
+
+# ── 뮤테이션 방증 3 — `$p_after` 를 후보에서 빼면 (h) 가 held 로 되살아난다 ──
+# bounce-state.sh 사본에서 해제 경로 후보 한 줄(MUT-P)만 지워 attempt 3 상태로 되돌리고,
+# 같은 ①-b 규칙(`sweep_decide`)을 그 사본으로 돌린다. 기대: (h) 만 `held` 로 뒤집히고
+# (g)·(f)·(e) 대조군은 그대로 — 이게 마감 검증 BLOCKER 의 실물 재현이다.
+mut3_sut="$tmp/mut3-bounce-state.sh"
+sed '/MUT-P: 해제 경로 후보(#218 attempt 4)/d' "$DIR/bounce-state.sh" > "$mut3_sut"
+if cmp -s "$DIR/bounce-state.sh" "$mut3_sut"; then
+  fail=$((fail + 1))
+  echo "  ✗ 뮤테이션 앵커(MUT-P) 를 못 찾았다 — 방증3 이 아무것도 안 바꾼다"
+else
+  pass=$((pass + 1))
+fi
+sweep_decide_attempt3() {
+  local mergeable="$1" bounce_file="$2" fc_json="$3" fc_now="$4" fc_head_at="$5"
+  local bstate rc=0
+  bstate=$(BOUNCE_COMMENTS_FILE="$bounce_file" bash "$mut3_sut" owner/repo 9 2>/dev/null) || rc=$?
+  if [ "$rc" = 0 ] && [ "$bstate" = "held" ]; then echo "held"; return; fi
+  if [ "$rc" != 0 ] || [ "$bstate" != "ok" ]; then echo "active"; return; fi
+  if [ "$mergeable" = "CONFLICTING" ]; then echo "adopt_conflict"; return; fi
+  FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
+    bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null
+}
+mut3_pass=0
+mut3_fail=0
+check_mutation3() {
+  local name="$1" mergeable="$2" bounce_file="$3" fc_json="$4" expect_old="$5"
+  local out
+  out=$(sweep_decide_attempt3 "$mergeable" "$bounce_file" "$fc_json" "$now_epoch" "$head_at")
+  if [ "$out" = "$expect_old" ]; then
+    mut3_pass=$((mut3_pass + 1))
+  else
+    mut3_fail=$((mut3_fail + 1))
+    echo "  ✗ 뮤테이션 대조3 $name — attempt-3 규칙 기대=$expect_old 실제=$out"
+  fi
+}
+check_mutation3 "(h)→attempt-3 규칙에서 사람이 푼 보류가 되살아난다(held)" \
+  MERGEABLE "$tmp/human_released.json" "$human_released_then_resumed" held
+# 대조군 — 후보를 하나 더한 것 말고는 attempt 3 과 다르지 않다.
+check_mutation3 "(g)→attempt-3 규칙에서도 무회귀(held)" \
+  MERGEABLE "$tmp/marker_then_held.json" "$marker_then_held_comments" held
+check_mutation3 "(f)→attempt-3 규칙에서도 무회귀(active)" \
+  MERGEABLE "$tmp/held_bounced.json" "$held_bounced_comments" active
+check_mutation3 "(e)→attempt-3 규칙에서도 무회귀(held)" \
+  MERGEABLE "$tmp/held_ok.json" "$held_ok_comments" held
+check_mutation3 "(a)→attempt-3 규칙에서도 무회귀(active)" \
+  MERGEABLE "$tmp/bounced.json" "$stale_reverify_comments" active
+check_mutation3 "(b)→attempt-3 규칙에서도 무회귀(stale_reverify)" \
+  MERGEABLE "$tmp/ok.json" "$no_bounce_comments" stale_reverify
+check_mutation3 "(d)→attempt-3 규칙에서도 무회귀(adopt_conflict)" \
+  CONFLICTING "$tmp/ok.json" "$no_bounce_comments" adopt_conflict
+
+if [ "$mut3_fail" = 0 ]; then
+  pass=$((pass + 1))
+  echo "  ✓ 뮤테이션 방증3: 해제 경로 후보를 빼면 (h) 가 실제로 held 로 되살아난다(mut3_pass=$mut3_pass)"
+else
+  fail=$((fail + 1))
+  echo "  ✗ 뮤테이션 방증3 실패 — 대조군이 어긋났다(mut3_pass=$mut3_pass mut3_fail=$mut3_fail)"
+fi
 
 # ── 뮤테이션 방증 — 게이트를 갈래 안으로 되돌리면 (a)·(c)·(f) 가 빨개진다 ──
 # `sweep_decide_pre218` (게이트가 CONFLICTING 갈래 안에만 있던 구형상)로 같은

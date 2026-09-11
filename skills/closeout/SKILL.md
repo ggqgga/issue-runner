@@ -133,9 +133,12 @@ head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify`
 
 **1) 반송 마커 게이트 먼저 — 갈래를 가르기 전에, CONFLICTING·MERGEABLE 공통**(#218):
 mergeable 값을 보기 **전에** `$SCRIPTS/bounce-state.sh <repo> <pr>` 를 한 번 돌려라.
-출력은 `ok`/`bounced`/`held` 세 값이다(#218 attempt 2 — `held` 신설).
+출력은 `ok`/`bounced`/`held` 세 값이다(#218 attempt 2 — `held` 신설). 판정 규칙은 한 줄이다:
+**최신 반송 마커 뒤에 오는 판정 코멘트(`머지 판정: ✅`/`⚠ 보류`/`🔄`) 중 가장 늦은 것이
+결과를 정한다** — ✅ 면 `ok`, ⚠ 면 `held`, `🔄` 면 `bounced`(교체 워커가 지금 일하는
+중이라는 가장 강한 증거라 워커 레인 소유다, #218 attempt 4).
 
-- `held` 면(최신 반송 마커보다 **뒤에** 새 `머지 판정: ⚠ 보류` 가 찍혔다) →
+- `held` 면(반송 마커 뒤 **마지막** 판정이 `머지 판정: ⚠ 보류` 다) →
   **needs-human** — 아래 2) 표의 `held` 행과 같은 조치: `$SCRIPTS/transition.sh
   closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`,
   closeout 무접촉. 여기서 멈춘다(mergeable 도 안 보고 `stale_reverify` 재디스패치로는
@@ -144,7 +147,8 @@ mergeable 값을 보기 **전에** `$SCRIPTS/bounce-state.sh <repo> <pr>` 를 �
 - `bounced` 이거나 **출력이 없으면(exit 1 — 판정 실패)** → `active` 취급 **무접촉**,
   여기서 멈춘다(mergeable 도 안 보고 2) finish-classify 도 안 부른다). 진행 중인
   반송 회차는 워커 레인 소유다(fail-closed — 반송되지 않았음을 *증명*했을 때만 연다,
-  #171 과 같은 방향).
+  #171 과 같은 방향). **사람이 `held` 를 풀어 라벨을 뗀 뒤 교체 워커가 `머지 판정: 🔄`
+  를 찍고 재개한 PR 도 여기로 온다** — 그게 `held` 의 해제 경로다(#218 attempt 4).
 - 출력이 정확히 `ok` 일 때만 → `gh pr view <pr> --repo <repo> --json mergeable` 로
   갈라라:
   - CONFLICTING 이면 → **입양(rebase 경로)**: ② Pick 후보로 넘기고 ③ 2단계에서
@@ -181,6 +185,21 @@ CONFLICTING·`stale_reverify`·`held` 세 갈래가 한 자리로 덮인다 — 
 `stale_reverify`·`stale_inline`·`done_verdict` 는 `bounced` 일 때 여전히 승격하지
 않는다 — ⓐ 는 위에서 이미 무회귀가 증명됐고, `bounced` 인 채로 그 값들을 승격하면
 #218 attempt 1 이 막았던 사고(반송된 코드를 완결로 오분류)가 되살아난다.
+
+**attempt 4 — `held` 의 해제 경로**(마감 검증 BLOCKER, PR #225): attempt 2·3 이 세운
+`held` 는 **진입만 있고 해제가 없었다.** 후보 집합이 ✅·⚠ 둘뿐이라 `머지 판정: 🔄` 가
+빠져 있었고, 그래서 ⑴ 반송 마커 ⑵ 워커 `⚠ 보류` → `held` → `needs-human`+`hold:policy`
+⑶ **사람이 그 보류를 풀어 라벨을 뗀다** ⑷ 교체 워커가 `🔄` 로 재개한다 ⑸ 다음 틱:
+`needs-human` 이 없으니 다시 스윕 대상인데 판정이 **여전히 `held`** → `closeout-blocked`
+가 다시 걸려 **사람이 방금 푼 보류가 되살아나고 살아있는 교체 워커가 끊긴다**(`✅` 에
+도달해야만 풀리는데 끊기니까 도달할 수 없다). 이 레포가 막아 온 "루프 대 사람
+싸움"(#151)이 방향만 바뀐 형태고, 이 게이트는 **매 틱** 도는 자리라 조용히 반복된다.
+해소는 규칙을 그대로 두고 후보 집합만 대칭으로 채우는 것 — `🔄` 를 넣되 결과값은 `ok`
+가 **아니라** `bounced`(`ok` 로 두면 attempt 1 이 막은 "CONFLICTING 갈래가 살아있는
+워커 PR 을 입양·rebase" 가 되돌아온다).
+
+**규율(이 자리에서 세 번 물린 것)**: 새 종결 상태를 만들 때는 진입 경로만 보지 말고
+**해제 경로까지 함께** 세워라. 진입만 보면 그 상태가 사람의 해제를 매 틱 되돌린다.
 
 CONFLICTING 갈래에 왜 원래 필요했나(#196 실측: bodat PR #5009 / 이슈 #4973): 반송된
 PR 은 `머지 판정: ✅` 가 없어 `closeout-eligible.sh` 목록에 애초에 안 뜨고,

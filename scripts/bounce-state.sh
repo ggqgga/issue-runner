@@ -3,17 +3,23 @@
 #
 # 질문 하나에만 답한다: **이 PR 은 지금 반송(bounce) 회차 안인가.**
 #
-#   stdout `ok`      exit 0  반송 마커가 없거나, 반송 마커 뒤에 온 종결 판정
-#                            (`머지 판정: ✅`/`⚠ 보류`) 중 **가장 늦은 것**이 ✅ 다
+#   판정 규칙 한 줄: **최신 반송 마커 뒤에 오는 판정 코멘트(`머지 판정: ✅`/`⚠ 보류`/
+#   `🔄`) 중 가장 늦은 것이 결과를 정한다.** 반송 마커가 없으면 `ok`, 반송 뒤 판정
+#   코멘트가 하나도 없으면 `bounced`.
+#
+#   stdout `ok`      exit 0  반송 마커가 없거나, 반송 마커 뒤 마지막 판정이 ✅ 다
 #                            → 마감 레인(closeout)이 만져도 된다
-#   stdout `bounced` exit 0  최신 반송 마커 뒤에 종결 판정(✅·⚠ 어느 쪽도)이 아직
-#                            없다 → **워커 레인 소유**. closeout 은 무접촉이어야 한다
-#   stdout `held`    exit 0  반송 마커 뒤에 온 종결 판정 중 **가장 늦은 것**이 ⚠ 다
+#   stdout `bounced` exit 0  최신 반송 마커 뒤에 판정 코멘트가 아직 없거나, 그중 마지막이
+#                            `🔄`(교체 워커가 일을 재개했다) 다 → **워커 레인 소유**.
+#                            closeout 은 무접촉이어야 한다
+#   stdout `held`    exit 0  반송 마커 뒤 마지막 판정이 ⚠ 다
 #                            (#218 attempt 2 — codex BLOCKER: 반송을 무조건 조기
 #                            종료하면 반송 뒤 워커가 명시적으로 올린 보류 신호가 묻힌다.
 #                            attempt 3 — codex BLOCKER: ✅ 의 *존재*만 보고 그 뒤에 더
 #                            늦은 ⚠ 을 못 봐 `반송 → ✅ → ⚠` 이 `ok` 로 샜다. 늦은 쪽이
-#                            이기도록 인덱스를 직접 비교해 고쳤다)
+#                            이기도록 인덱스를 직접 비교해 고쳤다.
+#                            attempt 4 — 마감 검증 BLOCKER: 후보 집합에 `🔄` 가 없어
+#                            `held` 가 **한 번 걸리면 안 풀렸다**. 아래 "해제 경로" 절)
 #                            → closeout 이 needs-human 으로 승격해야 한다(finish-classify
 #                            의 `held` 행과 같은 조치). `stale_reverify`/`stale_inline` 은
 #                            이 값으로 승격하지 않는다 — 살아있는 교체 워커와 충돌하는
@@ -161,6 +167,26 @@ fi
 # 단, `held` 은 `ok` 가 아니다 — 마감 레인이 `stale_reverify` 재디스패치로 새지
 # 않도록 호출자가 별도로 갈라야 한다(살아있는 교체 워커와 충돌하는 건 재디스패치
 # 쪽이지 needs-human 쪽이 아니다).
+#
+# ── 해제 경로(#218 attempt 4 — 마감 검증 BLOCKER) ──────────────────────
+# attempt 2·3 이 세운 `held` 는 **진입만 있고 해제가 없었다.** 후보 집합이 ✅·⚠ 둘뿐
+# 이라 `머지 판정: 🔄` 가 빠져 있었고, 그래서 이 순서가 오면 매 틱 되풀이됐다:
+#   ⑴ 반송 마커 ⑵ 워커 `⚠ 보류` → closeout 이 `held` → `needs-human`+`hold:policy`
+#   ⑶ **사람이 그 보류를 풀어 라벨을 뗀다** ⑷ 교체 워커가 `🔄` 를 찍고 재개한다
+#   ⑸ 다음 틱: `needs-human` 이 없으니 다시 스윕 대상인데 판정이 **여전히 `held`**
+#      → `closeout-blocked` 가 다시 걸려 **사람이 방금 푼 보류가 되살아나고 살아있는
+#      교체 워커가 끊긴다.** `✅` 에 도달해야만 풀리는데 끊기니까 도달할 수 없다.
+# 이 레포가 명시적으로 막아 온 "루프 대 사람 싸움"(#151)의 방향만 바뀐 형태고, 이
+# 게이트는 closeout 이 **매 틱** 실행하는 자리라 회귀가 조용히 반복된다.
+#
+# 그래서 규칙은 그대로 두고 **후보 집합만 대칭으로 채운다** — `🔄` 도 판정 코멘트이니
+# 같은 "가장 늦은 것이 이긴다" 에 참여시킨다. 결과값은 `ok` 가 **아니라** `bounced` 다:
+# `🔄` 는 "교체 워커가 지금 일하는 중" 이라는 가장 강한 증거이므로 워커 레인 소유다
+# (`ok` 로 두면 attempt 1 이 막은 "CONFLICTING 갈래가 살아있는 워커 PR 을 입양·rebase"
+# 가 그대로 되돌아온다). 새 술어를 만드는 게 아니라 후보가 하나 늘 뿐이다.
+#
+# 교훈(레포 공통): **새 종결 상태를 만들 때는 진입 경로만 보지 말고 해제 경로까지
+# 함께 세워라.** 진입만 보면 그 상태가 사람의 해제를 매 틱 되돌린다.
 state=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
   [.[].body] as $bodies
   | ([ $bodies | to_entries[]
@@ -175,16 +201,23 @@ state=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
   | ([ $bodies | to_entries[]
        | select(.value | startswith("머지 판정: ⚠") or startswith("Merge verdict: ⚠"))
        | .key ] | last) as $hi
-  # 반송 뒤(>bi)에 실제로 온 종결 판정만 후보로 삼는다 — bi 앞에 낡게 남은 ✅/⚠ 는
+  | ([ $bodies | to_entries[]
+       | select(.value | startswith("머지 판정: 🔄") or startswith("Merge verdict: 🔄"))
+       | .key ] | last) as $pi
+  # 반송 뒤(>bi)에 실제로 온 판정만 후보로 삼는다 — bi 앞에 낡게 남은 ✅/⚠/🔄 는
   # 무의미하므로 존재 여부가 아니라 "반송보다 늦었는가" 로 먼저 걸러낸다.
   | (if $vi != null and $vi > $bi then $vi else null end) as $v_after
   | (if $hi != null and $hi > $bi then $hi else null end) as $h_after
+  | (if $pi != null and $pi > $bi then $pi else null end) as $p_after
+  # 후보 중 인덱스가 가장 큰(=가장 늦은) 것이 이긴다. 후보가 없으면 bounced.
   | if   $bi == null then "ok"
-    elif $v_after != null and $h_after != null then
-      (if $h_after > $v_after then "held" else "ok" end)
-    elif $h_after != null then "held"
-    elif $v_after != null then "ok"
-    else "bounced" end' 2>/dev/null) || exit 1
+    else ([
+            {i:$p_after, s:"bounced"},   # MUT-P: 해제 경로 후보(#218 attempt 4)
+            {i:$v_after, s:"ok"},
+            {i:$h_after, s:"held"} ]
+          | map(select(.i != null)) | sort_by(.i) | last
+          | if . == null then "bounced" else .s end)
+    end' 2>/dev/null) || exit 1
 
 # jq 가 성공해도 형상이 어긋나면(빈 출력·예상 밖 값) 판정으로 인정하지 않는다.
 case "$state" in
