@@ -33,6 +33,12 @@
 # 여기선 증명 실패를 `active`(무접촉) 로 받는다. ✅ 갈래의 fail-closed 와 방향이 반대로
 # 보이지만 **같은 원리**다: 되돌릴 수 없는 쪽(머지·재디스패치)을 증명 없이 열지 않는다.
 #
+# 그 규율은 **판정 입력을 얻는 자리**에서 시작한다(#206 회차2). head 조회는 세 결말을
+# 갖는다 — `ok`(값을 얻음) · `unknown`(조회 실패) · `none`(조회는 됐는데 커밋 증거 없음).
+# 셋을 `head_sha=none` 하나에 실으면 하류가 실패를 부재로 읽어 살아 있는 워커를
+# 재디스패치한다. 그래서 조회의 **종료코드를 보존**해 `head_lookup` 플래그로 기억하고,
+# 진행 증거 헬퍼에도 같은 3값 어휘(`--commit-at unknown`)로 넘긴다.
+#
 # 판별 근거: 살아있는 워커는 `검증자 리뷰:` 코멘트 직후 수초 내 최종 판정을 찍는다.
 # 최신 검증자가 CLEAN 인데 STALE_FINISH_MIN 넘게 최종 판정이 없으면 워커 사망 확실.
 # 진행 중 fix 루프는 최신 검증자 코멘트가 recent 이거나 non-CLEAN 이라 자동 제외된다.
@@ -59,7 +65,10 @@
 #   FC_HEAD_SHA       head 커밋 SHA — pr-head-at.sh --with-sha 실조회 대체(#206 진행 증거 ②).
 #                      미지정이면 `none`(큐 증거 없음)으로 본다.
 #   FC_QUEUE_LOG      queue.log 경로 — progress-evidence.sh 의 PE_QUEUE_LOG 로 전달(픽스처용).
-#   FC_HEAD_AT        head 커밋 시각(ISO8601) — pr-head-at.sh 실조회 대체.
+#   FC_HEAD_AT        head 커밋 시각(ISO8601) — pr-head-at.sh 실조회 대체(주입 = `ok`).
+#                      주입 경로는 호출자가 값을 준 것이므로 `unknown`(조회 실패)이 아니다 —
+#                      조회 실패 축은 실호출 경로에서만 나고, 테스트도 **실호출 자리를
+#                      스텁으로 물려** 문다(주입만 무는 테스트는 그 자리의 회귀에 눈먼다).
 #                      빈 값/파싱 불가 = **못 얻음**. 🔄 계열 갈래(#110 스테일 클록)에선
 #                      종전대로 epoch 0 으로 degrade 하지만, `✅` 갈래(#171 머지 게이트)
 #                      에선 증명 실패이므로 done_verdict 를 내지 않고 active 다.
@@ -114,6 +123,15 @@ else
 fi
 [ -n "$failing" ] || failing=0
 
+# head_lookup — **조회의 결말을 담는 별도 플래그**(#206 회차2). 값 셋:
+#   ok       조회(또는 주입)에 성공 — head_at·head_sha 가 그 PR 의 값이다
+#   unknown  조회 **실패** — 값이 있는지조차 모른다(pr-head-at.sh 비0 종료 등)
+#   none     조회는 됐는데 커밋 증거가 없음 — 아래 has_progress 의 정규화가 만든다
+# 회차1 은 이 셋을 `head_sha=none` 이라는 **공유 센티널 하나**에 실었다. 그러면 하류가
+# 실패를 부재로 읽어 살아 있는 워커를 재디스패치한다(PR#168 교훈: 탈출 사유를 별도
+# 플래그로 기억하고 하류가 그걸 읽게 하라 · PR#139: 빈 결과와 실패를 구분하라).
+# `timebox-check.sh` 가 같은 자리에서 이미 이 형상이다(`branch_lookup_failed` → unknown).
+head_lookup=ok
 if [ -n "${FC_HEAD_AT+x}" ]; then
   head_at="$FC_HEAD_AT"
   head_sha="${FC_HEAD_SHA:-none}"
@@ -127,13 +145,23 @@ else
   # `--with-sha` 로 **한 번의 조회에서** 시각과 SHA 를 함께 받는다(#206) — SHA 는 진행 증거
   # ②(그 SHA 의 CI 티켓이 큐에 살아 있는가)에 쓴다. 따로 한 번 더 물으면 pr-head-at.sh 가
   # 없애려던 "head 를 묻는 두 자리" 가 되살아난다.
-  head_raw=$("$SCRIPT_DIR/pr-head-at.sh" --with-sha "$repo" "$pr" 2>/dev/null) || head_raw=''
-  if [ -n "$head_raw" ]; then
+  #
+  # **종료코드를 버리지 않는다**(#206 회차2, 회차1 BLOCKER). `|| head_raw=''` 로 rc 를
+  # 삼키면 일시적 gh 실패가 "이 PR 엔 커밋이 없다"로 둔갑하고, 아래 진행 증거 게이트가
+  # 그 결론으로 **살아 있는 워커의 반송 회차를 재디스패치**한다. pr-head-at.sh 는 단계마다
+  # 종료코드를 검사해 하나라도 못 얻으면 exit 1 로 알리도록 이미 설계돼 있다 — 그 신호를
+  # 여기서 흘리면 그 설계가 무의미해진다.
+  head_rc=0
+  head_raw=$("$SCRIPT_DIR/pr-head-at.sh" --with-sha "$repo" "$pr" 2>/dev/null) || head_rc=$?
+  if [ "$head_rc" != 0 ]; then
+    head_lookup=unknown; head_sha=unknown; head_at=''
+  elif [ -n "$head_raw" ]; then
     head_sha="${head_raw%% *}"
     head_at="${head_raw##* }"
   else
-    head_sha=none
-    head_at=''
+    # exit 0 인데 빈 출력 = 헬퍼 계약 위반(열린 PR 에는 반드시 head 커밋이 있다).
+    # "커밋이 없다" 로 읽을 수 없으므로 조회 실패와 같게 받는다.
+    head_lookup=unknown; head_sha=unknown; head_at=''
   fi
 fi
 
@@ -262,10 +290,19 @@ has_progress() {
   # 판정 술어는 그대로 헬퍼 한 자리이고, 여기서 하는 것은 그 입력 계약으로의 정규화다.
   # (빈 문자열을 그냥 넘기지 않는 이유: 헬퍼는 빈 값을 `none` 으로 접지 않고 판정 실패로
   #  본다 — 호출자가 "증거 없음" 을 뜻했는지 "못 얻었다" 를 뜻했는지 헬퍼는 모르기 때문.)
-  local commit_arg=none
-  [ -n "$head_epoch" ] && commit_arg="$head_at"
+  #
+  # **조회 실패는 그 셋 중 어느 것도 아니다**(#206 회차2). 헬퍼의 입력 어휘 3값
+  # (`<값>`/`none`/`unknown`)에서 `unknown` 으로 넘겨, 판정 불가가 하류까지 그대로
+  # 전달되게 한다 — 여기서 `none` 으로 접으면 조회 실패가 "커밋 증거 없음" 이 되어
+  # 살아 있는 워커의 반송 회차가 재디스패치된다(회차1 BLOCKER).
+  local commit_arg=none sha_arg="${head_sha:-none}"
+  if [ "$head_lookup" = unknown ]; then
+    commit_arg=unknown; sha_arg=unknown
+  elif [ -n "$head_epoch" ]; then
+    commit_arg="$head_at"
+  fi
   out=$("$SCRIPT_DIR/progress-evidence.sh" --now "$now" \
-    --commit-at "$commit_arg" --head-sha "${head_sha:-none}" 2>/dev/null) || rc=$?
+    --commit-at "$commit_arg" --head-sha "$sha_arg" 2>/dev/null) || rc=$?
   case "${out%% *}" in
     progress) return 0 ;;
     none)     [ "$rc" = 0 ] && return 1; return 0 ;;

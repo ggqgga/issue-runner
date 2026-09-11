@@ -297,14 +297,19 @@ got=$(PATH="$stub:$PATH" STUB_CAPTURE="$capture" STUB_HEAD_AT="2026-07-05T11:20:
 if [ "$got" = stale_reverify ]; then pass=$((pass + 1)); else
   fail=$((fail + 1)); echo "  ✗ 실수집경로·커밋스테일→stale_reverify — 기대=stale_reverify 실제=$got"
 fi
-# (d) gh 가 빈 값을 주는 경우(권한·네트워크 실패 등) → 기존 판정으로 degrade, 크래시 없음.
+# (d) gh 가 실패하는 경우(권한·네트워크 등) → **판정 불가 = active**(무접촉), 크래시 없음.
+#     #206 회차2 에서 계약이 바뀐 자리다. 옛 단언은 "기존 판정으로 degrade(stale_reverify)"
+#     였다 — 즉 조회 실패 한 번이 "커밋 증거 없음" 으로 둔갑해 재디스패치까지 갔다. 되돌릴
+#     수 없는 쪽(재디스패치·머지)은 증명 없이 열지 않는다는 이 파일의 규율(#171 ✅ 갈래와
+#     같은 방향)로 통일한다. 회수는 조회가 성공하는 다음 틱에 그대로 일어난다 — (c) 가
+#     그것을 문다(같은 실 경로·조회 성공·커밋 스테일 → stale_reverify).
 : > "$capture"
 got=$(PATH="$stub:$PATH" STUB_CAPTURE="$capture" STUB_HEAD_AT="" \
   FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
   FC_COMMENTS_JSON='[{"body":"머지 판정: 🔄 진행 중","createdAt":"2026-07-05T11:00:00Z"}]' \
   "$SUT" owner/repo 1 2>/dev/null)
-if [ "$got" = stale_reverify ]; then pass=$((pass + 1)); else
-  fail=$((fail + 1)); echo "  ✗ 실수집경로·gh빈값→기존판정 — 기대=stale_reverify 실제=$got"
+if [ "$got" = active ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ 실수집경로·gh조회실패→active(판정불가) — 기대=active 실제=$got"
 fi
 rm -rf "$stub"
 
@@ -668,6 +673,32 @@ run_fc() {
     "$SUT" owner/repo 1 2>/dev/null
 }
 
+# map_1b <branch: bounced|plain> <finish-classify 출력> → ①-b 조치
+# SKILL ①-b 산문의 **분기표 한 자리**. route_1b(주입 입력)와 아래 스텁 경로(실호출 자리)
+# 가 같은 표를 쓴다 — 두 벌로 적으면 한쪽만 고쳐질 때 격자가 산문과 조용히 갈린다.
+map_1b() {
+  case "$1" in
+    bounced)
+      # `bounced` 갈래는 **재디스패치만** 연다. 입양(머지)은 어느 출력에서도 열지 않는다 —
+      # 반송된 PR 에 남은 `검증자 리뷰: CLEAN` 은 반송 *이전* 회차의 것일 수 있다(#196).
+      # `stale_inline` 도 여기선 입양이 아니라 재디스패치다: 교체 워커가 커밋만 하고 ✅
+      # 직전에 죽은 형상이라(이 이슈가 없애려는 바로 그 좌초), 무접촉으로 두면 같은 정체가
+      # 옆 칸에 그대로 남는다(회차1 검증자 WARN).
+      case "$2" in
+        stale_reverify|stale_inline) printf 'redispatch\n' ;;
+        *)                           printf 'untouched\n' ;;
+      esac ;;
+    *)
+      case "$2" in
+        done_verdict)   printf 'eligible_path\n' ;;
+        stale_inline)   printf 'adopt_merge\n' ;;
+        stale_reverify) printf 'redispatch\n' ;;
+        held)           printf 'needs_human\n' ;;
+        *)              printf 'untouched\n' ;;
+      esac ;;
+  esac
+}
+
 # route_1b <mergeable> <comments-file> <head_at> <head_sha> <queue.log> <labels(csv)> [STALE_FINISH_MIN]
 route_1b() {
   local mergeable="$1" cfile="$2" head_at="$3" head_sha="$4" qlog="$5" labels="$6"
@@ -689,21 +720,12 @@ route_1b() {
     # 반송 회차의 CLEAN 검증자 코멘트는 반송 *이전* 것일 수 있어 `stale_inline` 입양은
     # 반송된 코드를 머지하는 길이 된다(#196 이 막은 방향).
     fc=$(run_fc "$cfile" "$head_at" "$head_sha" "$qlog" "$sfm")
-    case "$fc" in
-      stale_reverify) printf 'redispatch\n' ;;
-      *)              printf 'untouched\n' ;;
-    esac
+    map_1b bounced "$fc"
     return 0
   fi
 
   fc=$(run_fc "$cfile" "$head_at" "$head_sha" "$qlog" "$sfm")
-  case "$fc" in
-    done_verdict)   printf 'eligible_path\n' ;;
-    stale_inline)   printf 'adopt_merge\n' ;;
-    stale_reverify) printf 'redispatch\n' ;;
-    held)           printf 'needs_human\n' ;;
-    *)              printf 'untouched\n' ;;
-  esac
+  map_1b plain "$fc"
 }
 
 # row <이름> <want> <mergeable> <comments-file> <head_at> <head_sha> <queue.log> <labels>
@@ -769,10 +791,20 @@ row "C1 CONFLICTING·✅최신·커밋오래됨" adopt_rebase \
 row "C2 CONFLICTING·✅최신·커밋신선" adopt_rebase \
   CONFLICTING "$GT/verdict_ok.json" "$G_FRESH" "$G_SHA" "$GT/empty.log" ""
 
-# ── D. 반송 뒤 CLEAN 검증자 코멘트가 남아 있어도 입양하지 않는다 ───────────────
+# ── D. 반송 뒤 CLEAN 검증자 코멘트가 남아 있어도 **입양하지 않는다** ──────────
 # (그 CLEAN 은 반송 *이전* 회차의 것이다 — 입양하면 반송된 코드를 머지한다.)
-row "D1 CONFLICTING·반송마커+검증자CLEAN·커밋오래됨" untouched \
+# 대신 재디스패치로 보낸다(회차1 검증자 WARN): 교체 워커가 고쳐 커밋까지 하고 ✅ 직전에
+# 죽은 형상이 `stale_inline` 로도 나오는데, 이걸 무접촉으로 두면 이 이슈가 없애려는
+# 영구 정체가 옆 칸에 그대로 남는다. want=redispatch 는 "머지 안 한다"(adopt_merge 가
+# 아니다)와 "정체시키지 않는다"를 **동시에** 문다.
+row "D1 CONFLICTING·반송마커+검증자CLEAN·커밋오래됨" redispatch \
   CONFLICTING "$GT/bounced_verifier_clean.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+# 같은 칸에서 커밋이 신선하면 워커는 살아 있다 — 재디스패치 갈래도 진행 증거 게이트를
+# 그대로 통과해야 한다(D1 이 "항상 redispatch" 가 아님을 고정).
+row "D2 CONFLICTING·반송마커+검증자CLEAN·커밋신선" untouched \
+  CONFLICTING "$GT/bounced_verifier_clean.json" "$G_FRESH" "$G_SHA" "$GT/empty.log" ""
+row "D3 CONFLICTING·반송마커+검증자CLEAN·CI큐티켓살아있음" untouched \
+  CONFLICTING "$GT/bounced_verifier_clean.json" "$G_OLD" "$G_SHA" "$GT/queued.log" ""
 
 # ── E. 반송 판정 실패는 통과가 아니다(fail-closed) ─────────────────────────────
 row "E1 CONFLICTING·반송판정실패(코멘트입력부재)" untouched \
@@ -803,6 +835,119 @@ row "G6 MERGEABLE·검증자CLEAN+🔄·CI큐티켓살아있음" untouched \
   MERGEABLE "$GT/verifier_clean.json" "$G_OLD" "$G_SHA" "$GT/queued.log" ""
 row "G7 MERGEABLE·⚠ 최신"                       needs_human \
   MERGEABLE "$GT/held.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+
+# ══════════════════════════════════════════════════════════════════════════════
+# #206 회차2 — head **조회 실패**(unknown) ≠ 커밋 증거 **부재**(none)
+#
+# 회차1 반송 사유(검증자 [P1]): `pr-head-at.sh` 가 일시적으로 실패하면 finish-classify 가
+# **종료코드를 버리고** `head_sha=none`·`head_at=''` 로 정규화해, 하류(progress-evidence)
+# 에 "커밋 증거가 없다"고 말했다. 반송된 CONFLICTING PR 에 오래된 코멘트만 있으면 그
+# 결론으로 **살아 있는 워커가 재디스패치**된다 — `progress-evidence.sh:35` 이 못박은
+# `unknown ≠ none` 계약 위반이다(PR#139: 빈 결과와 실패를 구분하라 · PR#168: 탈출 사유를
+# 공유 센티널 하나에 싣지 말고 별도 플래그로 하류가 읽게 하라).
+#
+# 위 격자는 전부 `FC_HEAD_AT` **주입** 경로를 쓴다 — 그 경로만 무는 테스트는 실호출
+# 자리(:130 부근)가 회귀해도 초록이다. 그래서 여기서는 주입을 쓰지 않고 **실제 호출
+# 자리**를 스텁으로 물린다: `SCRIPT_DIR` 은 `dirname $0` 이므로 임시 디렉터리에
+# finish-classify.sh·progress-evidence.sh 를 심링크하고 그 옆에 스텁 `pr-head-at.sh` 를
+# 두면 head 조회만 갈아끼울 수 있다(네트워크 무접속은 그대로 — 코멘트는
+# `FC_COMMENTS_FILE`, CI 는 `FC_FAILING` 으로 주입).
+# ══════════════════════════════════════════════════════════════════════════════
+
+ST=$(mktemp -d)
+ln -s "$DIR/finish-classify.sh"   "$ST/finish-classify.sh"
+ln -s "$DIR/progress-evidence.sh" "$ST/progress-evidence.sh"
+ln -s "$DIR/pr-comments.sh"       "$ST/pr-comments.sh"
+
+# write_head_stub <exit코드> <stdout 한 줄(빈 문자열이면 무출력)>
+write_head_stub() {
+  cat > "$ST/pr-head-at.sh" <<EOF
+#!/usr/bin/env bash
+[ -n '$2' ] && printf '%s\n' '$2'
+exit $1
+EOF
+  chmod +x "$ST/pr-head-at.sh"
+}
+
+# run_stub <comments-file> <queue.log> — **FC_HEAD_AT 를 주지 않는다**(실호출 경로).
+run_stub() {
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 STALL_MIN=25 \
+    FC_COMMENTS_FILE="$1" FC_QUEUE_LOG="$2" \
+    "$ST/finish-classify.sh" owner/repo 1 2>/dev/null
+}
+
+# route_stub <mergeable> <comments-file> <stub-rc> <stub-stdout> <queue.log>
+route_stub() {
+  local mergeable="$1" cfile="$2" srepo_rc="$3" sout="$4" qlog="$5"
+  local bs brc=0
+  write_head_stub "$srepo_rc" "$sout"
+  if [ "$mergeable" = CONFLICTING ]; then
+    bs=$(BOUNCE_COMMENTS_FILE="$cfile" "$DIR/bounce-state.sh" owner/repo 1 2>/dev/null) || brc=$?
+    if [ "$brc" != 0 ] || [ -z "$bs" ]; then printf 'untouched\n'; return 0; fi
+    if [ "$bs" = ok ]; then printf 'adopt_rebase\n'; return 0; fi
+    map_1b bounced "$(run_stub "$cfile" "$qlog")"
+    return 0
+  fi
+  map_1b plain "$(run_stub "$cfile" "$qlog")"
+}
+
+# row_stub <이름> <want> <mergeable> <comments-file> <stub-rc> <stub-stdout> <queue.log>
+row_stub() {
+  local name="$1" want="$2" got
+  shift 2
+  got=$(route_stub "$@")
+  if [ "$got" = "$want" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "  ✗ [조회실패] $name — want=$want got=$got"
+  fi
+}
+
+echo "  [#206 회차2] pr-head-at.sh 종료코드 — unknown(조회 실패) vs none(부재)"
+
+# H1 ⑴ 조회 **실패**(비0 종료) → 판정 불가 → 재디스패치 라우트로 가지 않는다(fail-closed).
+#     이 행이 회차1 코드에서 빨갛다: 종료코드를 버리면 head_sha=none 이 되어 증거 없음이
+#     되고, 오래된 반송 코멘트뿐인 이 형상은 곧바로 redispatch 로 떨어진다.
+row_stub "H1 CONFLICTING·반송마커·head조회실패(exit 1)" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" 1 "" "$GT/empty.log"
+
+# H2 ⑵ 조회는 **성공**했고 커밋이 오래됨 → 진짜 증거 부재 → 종전대로 재디스패치.
+row_stub "H2 CONFLICTING·반송마커·head조회성공·커밋오래됨" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" 0 "$G_SHA $G_OLD" "$GT/empty.log"
+
+# H3 ⑶ 조회 성공 + 커밋 신선 → 종전대로 무접촉.
+row_stub "H3 CONFLICTING·반송마커·head조회성공·커밋신선" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" 0 "$G_SHA $G_FRESH" "$GT/empty.log"
+
+# H3b 조회 성공 + 커밋 오래됨인데 그 SHA 의 CI 티켓이 큐에 살아 있음 → 무접촉.
+#     (스텁이 낸 SHA 가 실제로 큐 판정에 쓰이는지 — SHA 축이 전달되는지 — 를 문다.)
+row_stub "H3b CONFLICTING·반송마커·head조회성공·CI큐티켓살아있음" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" 0 "$G_SHA $G_OLD" "$GT/queued.log"
+
+# H4 종료코드 0 인데 **출력이 빔** = 헬퍼 계약 위반(PR 에는 반드시 head 커밋이 있다).
+#    "커밋이 없다" 로 읽을 수 없으므로 조회 실패와 같게 받는다.
+row_stub "H4 CONFLICTING·반송마커·head조회 exit0 무출력" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" 0 "" "$GT/empty.log"
+
+# H5 같은 조회 실패를 **머지 방향**에서도 문다 — 검증자 CLEAN + 🔄 형상에서 조회가 실패하면
+#    회차1 코드는 `stale_inline`(=입양/머지)을 냈다. 되돌릴 수 없는 쪽은 증명 없이 안 연다.
+row_stub "H5 MERGEABLE·검증자CLEAN+🔄·head조회실패(exit 1)" untouched \
+  MERGEABLE "$GT/verifier_clean.json" 1 "" "$GT/empty.log"
+
+# H6 ⑷ 과잉 보수 반증 — 조회가 성공한 같은 형상은 여전히 입양으로 간다(전부 unknown 으로
+#    접지 않는다). H5 와 H6 의 차이는 오직 스텁의 종료코드다.
+row_stub "H6 MERGEABLE·검증자CLEAN+🔄·head조회성공·커밋오래됨" adopt_merge \
+  MERGEABLE "$GT/verifier_clean.json" 0 "$G_SHA $G_OLD" "$GT/empty.log"
+
+# H7 ✅ 갈래 무회귀(#171) — 조회 실패면 "판정이 head 이후"를 증명 못 하므로 done_verdict 를
+#    내지 않고(=eligible_path 아님) 무접촉이다. 같은 형상에서 조회가 성공하면 종전대로 통과.
+row_stub "H7 MERGEABLE·✅최신·head조회실패(exit 1)" untouched \
+  MERGEABLE "$GT/verdict_ok.json" 1 "" "$GT/empty.log"
+row_stub "H7b MERGEABLE·✅최신·head조회성공(✅보다 이른 커밋)" eligible_path \
+  MERGEABLE "$GT/verdict_ok.json" 0 "$G_SHA 2026-07-05T10:31:30Z" "$GT/empty.log"
+
+rm -rf "$ST"
 
 chmod 644 "$GT/unreadable.log" 2>/dev/null || true
 rm -rf "$GT"
