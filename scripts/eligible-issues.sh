@@ -151,10 +151,14 @@ TAB=$(printf '\t')
 BLOCKER_Q='.state + "\t" + ([.labels[].name] | join(","))'
 
 # 블로커의 라벨 → 사람이 읽는 한 낱말. 사다리 뒤 단계가 이긴다(needs-human 이 최우선 —
-# 사람이 답해야 풀리는 게이트라 하위가 영원히 대기한다).
+# 사람이 답해야 풀리는 게이트라 하위가 영원히 대기한다). 그다음이 기계 정지(`hold:*`)인
+# `보류` (#244) — 기계 정지가 `needs-human` 을 떼고 사유 라벨만 남기게 된 뒤로, 이 줄이
+# 없으면 홀드된 블로커가 `대기`(= 곧 집힐 것)로 읽혀 하위가 왜 안 풀리는지 안 보인다.
+# 순서는 loop-status 의 버킷 우선순위와 같다: 사람대기 > 보류 > 단계 라벨 > 대기.
 blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
   case ",$1," in
     *",needs-human,"*)   printf '사람대기' ;;
+    *",hold:"*)          printf '보류' ;;
     *",agent:claimed,"*) printf '구현중' ;;
     *",flow:verify,"*)   printf '검증대기' ;;
     *",flow:ready,"*)    printf '마감대기' ;;
@@ -193,7 +197,8 @@ while [ "$i" -lt "$count" ]; do
   printf '%s' "$row" | jq -e '[.labels[].name]|index("needs-human")' >/dev/null && continue
 
   # 기계 정지(hold:*) 제외 (#242) — verify-held·closeout-blocked·runner-held 가 붙이는
-  # 정지 사유. 지금은 `needs-human` 과 항상 쌍이라 **동작이 바뀌지 않지만**, held 이슈는
+  # 정지 사유. #244 로 기계 정지는 이 라벨 **하나만** 달고 오므로 이 필터가 곧 정지의
+  # 유일한 방어선이다(1단계 #242 에 적힌 "지금은 쌍이라 무동작" 전제는 이제 깨졌다). held 이슈는
   # `agent-ready` 를 사다리 내내 달고 있어서 `needs-human` 부착이 사유별로 걷히는 순간
   # 이 필터가 없으면 정지된 이슈가 곧바로 재디스패치된다(플랜 Plans/label-taxonomy-cleanup.md 1단계).
   #
@@ -209,7 +214,7 @@ while [ "$i" -lt "$count" ]; do
   # 오파싱하고(#21) `-label:hold:policy` 는 콜론이 둘이라 더 위험하다 — 필터는
   # 클라이언트 쪽에만 둔다(needs-human 의 서버측 제외는 기존 그대로 유지).
   #
-  # 해제는 **두 라벨 다** 떼는 것이다 — `needs-human` 만 떼면 `hold:*` 가 남아 후보로
+  # 해제는 **붙어 있는 정지 라벨을 다** 떼는 것이다 — `hold:*` 만 남아도 후보로
   # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
   printf '%s' "$row" | jq -e '[.labels[].name]|any(startswith("hold:"))' >/dev/null && continue
 
