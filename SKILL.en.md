@@ -26,8 +26,25 @@ maintenance must come before new work).
   conflicts from multiplying across PRs while human merges lag
 - `MAX_REPAIRS_PER_PR = 3` — cap on maintenance dispatches per PR
   (② Maintain circuit breaker)
-- `ISSUE_TIMEBOX_HOURS = 1` — allowed claim age for a `working` issue with no PR
-  (① Reconcile timebox)
+- `ISSUE_TIMEBOX_HOURS = 1` — the claim age at which a `working` issue with no PR
+  **starts being asked for progress evidence** (① Reconcile timebox). Exceeding it is
+  **not by itself a reason to stop** — past this age the issue is still reprieved as
+  long as there is progress evidence (#200).
+- `STALL_MIN = 25` — the "no progress" threshold (minutes). Only when the latest commit
+  on the remote branch `agent/issue-<num>` is older than this does the commit-side
+  evidence die. Rationale: bodat's measured `bin/ci` upper bound of ~570s (9.5 min) for a
+  single run plus slack for the box-wide serial CI queue (#127) — while a worker waits
+  out one CI run it is normal for no new commit to appear, so that window must not be
+  counted as stalling.
+- `MAX_TIMEBOX_GRACE = 3` — cap on **cumulative reprieves** within the same claim (an
+  `unknown` tick in between does not reset it — the counting window is everything after
+  the claim timestamp). Past
+  it the worker is stopped by the rule even with progress evidence — an unbounded
+  reprieve would never catch a real zombie, making the relaxation itself a new hole. At a
+  15-minute tick that is at most ~45 extra minutes, which covers the measured shapes
+  (72 min · 64 min) while still leaving a ceiling. The count is not a state file: it is
+  re-derived by counting issue comment markers (`<!-- timebox-grace: N -->`) created
+  **after the current claim timestamp only**.
 - `RESUME_AFTER_MIN = 120` — how long (minutes) the resume sweep waits before letting a
   stalled issue flow again. Once a `needs-human` + `hold:ladder` issue has gone this long
   without an update, ①'s resume sweep picks it up (passed to `resume-sweep.sh` as the
@@ -116,7 +133,10 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   background agent is actually alive. If it is dead and there are pushed commits,
   treat it as a maintenance target for ②. If there are no commits at all, check
   the issue's latest comment **before** releasing the claim —
-  `gh issue view <num> --repo <repo> --json comments --jq '.comments | last.body'`.
+  `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body | test("<!--\\s*timebox-grace:")) | not)] | last.body'`
+  (timebox reprieve markers are skipped — if a marker takes the latest-comment slot it
+  hides the worker's `BLOCKED:` and the issue silently loses its claim instead of being
+  escalated to a human, #200).
   If it starts with `BLOCKED:`, the worker stopped because human intervention is
   needed (ambiguous spec / plan-reality mismatch / same failure repeating):
   instead of returning the issue to a re-dispatchable state, attach the
@@ -128,17 +148,36 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   flows again — the README 'guardrails' convention). If the latest comment is not
   a BLOCKED comment, remove the worktree and release the claim (returning the
   issue to a re-dispatchable state).
-  **Timebox (no-progress detection)**: even if it is alive, check the claim age —
-  get the claim timestamp with
+  **Timebox (no-progress detection)**: even if it is alive, check whether it is **making
+  progress** — the decision input is progress evidence, not elapsed time (#200: the
+  elapsed time swallows the box-wide serial CI queue wait, which the worker does not
+  control; in two measured cases that nearly killed workers that were still working).
+  Get the claim timestamp with
   `gh api repos/<repo>/issues/<num>/timeline --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed")] | last.created_at'`
-  (if the response is empty, fall back to the worktree directory's creation time).
-  If the difference from the current time exceeds `ISSUE_TIMEBOX_HOURS`
-  (`working` by definition means there is no PR):
+  (if the response is empty, fall back to the worktree directory's creation time) and
+  hand it to `$SCRIPTS/timebox-check.sh <repo> <num> --claim-at <ISO8601>` (`working` by
+  definition means there is no PR). The verdict is one line —
+  `<verdict> <reason> elapsed=..m commit=..m queue=.. grace=n/max`:
+  - `ok` (exit 0) — the claim age is still within `ISSUE_TIMEBOX_HOURS`. Leave it alone.
+  - `grace` (exit 0) — past the age but there is progress evidence: the latest commit is
+    within `STALL_MIN` (`recent_commit`), or that head SHA's CI ticket is still alive in
+    the box-wide queue (`ci_queued`). **Do not stop it this tick.** The helper appends a
+    reprieve marker to the issue, so the next tick counts those markers against
+    `MAX_TIMEBOX_GRACE`. Put the verdict line as-is (elapsed · last commit · queue state ·
+    reprieve n/max) into ④ Report as an **info line, not a warn**, so an endless reprieve
+    is visible.
+  - `stop` (exit 1) — no progress (`no_progress`) or the reprieve cap is spent
+    (`grace_exhausted`). Do ⓐ–ⓓ below as written.
+  - `unknown` (exit 2) — a decision input could not be obtained (claim timestamp, branch
+    lookup, comment lookup, or the reprieve-marker append failed). **Do not stop it** —
+    surface it as a warn in ④ Report. Killing a live worker on a lookup failure discards
+    unpushed leftovers irreversibly, whereas a reprieve can be reversed next tick.
+  Only when the verdict is `stop`:
   ⓐ stop the worker with TaskStop (pushed commits are preserved on the remote
   branch),
   ⓑ remove the worktree — `git -C <repo-dir> worktree remove --force <wt>` then
   `git -C <repo-dir> branch -D agent/issue-<num>`. Unpushed leftovers are
-  **deliberately discarded** as the price of exceeding the timebox — if left in
+  **deliberately discarded** as the price of the `stop` verdict — if left in
   place, the next dispatch's make-worktree would hand the stopped worker's
   intermediate state to a fresh worker, breaking worktree isolation (the
   dirty-warn hold rule is for leftovers of unknown origin, so it does not apply
@@ -165,7 +204,9 @@ closeout-pick) never remove it. Per event:
 - `resumed` — `needs-human` and `hold:ladder` are off and `agent-ready` is untouched (the
   eligibility label is never touched). **Nothing for the dispatcher to do** — the issue
   reappears naturally as an `eligible-issues.sh` candidate in ③ this tick. Record the
-  number and `attempt` under `resumed` in ④ Report.
+  number and `attempt` under `resumed` in ④ Report. An issue carrying the deploy-wait
+  label (`deploy-wait`) never emits this event even once the window passes (#217) — it
+  goes to `note` below instead.
 - `escalated` — the resume cap (`LADDER_RESUME_LIMIT`) was exceeded, so the issue was
   escalated to `hold:policy` (`attempt`/`limit` are the resumes the marker comments actually
   recorded vs. the cap — read as `2/2`). The script already applied the label, so with
@@ -178,8 +219,9 @@ closeout-pick) never remove it. Per event:
   a `repo` of `*` means the account-wide search). The script did **not** touch it —
   **do not touch it either**; copy it verbatim into ④ Report's warns.
 - `note` — an informational line the script did **not** touch (a `needs-human` with no reason
-  label on a deploy-wait issue, for example — a **normal state** with nothing to act on). It
-  is not a warn, so it does not go into ④ Report's warns — if it is worth reporting at all,
+  label on a deploy-wait issue, or a deploy-wait issue's `hold:ladder` (#217, not a resume/
+  escalation target even once the window passes) — a **normal state** with nothing to act
+  on). It is not a warn, so it does not go into ④ Report's warns — if it is worth reporting at all,
   carry it as an info line only. Narrowing `warn` to "an invariant violation the loop can
   correct" and demoting everything else to `note` is the contract #188/#190 set.
 - `warn_after_edit` — a side failure **after** a write was already applied (label-release
@@ -316,7 +358,16 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       carries the marker `<!-- ladder-resume: N -->`, the issue was revived by ①'s resume
       sweep, and the number of such comments is which resume this is (the body has no marker —
       the sweep never touches it):
-      `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select(.body|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'` After the filled template, append ⓐ the ladder document's path
+      (quoted markers do not count — a marker inside inline backticks or a code fence is not
+      the signal but prose *about* the signal, so it is stripped first, with the **same
+      definition** as `JQ_UNQUOTE` in `resume-sweep.sh`. If the two drift apart, a second
+      invisible counter counts a different number — #197)
+
+      ````sh
+      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+      ````
+
+      After the filled template, append ⓐ the ladder document's path
       `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (where the
       worker reads which rung is climbed with which command) and ⓑ **the previous attempt's
       failure output** — the body of the issue's last ladder-related comment:

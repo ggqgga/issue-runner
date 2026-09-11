@@ -24,10 +24,16 @@ trap 'rm -rf "$tmp"' EXIT
 
 pass=0
 fail=0
+skip=0
 check() {
   local name="$1" cond="$2"
   if [ "$cond" = "ok" ]; then
     pass=$((pass + 1))
+  elif [ "$cond" = "skip" ]; then
+    # 부재를 실패로 접지 않는다(#193 closeout 재재심 BLOCKER) — 조용한 no 대신 눈에 보이는
+    # skip 줄을 남긴다. pass/fail 어느 쪽에도 안 셈해 "빠졌다"는 사실이 합계에서 안 숨는다.
+    skip=$((skip + 1))
+    echo "  ⇢ skip: $name"
   else
     fail=$((fail + 1))
     echo "  ✗ $name"
@@ -206,7 +212,10 @@ out=""
 ev()      { printf '%s' "$out" | jq -r 'select(.event=="'"$1"'")' 2>/dev/null; }
 has_ev()  { if [ -n "$(ev "$1")" ]; then echo ok; else echo no; fi; }
 no_ev()   { if [ -z "$(ev "$1")" ]; then echo ok; else echo no; fi; }
-counts()  { grep -c "$1" "$tmp/gh.log" 2>/dev/null || true; }
+# 패턴은 반드시 `-e` 로 넘기고 파일은 `--` 뒤에 둔다 — `-` 로 시작하는 패턴(`--body-file`)을
+# 맨몸으로 주면 grep 이 그것을 옵션으로 먹고 **파일 인자를 패턴으로** 삼아 stdin 을 읽는다.
+# 그러면 이 스위트가 stdin 이 EOF 가 아닌 환경(파이프·터미널)에서 조용히 매달린다(실측).
+counts()  { grep -c -e "$1" -- "$tmp/gh.log" 2>/dev/null || true; }
 none()    { if [ "$(counts "$1")" = 0 ]; then echo ok; else echo no; fi; }
 some()    { if [ "$(counts "$1")" != 0 ]; then echo ok; else echo no; fi; }
 hasl()    { case ",$(cat "$tmp/labels")," in *",$1,"*) echo ok ;; *) echo no ;; esac; }
@@ -236,7 +245,7 @@ check "마커 0: 코멘트 본문에 마커"        "$(grep -q 'issue comment .*
 check "마커 0: needs-human 해제"          "$(lacksl needs-human)"
 check "마커 0: hold:ladder 해제"          "$(lacksl hold:ladder)"
 check "마커 0: agent-ready 유지"          "$(hasl agent-ready)"
-check "본문은 건드리지 않는다(--body-file 부재)" "$(none -- '--body-file')"
+check "본문은 건드리지 않는다(--body-file 부재)" "$(none '--body-file')"
 check "기본 상한은 200 (env 미지정)"        "$(grep -q -- '--limit 200' "$tmp/gh.log" && echo ok || echo no)"
 check "비공허 실증: AND 쿼리로 목록을 뜬다" "$(grep -q 'issue list --repo owner/repo .*--label needs-human --label hold:ladder' "$tmp/gh.log" && echo ok || echo no)"
 
@@ -507,6 +516,9 @@ check "제목은 조회조차 안 한다(라벨 축)"   "$(grep -q -- '--json [^
 # 배포 대기 라벨이 붙어 있어도 `hold:*` 가 있으면 ② 는 그 행을 아예 보지 않는다(무편집 통과)
 # — 판정을 가드 밖으로 끌어내는 리팩터가 이 단언 없이는 전건 통과한다. ③ 이 정상적으로
 # 집어 가는지(policy_review_due)까지 확인해 "흘러갔다" 를 실증한다.
+# 이 테스트가 그대로 #201 Test plan ⓒ(deploy-wait + hold:policy + 노트 **있음** → 종전대로
+# policy_review_due 창 판정)다 — #201 의 no-note 갈래 변경이 이 갈래(due)엔 손대지 않았다는
+# 회귀 증거로 겸한다(사전 리뷰 지적 대응 — 신규 diff 에는 없던 기존 테스트라 안 보였다).
 setup "needs-human,deploy-wait,hold:policy" 200 0
 jq --arg b "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->" \
   '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/c.tmp" && mv "$tmp/c.tmp" "$tmp/comments.json"
@@ -526,10 +538,32 @@ check "두 축 동존: warn 없음"               "$(no_ev warn)"
 
 # ── policy 재심 due(#155) — 창 넘긴 hold:policy 에 재심 마커가 없으면 1회 이벤트, 무편집
 note() { jq --arg b "$1" '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/c.tmp" && mv "$tmp/c.tmp" "$tmp/comments.json"; }
+# ⓑ(#201) 회귀 방지 — 배포 대기가 **아닌** no-note 는 계속 warn 이다(진짜 규약 위반).
 setup "needs-human,hold:policy,agent-ready" 200 0
 run
 check "policy 재심 질문 없음: warn(no-note)" "$(printf '%s' "$out" | grep -q 'hold-note' && echo ok || echo no)"
 check "policy 재심 질문 없음: due 안 냄" "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+check "policy 재심 질문 없음(배포 대기 아님): note 없음" "$(no_ev note)"
+
+# ── ⓐ(#201) 배포 대기 + hold:policy + no-note → warn 아니라 note(조치 불가 반복 억제) ──
+# ②(사유 없는 needs-human)와 같은 deploy_wait_row 공유 술어를 쓴다. 실측 근거는
+# ggqgga/BodaT#5013 — 배포 레인이 transition.sh 를 거치지 않고 라벨을 직접 붙여 사람이
+# 답할 질문이 코멘트 산문에 있었는데도 `<!-- hold-note: policy -->` 마커가 없었다.
+setup "needs-human,deploy-wait,hold:policy" 200 0
+run
+check "배포대기 policy no-note: note"          "$(has_ev note)"
+check "배포대기 policy no-note: warn 아님"      "$(no_ev warn)"
+check "배포대기 policy no-note: due 안 냄"      "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
+check "배포대기 policy no-note: 문구에 deploy-wait·hold:policy" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("deploy-wait")) and (.msg | test("hold:policy"))' >/dev/null 2>&1 && echo ok || echo no)"
+check "배포대기 policy no-note: 편집 0회"       "$(none 'issue edit')"
+
+# ── ⓐ'(#201) full-cycle 과도기 축도 같은 술어를 공유한다(②와 동일 트레이드오프) ──
+setup "needs-human,full-cycle,hold:policy" 200 0
+run
+check "full-cycle policy no-note: note"        "$(has_ev note)"
+check "full-cycle policy no-note: warn 아님"    "$(no_ev warn)"
+
 setup "needs-human,hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 run
@@ -554,5 +588,577 @@ setup "needs-human,hold:ladder,agent-ready" 200 2
 run
 check "승격 코멘트에 hold-note:policy" "$(grep -q 'hold-note: policy' "$tmp/gh.log" && echo ok || echo no)"
 
-echo "resume-sweep: $pass passed, $fail failed"
+# ── ㉚ (#193) 번호를 못 구한 줄도 **유효 JSON 으로** 나간다 ────────────────
+# 재현: `sweep_issue`·② 는 목록 행을 jq 로 파싱해 번호를 얻는데, 그 파싱이 깨지면
+# `num`(`hnum`)이 **빈 문자열**이 된다. 세 헬퍼의 `"number":%s` 는 따옴표 **밖**이라
+# 그대로 `{…,"number":,"msg":…}` 가 나가 줄 전체가 JSON 이 아니었다 — 관대한 파서에선
+# 그 줄이 통째로 유실되고 엄격한 파서에선 읽기가 멈춘다. 어느 쪽이든 **경보가 조용히
+# 사라지는** 방향이라, 요구는 셋이다: (a) 줄은 나간다(삼키지 않는다) (b) 유효 JSON 이다
+# (c) 번호를 못 구했다는 사실이 줄에서 읽힌다.
+# 픽스처는 number 를 JSON **문자열**로 박아 그 상태를 만든다(실경로인 jq 실패와 `num` 의
+# 모양이 같다 — 둘 다 빈 문자열). 세 헬퍼를 각각 그 경로로 몰아 따로 확인한다.
+bad_num_rows() {  # bad_num_rows <출력파일> <number 자리에 박을 값> <라벨csv> <updatedAt>
+  jq -n --arg n "$2" --arg l "$3" --arg u "$4" \
+    '[{number:$n, labels: ($l|split(",")|map(select(length>0)|{name:.})), updatedAt:$u}]' > "$1"
+}
+lines_all_json() {  # 출력의 **모든** 줄이 유효 JSON 인가 — 빈 출력(삼킴)도 실패
+  local line
+  [ -s "$tmp/out" ] || { echo no; return; }
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    printf '%s' "$line" | jq -e . >/dev/null 2>&1 || { echo no; return; }
+  done < "$tmp/out"
+  echo ok
+}
+evq() {  # evq <이벤트> <jq 식> — 깨진 줄이 섞이면 jq 가 실패해 no
+  jq -e "select(.event==\"$1\") | $2" "$tmp/out" >/dev/null 2>&1 && echo ok || echo no
+}
+# 패턴은 `-e` 로 넘기고 파일은 `--` 뒤에 — `-` 로 시작하는 패턴을 맨몸으로 주면 grep 이
+# 그것을 옵션으로 먹고 파일 인자를 패턴 삼아 stdin 을 읽는다(스위트가 조용히 매달린다).
+nlines() { grep -c -e "$1" -- "$tmp/out" 2>/dev/null || true; }
+# 미상 표식은 **앞머리**에 원본 토큰을 인용해 붙는다 — `번호 파싱 실패('<토큰>') — `.
+# 뒤에 오는 기존 문구는 한 바이트도 안 바뀐다(디스패처 SKILL.md 가 문구로 분기한다).
+# jq 문자열 안의 `'` 은 작은따옴표 — 셸 작은따옴표 안이라 맨몸으로 못 쓴다.
+unknown_prefix() {  # unknown_prefix <이벤트> <원본 토큰>
+  jq -e --arg t "$2" \
+    "select(.event==\"$1\") | .msg | startswith(\"번호 파싱 실패(\\u0027\" + \$t + \"\\u0027) — \")" \
+    "$tmp/out" >/dev/null 2>&1 && echo ok || echo no
+}
+
+# (가) emit_warn — ① 이 updatedAt 을 못 읽은 줄. 번호도 함께 비어 있다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" ""
+echo '[]' > "$tmp/human.json"
+run
+check "빈 번호 warn: 모든 줄이 유효 JSON"     "$(lines_all_json)"
+check "빈 번호 warn: 줄을 삼키지 않는다"       "$([ "$(nlines '"event":"warn"')" = 1 ] && echo ok || echo no)"
+check "빈 번호 warn: number 는 0"             "$(evq warn '.number == 0')"
+check "빈 번호 warn: 기존 문구 그대로"         "$(evq warn '.msg | test("updatedAt 해석 불가")')"
+check "빈 번호 warn: 번호 미상·원본 토큰이 앞머리에" "$(unknown_prefix warn '')"
+
+# (나) emit_note — ② 배포 대기(#190) 줄. hnum 이 비어도 note 는 나가야 한다.
+setup "needs-human,agent-ready" 200 0
+echo '[]' > "$tmp/ladder.json"
+bad_num_rows "$tmp/human.json" "" "needs-human,deploy-wait" "$(ts 200)"
+run
+check "빈 번호 note: 모든 줄이 유효 JSON"     "$(lines_all_json)"
+check "빈 번호 note: 줄을 삼키지 않는다"       "$([ "$(nlines '"event":"note"')" = 1 ] && echo ok || echo no)"
+check "빈 번호 note: number 는 0"             "$(evq note '.number == 0')"
+check "빈 번호 note: 기존 문구 그대로"         "$(evq note '.msg | test("배포 대기\\(라벨 deploy-wait\\)")')"
+check "빈 번호 note: 번호 미상·원본 토큰이 앞머리에" "$(unknown_prefix note '')"
+
+# (다) emit_warn_after_edit — 쓰기 뒤 readback 조회가 실패한 줄.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/human.json"
+STUB_READBACK_LABELS="__FAIL__"
+run
+check "빈 번호 warn_after_edit: 모든 줄이 유효 JSON" "$(lines_all_json)"
+check "빈 번호 warn_after_edit: 줄을 삼키지 않는다"   "$([ "$(nlines '"event":"warn_after_edit"')" = 1 ] && echo ok || echo no)"
+check "빈 번호 warn_after_edit: number 는 0"         "$(evq warn_after_edit '.number == 0')"
+check "빈 번호 warn_after_edit: 기존 문구 그대로"     "$(evq warn_after_edit '.msg | test("재개 readback 조회 실패")')"
+check "빈 번호 warn_after_edit: 번호 미상·토큰 앞머리" "$(unknown_prefix warn_after_edit '')"
+
+# (라) 정상 경로 무회귀 — 번호가 있으면 표식이 붙지 않는다(문구가 한 바이트도 안 바뀐다).
+setup "needs-human,agent-ready" 200 0
+run
+check "정상 번호: number 유지·표식 없음" "$(evq warn '.number == 42 and (.msg | test("번호 파싱 실패") | not)')"
+
+# ── ㉛ (#193) `msg` 없는 이벤트 넷도 같은 자리를 안전하게 — waiting·escalated·resumed·
+#    policy_review_due. 이쪽은 사실을 적을 `msg` 칸이 없어 **형식 안전만** 취한다(번호 0).
+#    방출 조건은 안 바뀐다 — 특히 waiting 은 원래 조용히 넘기는 이벤트라 줄 수가 늘면 안 된다.
+#    이슈 본문 `## 범위 — 한 자리가 아니라 파일 전역이다` 가 요구한 넓히기.
+setup "needs-human,hold:ladder,agent-ready" 10 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 10)"
+echo '[]' > "$tmp/human.json"
+run
+check "빈 번호 waiting(창 전): 유효 JSON"    "$(lines_all_json)"
+check "빈 번호 waiting(창 전): 1줄만"        "$([ "$(nlines '"event":"waiting"')" = 1 ] && echo ok || echo no)"
+check "빈 번호 waiting(창 전): number 는 0"  "$(evq waiting '.number == 0')"
+check "빈 번호 waiting(창 전): minutes 유지"  "$(evq waiting '.minutes >= 9 and .minutes <= 11')"
+
+# 창 재판정 경로(목록 스냅샷 뒤 사람이 건드려 live updatedAt 이 새 기준이 된 경우)의 waiting.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/human.json"
+printf '%s' "$(ts 5)" > "$tmp/updated.livefile"
+STUB_UPDATED_LIVE="$tmp/updated.livefile"
+run
+check "빈 번호 waiting(창 재판정): 유효 JSON"   "$(lines_all_json)"
+check "빈 번호 waiting(창 재판정): number 는 0" "$(evq waiting '.number == 0')"
+check "빈 번호 waiting(창 재판정): 무편집"      "$(none 'issue edit')"
+
+# 재개(resumed) — 번호가 비어도 줄은 유효 JSON 이어야 한다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/human.json"
+run
+check "빈 번호 resumed: 유효 JSON"      "$(lines_all_json)"
+check "빈 번호 resumed: number 는 0"    "$(evq resumed '.number == 0')"
+check "빈 번호 resumed: attempt 유지"   "$(evq resumed '.attempt == 1')"
+
+# 승격(escalated) — 마커 2개로 상한 초과.
+setup "needs-human,hold:ladder,agent-ready" 200 2
+bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/human.json"
+run
+check "빈 번호 escalated: 유효 JSON"        "$(lines_all_json)"
+check "빈 번호 escalated: number 는 0"      "$(evq escalated '.number == 0')"
+check "빈 번호 escalated: attempt·limit 유지" "$(evq escalated '.attempt == 2 and .limit == 2')"
+
+# policy 재심 due — ③ 의 pnum 이 빈 경우.
+setup "needs-human,hold:policy,agent-ready" 200 0
+bad_num_rows "$tmp/policy.json" "" "needs-human,hold:policy,agent-ready" "$(ts 200)"
+echo '[]' > "$tmp/ladder.json"
+echo '[]' > "$tmp/human.json"
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "빈 번호 policy_review_due: 유효 JSON"   "$(lines_all_json)"
+check "빈 번호 policy_review_due: number 는 0" "$(evq policy_review_due '.number == 0')"
+check "빈 번호 policy_review_due: 무편집"      "$(none 'issue edit')"
+
+# 정상 번호(42)일 때 넷 다 번호를 그대로 싣는다 — 바이트 무회귀 가드.
+setup "needs-human,hold:ladder,agent-ready" 10 0
+run
+check "정상 번호 waiting: number 42 유지" "$(evq waiting '.number == 42')"
+setup "needs-human,hold:ladder,agent-ready" 200 0
+run
+check "정상 번호 resumed: number 42 유지" "$(evq resumed '.number == 42')"
+setup "needs-human,hold:ladder,agent-ready" 200 2
+run
+check "정상 번호 escalated: number 42 유지" "$(evq escalated '.number == 42')"
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "정상 번호 policy_review_due: number 42 유지" "$(evq policy_review_due '.number == 42')"
+
+# ── ㉜ (#193 재심) 번호 검증은 **정규 JSON 정수 형태**로 — `01` 은 미상 처리 ──────
+# 사람 게이트 재심(#193 코멘트 `<!-- policy-review: resumed -->`)의 판정: 선행 0 토큰은
+# 정상 번호의 특이 표기가 **아니다**. `num` 의 출처는 `jq -r '.number|tostring'` 하나뿐이고
+# jq 는 `1` 을 `"1"` 로 낸다 — `01` 을 낼 경로가 없으니 그건 **파싱이 어긋났다는 증거**다.
+# 그래서 `01 → 1` 정규화는 채택하지 않는다(출처가 말하지 않은 번호를 지어내는 것 —
+# 틀린 번호를 단 경보는 번호 없는 경보보다 나쁘다: 읽는 사람이 무고한 이슈를 연다).
+# `_nonneg_int()`(모든 문자가 숫자인가)로는 `01`·`007` 이 통과해 `"number":01` 이 나가고,
+# RFC 8259 는 선행 0 을 금지하므로 그 줄은 **여전히 깨진 JSON** 이었다.
+# `jq` 는 관대해서 `{"number":01}` 을 **조용히 `1` 로 읽는다**(실측 jq-1.7.1-apple).
+# 즉 `01` 이 나가면 엄격한 파서(python json)는 줄을 **거절**하고, 관대한 파서는 **없는
+# 이슈 #1** 로 읽는다 — 이 이슈가 막으려던 두 실패(조용한 유실 · 틀린 번호)가 정확히 그 둘이다.
+# 그래서 계약 단언은 `jq` 만으로 두지 않고 **엄격 파서**로도 한 번 더 문다(jq 로만 재면
+# `01` 회귀가 초록으로 통과한다 — 실측으로 확인한 공허 단언 경로).
+# closeout 재재심(#193 2회차 반송) — README 가 선언한 요구사항은 `gh`·`jq`·bash 뿐이라
+# python3 는 이 스위트가 트리에 처음 들여온 의존성이다. 없는 박스에서 엄격 파서 단언이
+# 전부 `no` 로 접히면 `bin/ci` 가 필수 게이트에서 통째로 빨개진다(재현: python3 를 exit 127
+# 스텁으로 가리면 237 passed / 15 failed) — 그래서 두 갈래로 나눈다:
+#   ① `number_token_json_int` — 파서 없이 **방출된 바이트**를 `case`/`grep -E` 로 직접 문다.
+#      01·007 회귀는 이 단언 하나로 어느 박스에서나 잡힌다(주 단언).
+#   ② `strict_json_all` — python3 가 있으면 엄격 파서로 한 번 더 물어 보조 확증한다. 없으면
+#      **skip** 을 눈에 보이게 돌려준다(조용한 no 금지) — check() 가 skip 을 실패로 안 센다.
+number_token_json_int() {  # number_token_json_int <이벤트> — 그 줄의 number 토큰이 정규 JSON 정수 리터럴(0|[1-9][0-9]*)인가
+  local line n
+  line=$(grep -m1 "\"event\":\"$1\"" "$tmp/out") || { echo no; return; }
+  n=$(printf '%s' "$line" | grep -oE '"number":[^,}]*')
+  n=${n#'"number":'}
+  case "$n" in
+    0) echo ok ;;
+    [1-9]) echo ok ;;
+    [1-9][0-9]*) echo ok ;;
+    *) echo no ;;
+  esac
+}
+strict_json_all() {  # 출력의 모든 줄이 RFC 8259 로 파싱되는가 (빈 출력 = 삼킴 = 실패 · python3 없으면/못 돌면 skip)
+  [ -s "$tmp/out" ] || { echo no; return; }
+  local rc
+  python3 -c 'import json, sys
+n = 0
+for line in open(sys.argv[1], encoding="utf-8"):
+    line = line.strip()
+    if not line:
+        continue
+    json.loads(line)
+    n += 1
+sys.exit(0 if n else 1)' "$tmp/out" >/dev/null 2>&1
+  rc=$?
+  # 127 = "명령을 못 찾음"(PATH 부재의 표준 셸 종료값 — python3 를 exit 127 스텁으로 가려
+  # 재현한 closeout 시나리오도 같은 값을 낸다). command -v 로 미리 가리면 이 스텁을 못 잡는다
+  # (스텁은 PATH 상엔 실존 파일이라 command -v 는 통과하고, 실행 시점에야 127 을 낸다) — 그래서
+  # 실행 결과의 종료값으로 판정한다.
+  if [ "$rc" -eq 127 ]; then
+    echo skip
+    return
+  fi
+  [ "$rc" -eq 0 ] && echo ok || echo no
+}
+emit_line_for() {  # emit_line_for <number 자리에 박을 토큰> — warn 줄 하나로 몬다
+  setup "needs-human,hold:ladder,agent-ready" 200 0
+  bad_num_rows "$tmp/ladder.json" "$1" "needs-human,hold:ladder,agent-ready" ""
+  echo '[]' > "$tmp/human.json"
+  run
+}
+check_accept() {  # check_accept <정규 토큰>
+  emit_line_for "$1"
+  check "정규 '$1': 모든 줄이 유효 JSON"      "$(lines_all_json)"
+  check "정규 '$1': number 토큰이 정규 JSON 정수 리터럴(바이트 단언)" "$(number_token_json_int warn)"
+  check "정규 '$1': 엄격 파서로도 파싱된다"    "$(strict_json_all)"
+  check "정규 '$1': number 를 그대로 싣는다"   "$(jq -e --argjson n "$1" 'select(.event=="warn") | .number == $n' "$tmp/out" >/dev/null 2>&1 && echo ok || echo no)"
+  check "정규 '$1': 미상 표식 없음(문구 무변)" "$(evq warn '.msg | test("번호 파싱 실패") | not')"
+}
+check_reject() {  # check_reject <비정규 토큰>
+  emit_line_for "$1"
+  check "비정규 '$1': 모든 줄이 유효 JSON"      "$(lines_all_json)"
+  check "비정규 '$1': number 토큰이 정규 JSON 정수 리터럴(바이트 단언, 0 으로 낮춘 값)" "$(number_token_json_int warn)"
+  check "비정규 '$1': 엄격 파서로도 파싱된다"    "$(strict_json_all)"
+  check "비정규 '$1': 줄을 삼키지 않는다"        "$([ "$(nlines '"event":"warn"')" = 1 ] && echo ok || echo no)"
+  check "비정규 '$1': number 는 0"              "$(evq warn '.number == 0')"
+  check "비정규 '$1': 원본 토큰을 앞머리에 인용"  "$(unknown_prefix warn "$1")"
+  check "비정규 '$1': 기존 문구가 뒤에 그대로"    "$(evq warn '.msg | test("updatedAt 해석 불가")')"
+}
+
+# 통과시켜야 할 것 — `0` 단독도 정규다("특정 이슈가 아니다" 로 이미 쓰는 값).
+for t in 0 1 42 1234; do check_accept "$t"; done
+# 걸러야 할 것 — 선행 0·부호·소수점·지수·빈 값·공백. 전부 JSON 정수 리터럴이 아니다.
+for t in 01 007 +1 1.0 1e3 '' ' ' '1 2'; do check_reject "$t"; done
+
+# 이 이슈의 계약은 "정수처럼 생겼나" 가 아니라 **"JSON 으로 읽히나"** 다 — 토큰에 따옴표·
+# 역슬래시가 섞여 들어와도 줄은 파싱돼야 한다(인용을 맨몸으로 박으면 원래 버그의 재현이다).
+for t in '1"2' '1\2' 'a"b\c'; do
+  emit_line_for "$t"
+  check "따옴표 섞인 토큰 '$t': 줄이 jq . 로 파싱된다"   "$(lines_all_json)"
+  check "따옴표 섞인 토큰 '$t': number 토큰이 정규 JSON 정수 리터럴(바이트 단언)" "$(number_token_json_int warn)"
+  check "따옴표 섞인 토큰 '$t': 엄격 파서로도 파싱된다"  "$(strict_json_all)"
+  check "따옴표 섞인 토큰 '$t': number 는 0"           "$(evq warn '.number == 0')"
+  check "따옴표 섞인 토큰 '$t': 줄을 삼키지 않는다"     "$([ "$(nlines '"event":"warn"')" = 1 ] && echo ok || echo no)"
+done
+
+# ── ㉝ (#193 재심) `_nonneg_int()` 는 안 바꿨다 — env exit 64 게이트 3건 무회귀 ────
+# 방출용 술어를 별도 이름으로 세운 이유가 이것이다: 저 헬퍼까지 정규형으로 좁히면
+# 사람이 `RESUME_AFTER_MIN=060` 으로 써 온 환경이 갑자기 죽는다(이 이슈의 범위 밖).
+setup "needs-human,hold:ladder,agent-ready" 200 0
+RA='060'
+run
+check "RESUME_AFTER_MIN=060: exit 64 아님(관대함 유지)" "$([ "$RC" != 64 ] && echo ok || echo no)"
+check "RESUME_AFTER_MIN=060: 60분으로 읽혀 재개된다"     "$(has_ev resumed)"
+setup "needs-human,hold:ladder,agent-ready" 200 0
+RL='02'
+run
+check "LADDER_RESUME_LIMIT=02: exit 64 아님" "$([ "$RC" != 64 ] && echo ok || echo no)"
+setup "needs-human,hold:ladder,agent-ready" 200 0
+LL='0200'
+run
+check "RESUME_LIST_LIMIT=0200: exit 64 아님" "$([ "$RC" != 64 ] && echo ok || echo no)"
+# 진짜 비정수는 여전히 exit 64 (세 게이트 모두).
+setup "needs-human,hold:ladder,agent-ready" 200 0
+LL='1000x'
+run
+check "잘못된 RESUME_LIST_LIMIT: exit 64"   "$([ "$RC" = 64 ] && echo ok || echo no)"
+check "잘못된 RESUME_LIST_LIMIT: gh 호출 0" "$([ ! -s "$tmp/gh.log" ] && echo ok || echo no)"
+
+# ── ㉞ (#217) 배포 대기 티켓의 hold:ladder — 재개·승격이 note 갈래와 같은 답을 읽는다 ──
+# 실측 ggqgga/BodaT#5040: 같은 실행이 `resumed`(①)와 배포 대기 `note`(②)를 동시에 냈다.
+# ②는 hold:ladder 가 있는 행을 애초에 안 보므로(②의 "hold:* 없음" 가드) note 는 여기(①)
+# 에서 대신 낸다 — deploy_wait_row 공유 술어(②·③과 동일, #201) 를 여기서도 쓴다.
+
+# ⓐ deploy-wait + needs-human + hold:ladder, 창 경과 → note 만, 라벨 그대로
+setup "needs-human,hold:ladder,deploy-wait,agent-ready" 200 0
+run
+check "ⓐ deploy-wait+hold:ladder 창 경과: note"        "$(has_ev note)"
+check "ⓐ: resumed 아님"                                "$(no_ev resumed)"
+check "ⓐ: warn 아님"                                    "$(no_ev warn)"
+check "ⓐ: needs-human 유지(라벨 그대로)"                "$(hasl needs-human)"
+check "ⓐ: hold:ladder 유지(라벨 그대로)"                "$(hasl hold:ladder)"
+check "ⓐ: 편집 0회"                                     "$(none 'issue edit')"
+check "ⓐ: 마커 코멘트도 0회"                            "$(none 'issue comment')"
+check "ⓐ: 문구에 deploy-wait"                           "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("deploy-wait"))' >/dev/null 2>&1 && echo ok || echo no)"
+
+# ⓑ 회귀 방지 — deploy-wait 없는 needs-human+hold:ladder, 창 경과 → 종전대로 resumed·라벨 해제
+setup "needs-human,hold:ladder,agent-ready" 200 0
+run
+check "ⓑ 배포 대기 아님: resumed(회귀 없음)"            "$(has_ev resumed)"
+check "ⓑ: needs-human 해제"                             "$(lacksl needs-human)"
+check "ⓑ: hold:ladder 해제"                             "$(lacksl hold:ladder)"
+check "ⓑ: note 아님"                                     "$(no_ev note)"
+
+# ⓒ deploy-wait + hold:ladder, 재개 마커 2개(상한 소진) → escalated 아님, hold:policy 안 붙는다
+setup "needs-human,hold:ladder,deploy-wait,agent-ready" 200 2
+run
+check "ⓒ deploy-wait 상한 소진: escalated 아님"          "$(no_ev escalated)"
+check "ⓒ: note"                                          "$(has_ev note)"
+check "ⓒ: hold:policy 안 붙는다"                         "$(lacksl hold:policy)"
+check "ⓒ: hold:ladder 유지(승격 안 함)"                  "$(hasl hold:ladder)"
+check "ⓒ: 편집 0회"                                      "$(none 'issue edit')"
+check "ⓒ: 상한 초과 코멘트도 안 남긴다"                  "$(none '사다리 재개 상한')"
+
+# ⓓ 회귀 방지 — deploy-wait 없는 상한 소진 → 종전대로 escalated
+setup "needs-human,hold:ladder,agent-ready" 200 2
+run
+check "ⓓ 배포 대기 아님 상한 소진: escalated(회귀 없음)" "$(has_ev escalated)"
+check "ⓓ: hold:policy 부착"                              "$(hasl hold:policy)"
+check "ⓓ: note 아님"                                      "$(no_ev note)"
+
+# full-cycle(과도기 축)도 같은 술어를 공유한다 — ②·③과 동일 트레이드오프.
+setup "needs-human,hold:ladder,full-cycle,agent-ready" 200 0
+run
+check "full-cycle+hold:ladder 창 경과: note"             "$(has_ev note)"
+check "full-cycle+hold:ladder: resumed 아님"             "$(no_ev resumed)"
+check "full-cycle+hold:ladder: 편집 0회"                 "$(none 'issue edit')"
+
+# ⓔ (사전 리뷰) deploy_wait_row 판정 자체가 실패(labels 모양이 배열이 아님) → warn·무편집
+# fail-open 이면 "배포 대기 아님" 으로 폴백해 그대로 재개해버린다 — 이 이슈가 막으려는
+# 사고를 판정 실패 경로에서 재현하는 것. number·updatedAt 추출은 .labels 를 안 보므로
+# 위 창 판정까지는 정상 통과하고, deploy_wait_row 의 `.labels[].name` 에서만 깨진다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+jq -n --argjson n 42 --arg u "$(ts 200)" '[{number:$n, labels:"broken", updatedAt:$u}]' > "$tmp/ladder.json"
+run
+check "ⓔ 판정 실패: warn"                                "$(has_ev warn)"
+check "ⓔ 판정 실패: 문구"                                "$(saysl '배포 대기 판정 실패')"
+check "ⓔ 판정 실패: resumed 아님"                        "$(no_ev resumed)"
+check "ⓔ 판정 실패: note 아님"                           "$(no_ev note)"
+check "ⓔ 판정 실패: 편집 0회"                            "$(none 'issue edit')"
+check "ⓔ 판정 실패: 코멘트 0회"                          "$(none 'issue comment')"
+
+# ── (#197) 인용된 마커는 제어 신호가 아니다 ────────────────────────────────
+# 마커는 루프끼리 주고받는 신호인데, 그 신호를 **설명하는 글**(백틱 인라인 코드·코드펜스)이
+# substring 매칭에 걸려 신호 자체로 읽히던 회귀. 실측(ggqgga/issue-runner#174)에서 재심
+# 코멘트가 본문에 hold-note 을 인용해 **자기 자신을 새 에피소드 경계**로 만들었고, 경계
+# 뒤(range($q+1; …))에는 재심 마커가 없어 판정이 매 틱 `due` 로 되돌아왔다(영구 반복).
+
+# ⓐ 인용된 hold-note + 같은 코멘트 안의 **진짜** 재심 마커 → reviewed (due 아님)
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+note '재심: 사람 몫 유지 — 이벤트마다 에피소드 경계(마지막 `` `<!-- hold-note: policy -->` ``)를 잡고 그 뒤를 본다 <!-- policy-review: kept --><!-- bodat:worker -->'
+run
+check "#174 인용 hold-note: 경계가 아니다(due 재발 없음)" "$(no_ev policy_review_due)"
+check "#174 인용 hold-note: warn 도 아니다"              "$(no_ev warn)"
+
+# 코드펜스로 인용한 hold-note 도 같다(같은 코멘트에 진짜 재심 마커가 맨몸으로 붙어 있다).
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+note '재심: 사람 몫 유지 — 예시는 아래와 같다
+```
+<!-- hold-note: policy -->
+```
+<!-- policy-review: kept --><!-- bodat:worker -->'
+run
+check "코드펜스 인용 hold-note: due 재발 없음" "$(no_ev policy_review_due)"
+
+# ⓑ 진짜 새 hold-note(맨몸 마커) 뒤에 재심 마커가 없으면 여전히 `due` — 인용 제거가
+#    진짜 질문까지 지워 버리면 이 단언이 빨개진다(과다 필터 방증).
+setup "needs-human,hold:policy,agent-ready" 200 0
+note '재심: 지난 홀드는 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->'
+note "사람 확인(policy): 이번엔 C인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "새 질문 뒤 마커 없음: 여전히 due" "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .number == 42' >/dev/null 2>&1 && echo ok || echo no)"
+
+# ⓒ 회귀 없음 — 블록쿼트(`>`) 안의 **맨몸** 마커는 정상 신호로 계속 센다. 블록쿼트로 남의
+#    코멘트를 통째 인용하는 일은 이 루프에 없고, 걸러 버리면 진짜 마커를 잃는다(#197 방향 A).
+setup "needs-human,hold:policy,agent-ready" 200 0
+note '> 사람 확인(policy): A인가 B인가
+> <!-- hold-note: policy --><!-- bodat:worker -->'
+run
+check "블록쿼트 맨몸 hold-note: 질문으로 센다(due)" "$(has_ev policy_review_due)"
+check "블록쿼트 맨몸 hold-note: warn 없음(no-note 로 안 샌다)" "$(no_ev warn)"
+
+# ⓓ 인용된 `ladder-resume` 은 재개 횟수를 올리지 않는다 — 아직 재개 여지가 있는 이슈가
+#    상한(2) 초과로 조기에 사람 대기(hold:policy)로 승격되던 둘째 축.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+note '디버깅 메모: 스윕은 `<!-- ladder-resume: 1 -->` 를 남긴다'
+note '인수인계 메모:
+```
+<!-- ladder-resume: 2 -->
+```'
+run
+check "인용 ladder-resume: 개수 0 → 첫 재개" "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 1' >/dev/null 2>&1 && echo ok || echo no)"
+check "인용 ladder-resume: 조기 승격 없음"    "$(no_ev escalated)"
+
+# 인용 2개 + 진짜 1개 → 진짜 1개만 세어 2번째 재개(상한 2 안쪽)
+setup "needs-human,hold:ladder,agent-ready" 200 1
+note '참고: `<!-- ladder-resume: 9 -->` 와 `<!-- ladder-resume: 8 -->` 는 인용일 뿐이다'
+run
+check "인용 2 + 진짜 1: attempt=2(승격 아님)" "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 2' >/dev/null 2>&1 && echo ok || echo no)"
+
+# 회귀: 코멘트 **끝에 맨몸으로** 붙은 정상 마커는 계속 세어진다(상한이 그대로 걸린다).
+setup "needs-human,hold:ladder,agent-ready" 200 2
+run
+check "맨몸 마커 2개: 상한 초과 승격(회귀 없음)" "$(has_ev escalated)"
+
+# ⓔ 과다 필터 방증 — 산문이 한 줄 안에서 백틱 세 개를 **언급**해도(펜스를 여는 게 아니다)
+#    그 사이의 맨몸 마커는 살아남는다. 펜스에 줄 앵커가 없으면 두 언급 사이가 통째로 지워져
+#    재개 횟수가 **과소집계**되고, 상한이 영영 안 걸려 무한 재개가 된다(원래 버그보다 나쁘다).
+setup "needs-human,hold:ladder,agent-ready" 200 0
+note '펜스는 ``` 로 연다
+재개 1/2: 사다리 재시도 — <!-- ladder-resume: 1 --><!-- bodat:worker -->
+닫을 때도 ``` 를 쓴다'
+run
+check "줄 중간 백틱셋 언급 사이의 맨몸 마커: 그대로 센다(attempt=2)" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 2' >/dev/null 2>&1 && echo ok || echo no)"
+
+# ⓕ 세 번째 지점 — `policy-review` 를 **인용만** 한 코멘트는 재심으로 세지 않는다.
+#    이 방향의 오탐이 셋 중 가장 위험하다: 거짓 `reviewed` 는 사람 정책 게이트를 실제 재심
+#    없이 통과시키고, 그 이슈는 아무도 다시 묻지 않는다(조용한 유실).
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+note '메모: 재심 코멘트는 `<!-- policy-review: kept -->` 마커를 남긴다(아직 안 남겼다)'
+run
+check "인용 policy-review: 재심으로 안 센다(due 유지)" "$(has_ev policy_review_due)"
+
+# ── (#197 반송) 백틱 구분자 **길이 맞춤** — 다섯 형태 × 세 판정 지점 ────────
+# 첫 회차의 인라인 패스는 백틱을 **하나씩** 짝지었다. 그러면 짝수 길이 구분자(백틱 2개로
+# 여는 스팬)가 "빈 스팬 두 개" 로 갈려 **알맹이(마커)만 맨몸으로 남는다** — 인용인데 신호로
+# 세진다(마감 검증 실측: 네 형태 중 이중 백틱만 `마커로 셈=true`). CommonMark 의 코드 스팬은
+# 여는 백틱 런과 **같은 길이**의 닫는 런까지가 한 스팬이므로 그 규칙으로 맞춘다.
+# 아래는 다섯 형태(단일·이중·삼중 백틱 인용 · 펜스 · 맨몸)를 **세 판정 지점 모두**
+# (ladder-resume 개수 · hold-note 경계 · policy-review 재심)에서 무는 격자다.
+# 되돌리면(백틱 하나씩 짝짓기) `[double]` 줄만 빨개진다 — 뮤테이션 방증은 PR 본문에.
+
+quoted_note() {  # quoted_note <형태> <마커> → 그 마커를 <형태>로 인용한 코멘트 본문
+  case "$1" in
+    single) printf '메모: `%s` 를 남긴다' "$2" ;;
+    double) printf '메모: ``%s`` 를 남긴다' "$2" ;;
+    triple) printf '메모: ```%s``` 를 남긴다' "$2" ;;
+    fence)  printf '메모: 아래 형태로 남긴다\n```\n%s\n```' "$2" ;;
+    *)      echo "quoted_note: 알 수 없는 형태 $1" >&2; return 1 ;;
+  esac
+}
+
+for form in single double triple fence; do
+  # ① ladder-resume 개수 — 인용은 재개 횟수를 올리지 않는다(조기 승격 금지)
+  setup "needs-human,hold:ladder,agent-ready" 200 0
+  note "$(quoted_note "$form" '<!-- ladder-resume: 1 -->')"
+  run
+  check "[$form] 인용 ladder-resume: 안 센다(attempt=1)" \
+    "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 1' >/dev/null 2>&1 && echo ok || echo no)"
+  check "[$form] 인용 ladder-resume: 조기 승격 없음" "$(no_ev escalated)"
+
+  # ② hold-note 경계 — 인용은 새 에피소드 경계가 아니다
+  #    (#174 형태: 인용된 hold-note 과 **진짜** 재심 마커가 한 코멘트 안에 공존)
+  setup "needs-human,hold:policy,agent-ready" 200 0
+  note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+  note "$(quoted_note "$form" '<!-- hold-note: policy -->')
+<!-- policy-review: kept --><!-- bodat:worker -->"
+  run
+  check "[$form] 인용 hold-note: 경계 아님(due 재발 없음)" "$(no_ev policy_review_due)"
+
+  # ③ policy-review — 인용만 한 코멘트는 재심이 아니다(거짓 reviewed = 조용한 유실)
+  setup "needs-human,hold:policy,agent-ready" 200 0
+  note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+  note "$(quoted_note "$form" '<!-- policy-review: kept -->')"
+  run
+  check "[$form] 인용 policy-review: 재심으로 안 센다(due 유지)" "$(has_ev policy_review_due)"
+done
+
+# 다섯째 형태 = **맨몸**(대조군). 세 지점 모두 반대 방향으로 나와야 한다 — 인용 제거가
+# **더** 지우는 쪽으로 틀리면(맨몸 마커 유실) 상한이 안 걸려 원래 버그보다 나쁘다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+note "재개 1/2: 사다리 재시도 <!-- ladder-resume: 1 --><!-- bodat:worker -->"
+run
+check "[bare] 맨몸 ladder-resume: 센다(attempt=2)" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 2' >/dev/null 2>&1 && echo ok || echo no)"
+
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "재심: 지난 홀드는 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->"
+note "사람 확인(policy): 이번엔 C인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+run
+check "[bare] 맨몸 hold-note: 새 경계로 센다(due)" "$(has_ev policy_review_due)"
+
+setup "needs-human,hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+note "재심: 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->"
+run
+check "[bare] 맨몸 policy-review: 재심으로 센다(due 없음)" "$(no_ev policy_review_due)"
+
+# ── (#197 반송 attempt3) 가변 길이 펜스·백틱 런 경계 — 17건 격자 ───────────────
+# 마감 검증 BLOCKER: 인라인은 닫는 런의 **뒤만** 보고(앞쪽 최대런 여부를 안 물어) 더 긴
+# 런의 접미부를 짧은 스팬의 닫기로 오인했고, 펜스는 여는 문자·길이를 안 물고 닫는 줄 뒤에
+# 아무 텍스트나 허용해 조기 종료했다. 위 두 회차는 매번 지적된 한 사례만 닫아 같은 축에서
+# 반복됐다 — 이번엔 `unquoted` 정의를 스크립트에서 그대로 뽑아(손타이핑 대조 금지) CommonMark
+# 규칙 그대로의 17건을 **직접** 문다(세 판정 지점은 전부 이 정의 하나를 공유하므로 — 위
+# 동기화 검사로 이미 보장 — 여기서 한 번만 확인하면 충분하다).
+grid_unq=$(grep -o 'def unquoted:.*;' "$DIR/resume-sweep.sh" | head -1)
+check "격자: 스크립트에 인용 제거 정의(def unquoted)" "$([ -n "$grid_unq" ] && echo ok || echo no)"
+
+GRID_MARKER='<!-- ladder-resume: 1 -->'
+
+grid_check() {  # grid_check <label> <want:true|false> <text>
+  local label="$1" want="$2" text="$3" got
+  got=$(printf '%s' "$text" \
+    | jq -Rs "$grid_unq"' (unquoted | test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))')
+  check "[격자] $label (want=$want)" "$([ "$got" = "$want" ] && echo ok || echo no)"
+}
+
+grid_check "맨몸 마커" \
+  true "$(printf '그냥 텍스트 %s' "$GRID_MARKER")"
+
+grid_check "단일 백틱" \
+  false "$(printf '`%s`' "$GRID_MARKER")"
+
+grid_check "이중 백틱" \
+  false "$(printf '``%s``' "$GRID_MARKER")"
+
+grid_check "삼중 인라인" \
+  false "$(printf '```%s```' "$GRID_MARKER")"
+
+grid_check "이중런 안 삼중런" \
+  false "$(printf '``foo ```x``` %s bar``' "$GRID_MARKER")"
+
+grid_check "정상 삼중 펜스" \
+  false "$(printf '```\n%s\n```' "$GRID_MARKER")"
+
+grid_check "펜스 언어태그" \
+  false "$(printf '```bash\n%s\n```' "$GRID_MARKER")"
+
+grid_check "들여쓴 펜스" \
+  false "$(printf '  ```\n  %s\n  ```' "$GRID_MARKER")"
+
+grid_check "닫는펜스 아닌 줄" \
+  false "$(printf '```\n``` not-a-close\n%s\n```' "$GRID_MARKER")"
+
+grid_check "사중 펜스 안 삼중줄" \
+  false "$(printf '````\n```\n%s\n````' "$GRID_MARKER")"
+
+grid_check "혼재(인용+맨몸)" \
+  true "$(printf '메모: `%s` 를 남긴다. 실제로는 %s' "$GRID_MARKER" "$GRID_MARKER")"
+
+grid_check "닫히지 않은 백틱" \
+  true "$(printf '` 이건 안 닫힌 백틱입니다 %s' "$GRID_MARKER")"
+
+grid_check "펜스 둘 사이 맨몸" \
+  true "$(printf '```\ndecoy code\n```\n\n%s\n\n```\ndecoy2\n```' "$GRID_MARKER")"
+
+grid_check "물결 펜스" \
+  false "$(printf '~~~\n%s\n~~~' "$GRID_MARKER")"
+
+grid_check "닫는 펜스가 더 김" \
+  false "$(printf '```\n%s\n````' "$GRID_MARKER")"
+
+grid_check "펜스 미닫힘(문서 끝까지)" \
+  false "$(printf '```\n%s' "$GRID_MARKER")"
+
+grid_check "물결 펜스로 백틱 펜스 닫기 시도" \
+  false "$(printf '```\n%s\n~~~' "$GRID_MARKER")"
+
+# g18 (#197 반송 attempt4 회귀): 줄 머리의 인라인 삼중 백틱은 CommonMark 상 펜스가 아니다
+# (백틱 펜스의 info string 엔 백틱이 못 온다 — 물결 펜스에는 이 제약이 없다). attempt3 의
+# 펜스 정규식은 이 제약을 안 봐서 줄 첫머리의 코드 스팬을 "안 닫힌 펜스"로 읽고 `$` 대안으로
+# 문서 끝까지 지웠다 — 뒤따르는 맨몸 마커가 함께 사라져 수용 기준 2번(맨몸 마커는 계속
+# 세어진다)이 깨졌다(#197 마감 검증 attempt4 실측: `policy-review: kept` 유실 →
+# policy_review_due 매 틱 재발, 과소 카운트 방향의 영구 반복).
+grid_check "g18 줄머리 인라인 삼중백틱 뒤 맨몸 마커" \
+  true "$(printf '```example``` 라는 인라인 코드입니다.\n본문 설명.\n%s' "$GRID_MARKER")"
+
+# ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
+# 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는
+# 두 번째 계산기가 다른 수를 센다. **스크립트에서 뽑은 문자열**을 두 SKILL 에서 grep -F 로
+# 대조한다(손타이핑 대조는 한글·백틱이 뭉개져 오탐을 낸다).
+root=$(cd "$DIR/.." && pwd)
+unq=$(grep -o 'def unquoted:.*;' "$DIR/resume-sweep.sh" | head -1)
+check "스크립트에 인용 제거 정의(def unquoted)" "$([ -n "$unq" ] && echo ok || echo no)"
+for f in SKILL.md SKILL.en.md; do
+  check "$f 의 재개 횟수 jq 가 같은 정의를 쓴다" \
+    "$([ -n "$unq" ] && grep -qF -- "$unq" "$root/$f" && echo ok || echo no)"
+done
+
+if [ "$skip" -gt 0 ]; then
+  echo "resume-sweep: $pass passed, $fail failed, $skip skipped (python3 없음)"
+else
+  echo "resume-sweep: $pass passed, $fail failed"
+fi
 [ "$fail" -eq 0 ]

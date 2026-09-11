@@ -224,8 +224,10 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 1. `<!-- verify-attempt: N -->` 를 PR 본문에서 읽어(없으면 0) N+1 이 `VERIFY_ATTEMPTS_LIMIT`
    **미만**이면 재디스패치, **이상**이면 아래 held 로.
 2. 재디스패치: 실패 사유 코멘트(멱등 마커) —
-   `gh pr comment <pr> --repo <repo> --body "재검증 실패: #<issue> — <사유> (attempt N+1)
-<!-- bodat:worker -->"`.
+   `$SCRIPTS/bounce-comment.sh reverify-fail <repo> <pr> <issue> <N+1> "<사유>"`
+   (문구를 손으로 옮겨 적지 않는다 — 콜론·어순이 변형되면 `bounce-state.sh` 반송
+   안전망이 놓친다, #212. 생성되는 본문은
+   `재검증 실패: #<issue> — <사유> (attempt N+1)\n<!-- bodat:worker -->`).
    **이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지 않는다**
    (/loop 스팸 방지). PR 본문 주석을 `<!-- verify-attempt: N+1 -->` 로 갱신
    (`gh pr edit <pr> --repo <repo> --body ...` — 나머지 본문 보존).

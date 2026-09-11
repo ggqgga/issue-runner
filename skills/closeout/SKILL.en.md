@@ -118,9 +118,10 @@ the code closeout itself blocked. So `closeout-eligible.sh` never promotes on th
    as a pass is exactly fail-open on a merge gate).
 2. **Bounce-marker safety net** — covers the window right after a bounce, before the replacement
    worker pushes, when the head time is still unchanged. The marker set lives in **one place**
-   (`BOUNCE_MARKERS` in `bounce-state.sh`) and holds both bounce channels: `재디스패치:`
-   (this skill, ①-b) and `재검증 실패:` (verify-runner ④). New bounce wording goes in that array
-   and nowhere else. Ordering is decided by the **last matching index in the comment array**, not
+   (`BOUNCE_MARKERS` in `bounce-state.sh`) and holds both bounce channels: `재디스패치`
+   (this skill, ①-b) and `재검증 실패` (verify-runner ④) — prefix match, no literal colon
+   required (#212). New bounce wording goes in that array and nowhere else. Ordering is
+   decided by the **last matching index in the comment array**, not
    by `createdAt` — GitHub comment times are second-granular, so a ✅ and a marker written in the
    same second cannot be ordered by time.
 
@@ -165,7 +166,8 @@ PR, attached `harvesting`, and ran `git rebase origin/main` inside that worker's
 (nothing was lost only because it had not been pushed yet).
 
 The judgment lives in `bounce-state.sh` **in one place** — both the marker set
-(`재디스패치:` · `재검증 실패:`) and the rule that ordering is measured by the **last matching
+(`재디스패치` · `재검증 실패`, prefix match with no literal colon required — #212) and the
+rule that ordering is measured by the **last matching
 index in the comments array**, not by `createdAt`; `closeout-eligible.sh` calls the same place
 (no second copy of the logic).
 
@@ -197,9 +199,12 @@ separate freshness gate needed:
 (the labels are set outside this skill by the worker runtime — use as a supplement when
 present; judge by finish-classify alone when absent).
 
-**Re-dispatch idempotency marker (required)**: on a `stale_reverify` re-dispatch, leave
-`gh pr comment <pr> --repo <repo> --body "재디스패치: #<issue> — lost finish (died before verify) <!-- bodat:worker -->"`,
-and **if this marker already exists and there has been no new commit / verifier comment since,
+**Re-dispatch idempotency marker (required)**: on a `stale_reverify` re-dispatch, leave the
+comment with `$SCRIPTS/bounce-comment.sh redispatch <repo> <pr> <issue>` (do not hand-type the
+wording — a dropped colon or reordering lets the `bounce-state.sh` bounce safety net miss it,
+#212. The generated body is `재디스패치: #<issue> — 완결 유실(검증 전 사망) <!-- bodat:worker -->`
+— the marker word itself stays Korean across both skill languages, see bounce-state.sh).
+**if this marker already exists and there has been no new commit / verifier comment since,
 do not re-issue** (prevents /loop spam, isomorphic to the step-6 spinoff marker). Re-dispatch
 eligibility is `open + agent-ready + ¬agent:claimed` (eligible-issues.sh), and the
 `closeout-redispatch` transition sets both in one call (do not hand-run `gh issue edit`).
@@ -524,23 +529,35 @@ attempt results).
 
 **A merged PR files exactly one deploy-wait issue, without exception.** Do not judge — even
 if it is tests-only or a one-line comment, being merged means it entered the promotion scope,
-and that fact must be visible to a human. File it with
-`gh issue create --repo <repo> --label needs-human --label deploy-wait` — `needs-human`
-stays for compatibility with the existing human-gate collection (deploy-bodat etc.), and
-`deploy-wait` is the bucket label `loop-status.sh` uses to separate deploy-waiting from
-human-waiting — leave the marker
-`gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
-**exit as approval-required**.
+and that fact must be visible to a human.
 
-**Missing label — fail closed, never lose the ticket (same shape as the step-6 spinoff rule).**
-`gh issue create` fails **without creating the issue** when any `--label` does not exist in the
-repo. Existing opted-in repos lack `deploy-wait` until `setup-labels.sh` is rerun, so without
-this rule the first closeout after upgrading ends with the PR merged but no ticket and no marker.
-On a `'deploy-wait' not found`-style failure, run `$SCRIPTS/setup-labels.sh <repo>` **once** and
-retry the same command **once**. If the retry also fails, do not loop — file with
-**`--label needs-human` only** (no lost ticket — `loop-status.sh` still counts it as
-deploy-waiting via the `배포 대기:` title fallback) and report
-`BLOCKED: deploy-wait label attach failed on deploy issue — #<number>` in ④ Report.
+- **Issuance command (required form — do not substitute prose).**
+
+  ```
+  gh issue create --repo <repo> --title "배포 대기: PR #<pr> — <summary>[ (승격만)]" \
+    --body-file <body-file> --label needs-human --label deploy-wait [--label <P1|P2>]
+  ```
+
+  `needs-human` stays for compatibility with the existing human-gate collection
+  (deploy-bodat etc.), and `deploy-wait` is the bucket label `loop-status.sh` uses to
+  separate deploy-waiting from human-waiting — **both** are needed. After issuance leave the
+  marker `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
+  **exit as approval-required**.
+- **Missing label — fail closed, never lose the ticket (same shape as the step-6 spinoff
+  rule).** `gh issue create` fails **without creating the issue** when any `--label` does not
+  exist in the repo. Existing opted-in repos lack `deploy-wait` until `setup-labels.sh` is
+  rerun, so without this rule the first closeout after upgrading ends with the PR merged but
+  no ticket and no marker. On a `'deploy-wait' not found`-style failure, run
+  `$SCRIPTS/setup-labels.sh <repo>` **once** and retry the same command **once**. If the
+  retry also fails, do not loop — file with **`--label needs-human` only** (no lost ticket —
+  `loop-status.sh` still counts it as deploy-waiting via the `배포 대기:` title fallback) and
+  report `BLOCKED: deploy-wait label attach failed on deploy issue — #<number>` in ④ Report.
+- **Verify right after issuance (same shape as step 6).** Check with
+  `gh issue view <number> --repo <repo> --json labels` that **both** `needs-human` and
+  `deploy-wait` actually landed; if either is missing, top it up with
+  `gh issue edit <number> --repo <repo> --add-label needs-human --add-label deploy-wait`
+  (the 8/8 miss behind this fix was not only the command sitting mid-prose — step 4 never
+  had this verify step at all, while step 6 did and did not leak).
 
 Why this rule was flipped: the previous rule created no issue when `<LIVE_CHECKS>` was `없음`,
 justified by "④ Report's `승격 대기 N커밋` holds the unpromoted state". But that Report line

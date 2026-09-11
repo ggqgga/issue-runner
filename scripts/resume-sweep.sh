@@ -15,7 +15,9 @@
 #               warn 과 섞으면 "손대지 않았다" 가 거짓이 되어, 보고를 읽는 쪽이 GitHub 상태를
 #               되짚어야 할 때(사람 확인)와 그냥 다음 틱을 기다리면 될 때를 못 가른다.
 #   note      — **아무것도 안 건드린** 정보 줄. warn 과 달리 조치할 것이 **없는** 정상 상태다
-#               (배포 대기 이슈의 사유 없는 needs-human). 버리지 않고 남기는 이유는 emit_note 주석.
+#               (배포 대기 이슈의 사유 없는 needs-human · #201: 배포 대기 이슈의 질문 없는
+#               hold:policy · #217: 배포 대기 이슈의 hold:ladder — 창이 지나도 재개·승격
+#               대상이 아니다). 버리지 않고 남기는 이유는 emit_note 주석.
 #
 # 상태 파일 없음 — 재개 횟수는 **이슈 코멘트에 붙은 마커**(`<!-- ladder-resume: N -->`)의
 # 개수가 SSOT 다. 재개 코멘트가 자기 마커를 품으므로 카운터와 알림이 한 번의 append 로 끝나고,
@@ -59,6 +61,67 @@ if ! _nonneg_int "$LIST_LIMIT" || [ "$LIST_LIMIT" -lt 1 ]; then
   exit 64
 fi
 
+# ── 인용된 마커는 제어 신호가 아니다 (#197) ───────────────────────────────
+# 마커(`<!-- hold-note: … -->`·`<!-- policy-review: … -->`·`<!-- ladder-resume: N -->`)는
+# 루프끼리 주고받는 **제어 신호**다. 그런데 substring 매칭은 그 신호를 *설명하는 글*까지
+# 신호로 읽는다 — 실측(#174): 재심 코멘트가 본문에 hold-note 을 인용해 **자기 자신을**
+# 이번 홀드의 질문(에피소드 경계)으로 만들었고, 경계 뒤에는 재심 마커가 없어 판정이 매 틱
+# `due` 로 되돌아왔다(사람이 라벨을 뗄 때까지 영구 반복). 같은 취약점이 재개 횟수에도 있어
+# `<!-- ladder-resume: 1 -->` 를 인용만 해도 소진 횟수가 부풀고 조기 승격(사람 대기)됐다.
+#
+# 그래서 매칭 **전에** 인용 구간을 걷어낸다. 걷어내는 것: 코드펜스(``` … ```)와 백틱 인라인
+# 코드. 걷어내지 **않는** 것: 코멘트 끝에 맨몸으로 붙는 정상 마커와, 블록쿼트(`>`)·따옴표
+# 안의 맨몸 마커(블록쿼트로 남의 코멘트를 통째 인용하는 일은 이 루프에 없고, 걸러 버리면
+# 진짜 마커를 잃는다).
+#
+# 순서가 계약이다 — 펜스를 **먼저** 지운 뒤 인라인을 지운다. 인라인을 먼저 돌리면 펜스
+# 안쪽의 백틱이 인라인 스팬으로 소진돼, 남은 펜스 구분자가 짝을 잃는다.
+#
+# 두 패스 모두 **범위를 좁혀** 과다 필터를 막는다 — 지우는 쪽으로 틀리면 맨몸 마커가 통째로
+# 사라져(재개 횟수 과소집계 → 상한이 안 걸리는 무한 재개) 원래 버그보다 나쁘다. 규칙은
+# CommonMark 의 코드펜스·코드스팬 규칙을 **그대로** 따른다(한 사례가 아니라 규칙 전체 —
+# #197 마감 검증 attempt3: 이전 두 회차가 매번 지적된 한 형태만 닫아 같은 축에서 반복됐다):
+#   · 펜스는 CommonMark 대로 **줄 머리**(들여쓰기 ≤3칸)에서만 연다/닫는다. 백틱 펜스와
+#     물결 펜스는 **두 개의 gsub 로 분리한다**(#197 마감 검증 attempt4: 하나로 합쳐 두면
+#     백틱 펜스의 info string 이 물결과 같은 `[^\n]*` 를 물려받아 백틱을 허용하게 된다).
+#     여는 펜스의 **길이**를 이름있는 그룹(`(?<f>```+)`/`(?<t>~~~+)`)으로 기억해 두고,
+#     닫는 줄은 같은 문자로 **그 길이 이상**(`\k<f>`/`\k<t>`)이며 뒤에 **공백만** 올
+#     때만(`[ \t]*`, 그 뒤 줄끝/문자열끝) 닫힌 것으로 본다 — 다른 텍스트가 붙은 줄
+#     (`` ``` not-a-close ``)이나 더 짧은 런(사중 펜스 안의 삼중 줄)은 닫지 못하고
+#     지나친다. 닫는 펜스가 없으면 **문서 끝까지**가 코드다(`$` 대안 — 덜 지우는 쪽이
+#     아니라 CommonMark 자체가 그렇다). **백틱 펜스의 info string 은 백틱을 금지**한다
+#     (`[^`\n]*` — CommonMark 규칙, 물결 펜스에는 이 제약이 없어 물결 쪽만 `[^\n]*`).
+#     이 제약이 없으면 줄 머리의 인라인 3-백틱 스팬(` ```example``` `)이 "안 닫힌 펜스"로
+#     읽혀 `$` 대안이 문서 끝까지 삼킨다 — 뒤따르는 맨몸 마커가 함께 사라져 수용 기준
+#     2번(맨몸 마커는 계속 세어진다)이 깨졌다(#197 마감 검증 attempt4 실측 — g18).
+#     jq(Oniguruma)의 `^` 는 줄 머리가 아니라 **문자열 머리**라 `(^|\n)` 로 직접 쓴다
+#     (실측 — `test("^```")` 는 2행의 펜스에 거짓이다).
+#   · 인라인은 CommonMark 의 코드 스팬 규칙대로 **구분자 길이를 정확히 맞추고, 양쪽 다
+#     최대런**(maximal run)이어야 한다 — 여는 런 `(?<!`)(?<r>`+)` 앞에 백틱이 없어야
+#     하고(런의 시작), 닫는 런 `(?<!`)\k<r>(?!`)` 도 앞뒤 모두 백틱이 없어야 한다(런의
+#     끝). 앞쪽만 안 물고 뒤쪽만 확인하면(첫 회차가 그랬다) 더 긴 런의 **접미부**가 짧은
+#     런의 닫기로 오인된다 — 길이 3 런은 길이 2 스팬을 닫지 못하는데도 뒤 두 글자가 닫기로
+#     읽힌다(#197 마감 검증 attempt3 실측). 백틱을 하나씩 짝지으면(더 이전 회차) 짝수 길이
+#     구분자가 "빈 스팬 두 개"로 갈려 알맹이(마커)만 맨몸으로 남는다. 알맹이에 백틱이 있을
+#     때 쓰는 이중 백틱은 CommonMark 의 정식 코드 스팬이다.
+#   · 인라인도 **한 줄 안**으로 제한한다(`[^\n]`). 줄을 넘게 두면 앞줄의 홀백틱이 뒷줄
+#     백틱과 짝지어 그 사이의 진짜 마커를 삼킨다. 한 줄 안에서도 코드가 아닌 백틱 두 개가
+#     마커를 사이에 두면 같은 일이 나지만, 그건 마커를 감싼 인용과 형태가 같아 구분할 수
+#     없다 — 한 줄로 좁히는 것이 이 대칭 위험을 실질적으로 줄이는 선까지다.
+#   · 알려진 느슨함(그대로 남긴다 — 숨기지 않는다): **여러 줄에 걸친 코드 스팬**은 여전히
+#     신호로 샌다(#197 마감 검증 attempt4 WARN — 실측: `` `<!-- ladder-resume: 1\n--> ` ``
+#     에서 `ladder-resume` 가 살아남는다). 인라인을 한 줄로 제한한 선택(위 항목)의 직접적
+#     결과다 — 줄을 넘게 두면 앞줄의 홀백틱이 뒷줄 백틱과 짝지어 진짜 마커를 삼키는 쪽이
+#     더 나쁘다고 판단해 **의도적으로 남겨 둔다**. (구 버전은 백틱 펜스를 물결로 닫는 혼용
+#     `` `*~* `` 를 허용했으나, 두 gsub 분리로 자연히 사라졌다 — 더 이상 유효한 느슨함이
+#     아니다.)
+# 두 패스 모두 Oniguruma 의 **이름있는 그룹**(`(?<name>…)`)과 **lookbehind**(`(?<!…)`)에
+# 의존한다 — 이 저장소가 요구하는 macOS bash 3.2 는 셸 문법 얘기고, jq 엔진(Oniguruma)이
+# 이 구문을 지원하는지가 별개다. jq-1.6/1.7 양쪽에서 실측했다(`jq --version`).
+# 이 정의는 SKILL.md·SKILL.en.md ③-4d 의 재개 횟수 jq 와 **같은 문자열**이어야 한다
+# (프롬프트와 스크립트가 다른 수를 세면 안 된다 — 동기화는 테스트가 grep -F 로 문다).
+JQ_UNQUOTE='def unquoted: gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " ");'
+
 # 사용자 확인은 공유 헬퍼(gh-login.sh) — REST /user 503 폴백·형식 검증·재시도는 그 안.
 # 오염된 me 로 빈 스코프를 위장하지 않는다(fail-loud).
 me=$("$SCRIPT_DIR/gh-login.sh") || me=""
@@ -87,24 +150,104 @@ has_label() {  # has_label <콤마목록> <라벨>
   return 1
 }
 
+# `number` 는 따옴표 **밖**의 %s 라, 값이 비거나 정수가 아니면 `{…,"number":,…}` 가 나가
+# 줄 전체가 JSON 이 아니게 된다(#193). 그 줄은 관대한 파서에선 통째로 유실되고 엄격한
+# 파서에선 읽기를 멈춘다 — 어느 쪽이든 **경보가 조용히 사라지는** 방향이다. 그래서:
+#   · 줄은 **반드시 나간다** — 번호를 못 구했다고 경보를 버리면 고치려던 것을 그대로 재현한다.
+#   · 번호는 `0` 으로 낮춘다 — "특정 이슈가 아니다" 라는 뜻으로 레포 단위 경보가 이미 쓰는 값.
+#   · `0` 만으로는 그 레포 단위 경보와 구분이 안 되니, **원본 토큰을 인용해** msg 앞머리에
+#     붙인다 — 무엇이 들어왔는지가 파싱이 어디서 어긋났는지를 짚는 유일한 단서다.
+#     기존 문구는 그 뒤에 한 바이트도 안 바뀐 채 붙는다 — 디스패처 SKILL.md 가 문구로 분기한다.
+# 세 헬퍼가 **같은 규칙**을 따르도록 방출을 한 곳(_emit)으로 모은다 — 한 헬퍼만 고치면
+# 나머지 둘이 같은 모양으로 남는다.
+
+# 방출용 번호 술어 — 값이 **정규 JSON 정수 리터럴**인가(`0` | `[1-9][0-9]*`).
+# `_nonneg_int()`(:47) 와 일부러 **다른 이름·다른 규칙**이다:
+#   · 저쪽은 사람이 손으로 쓰는 env(RESUME_AFTER_MIN 등)의 exit 64 게이트다. 뒤에서 산술로만
+#     쓰이므로 `060` 이 들어와도 60 으로 멀쩡히 돈다 — 거기까지 좁히면 그렇게 써 온 환경이
+#     갑자기 죽는다(이 이슈의 범위 밖).
+#   · 이쪽은 **JSON 리터럴 자리**다. RFC 8259 는 선행 0 을 금지하고, 관대한 파서(jq)는
+#     `{"number":01}` 을 조용히 **`1`** 로 읽는다 — 즉 통과시키면 엄격한 쪽은 줄을 버리고
+#     관대한 쪽은 **없는 이슈 #1** 을 가리킨다.
+# 그래서 `01 → 1` 정규화는 채택하지 않는다: `num` 의 출처는 `jq -r '.number|tostring'`
+# 하나뿐이고 jq 는 `1` 을 `"1"` 로 낸다 — `01` 을 낼 경로가 없으니 선행 0 은 "특이 표기" 가
+# 아니라 **파싱이 어긋났다는 증거**다. 정규화하면 출처가 말하지 않은 번호를 지어내는 것이고,
+# 경보의 뜻이 "어느 이슈인지 모르겠다" 에서 "이슈 #1 이다" 로 바뀐다 — 틀린 번호를 단 경보는
+# 번호 없는 경보보다 나쁘다(읽는 사람이 무고한 이슈를 열고 진짜 대상은 영영 안 보인다).
+_json_int() {  # 통과: 0·1·42·1234 / 거절: ''·01·007·+1·1.0·1e3·공백 포함 토큰
+  case "$1" in
+    ''|*[!0-9]*) return 1 ;;   # 빈 값 · 숫자 아닌 문자(부호·소수점·지수·공백)가 섞였다
+    0)  return 0 ;;            # `0` 단독은 정규 — "특정 이슈가 아니다"
+    0*) return 1 ;;            # 두 자리 이상인데 선행 0 → 비정규
+    *)  return 0 ;;
+  esac
+}
+
+# 인용할 원본 토큰을 JSON **문자열 안**에 안전하게 넣는다. 맨몸으로 박으면 따옴표·역슬래시·
+# 제어문자가 섞여 들어온 순간 이 이슈가 고치려는 것(깨진 줄)을 msg 자리에서 그대로 재현한다.
+# 토큰은 파싱이 어긋났을 때의 값이라 **무엇이든 될 수 있다** — 모양을 가정하지 않는다.
+_json_token() {  # _json_token <원본 토큰>
+  local t="$1"
+  t=${t//\\/\\\\}
+  t=${t//\"/\\\"}
+  # 개행·탭 등 제어문자는 JSON 문자열에 맨몸으로 못 들어간다 — 눈에 보이는 기호로 접는다.
+  case "$t" in *[[:cntrl:]]*) t=$(printf '%s' "$t" | tr '[:cntrl:]' '?') ;; esac
+  printf '%s' "$t"
+}
+
+_emit() {  # _emit <event> <repo> <num> <msg>
+  local num="$3" msg="$4"
+  if ! _json_int "$num"; then
+    msg="번호 파싱 실패('$(_json_token "$num")') — $msg"
+    num=0
+  fi
+  printf '{"event":"%s","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$num" "$msg"
+}
+
+# `msg` 가 없는 이벤트(waiting·escalated·resumed·policy_review_due)도 같은 자리에 같은
+# 위험을 안는다 — 그쪽은 `printf` 가 인라인이고 필드 구성이 제각각이라 `_emit` 을 못 쓴다.
+# 사실을 적을 `msg` 칸이 없으니 **형식 안전만** 취한다: 정규 정수가 아니면 0. 방출 조건은
+# 손대지 않는다(특히 `waiting` 은 원래 조용히 넘기는 이벤트라 줄 수가 늘면 안 된다).
+_emit_num() { if _json_int "$1"; then printf '%s' "$1"; else printf 0; fi; }
+
 emit_warn() {  # emit_warn <repo> <num> <msg> — msg 는 이 파일이 쓰는 고정 문구(따옴표 없음)
-  printf '{"event":"warn","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$3"
+  _emit warn "$1" "$2" "$3"
 }
 
 # 쓰기가 이미 GitHub 에 반영된 뒤의 실패. warn 과 나누는 이유는 대응이 다르기 때문이다 —
 # warn 은 "그대로 두면 다음 틱이 다시 본다", 이건 "상태가 반쯤 바뀌었으니 사람이 본다".
 emit_warn_after_edit() {  # emit_warn_after_edit <repo> <num> <msg>
-  printf '{"event":"warn_after_edit","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$3"
+  _emit warn_after_edit "$1" "$2" "$3"
 }
 
 # 조치할 것이 **없는** 정보 줄. warn 의 정의를 "루프가 교정 가능한 불변식 위반" 으로 좁히고
 # (형제 이슈 #188 이 loop-status.sh 에서 정한 정의) 거기서 빠지는 건을 여기로 내린다.
 # 그냥 빼지 않는 이유: 관측에서 통째로 사라지면 그 자체가 다른 사각지대가 된다.
-# msg 는 이 파일이 쓰는 고정 문구다 — 라벨 이름을 끼워 넣지만 그 값은 아래 ② 가 고르는
-# **jq 문자열 리터럴 두 개("deploy-wait"·"full-cycle") 중 하나**이지 GitHub 에서 온 텍스트가
-# 아니다. 따옴표·개행이 못 들어오므로 printf JSON 포맷 계약이 깨질 경로가 없다.
+# msg 는 이 파일이 쓰는 고정 문구다 — 라벨 이름을 끼워 넣지만 그 값은 아래 deploy_wait_row 가
+# 고르는 **jq 문자열 리터럴 두 개("deploy-wait"·"full-cycle") 중 하나**이지 GitHub 에서 온
+# 텍스트가 아니다. 따옴표·개행이 못 들어오므로 printf JSON 포맷 계약이 깨질 경로가 없다.
 emit_note() {  # emit_note <repo> <num> <msg>
-  printf '{"event":"note","repo":"%s","number":%s,"msg":"%s"}\n' "$1" "$2" "$3"
+  _emit note "$1" "$2" "$3"
+}
+
+# 배포 대기 축 판정 — ①(재개·승격, #217)·②(사유 없는 needs-human)·③(policy 재심 no-note,
+# #201) 이 공유하는 **한 벌** 술어다. 복제하면 세 벌이 나중에 갈라진다(#201·#217 이 막으려는
+# 것 자체 — 같은 질문에 갈래마다 다른 답이 나오는 사고).
+# 라벨만 본다 — 제목은 사람이 자유롭게 쓰므로 판별 축이 될 수 없다(그래서 이 스크립트는
+# title 을 조회조차 하지 않는다). `deploy-wait` 가 정본 축이다(closeout 이 배포 대기 이슈에
+# 붙인다) — 그래서 둘 다 있으면 이쪽을 문구에 남긴다. `full-cycle` 은 **과도기 축**이다:
+# 사람 세션 스킬 full-cycle §7 이 배포 대기 이슈에 `needs-human`+`full-cycle` 만 붙이고
+# `deploy-wait` 를 빠뜨려서 생긴 구멍인데, 그 스킬은 이 레포 밖이라 여기서 못 고친다.
+# **그쪽이 `deploy-wait` 를 붙이는 날 이 갈래(full-cycle)는 뗀다** — 원칙적 축으로 오해하지
+# 마라. 번호와 축을 **한 번의 jq 로 함께** 뽑는다 — 호출부(② 는 needs-human 이슈 수만큼,
+# ③ 은 hold:policy 이슈 수만큼) 마다 필드별 프로세스를 띄우면 조회보다 파싱이 더 비싸진다.
+deploy_wait_row() {  # deploy_wait_row <row-json> — stdout: "<number>\t<axis>"(axis: deploy-wait|full-cycle|""). jq 실패 시 둘 다 빈 값 — 빈 축은 호출부에서 "해당 없음" 으로 떨어진다(강등이 조회 실패를 타고 번지지 않는 방향).
+  printf '%s' "$1" | jq -r '
+    [.labels[].name] as $n
+    | [(.number|tostring),
+       (if ($n | index("deploy-wait") != null) then "deploy-wait"
+        elif ($n | index("full-cycle") != null) then "full-cycle"
+        else "" end)] | @tsv' 2>/dev/null
 }
 
 # ── GitHub 읽기 헬퍼 — 전부 **조회 실패는 rc 1** ──────────────────────────
@@ -133,7 +276,7 @@ count_markers() {  # count_markers <repo> <num>
   out=$(gh issue view "$2" --repo "$1" --json comments 2>/dev/null) || return 1
   printf '%s' "$out" | jq -e 'type=="object"' >/dev/null 2>&1 || return 1
   printf '%s' "$out" \
-    | jq '[.comments[]? | select(.body | test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+    | jq "$JQ_UNQUOTE"'[.comments[]? | select(.body | unquoted | test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
 }
 
 # 연결된 **열린** PR 들 — "<번호><TAB><라벨 콤마목록>" 줄. 없으면 빈 출력(정상).
@@ -199,10 +342,10 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate>
 
 rc=0
 
-# ── 이슈 1건 처리 (재개 대상 = needs-human ∧ hold:ladder) ─────────────────
+# ── 이슈 1건 처리 (재개 대상 = needs-human ∧ hold:ladder ∧ ¬deploy-wait, #217) ─────
 sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
   local repo="$1" row="$2"
-  local num updated row_tsv then_epoch elapsed attempts next cur back live_updated
+  local num updated row_tsv then_epoch elapsed attempts next cur back live_updated dw_tsv dwlabel
 
   # 한 번의 jq 로 둘 다 뽑는다 — 큰 레포에선 이 함수가 이슈 수만큼 돌아, 필드마다
   # 프로세스를 띄우면 조회보다 파싱이 더 비싸진다.
@@ -221,7 +364,29 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
     # SKILL 은 이 이벤트를 보고하지 않지만(조용히 넘긴다) **내보내는 것 자체가 계약**이다 —
     # "창 안이라 안 건드렸다" 와 "대상이 아예 없었다" 를 구분하는 유일한 신호라, 사람이
     # 스윕을 손으로 돌려 디버깅할 때·앞으로 loop-status 가 세게 될 때 이 줄이 근거다.
-    printf '{"event":"waiting","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$num" "$elapsed"
+    printf '{"event":"waiting","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$(_emit_num "$num")" "$elapsed"
+    return 0
+  fi
+
+  # ── 배포 대기 축 — 창이 지나도 재개·승격 대상이 아니다(#217) ──────────────
+  # #5040 실측: 같은 실행에서 이 이슈가 `resumed`(여기)와 배포 대기 `note`(②)를 동시에
+  # 냈다 — 판정(②)은 배포 대기임을 알고 쓰기(여기)는 몰랐던 것이 근본 원인이다. ②·③ 과
+  # **같은 술어**(deploy_wait_row, 위 정의)를 **같은 row**(이미 들고 있다 — 추가 조회 없음)
+  # 에 적용해 답을 하나로 모은다. hold:ladder 만 보고 있으니 이 이슈는 애초에 ② 의 "hold:*
+  # 없음" 가드를 안 타 note 가 안 나왔다 — 그 note 를 여기서 대신 낸다(중복 없이, 갈래를
+  # 옮길 뿐). 상한 소진 여부와 무관하게 여기서 먼저 걸러지므로 승격(escalate) 갈래도
+  # 같은 제외를 받는다(요청 ③) — 아래로 내려가는 코드 경로 자체가 없다.
+  # 판정 자체가 실패(row 가 예상 모양이 아님 등)하면 "배포 대기 아님" 으로 폴백하지
+  # 않는다 — 그건 이 함수가 fail-open 이 되어 정확히 이 이슈가 막으려는 사고(사람 게이트를
+  # 조용히 벗겨내는 것)를 판정 실패 경로에서 재현한다(사전 리뷰 지적). rc 로 조회 실패와
+  # 빈 결과(배포 대기 아님)를 가른다 — 이 파일이 read_state 등에서 이미 쓰는 규율과 같다.
+  if ! dw_tsv=$(deploy_wait_row "$row"); then
+    emit_warn "$repo" "$num" "배포 대기 판정 실패(라벨 파싱) — 재개 대상인지 확정 못 해 건드리지 않는다"
+    return 0
+  fi
+  dwlabel=${dw_tsv#*$'\t'}
+  if [ -n "$dwlabel" ]; then
+    emit_note "$repo" "$num" "배포 대기(라벨 $dwlabel) — needs-human 이 정상 상태라 warn 아님"
     return 0
   fi
 
@@ -252,7 +417,7 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
       elapsed=$(( (now_epoch - then_epoch) / 60 ))
       [ "$elapsed" -lt 0 ] && elapsed=0
       if [ "$elapsed" -lt "$RESUME_AFTER_MIN" ]; then
-        printf '{"event":"waiting","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$num" "$elapsed"
+        printf '{"event":"waiting","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$(_emit_num "$num")" "$elapsed"
         return 0
       fi
     fi
@@ -291,7 +456,7 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
     # 승격에선 마커를 안 남기므로 next 를 실으면 GitHub 어디에도 대응하는 숫자가 없는 값이
     # 이벤트에만 떠돈다(합산하는 소비자는 승격마다 1씩 과다 계수한다).
     printf '{"event":"escalated","repo":"%s","number":%s,"attempt":%s,"limit":%s}\n' \
-      "$repo" "$num" "$attempts" "$LADDER_RESUME_LIMIT"
+      "$repo" "$(_emit_num "$num")" "$attempts" "$LADDER_RESUME_LIMIT"
     return 0
   fi
 
@@ -323,7 +488,7 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
     emit_warn_after_edit "$repo" "$num" "재개 readback 불일치(needs-human·hold:ladder 가 남아 있다) — 사람 확인 필요"
     return 0
   fi
-  printf '{"event":"resumed","repo":"%s","number":%s,"attempt":%s}\n' "$repo" "$num" "$next"
+  printf '{"event":"resumed","repo":"%s","number":%s,"attempt":%s}\n' "$repo" "$(_emit_num "$num")" "$next"
 }
 
 # ── 스코프 레포 목록 ───────────────────────────────────────────────────────
@@ -402,29 +567,11 @@ while IFS= read -r repo; do
         # 불변식 위반일 때만**(형제 이슈 #188 이 loop-status.sh 에서 정한 정의). 그래서 note 로
         # 강등한다. 조용히 버리지 않는 이유는 emit_note 주석 참고.
         #
-        # 축은 **라벨만** 본다 — 제목은 사람이 자유롭게 쓰므로 판별 축이 될 수 없다(그래서 이
-        # 스크립트는 title 을 조회조차 하지 않는다). 제외 판정도 **같은 row 에 대한 jq 테스트**로만
-        # 한다: 별도 `gh issue list --label deploy-wait` 로 제외 집합을 만들면 그 조회의 실패가
-        # "배포 대기 이슈 없음" 으로 위장돼 전부 다시 warn 이 된다(조회 실패를 '해당 없음' 으로
-        # 삼키지 않는다는 이 파일의 규율).
-        #
-        # `deploy-wait` 가 정본 축이다(closeout 이 배포 대기 이슈에 붙인다) — 그래서 둘 다 있으면
-        # 이쪽을 문구에 남긴다. `full-cycle` 은 **과도기 축**이다: 사람 세션 스킬 full-cycle §7 이
-        # 배포 대기 이슈에 `needs-human`+`full-cycle` 만 붙이고 `deploy-wait` 를 빠뜨려서 생긴
-        # 구멍인데, 그 스킬은 이 레포 밖이라 여기서 못 고친다. **그쪽이 `deploy-wait` 를 붙이는 날
-        # 이 갈래(full-cycle)는 뗀다** — 원칙적 축으로 오해하지 마라. 그때까지의 대가는 `full-cycle`
-        # 이 붙은 구현 이슈까지 note 로 내려간다는 것이고, 이는 의도된 트레이드오프다
-        # (실측상 그런 이슈는 계정 전체에 0건 — 2026-09-11).
-        # 번호와 축을 **한 번의 jq 로 함께** 뽑는다 — 이 루프는 레포의 needs-human 이슈 수만큼
-        # 도니 필드마다 프로세스를 띄우면 조회보다 파싱이 더 비싸진다(read_state 가 같은 이유로
-        # 같은 모양이다). jq 가 실패하면 둘 다 비고, 빈 축은 아래에서 warn 으로 떨어진다 —
-        # 강등이 조회 실패를 타고 번지지 않는 방향이다.
-        row_tsv=$(printf '%s' "$row" | jq -r '
-          [.labels[].name] as $n
-          | [(.number|tostring),
-             (if ($n | index("deploy-wait") != null) then "deploy-wait"
-              elif ($n | index("full-cycle") != null) then "full-cycle"
-              else "" end)] | @tsv' 2>/dev/null) || row_tsv=""
+        # 제외 판정도 **같은 row 에 대한 jq 테스트**로만 한다: 별도 `gh issue list --label
+        # deploy-wait` 로 제외 집합을 만들면 그 조회의 실패가 "배포 대기 이슈 없음" 으로
+        # 위장돼 전부 다시 warn 이 된다(조회 실패를 '해당 없음' 으로 삼키지 않는다는 이 파일의
+        # 규율). 축 판정 자체는 deploy_wait_row 공유 술어(위 정의, #201) — 두 벌 금지.
+        row_tsv=$(deploy_wait_row "$row") || row_tsv=""
         hnum=${row_tsv%%$'\t'*}
         dwlabel=${row_tsv#*$'\t'}
         if [ -n "$dwlabel" ]; then
@@ -457,19 +604,33 @@ while IFS= read -r repo; do
       # 에피소드 단위: 마지막 `hold-note: policy` 코멘트(=이번 홀드의 질문) **이후**에 재심 마커가
       # 있어야 "이번 홀드는 재심됨" 이다. 옛 홀드의 마커가 새 홀드의 재심을 막지 않게.
       # 질문(hold-note) 자체가 없으면 재심할 대상이 없다 — warn 으로만(레거시·손으로 붙인 홀드).
-      pstate=$(printf '%s' "$pout" | jq -r '
-        [.comments[]? | .body] as $b
+      pstate=$(printf '%s' "$pout" | jq -r "$JQ_UNQUOTE"'
+        [.comments[]? | .body | unquoted] as $b
         | ([range(0; $b|length)] | map(select($b[.] | test("<!--\\s*hold-note:\\s*policy"))) | last) as $q
         | if $q == null then "no-note"
           else ([range($q+1; $b|length)] | map(select($b[.] | test("<!--\\s*policy-review:"))) | length) as $r
                | if $r > 0 then "reviewed" else "due" end end' 2>/dev/null || echo "parse-fail")
       case "$pstate" in
         reviewed) continue ;;   # 이번 홀드는 이미 1회 재심됨 — 사람이 라벨을 뗄 때까지 다시 안 묻는다
-        no-note)  emit_warn "$repo" "$pnum" "hold:policy 인데 질문(hold-note) 코멘트가 없다 — 재심 불가, --note 로 다시 걸거나 사람이 처리"; continue ;;
+        no-note)
+          # 배포 대기 이슈는 배포 레인이 transition.sh 를 거치지 않고 라벨·코멘트를 직접
+          # 붙인다(실측 #201: ggqgga/BodaT#5013 — 사람이 답할 질문이 코멘트 산문에 있었는데도
+          # `<!-- hold-note: policy -->` 마커가 없었다). 그 레인은 이 레포 밖이라 마커 규약을
+          # 강제할 수 없으므로, 여기서는 "배포 게이트 표시"로 보고 note 로 내린다(②와 같은 축,
+          # 같은 이유 — 두 벌 금지 #201). 배포 대기가 **아닌** no-note 는 여전히 규약 위반이라
+          # warn 유지(회귀 없음).
+          dw_row=$(deploy_wait_row "$row") || dw_row=""
+          dwlabel=${dw_row#*$'\t'}
+          if [ -n "$dwlabel" ]; then
+            emit_note "$repo" "$pnum" "배포 대기(라벨 $dwlabel) — hold:policy 이지만 질문(hold-note) 없이 부착돼 재심 대상 아님"
+          else
+            emit_warn "$repo" "$pnum" "hold:policy 인데 질문(hold-note) 코멘트가 없다 — 재심 불가, --note 로 다시 걸거나 사람이 처리"
+          fi
+          continue ;;
         due) ;;
         *) emit_warn "$repo" "$pnum" "재심 마커 해석 실패 — 이번 틱은 건너뛴다"; continue ;;
       esac
-      printf '{"event":"policy_review_due","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$pnum" "$pmin"
+      printf '{"event":"policy_review_due","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$(_emit_num "$pnum")" "$pmin"
     done 3< "$tmp/issues.policy"
   else
     echo "resume-sweep: $repo needs-human+hold:policy 목록 조회 실패 — 재심 점검을 건너뛴다" >&2

@@ -96,7 +96,8 @@ closeout 이 머지한다. 그래서 `closeout-eligible.sh` 는 ✅ 존재만으
    `active` 다(머지 게이트에서 증명 실패를 통과로 처리하면 그게 fail-open).
 2. **반송 마커 안전망** — 반송 직후 아직 새 커밋이 없어 head 시각이 그대로인 창을 덮는다.
    마커 집합은 반송 채널 둘을 **한 자리**(`bounce-state.sh` 의 `BOUNCE_MARKERS`)에
-   묶는다: `재디스패치:`(이 스킬 ①-b) · `재검증 실패:`(verify-runner ④). 새 반송 어휘가
+   묶는다: `재디스패치`(이 스킬 ①-b) · `재검증 실패`(verify-runner ④, 콜론 등 뒤에 무엇이
+   오든 접두 매칭 — #212). 새 반송 어휘가
    생기면 그 배열만 고친다. 선후는 `createdAt` 이 아니라 **코멘트 배열의 마지막 매칭
    인덱스**로 잰다 — GitHub 코멘트 시각은 초 단위라 동초에 달린 ✅ 와 마커의 순서를
    시각만으로는 가릴 수 없다.
@@ -145,7 +146,8 @@ head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify`
 형상이기도 하다.** 실제로 closeout 이 살아 있는 워커의 PR 을 입양해 `harvesting` 을 붙이고
 그 워크트리에서 `git rebase origin/main` 까지 돌렸다(원격은 push 전이라 무손상).
 
-판정은 `bounce-state.sh` **한 자리**다 — 마커 집합(`재디스패치:`·`재검증 실패:`)도, 선후를
+판정은 `bounce-state.sh` **한 자리**다 — 마커 집합(`재디스패치`·`재검증 실패`, 콜론
+리터럴을 요구하지 않는 접두 매칭 — #212)도, 선후를
 `createdAt` 이 아니라 **코멘트 배열의 마지막 매칭 인덱스**로 재는 규칙도 거기 있고
 `closeout-eligible.sh` 가 같은 자리를 부른다(로직 두 벌 금지).
 
@@ -176,8 +178,10 @@ CONFLICTING PR 도 그 라벨을 그대로 달고 있다 — 배제 조건으로
 결과만으로 판정).
 
 **재디스패치 멱등 마커 (필수)**: `stale_reverify` 재디스패치 시 PR 에
-`gh pr comment <pr> --repo <repo> --body "재디스패치: #<이슈> — 완결 유실(검증 전 사망) <!-- bodat:worker -->"`
-를 남기고, **이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지
+`$SCRIPTS/bounce-comment.sh redispatch <repo> <pr> <이슈>` 로 코멘트를 남긴다(문구를
+손으로 옮겨 적지 않는다 — 콜론·어순이 변형되면 `bounce-state.sh` 반송 안전망이 놓친다,
+#212. 생성되는 본문은 `재디스패치: #<이슈> — 완결 유실(검증 전 사망) <!-- bodat:worker -->`).
+**이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지
 않는다**(/loop 스팸 방지, 6단계 파생 마커 동형). 재디스패치 자격은 `open + agent-ready +
 ¬agent:claimed`(eligible-issues.sh)이라 `closeout-redispatch` 전이가 그 둘을 한 번에
 맞춘다(손으로 `gh issue edit` 하지 마라). 위 두 전이 모두 **exit 1(readback 불일치)·
@@ -451,20 +455,32 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 
 **머지된 PR 은 예외 없이 배포 대기 이슈를 하나 발행한다.** 판정하지 마라 — 테스트
 전용이든 주석 한 줄이든, 머지됐다는 것은 승격 범위에 들어갔다는 뜻이고 그 사실이
-사람에게 보여야 한다. `gh issue create --repo <repo> --label needs-human --label deploy-wait`
-으로 발행하고 — `needs-human` 은 deploy-bodat 등 기존 수집(사람 게이트 쿼리)과의 호환
-때문에 유지하고, `deploy-wait` 는 `loop-status.sh` 가 배포대기와 사람대기를 갈라 세는
-버킷 라벨이다 — `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"` 마커를
-남긴 뒤 → **approval-required 로 종료**한다.
+사람에게 보여야 한다.
 
-**라벨 부재 fail-closed — 티켓을 잃지 않는다 (6단계 파생과 동형).** `gh issue create` 는
-`--label` 에 레포에 없는 라벨이 있으면 **이슈 자체를 안 만들고 실패**한다. `setup-labels.sh`
-재실행 전의 기존 옵트인 레포엔 `deploy-wait` 가 없으므로, 이 규칙이 없으면 업그레이드 뒤
-첫 마감이 PR 은 머지된 채 티켓·마커 없이 끝난다. `'deploy-wait' not found` 류로 실패하면
-`$SCRIPTS/setup-labels.sh <repo>` 를 **1회** 호출한 뒤 같은 명령을 **1회만** 재시도한다.
-재시도도 실패하면 더 반복하지 말고 **`--label needs-human` 만으로 발행**하고(티켓 유실 방지 —
-`loop-status.sh` 는 제목 `배포 대기:` 폴백으로 여전히 배포대기로 센다) ④ Report 에
-`BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로 올린다.
+- **발행 명령 (필수 형태 — 산문으로 대체하지 마라).**
+
+  ```
+  gh issue create --repo <repo> --title "배포 대기: PR #<pr> — <요약>[ (승격만)]" \
+    --body-file <본문파일> --label needs-human --label deploy-wait [--label <P1|P2>]
+  ```
+
+  `needs-human` 은 deploy-bodat 등 기존 수집(사람 게이트 쿼리)과의 호환 때문에 유지하고,
+  `deploy-wait` 는 `loop-status.sh` 가 배포대기와 사람대기를 갈라 세는 버킷 라벨이다 —
+  **둘 다** 필요하다. 발행 뒤 `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"`
+  마커를 남긴 뒤 → **approval-required 로 종료**한다.
+- **라벨 부재 fail-closed — 티켓을 잃지 않는다 (6단계 파생과 동형).** `gh issue create` 는
+  `--label` 에 레포에 없는 라벨이 있으면 **이슈 자체를 안 만들고 실패**한다. `setup-labels.sh`
+  재실행 전의 기존 옵트인 레포엔 `deploy-wait` 가 없으므로, 이 규칙이 없으면 업그레이드 뒤
+  첫 마감이 PR 은 머지된 채 티켓·마커 없이 끝난다. `'deploy-wait' not found` 류로 실패하면
+  `$SCRIPTS/setup-labels.sh <repo>` 를 **1회** 호출한 뒤 같은 명령을 **1회만** 재시도한다.
+  재시도도 실패하면 더 반복하지 말고 **`--label needs-human` 만으로 발행**하고(티켓 유실 방지 —
+  `loop-status.sh` 는 제목 `배포 대기:` 폴백으로 여전히 배포대기로 센다) ④ Report 에
+  `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로 올린다.
+- **발행 직후 확인 (6단계와 동형).** `gh issue view <번호> --repo <repo> --json labels` 로
+  `needs-human` 과 `deploy-wait` 가 **둘 다** 붙었는지 확인하고, 빠진 게 있으면
+  `gh issue edit <번호> --repo <repo> --add-label needs-human --add-label deploy-wait` 로
+  보강한다(이번 사고의 8/8 누락은 발행 명령이 산문 한가운데 있었던 것뿐 아니라 이 확인
+  절 자체가 4단계에 없었기 때문이다 — 6단계는 있어서 안 샜다).
 
 이 규칙이 뒤집힌 이유: 직전 규칙은 `<LIVE_CHECKS>` 가 `없음` 이면 이슈를 안 만들고
 "미승격 현황은 ④ Report 의 `승격 대기 N커밋` 이 갖는다" 로 정당화했다. 그런데 그

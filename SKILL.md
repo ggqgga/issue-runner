@@ -29,8 +29,19 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   2~3건 캡을 영구 점유해 실효 캡이 7 로 떨어져 있었다(2026-08-13 실측: 10칸 중 3칸).
   14 는 그 상시 점유분을 흡수한 값이다. 사람 대기 PR 이 정리되면 다시 낮춰도 된다.
 - `MAX_REPAIRS_PER_PR = 3` — PR 1개당 보수 디스패치 상한 (② Maintain 서킷 브레이커)
-- `ISSUE_TIMEBOX_HOURS = 1` — PR 없는 `working` 이슈에 허용하는 claim 경과 시간
-  (① Reconcile timebox)
+- `ISSUE_TIMEBOX_HOURS = 1` — PR 없는 `working` 이슈에서 **진행 증거를 묻기 시작하는**
+  claim 경과 시간 (① Reconcile timebox). 경과 초과 **자체는 중단 사유가 아니다** — 이
+  시간을 넘긴 뒤에도 진행 증거가 있으면 유예한다(#200).
+- `STALL_MIN = 25` — "무진전" 의 기준(분). 원격 브랜치 `agent/issue-<num>` 의 최신 커밋이
+  이보다 오래됐을 때만 커밋 쪽 진행 증거가 죽는다. 근거: bodat `bin/ci` 1회 실측 상한
+  ~570초(9.5분)에 박스 전역 직렬 CI 큐(#127) 대기 여유를 더한 값 — 워커가 CI 한 판을
+  기다리는 동안 새 커밋이 없는 것은 정상이므로, 그 구간을 무진전으로 세면 안 된다.
+- `MAX_TIMEBOX_GRACE = 3` — 같은 claim 에서 허용하는 **누적 유예 횟수**(사이에 `unknown`
+  틱이 끼어도 리셋되지 않는다 — 세는 창은 claim 시각 이후 전부다). 넘으면 진행
+  증거가 있어도 규칙대로 중단한다 — 유예가 무한이면 진짜 좀비를 못 잡아 이 완화 자체가
+  새 구멍이 된다. 틱 간격 15분 기준 최대 ~45분의 추가 시간이라 실측(72분·64분) 형상을
+  덮으면서도 상한이 남는다. 횟수는 상태 파일이 아니라 이슈 코멘트 마커
+  (`<!-- timebox-grace: N -->`)를 **현재 claim 시각 이후 것만** 세어 재파생한다.
 - `RESUME_AFTER_MIN = 120` — 재개 스윕이 멈춘 이슈를 다시 흘려보내기까지 기다리는
   시간(분). `needs-human` + `hold:ladder` 이슈의 마지막 갱신이 이만큼 지나면 ① 의 재개
   스윕이 집는다 (`resume-sweep.sh` 에 동명 환경변수로 전달된다).
@@ -123,7 +134,9 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 - `working` — 워커 진행 중. TaskList 로 해당 백그라운드 에이전트가 실제 살아있는지
   확인. 죽었고 push 된 커밋이 있으면 ② 의 보수 대상으로. 커밋이 전혀 없으면
   claim 해제 **전에** 이슈 최신 코멘트를 확인하라 —
-  `gh issue view <num> --repo <repo> --json comments --jq '.comments | last.body'`
+  `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body | test("<!--\\s*timebox-grace:")) | not)] | last.body'`
+  (timebox 유예 마커 코멘트는 건너뛴다 — 마커가 최신 코멘트 자리를 차지하면 워커가 남긴
+  `BLOCKED:` 가 가려져 사람대기 승격 대신 조용한 claim 해제로 샌다, #200)
   가 `BLOCKED:` 로 시작하면 워커가 사람 개입이 필요해서 멈춘 것이다 (모호 스펙 /
   계획-현실 불일치 / 동일 실패 반복): 재디스패치 복귀 대신
   `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy --note "<사람이 답해야 할 질문 한 줄>"` 로 `needs-human`
@@ -132,13 +145,31 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   올려라 (사람이 원인을 해소하고 needs-human 을 떼면 다시 흐른다 — README
   '가드레일' 규약). BLOCKED 코멘트가 아니면 worktree 제거 후 claim 해제
   (재디스패치 가능 상태로 복귀).
-  **timebox (무진전 감지)**: 살아있어도 claim 경과 시간을 확인하라 —
+  **timebox (무진전 감지)**: 살아있어도 **진행이 있는지** 확인하라 — 판정 입력은 경과
+  시간이 아니라 진행 증거다(#200: 경과에는 워커가 통제할 수 없는 박스 전역 직렬 CI 큐
+  대기가 통째로 들어가, 실측 2건에서 진행 중인 워커를 죽일 뻔했다).
   `gh api repos/<repo>/issues/<num>/timeline --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed")] | last.created_at'`
   로 claim 시각을 구하고 (빈 응답이면 worktree 디렉토리 생성 시각으로 대체),
-  현재 시각과의 차가 `ISSUE_TIMEBOX_HOURS` 를 초과하면 (`working` 은 정의상 PR 없음):
+  `$SCRIPTS/timebox-check.sh <repo> <num> --claim-at <ISO8601>` 에 넘겨라 (`working` 은
+  정의상 PR 없음). 판정은 한 줄로 나온다 —
+  `<verdict> <reason> elapsed=..m commit=..m queue=.. grace=n/max`:
+  - `ok` (exit 0) — 경과가 아직 `ISSUE_TIMEBOX_HOURS` 이내. 손대지 마라.
+  - `grace` (exit 0) — 경과는 넘었지만 진행 증거가 있다: 최신 커밋이 `STALL_MIN` 이내
+    이거나(`recent_commit`), 그 head SHA 의 CI 티켓이 박스 전역 큐에 살아 있다
+    (`ci_queued`). 이번 틱은 **중단하지 마라**. 헬퍼가 유예 마커를 이슈에 append 하므로
+    다음 틱이 그 개수를 세어 `MAX_TIMEBOX_GRACE` 를 건다. ④ Report 에는 **warn 이 아니라
+    정보 줄**로 판정 줄을 그대로(경과·마지막 커밋·큐 상태·유예 n/max) 옮겨 무한 유예가
+    눈에 보이게 하라.
+  - `stop` (exit 1) — 무진전(`no_progress`)이거나 유예 상한 소진(`grace_exhausted`).
+    아래 ⓐ~ⓓ 를 그대로 하라.
+  - `unknown` (exit 2) — 판정 입력을 못 얻었다(claim 시각·브랜치 조회·코멘트 조회·유예
+    마커 append 실패). **중단하지 말고** ④ Report 에 warn 으로 올려라 — 조회 실패로
+    살아있는 워커를 죽이면 미push 잔여물이 되돌릴 수 없이 폐기되지만, 유예는 다음 틱이
+    되돌릴 수 있다.
+  `stop` 일 때만:
   ⓐ TaskStop 으로 워커를 중단하고 (push 된 커밋은 원격 브랜치에 보존된다),
   ⓑ worktree 를 제거하라 — `git -C <repo-dir> worktree remove --force <wt>` 후
-  `git -C <repo-dir> branch -D agent/issue-<num>`. 미push 잔여물은 timebox 초과의
+  `git -C <repo-dir> branch -D agent/issue-<num>`. 미push 잔여물은 `stop` 판정의
   대가로 **의도적으로 폐기**한다 — 남겨두면 다음 디스패치의 make-worktree 가 중단된
   워커의 중간 상태를 그대로 물려줘 worktree 격리가 깨진다 (dirty-warn 보류 규율은
   원인 불명의 잔여물용이므로 이 의도적 중단에는 적용하지 않는다).
@@ -160,7 +191,9 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
 
 - `resumed` — `needs-human`·`hold:ladder` 가 떨어졌고 `agent-ready` 는 그대로다(자격은
   건드리지 않는다). **디스패처가 따로 할 일은 없다** — 이번 틱 ③ 의 `eligible-issues.sh`
-  후보로 자연히 다시 나타난다. ④ Report 의 `재개` 에 번호와 `attempt` 를 적는다.
+  후보로 자연히 다시 나타난다. ④ Report 의 `재개` 에 번호와 `attempt` 를 적는다. 배포 대기
+  라벨(`deploy-wait`)이 붙은 이슈는 창이 지나도 이 이벤트가 나오지 않는다(#217) — 대신
+  아래 `note` 로 간다.
 - `escalated` — 재개 상한(`LADDER_RESUME_LIMIT`) 초과라 `hold:policy` 로 승격됐다
   (`attempt`/`limit` 은 마커 코멘트가 기록한 소진 횟수 대 상한 — `2/2` 로 읽는다). 라벨은
   스크립트가 이미 붙였으니 **추가 조치 없이** ④ Report 의 `승격` 에 올려 사람이 보게 하라.
@@ -169,7 +202,8 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
   **목록/탐색 상한 도달**(`--limit 200` 에 닿아 잘린 이슈가 이번 틱엔 안 보인다는 뜻 — 반복되면
   `.loop/repos` 로 스코프를 좁히라는 신호다. `repo` 가 `*` 면 계정 전체 탐색 쪽이다).
   스크립트가 **손대지 않은** 건이다 — **건드리지 말고** ④ Report 의 warn 에 그대로 옮겨라.
-- `note` — 스크립트가 **손대지 않은** 정보 줄이다(배포 대기 이슈의 사유 없는 `needs-human` 처럼
+- `note` — 스크립트가 **손대지 않은** 정보 줄이다(배포 대기 이슈의 사유 없는 `needs-human` ·
+  배포 대기 이슈의 `hold:ladder`(#217, 창이 지나도 재개·승격 대상이 아니다)처럼
   **정상 상태**라 조치할 것이 없는 건). warn 이 아니므로 ④ Report warn 에 올리지 않는다 —
   보고가 필요하면 정보 줄로만 남긴다. warn 을 "루프가 교정 가능한 불변식 위반" 으로 좁히고
   나머지를 note 로 내리는 것이 #188/#190 이 정한 규약이다.
@@ -304,7 +338,14 @@ N 도 디스패치당 1만 올린다.
       **재개된 이슈면 프롬프트에 두 가지를 더 인라인하라.** 마커(`<!-- ladder-resume: N -->`)를
       품은 **코멘트**가 하나라도 있으면 ① 의 재개 스윕이 되살린 건이고, 그 개수가 몇 번째
       재개인지다(본문에는 마커가 없다 — 스윕은 본문을 건드리지 않는다):
-      `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select(.body|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'`
+      (인용은 세지 않는다 — 백틱 인라인 코드·코드펜스 안의 마커는 신호가 아니라 신호를
+      *설명하는 글*이라, `resume-sweep.sh` 의 `JQ_UNQUOTE` 와 **같은 정의**로 먼저 걷어낸다.
+      두 곳이 갈라지면 사람 눈에 안 보이는 두 번째 계산기가 다른 수를 센다 — #197)
+
+      ````sh
+      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+      ````
+
       채운 템플릿 뒤에 ⓐ 사다리 문서 경로
       `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (어느 칸을 어떤
       명령으로 올라가는지 워커가 읽을 곳) 와 ⓑ **직전 시도의 실패 출력** — 이슈의 마지막

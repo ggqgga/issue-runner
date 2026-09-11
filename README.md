@@ -194,7 +194,9 @@ The loop is designed to run away safely — each limit bounds "the worst a human
 | `MAX_AGENTS` | `4` | Concurrent in-flight issues. In-flight = working + repairing + red PRs; a green PR waiting on human review does **not** hold a slot |
 | `MAX_OPEN_PRS` | `14` | Open-PR backpressure. On reaching it, new dispatch pauses (repairs continue) and Report raises a backlog warn |
 | `MAX_REPAIRS_PER_PR` | `3` | Repair cap per PR. Beyond it, the loop stops and labels the issue `needs-human` (circuit breaker) |
-| `ISSUE_TIMEBOX_HOURS` | `1` | A worker with no PR after this long is stopped and its worktree discarded; pushed commits survive for re-dispatch. The check runs on the 15-min tick, so the real ceiling is up to ~1h15m |
+| `ISSUE_TIMEBOX_HOURS` | `1` | Past this claim age a worker with no PR is asked for **progress evidence** — exceeding it alone no longer stops anything (#200). Without evidence it is stopped and its worktree discarded; pushed commits survive for re-dispatch |
+| `STALL_MIN` | `25` | The "no progress" threshold. Evidence = the branch's latest commit is younger than this, or that head SHA's CI ticket is still alive in the box-wide serial queue. Sized so one `bin/ci` run plus its queue wait is not counted as stalling |
+| `MAX_TIMEBOX_GRACE` | `3` | Cap on cumulative reprieves within one claim, so the relaxation cannot become an endless reprieve. The checks run on the 15-min tick, so the real ceiling is ~2h (1h timebox + up to a tick to notice + 3 reprieve ticks). Counted from append-only issue comment markers, not from any state file |
 | `SOFT_TOKEN_BUDGET_PER_ISSUE` | `300k` | Observation only — never interrupts, just flags a promotion recommendation in Report |
 
 And the invariant that isn't a number: **issue-runner never merges.** A `needs-human` issue means the loop has let go — a human clears the cause and removes the label to let it flow again.
