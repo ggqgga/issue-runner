@@ -50,9 +50,10 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 - `VERIFIER_TIMEOUT_MIN = 10` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
   시각 + 이 값을 데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict
   미산출로 간주한다 — codex 외부 CLI 스톨이 틱을 무한정 묶는 것을 막는 방어선(#96).
-- 절대 금지: production 무인 배포(4단계는 사람 게이트 — 실 배포 안 함) · 프로덕션
+- 절대 금지: production 무인 배포(4단계는 **배포 레인(deploy-cycle) 인계** — closeout
+  자신은 실 배포를 하지 않는다) · 프로덕션
   포인터 브랜치(release 등) 무인 승격(검증된 SHA 를 프로덕션/워커가 당기는 브랜치로
-  미는 것도 배포와 동급의 사람 게이트다) · main 직접
+  미는 것도 배포와 동급으로 **배포 레인(deploy-cycle)의 몫**이다) · main 직접
   push(문서 reconcile 도 PR 브랜치 경유) · `harvesting` 점유 없이 머지 · issue-runner
   가 만든 워크트리/브랜치 조작 · issue-runner 의 "절대 머지 안 함" 불변 훼손.
 
@@ -76,7 +77,7 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 | 2 머지 | PR `MERGED` | MERGED 면 머지 끝 (머지 직후 worktree 정리 포함) |
 | 3 reconcile | 계획문서 diff(머지 커밋) + epic 코멘트 | 머지에 포함이면 끝 |
 | 4 배포 | `배포 대기:` 코멘트 / `deployed:<sha>` | 있으면 재요청 안 함 |
-| 5 후처리 | `✅ 스모크` 코멘트 / 배포 이슈 CLOSED + 검증·배포 완료 코멘트 | 있으면 재스모크 안 함 (사람 게이트가 검증까지 마치고 닫은 경우 포함) |
+| 5 후처리 | `✅ 스모크` 코멘트 / 배포 이슈 CLOSED + 검증·배포 완료 코멘트 | 있으면 재스모크 안 함 (배포 레인(deploy-cycle)이 검증까지 마치고 닫은 경우 포함) |
 | 6 파생 | 생성 이슈 번호 코멘트 | 있으면 재발행 안 함 |
 
 ## ①-b 정체 PR 스윕 — 완결 유실 회수 (매 틱)
@@ -534,7 +535,9 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   없으면 이 단계는 no-op — **새 doc 커밋·push 가 없으므로 위 캐시 보강도 건너뛴다**
   (채울 새 HEAD SHA 가 없다).
 
-**4단계 — 배포 (사람 게이트, dry-run).** **실 배포를 하지 않는다.**
+**4단계 — 배포 레인 인계 (dry-run).** **closeout 은 실 배포를 하지 않고 배포 대기
+이슈를 deploy-cycle 루프에 넘긴다.** 이유는 사람 승인이 아니라 **레인 분리**다 —
+배포·승격·실테스트·종료는 deploy-cycle 의 무인 사이클이 소유한다.
 `references/deploy-check-issue.md` 를 채워(`<DEPLOY_CMD>`=레포 배포 엔트리포인트,
 모르면 "레포 배포 절차"; `<VERIFY_URL>`=production 베이스 URL — 5단계 스모크가 몰
 주소, 모르면 빈 줄로 둬 5단계가 URL 도달불가로 폴백; `<LIVE_CHECKS>`=PR test plan·
@@ -543,8 +546,9 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 유일한 이관 목적지다).
 
 **`<LIVE_CHECKS>` 는 두 형태 중 하나여야 한다 — 산문 금지.**
-- 사람이 배포 후 밟을 게 **하나도 없으면** 정확히 `없음` 한 단어. 뒤에 설명을 붙이지 마라.
-- 있으면 **`- [ ]` 체크박스 목록**. 한 줄 = 사람이 한 번 밟는 동작. 배경·근거·주의는
+- 배포 후 밟을 게 **하나도 없으면** 정확히 `없음` 한 단어. 뒤에 설명을 붙이지 마라.
+- 있으면 **`- [ ]` 체크박스 목록**. 한 줄 = deploy-cycle ⑦ 이 한 번 밟는 동작(실장비면
+  TEST 워커 프로필 #18 드라이런). 배경·근거·주의는
   `## 변경 요약` 에 쓰고 여기엔 밟을 것만 남긴다.
 
 형태를 강제하는 이유: 아래 분기가 이 절을 읽어 이슈 발행 여부를 가르는데, 자유 산문이면
@@ -555,13 +559,14 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 **옮기기 전에 closeout 이 사다리를 한 번 올라간다 (시도 없는 `[ ]` 는 그대로 옮기지 않는다).**
 워커가 남긴 미완 항목 중 **사다리 시도·인용 없이 `[ ]` 로만 남은 것**(PR test plan 에
 시도한 칸도 실패 출력도 없는 항목)은 그대로 이 절에 옮기지 마라 — 그렇게 옮기면 아무도
-시도하지 않은 일이 사람 몫으로 승격된다. closeout 이
+시도하지 않은 일이 그대로 배포 레인으로 떠넘겨진다. closeout 이
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
 의 **칸 ①(dev 서버 — `bin/rails runner`·localhost)와 칸 ②(`bin/dry-run`·AdsPower 릴레이)**
-를 **한 번씩** 시도한 뒤에 옮긴다(칸 ③ 실장비는 closeout 의 몫이 아니다 — 시도 결과와
-함께 남긴다).
-- 칸 ①② 에서 **판정이 서면** 그 항목은 `<LIVE_CHECKS>` 에서 **뺀다**(사람이 밟을 게
-  아니다). 판정 근거는 PR 코멘트에 남긴다.
+를 **한 번씩** 시도한 뒤에 옮긴다. **칸 ③(TEST 워커)은 deploy-cycle ⑦ 의 몫이다** —
+그래서 `<LIVE_CHECKS>` 로 옮기는 것이지 사람 몫으로 승격하는 게 아니다. ①② 시도 결과를
+함께 남겨 ⑦ 이 같은 칸을 반복하지 않게 한다.
+- 칸 ①② 에서 **판정이 서면** 그 항목은 `<LIVE_CHECKS>` 에서 **뺀다**(배포 레인이 밟을
+  게 아니다). 판정 근거는 PR 코멘트에 남긴다.
 - **실패하면** 항목을 `- [ ]` 로 옮기되, **시도한 칸과 실패 출력(명령 한 줄 + 마지막
   20줄)을 인용**한다. 인용은 `## 변경 요약` 절에 적는다 — `<LIVE_CHECKS>` 는 위 형태
   규율대로 **밟을 동작만** 남는 자리라 산문·출력이 들어가면 안 된다.
@@ -649,7 +654,7 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
   그 이슈는 사람이 승격을 마치면 닫는 그릇이지 검증 대상이 아니다.
 - **이미 닫힌 배포 이슈 — 스모크 생략.** 배포 이슈가 이미 CLOSED 이고 검증/배포 완료
   코멘트가 있으면 5단계 완료로 간주한다 — 재스모크하지 않고 다음 단계로 진행한다
-  (사람 게이트가 검증까지 마치고 닫은 경우 — 승격 모델 레포의 표준 종결).
+  (배포 레인(deploy-cycle)이 검증까지 마치고 닫은 경우 — 승격 모델 레포의 표준 종결).
 - **저하(degrade) — 조용한 skip 금지.** chrome-devtools MCP 가 세션에 없거나(헤드리스/
   크론 — 대화형 인증 MCP 부재 가능) `<VERIFY_URL>` 이 비었거나 도달 불가면, 스모크를
   건너뛰고 기존 사람-보고 경로로 폴백하되 배포 이슈에 `스모크 skip: <사유>` 코멘트를
@@ -792,7 +797,7 @@ approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스�
 - **blocked** — 1단계 검증이 BLOCKER 이거나 2단계 rebase 통합 실패라 보류(머지 안 함).
 - **dup** — 1단계 검증이 "이미 `origin/main` 에 있다·중복" 으로 판정해 `closeout-dup` 으로
   PR·이슈를 머지 없이 닫음(`needs-human` 없음 — 루프가 끝낸 것이다). `중복종료 N` 으로 집계.
-- **approval-required** — 4단계에서 배포 이슈를 발행하고 사람 게이트 대기.
+- **approval-required** — 4단계에서 배포 이슈를 발행하고 deploy-cycle 레인에 인계.
 - **exhausted** — 5단계 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복돼 needs-human 승격.
 - **stagnated** — `QUIET_TICKS` 연속 조용함(①-b 스윕은 stagnated 여도 매 틱 돈다).
 
@@ -806,8 +811,10 @@ approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스�
 - 역할 분담: issue-runner = 벌리는 공장 (절대 머지하지 않고 불변을 보존), closeout
   = 마감 도크 (머지를 독점). 두 루프는 `harvesting` 라벨 점유로 충돌을 막는다 —
   closeout 가 집은 PR 은 issue-runner ② Maintain 이 건드리지 않는다.
-- 사람 게이트: production 배포만 사람이 승인한다 (4단계 dry-run 이슈 발행 → 승인).
-  나머지 머지·문서반영·후속발행은 무인.
+- 배포 레인(deploy-cycle): production 배포·release 승격은 closeout 이 하지 않는다 —
+  4단계가 dry-run 배포 대기 이슈를 발행해 deploy-cycle 루프에 넘기고, 배포·승격·
+  실테스트(칸 ③ TEST 워커)·종료는 그 레인의 ⑦ 이 소유한다. 나머지 머지·문서반영·
+  후속발행은 closeout 이 무인으로 한다.
 - 운용: closeout 은 issue-runner 와 별도의 `/loop` 세션으로 돌린다
   (예 `/loop 20m /closeout`) — 서로의 점유를 라벨로만 조율한다.
 - 의존: 결정적 헬퍼(`closeout-reconcile.sh`·`closeout-eligible.sh`·
