@@ -1310,6 +1310,33 @@ fi
 grep -qF 'head_lookup=unknown' scripts/finish-classify.sh \
   || { echo "  ✗ finish-classify.sh: 조회 실패를 기억하는 head_lookup 플래그가 없다"; exit 1; }
 
+echo "[#206] 브랜치 이슈 추정은 head \`agent/issue-N\` 1순위 — 코드와 한/영 산문이 같은 계약"
+# `claimed_arg` 가 이슈 인자 생략 시 고르는 이슈는 "이 PR 이 닫는 이슈" 가 아니라
+# **"이 브랜치의 워커가 집어간 이슈"** 다. `closingIssuesReferences[0]` 은 닫는 이슈가 둘
+# 이상일 때 남의 이슈를 가리킨다(실측 PR #113 head=`agent/issue-109` refs=`[108,109]`) —
+# 그걸 물으면 claim 이 `none` 이 되어 살아있는 워커가 재디스패치된다(#206 회차3 BLOCKER).
+#
+# 행동 자체는 `scripts/tests/finish-classify.test.sh` 의 격자가 문다(뮤테이션 방증까지).
+# 여기서 막는 것은 그 격자가 **못 보는 축**이다: 코드만 고치고 산문이 옛 계약을 계속
+# 광고하면 다음 구현자가 되돌린다(PR#191 교훈 — 실제로 그 사고로 한 회차를 태웠다).
+grep -qF 'headRefName' scripts/finish-classify.sh \
+  || { echo "  ✗ finish-classify.sh 가 head(headRefName)를 안 묻는다 — 브랜치 이슈 추정이 [0] 로 되돌아갔다"; exit 1; }
+grep -qF 'agent/issue-' scripts/finish-classify.sh \
+  || { echo "  ✗ finish-classify.sh 가 head 의 agent/issue-N 을 파싱하지 않는다"; exit 1; }
+# 한/영 산문이 **둘 다** head 1순위를 말해야 한다(한쪽만 고치면 두 독자가 다른 계약을 믿는다).
+grep -qF '1순위' skills/closeout/SKILL.md \
+  || { echo "  ✗ SKILL.md 가 head 1순위 계약을 안 적었다"; exit 1; }
+grep -qF 'first' skills/closeout/SKILL.en.md \
+  || { echo "  ✗ SKILL.en.md 가 head-first 계약을 안 적었다"; exit 1; }
+# 그리고 **옛 계약 문장이 남아 있으면** 빨갛게 한다 — 새 문장을 덧붙이고 옛 문장을 안 지우는
+# 것이 PR#191 이 실제로 겪은 실패 형태다.
+if grep -qF '안 주면 `closingIssuesReferences` 로 한 번 묻는다' skills/closeout/SKILL.md; then
+  echo "  ✗ SKILL.md 에 옛 계약 문장이 남아 있다(closingIssuesReferences 로 묻는다)"; exit 1
+fi
+if grep -qF 'asks `closingIssuesReferences` once when omitted' skills/closeout/SKILL.en.md; then
+  echo "  ✗ SKILL.en.md 에 옛 계약 문장이 남아 있다"; exit 1
+fi
+
 echo "[#206] iso_to_epoch 형식 패턴은 모든 사본에서 동일 (한쪽만 느슨해지면 조용히 갈린다)"
 # finish-classify.sh 와 progress-evidence.sh 는 같은 시각 문자열을 각자 파싱한다. 패턴이
 # 갈리면 한쪽은 성공·한쪽은 `commit_at_invalid` 가 되어 🔄 계열 회수가 통째로 멈춘다

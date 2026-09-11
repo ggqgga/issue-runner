@@ -306,7 +306,12 @@ claim 은 몇 시간 전이다. 이 신호가 필요한 이유: 진행 증거 �
 마지막 부착이 `ISSUE_TIMEBOX_HOURS` 안이면 커밋이 없어도 `active` 다. 조회는
 `$SCRIPTS/claim-at.sh <repo> <이슈>` **한 자리**(타임라인의 마지막 매칭 인덱스로 부착 여부
 판정 — `bounce-state.sh` 와 같은 규율)이고, 그래서 2) 의 분류 호출이 이슈 번호를 함께 받는다
-(`finish-classify.sh <repo> <pr> [<이슈>]` — 안 주면 `closingIssuesReferences` 로 한 번 묻는다).
+(`finish-classify.sh <repo> <pr> [<이슈>]` — 안 주면 한 번 묻되, **head 의 `agent/issue-N` 이 1순위**이고
+`closingIssuesReferences` 는 폴백이다). 그 순서가 중요한 이유: 여기서 필요한 것은 "이 PR 이 닫는
+이슈" 가 아니라 **"이 브랜치의 워커가 집어간 이슈"** 이다 — `[0]` 은 닫는 이슈가 둘
+이상일 때 **남의 이슈**를 가리킨다(실측 PR #113 head=`agent/issue-109` refs=`[108,109]` — `[0]` 은
+#108). 그 이슈를 물으면 claim 이 `none` 으로 나와 증거 ③ 이 조용히 꺼지고, 지금 일하는
+워커가 재디스패치된다.
 상한이 `ISSUE_TIMEBOX_HOURS` 인 이유: 그 시간을 넘긴 claim 은 ① Reconcile 의
 `timebox-check.sh` 가 이미 회수 대상으로 보는 구간이라 여기서 살릴 이유가 없다 — 두 자리가
 같은 상수를 읽어 같은 경계를 쓴다. 조회 실패는 `none` 이 아니라 `unknown` 이다(조회 실패

@@ -348,8 +348,13 @@ is working right now.** So progress evidence ③ is: if `agent:claimed` is **att
 last attachment is within `ISSUE_TIMEBOX_HOURS`, the PR is `active` even with no commits. The
 lookup lives in `$SCRIPTS/claim-at.sh <repo> <issue>` **in one place** (attachment decided by the
 last matching index in the timeline — the same rule as `bounce-state.sh`), which is why the
-classify call in 2) also takes the issue number (`finish-classify.sh <repo> <pr> [<issue>]` — it
-asks `closingIssuesReferences` once when omitted). Why `ISSUE_TIMEBOX_HOURS` as the bound: a claim
+classify call in 2) also takes the issue number (`finish-classify.sh <repo> <pr> [<issue>]` — when
+omitted it asks once, taking the head's `agent/issue-N` **first** and falling back to
+`closingIssuesReferences`). Why that order: what is needed here is not "the issue this PR closes"
+but **"the issue this branch's worker claimed"** — `[0]` points at **someone else's issue** when a
+PR closes more than one (measured: PR #113 head=`agent/issue-109` refs=`[108,109]` — `[0]` is
+#108). Asking that one returns `none` for the claim, silently switching off evidence ③ and
+redispatching the worker that is working right now. Why `ISSUE_TIMEBOX_HOURS` as the bound: a claim
 older than that is already reclaimable by ① Reconcile's `timebox-check.sh`, so there is nothing to
 save here — both places read the same constant and therefore the same boundary. A failed lookup is
 `unknown`, not `none` (stripping a live worker's claim over one failed lookup is irreversible).
