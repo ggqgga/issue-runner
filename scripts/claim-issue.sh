@@ -70,10 +70,10 @@ if printf '%s' "$pre" | jq -e '.labels | map(.name) | index("needs-human")' >/de
 fi
 # hold:* 재확인 (#242) — 기계 정지(verify-held·closeout-blocked·runner-held). 위
 # needs-human 과 같은 이유로 claim 직전에 다시 본다. 지금은 둘이 항상 쌍이지만
-# `needs-human` 부착이 사유별로 걷히면 이 줄만 남아 정지를 지킨다(플랜 1단계).
+# `needs-human` 부착이 사유별로 걷혔으므로(#244) 이제 이 줄만이 기계 정지를 지킨다.
 # 판별은 **접두사** `hold:` — 사유가 늘어도 안 깨지고, `hold:` 로 시작하지 않는 라벨
 # (`holding`·`on-hold`·`area:hold`)은 걸리지 않는다(과잉 제외 = 정상 후보 소실).
-# 해제는 **두 라벨 다** 떼는 것이다 — `needs-human` 만 떼면 `hold:*` 가 남아 후보로
+# 해제는 **붙어 있는 정지 라벨을 다** 떼는 것이다 — `hold:*` 만 남아도 후보로
 # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
 if printf '%s' "$pre" | jq -e '.labels | map(.name) | any(startswith("hold:"))' >/dev/null; then
   echo "skip: $repo#$num hold:*" >&2; exit 1

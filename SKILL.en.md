@@ -263,14 +263,16 @@ closeout-pick) never remove it. Per event:
   escalated to `hold:policy` (`attempt`/`limit` are the resumes the marker comments actually
   recorded vs. the cap — read as `2/2`). The script already applied the label, so with
   **no further action** list it under `escalated` in ④ Report for a human to see.
-- `warn` — a human-owned stop (`needs-human`, `hold:policy`, `hold:conflict`) coexisting with
-  `hold:ladder` (not an auto-resume target), a race against human edits, a failure **before** any write, or a
+- `warn` — another stop the ladder sweep may not clear (`needs-human`, or `hold:policy`/
+  `hold:conflict` — policy still owes its one re-review) coexisting with
+  `hold:ladder`, so it is not an auto-resume target; a race against human edits; a failure **before** any write; or a
   **listing/search cap hit** (the `--limit 200` window filled, so truncated issues are
   invisible this tick — repeated hits mean it is time to narrow scope with `.loop/repos`;
   a `repo` of `*` means the account-wide search). The script did **not** touch it —
   **do not touch it either**; copy it verbatim into ④ Report's warns.
 - `note` — an informational line the script did **not** touch (a `needs-human` with no reason
-  label — a stop a human set by hand, which is **normal** (#244) — or a deploy-wait issue's `hold:ladder` (#217, not a resume/
+  label — a stop a human set by hand, which is **normal** (#244); the same on a deploy-wait
+  issue, which says so in its own wording; or a deploy-wait issue's `hold:ladder` (#217, not a resume/
   escalation target even once the window passes) — a **normal state** with nothing to act
   on). It is not a warn, so it does not go into ④ Report's warns — if it is worth reporting at all,
   carry it as an info line only. Narrowing `warn` to "an invariant violation the loop can
