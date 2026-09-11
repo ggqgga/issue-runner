@@ -233,7 +233,15 @@ exit 64 — 사유 없는 `needs-human` 을 만들 수 없다). rebase/semantic 
 (① Reconcile 마커표) 다음 틱이 멱등 재개할 수 있게 한다.
 
 **1단계 — 계획 부합 검증 — 내장 리뷰어.** `<issue>` 는 PR 본문의 `Closes #N` / `Refs #N` 줄에서
-얻는다(`gh pr view <pr> --repo <repo> --json body` 로 파싱). 검증은 `$SCRIPTS/codex-review-gate.sh`(#134,
+얻는다(`gh pr view <pr> --repo <repo> --json body` 로 파싱). **worktree 확보(fetch·reset, #207).**
+`$SCRIPTS/make-worktree.sh <repo> <N>` 로 `<worktree>` 확보(`<N>`=PR head `agent/issue-N` 파싱,
+3단계와 동일) 직후 `git -C <wt> fetch origin` 후 `git -C <wt> reset --hard origin/agent/issue-<N>`
+으로 worktree HEAD 를 PR 의 현재 head SHA 에 맞춘다(`make-worktree.sh` 는 기존 worktree 가
+있으면 그대로 반환해 rebase·force-push 전 SHA 가 체크아웃된 채일 수 있다 — revalidate 절
+(아래)이 같은 이유로 이 두 줄을 건다. 아래 계획 부합 호출의 프롬프트(`references/verifier-prompt.md`)가
+"이 워크트리는 검증 대상 PR 브랜치의 HEAD 로 체크아웃돼 있으므로 최신이다" 라고 전제하므로,
+이 동기화 없이는 그 전제가 거짓이 되어 옛 커밋이 검토되고 그 뒤 push 된 새 커밋은 아무도
+안 본 채 머지될 수 있다). 검증은 `$SCRIPTS/codex-review-gate.sh`(#134,
 Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에이전트 스폰·폴링·`TaskStop` 배선 없음:
 1. correctness: `codex-review-gate.sh --base origin/<default> --cd <worktree> --out <스크래치>/a` →
    stdout 마지막 줄 `verdict=… p1= p2=`, 본문 `a/review.md`. `[P1]` = BLOCKER.

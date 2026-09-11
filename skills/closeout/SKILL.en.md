@@ -266,7 +266,16 @@ For the picked PR, perform the 6 steps below in order. At the end of each step, 
 the marker command (① Reconcile marker table) so the next tick can resume idempotently.
 
 **Step 1 — plan-conformance verification — built-in reviewer.** Get `<issue>` from the PR body's
-`Closes #N` / `Refs #N` line (parse via `gh pr view <pr> --repo <repo> --json body`). Verification is
+`Closes #N` / `Refs #N` line (parse via `gh pr view <pr> --repo <repo> --json body`). **Obtain the
+worktree (fetch·reset, #207).** Obtain `<worktree>` via `$SCRIPTS/make-worktree.sh <repo> <N>`
+(`<N>` parsed from the PR head `agent/issue-N`, same as step 3), then immediately
+`git -C <wt> fetch origin` followed by `git -C <wt> reset --hard origin/agent/issue-<N>` to align
+the worktree HEAD to the PR's current head SHA (`make-worktree.sh` returns an existing worktree
+as-is, so it may still have the pre-rebase/pre-force-push SHA checked out — the revalidate section
+below applies the same two commands for the same reason. The plan-conformance prompt below
+(`references/verifier-prompt.md`) asserts "this worktree is checked out at the HEAD of the PR
+branch under review, so it is current" — without this sync that assertion is false, and a stale
+commit gets reviewed while a newer pushed commit reaches merge unreviewed). Verification is
 **two synchronous calls** of `$SCRIPTS/codex-review-gate.sh` (#134, Plans/codex-native-review-gate.md) —
 no subagent spawn, polling, or `TaskStop` wiring:
 1. correctness: `codex-review-gate.sh --base origin/<default> --cd <worktree> --out <scratch>/a` →
