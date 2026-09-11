@@ -1158,6 +1158,43 @@ grep -qF 'Do not batch' skills/closeout/SKILL.en.md \
 grep -qF -e '- [ ]` 체크박스 목록만' skills/closeout/references/deploy-check-issue.md \
   || { echo "  ✗ deploy-check-issue.md: 체크박스 형태 안내 없음"; exit 1; }
 
+echo "[closeout] 5단계 종결 조건 — 실장비 항목이 남아 있으면 안 닫는 예외 검사 (#278)"
+# 4단계는 실테스트(사다리 칸 ③ TEST 워커)를 deploy-cycle ⑦ 소유로 선언하는데, 5단계 green
+# 갈래는 같은 `<LIVE_CHECKS>` 를 크롬으로 밟고 배포 이슈를 닫는다 — 그대로 두면 실장비 항목이
+# 든 티켓이 TEST 워커를 한 번도 안 거치고 종결된다(#278 검증 BLOCKER). 그래서 5단계 구간
+# (`**5단계 —`/`**Step 5 —` ~ `**6단계 —`/`**Step 6 —`) 안에 셋이 다 있어야 한다:
+#   (a) 예외의 코멘트 마커 `종결 보류: 실장비 항목` — 마커가 곧 그 예외가 적혀 있다는 증거.
+#   (b) 4단계와 **같은** 판별 술어(`TEST 워커 프로필 #18` / `TEST-worker profile #18`). 같은
+#       문자열이 4단계 구간에도 있어야 한다 — 두 곳이 갈라지면 "실장비 항목" 을 세는
+#       두 번째 계산기가 생기고, 그건 사람 눈에 안 보인다.
+#   (c) green 갈래의 상호참조(`실장비 예외` / `real-hardware exception`) — 예외만 적고
+#       green 갈래를 안 고치면 green 만 읽는 실행자가 그대로 닫는다(이번 BLOCKER 의 형태).
+# 스코프를 구간으로 좁히는 이유는 #223 과 같다 — "파일 어딘가" 면 문구가 6단계로 밀려도 초록.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) s4_anchor='^\*\*Step 4 —'; s5_anchor='^\*\*Step 5 —'; s6_anchor='^\*\*Step 6 —'
+             predicate='TEST-worker profile #18'; xref='real-hardware exception' ;;
+    *)       s4_anchor='^\*\*4단계 —';   s5_anchor='^\*\*5단계 —';   s6_anchor='^\*\*6단계 —'
+             predicate='TEST 워커 프로필 #18'; xref='실장비 예외' ;;
+  esac
+  s4_line=$(grep -nE "$s4_anchor" "$f" | head -1 | cut -d: -f1)
+  s5_line=$(grep -nE "$s5_anchor" "$f" | head -1 | cut -d: -f1)
+  s6_line=$(grep -nE "$s6_anchor" "$f" | head -1 | cut -d: -f1)
+  [ -n "$s4_line" ] || { echo "  ✗ $f: 4단계 헤더 앵커 없음"; exit 1; }
+  [ -n "$s5_line" ] || { echo "  ✗ $f: 5단계 헤더 앵커 없음"; exit 1; }
+  [ -n "$s6_line" ] || { echo "  ✗ $f: 6단계 헤더 앵커 없음"; exit 1; }
+  s4_body=$(sed -n "${s4_line},${s5_line}p" "$f")
+  s5_body=$(sed -n "${s5_line},${s6_line}p" "$f")
+  printf '%s\n' "$s5_body" | grep -qF '종결 보류: 실장비 항목' \
+    || { echo "  ✗ $f: 5단계에 실장비 잔존 시 종결 보류 예외(마커 '종결 보류: 실장비 항목')가 없다 (#278)"; exit 1; }
+  printf '%s\n' "$s5_body" | grep -qF "$predicate" \
+    || { echo "  ✗ $f: 5단계 실장비 예외가 4단계 판별 술어('$predicate')를 안 쓴다 (#278)"; exit 1; }
+  printf '%s\n' "$s4_body" | grep -qF "$predicate" \
+    || { echo "  ✗ $f: 4단계에 판별 술어('$predicate')가 없다 — 5단계와 술어가 갈라졌다 (#278)"; exit 1; }
+  printf '%s\n' "$s5_body" | grep -qF "$xref" \
+    || { echo "  ✗ $f: 5단계 green 갈래에 실장비 예외 상호참조('$xref')가 없다 — green 만 읽으면 그대로 닫는다 (#278)"; exit 1; }
+done
+
 echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4)"
 # 1단계 검증자가 과거 오판 패턴(인용 오판·base 맹점 등)을 반복하지 않도록 lessons 를
 # 프롬프트에 주입한다 — 프롬프트가 유일한 전달 경로라는 기존 계약 유지.

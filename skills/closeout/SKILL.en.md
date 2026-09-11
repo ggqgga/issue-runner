@@ -759,12 +759,26 @@ if a prior tick died before cleanup and left a smoke page, `close_page` it first
 `navigate_page` to `<VERIFY_URL>`, and compare each item via
 `evaluate_script`/`take_snapshot` to produce a per-item pass/fail (distinguish
 structure/empty-state confirmation from real-data render confirmation in the result).
-- **No items to step through — do not smoke.** A PR that step 4 routed down the `없음`
-  branch has no issue, so it is not a step-5 subject at all. Even when a deploy issue
-  exists, if `## 라이브/하드웨어 검증 항목` holds no `- [ ]` at all, do not open Chrome —
-  a smoke with zero items to compare has not passed anything, it **looked at nothing**,
-  yet it prints as `✅ 스모크 0/0 통과` and reads as verified (a false green). Leave the
-  reason as a comment instead: `스모크 생략: 밟을 항목 0`.
+- **No items to step through — do not smoke.** Step 4 files a deploy issue for every
+  merged PR, so `(승격만)` issues exist too — but if `## 라이브/하드웨어 검증 항목` holds
+  no `- [ ]` at all, do not open Chrome; mark it complete. A smoke with zero items to
+  compare has not passed anything, it **looked at nothing**, yet it prints as
+  `✅ 스모크 0/0 통과` and reads as verified (a false green). Leave the reason as a
+  comment instead: `스모크 생략: 밟을 항목 0`. That issue is a container the deploy-cycle
+  lane closes once the promotion is done, not a verification subject.
+- **Real-hardware items still open — do not close even on green (Chrome cannot step rung ③).**
+  Among the `- [ ]` lines in `## 라이브/하드웨어 검증 항목`, a line **whose action is
+  ladder rung ③ (a TEST-worker profile #18 dry run)** is a real-hardware item — step 4
+  writes those lines exactly that way (the `<LIVE_CHECKS>` shape discipline above), so
+  reuse that predicate here instead of inventing a second one. **Drop such lines from the
+  `<n>/<n>` denominator** — pretending Chrome compared them makes both a pass and a fail
+  a lie (the same false green as "no items" above). If dropping them leaves zero items to
+  compare, do not open Chrome — skip the smoke exactly like the "no items" bullet above.
+  And if **even one** such line remains, **do not close the deploy issue even when
+  everything else passes** — rung ③ is deploy-cycle ⑦'s job, so closing here finalizes a
+  ticket whose real-hardware items never met the TEST worker once. Leave the reason as a
+  comment instead: `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦`. That issue is a
+  container the deploy-cycle lane's ⑦ closes after it steps rung ③.
 - **Already-closed deploy issue — skip the smoke.** If the deploy issue is already
   CLOSED and has a verification/deploy-complete comment, treat step 5 as complete —
   do not re-smoke, proceed to the next step (the case where the deploy lane
@@ -784,7 +798,11 @@ structure/empty-state confirmation from real-data render confirmation in the res
   original PR (this comment is the step-5 completion marker — a resumed tick does not
   re-smoke). Then remove the `needs-human` label from the deploy issue and close the
   deploy issue (the only remaining gate was verification and it passed, so closeout
-  finalizes — the recommended option of the open decision). Since #243 a step-4 issue
+  finalizes — the recommended option of the open decision).
+  **Unless the real-hardware exception above applies** — if even one rung-③ item is
+  still `- [ ]`, stop at the label cleanup, leave the issue open, and finish with the
+  `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦` comment (verification was not the only
+  remaining gate — rung ③ is). Since #243 a step-4 issue
   never carries `needs-human` in the first place — this removal is harmless leftover
   cleanup for issues filed before that (`--remove-label` is a no-op for an absent label).
 - **fail (any item fails)** → do not fix it directly; use the existing publish path: an
