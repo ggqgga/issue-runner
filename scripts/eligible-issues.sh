@@ -37,21 +37,50 @@ in_scope() {
 # 라벨명 하나("X -label:Y")로 오파싱해 항상 0건이 된다 (이슈 #21, GH_DEBUG=api 실측).
 # REST search/issues 직접 호출만 정상 동작. 출력은 기존 gh search --json 형태와
 # 동일하게 변환해 이후 파이프라인(repository.nameWithOwner/labels[].name/createdAt) 무수정.
-# sort=created·order=asc — 최종 정렬(sort_by)은 아래서 하지만, 후보가 창(SEARCH_WINDOW)을
-# 넘으면 "어떤 50개가 창에 담기는지"가 정렬 없인 best-match(관련도) 순 = 임의가 되어
-# 오래된 이슈가 창 밖으로 밀릴 수 있다. 창 자체를 오래된 순으로 고정한다.
+# sort=created·order=asc — 최종 정렬(sort_by)은 아래서 하지만, 후보가 한 페이지를 넘으면
+# "어떤 것이 어느 페이지에 담기는지"가 정렬 없인 best-match(관련도) 순 = 임의가 되어
+# 페이지를 이어 받아도 같은 이슈가 두 장에 겹치거나 어느 장에도 안 담길 수 있다.
+# 페이지 경계 자체를 오래된 순으로 고정한다.
 #
-# 창 상한 두 개는 여기 한 자리에만 둔다 (#247). 막힌 이슈도 `agent-ready` 를 달고 창을
-# 차지하므로(파생 이슈는 블로커가 있어도 agent-ready 한 벌로 발행한다) 후보가 창을 넘으면
-# **가장 새 이슈부터** 조용히 안 보인다 — 그래서 total_count 를 함께 받아 창에 닿기 전
-# (SOFT)부터 말한다.
-SEARCH_WINDOW=50
-SEARCH_WINDOW_SOFT=40
+# 창 상한은 여기 한 자리에만 둔다 (#247·#277). 막힌 이슈도 `agent-ready` 를 달고 창을
+# 차지하므로(파생 이슈는 블로커가 있어도 agent-ready 한 벌로 발행한다) 후보가 한 페이지를
+# 넘는 일이 상시다 — 넘으면 `sort=created asc` 라 **가장 새 이슈부터** 조용히 안 보인다.
+# 그래서 한 장으로 끝내지 않고 `page=2,3,…` 을 **이어 받아 합친다** (#277 실측: 후보 53건 >
+# 창 50 에서 가장 새 3건이 사라졌다 — PR #273 검증 틱 stderr).
+#
+#   SEARCH_WINDOW      한 페이지(`per_page`)
+#   SEARCH_MAX_PAGES   이어 받을 최대 페이지 수
+#   SEARCH_CAP         그 곱 = **실질 상한**. 손실이 시작되는 선은 이제 여기다.
+#   SEARCH_CAP_SOFT    상한의 80% — 임박 경고선.
+#
+# 상한까지 와도 total_count 가 더 크면 **조용히 자르지 않는다** — 기존 절단 warn 을 그대로
+# 낸다(이 레포의 `assert_list_page!`·`each_remote_page` 와 같은 자세). 임박 warn 도 이제
+# 페이지 하나가 아니라 이 실질 상한을 기준으로 말한다: `47/50` 은 더 이상 손실이 아니고
+# (2페이지째가 받아 온다) 그 수를 경고로 계속 찍으면 진짜 상한 신호가 묻힌다.
+#
+# 두 상수는 env 로 덮을 수 있다 — 테스트 격자가 250건 픽스처 없이 경계 산술을 물기 위한
+# 이음매다(`CLAIM_STALE_WAIT`·`HOLD_NOTE_MAX` 와 같은 관행). 숫자가 아니면 기본값으로
+# 되돌리고, 선행 0 은 8진수로 읽히지 않게 10진수로 정규화한다.
+SEARCH_WINDOW=${ELIGIBLE_SEARCH_WINDOW:-50}
+SEARCH_MAX_PAGES=${ELIGIBLE_SEARCH_MAX_PAGES:-5}
+case "$SEARCH_WINDOW" in ''|*[!0-9]*) SEARCH_WINDOW=50 ;; *) SEARCH_WINDOW=$((10#$SEARCH_WINDOW)) ;; esac
+case "$SEARCH_MAX_PAGES" in ''|*[!0-9]*) SEARCH_MAX_PAGES=5 ;; *) SEARCH_MAX_PAGES=$((10#$SEARCH_MAX_PAGES)) ;; esac
+[ "$SEARCH_WINDOW" -ge 1 ] || SEARCH_WINDOW=50
+[ "$SEARCH_MAX_PAGES" -ge 1 ] || SEARCH_MAX_PAGES=5
+SEARCH_CAP=$((SEARCH_WINDOW * SEARCH_MAX_PAGES))
+SEARCH_CAP_SOFT=$((SEARCH_CAP * 4 / 5))
 
-resp=$(gh api -X GET search/issues \
-  -f q="user:$me is:open is:issue label:agent-ready -label:needs-human" \
-  -f per_page="$SEARCH_WINDOW" -f sort=created -f order=asc \
-  -q '{total_count: .total_count, items: [.items[] | {repository: {nameWithOwner: (.repository_url | sub(".*/repos/"; ""))}, number, title, labels: [.labels[] | {name}], createdAt: .created_at}]}')
+# 페이지 하나를 받는다. `--paginate` 는 쓰지 않는다 — `--jq` 없이 쓰면 페이지 배열을
+# **병합**해 형상이 달라지고(이 레포 실측 교훈), total_count 기준으로 몇 장을 받을지도
+# 우리가 정해야 한다. 페이지 번호만 바꿔 같은 쿼리를 명시적으로 이어 받는다.
+search_page() {  # search_page <페이지> → {total_count, items}
+  gh api -X GET search/issues \
+    -f q="user:$me is:open is:issue label:agent-ready -label:needs-human" \
+    -f per_page="$SEARCH_WINDOW" -f sort=created -f order=asc -f page="$1" \
+    -q '{total_count: .total_count, items: [.items[] | {repository: {nameWithOwner: (.repository_url | sub(".*/repos/"; ""))}, number, title, labels: [.labels[] | {name}], createdAt: .created_at}]}'
+}
+
+resp=$(search_page 1)
 cands=$(printf '%s' "$resp" | jq -c '.items')
 total=$(printf '%s' "$resp" | jq -r '.total_count')
 
@@ -60,12 +89,41 @@ case "$total" in
     # total_count 를 못 읽었다 — 창 상태 **미상**이다. 빈 결과·실패를 정상으로 둔갑시키지
     # 않는다(PR#139): 침묵은 "창에 여유가 있다"는 주장이라 여기선 거짓말이 된다.
     # 읽은 값은 한 줄로 접어 싣는다 — ④ Report 가 옮기는 warn 은 **한 줄**이어야 한다.
+    # 몇 장을 더 받아야 하는지도 미상이므로 1페이지로 끝낸다(근거 없는 추가 호출 금지).
     echo "warn: 검색 창 크기 미상 — total_count 를 못 읽었다(창 절단 여부 판정 불가): [$(printf '%s' "$total" | tr '\n' ' ')]" >&2 ;;
   *)
-    if [ "$total" -gt "$SEARCH_WINDOW" ]; then
-      echo "warn: 검색 창 절단 — agent-ready 후보 ${total}건 > 창 $SEARCH_WINDOW, 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)" >&2
-    elif [ "$total" -gt "$SEARCH_WINDOW_SOFT" ]; then
-      echo "warn: 검색 창 임박 $total/$SEARCH_WINDOW" >&2
+    # 다음 페이지를 이어 받는다 — 상한까지, 그리고 받은 페이지 수가 total 을 덮을 때까지.
+    # 후보가 창 안이면 이 루프는 **한 바퀴도 안 돈다** = 호출 1회 그대로(틱 비용 회귀).
+    page=1
+    while [ "$page" -lt "$SEARCH_MAX_PAGES" ] && [ $((page * SEARCH_WINDOW)) -lt "$total" ]; do
+      page=$((page + 1))
+      # 조회 실패를 부분 목록으로 둔갑시키지 않는다(PR#139: 빈 결과 ≠ 실패). 조용히
+      # 1페이지만 들고 가면 이 스크립트가 고치려던 드롭이 그대로 재현되므로, 1페이지
+      # 실패와 같은 자세로 이번 틱을 접는다(다음 틱 재시도).
+      if ! presp=$(search_page "$page" 2>&1); then
+        echo "eligible-issues: 검색 page=$page 조회 실패 — 부분 후보 목록을 정상으로 쓰지 않는다(이번 틱 중단): $presp" >&2
+        exit 1
+      fi
+      pitems=$(printf '%s' "$presp" | jq -c '.items' 2>/dev/null) || pitems=""
+      case "$pitems" in
+        '['*) ;;
+        *)
+          echo "eligible-issues: 검색 page=$page 응답 형식 미상 — 부분 후보 목록을 정상으로 쓰지 않는다(이번 틱 중단): $presp" >&2
+          exit 1 ;;
+      esac
+      # 빈 페이지 = 서버가 더 줄 게 없다는 뜻(total_count 와 실제 페이지가 어긋나는 인덱스
+      # 지연에서 난다). 무한 루프 대신 멈춘다.
+      [ "$(printf '%s' "$pitems" | jq 'length')" -gt 0 ] || break
+      # 페이지 간 중복은 dedupe 하지 않는다 — 페이지 경계에서 이슈가 바뀌면 같은 후보가
+      # 두 번 실릴 수 있지만, 실제 중복 디스패치는 claim-issue.sh 의 원자적 잠금(#108)이
+      # 막는다. 여기서 지우면 total 대조가 흔들려 경고가 거짓말을 한다.
+      cands=$(jq -c -n --argjson a "$cands" --argjson b "$pitems" '$a + $b')
+    done
+
+    if [ "$total" -gt "$SEARCH_CAP" ]; then
+      echo "warn: 검색 창 절단 — agent-ready 후보 ${total}건 > 창 $SEARCH_CAP(페이지 $SEARCH_MAX_PAGES × $SEARCH_WINDOW), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)" >&2
+    elif [ "$total" -gt "$SEARCH_CAP_SOFT" ]; then
+      echo "warn: 검색 창 임박 $total/$SEARCH_CAP" >&2
     fi ;;
 esac
 
@@ -99,6 +157,9 @@ while [ "$i" -lt "$count" ]; do
   i=$((i + 1))
   repo=$(printf '%s' "$row" | jq -r '.repository.nameWithOwner')
   num=$(printf '%s' "$row" | jq -r '.number')
+  # 이어 붙인 라벨 문자열은 **정지 판정에는 쓰지 않는다** (#266 — 위 needs-human·hold:
+  # 두 줄은 라벨 배열로 본다). 아래 `agent:claimed`·`flow:*`·`P0/P1/P2` 판정은 이번 범위
+  # 밖이라 표현을 그대로 둔다(#277 이 손대지 않기로 한 자리).
   labels=$(printf '%s' "$row" | jq -r '[.labels[].name] | join(",")')
 
   # 세션 레포 스코프 밖이면 제외 (#40)
@@ -107,18 +168,25 @@ while [ "$i" -lt "$count" ]; do
   # 이미 claim 된 것 제외
   case ",$labels," in *",agent:claimed,"*) continue ;; esac
 
-  # 사람 개입 대기(needs-human) 제외 — 사람이 라벨을 떼기 전에는 재디스패치 금지
-  case ",$labels," in *",needs-human,"*) continue ;; esac
+  # 사람 개입 대기(needs-human) 제외 — 사람이 라벨을 떼기 전에는 재디스패치 금지.
+  # 판정은 **라벨 배열**로 한다 (#266) — 다른 세 게이트(claim-issue.sh·verify-eligible.sh·
+  # closeout-eligible.sh)와 같은 표현이다. 라벨 목록을 쉼표로 이어 붙인 뒤 `,needs-human,`
+  # 를 찾으면, 쉼표를 품은 **한** 라벨(GitHub 은 라벨명에 쉼표를 허용한다 — 예 `a,needs-human`)
+  # 이 두 라벨로 쪼개져 정상 후보가 소리 없이 사라진다. 과잉 제외는 원래 결함보다 나쁘다.
+  printf '%s' "$row" | jq -e '[.labels[].name]|index("needs-human")' >/dev/null && continue
 
   # 기계 정지(hold:*) 제외 (#242) — verify-held·closeout-blocked·runner-held 가 붙이는
   # 정지 사유. 지금은 `needs-human` 과 항상 쌍이라 **동작이 바뀌지 않지만**, held 이슈는
   # `agent-ready` 를 사다리 내내 달고 있어서 `needs-human` 부착이 사유별로 걷히는 순간
   # 이 필터가 없으면 정지된 이슈가 곧바로 재디스패치된다(플랜 Plans/label-taxonomy-cleanup.md 1단계).
   #
-  # 판별은 **접두사** `hold:` — 사유가 늘어도(`hold:<새사유>`) 안 깨진다. 라벨 경계는
-  # 위 join 의 콤마이므로 `,hold:` 로 물어야 한다. 그래야 `hold:` 로 **시작하지 않는**
-  # 라벨(`holding`·`on-hold`·`area:hold`·`hold-ladder`·`holder:x`)이 걸리지 않는다 —
-  # 과잉 제외는 정상 후보를 소리 없이 없애는 방향이라 원래 결함보다 나쁘다.
+  # 판별은 **접두사** `hold:` — 사유가 늘어도(`hold:<새사유>`) 안 깨지고, `hold:` 로
+  # **시작하지 않는** 라벨(`holding`·`on-hold`·`area:hold`·`hold-ladder`·`holder:x`)은
+  # 걸리지 않는다 — 과잉 제외는 정상 후보를 소리 없이 없애는 방향이라 원래 결함보다 나쁘다.
+  # 라벨 경계는 **배열**이지 쉼표가 아니다 (#266): 이어 붙인 문자열에서 `,hold:` 를 찾으면
+  # 쉼표를 품은 한 라벨(`x,hold:y`)이 두 라벨로 쪼개져 그 과잉 제외가 실제로 일어난다.
+  # 그래서 위 `$labels` join 이 아니라 `$row` 의 라벨 배열에 물어 다른 세 게이트와 같은
+  # 표현(`any(startswith("hold:"))`)을 쓴다 — 새 조회는 없다(배열은 이미 받아 뒀다).
   #
   # 서버 쿼리(위 search/issues)는 **일부러 안 건드린다**: `gh` 검색은 부정 라벨을
   # 오파싱하고(#21) `-label:hold:policy` 는 콜론이 둘이라 더 위험하다 — 필터는
@@ -126,7 +194,7 @@ while [ "$i" -lt "$count" ]; do
   #
   # 해제는 **두 라벨 다** 떼는 것이다 — `needs-human` 만 떼면 `hold:*` 가 남아 후보로
   # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
-  case ",$labels," in *",hold:"*) continue ;; esac
+  printf '%s' "$row" | jq -e '[.labels[].name]|any(startswith("hold:"))' >/dev/null && continue
 
   # 검증/마감 레인 이슈 제외 (진행 라벨 미러) — 원 이슈에 flow:verify/flow:ready/harvesting
   # 가 미러링돼 있으면 구현이 끝나 다운스트림(verify-runner·closeout) 소유다. agent:claimed
