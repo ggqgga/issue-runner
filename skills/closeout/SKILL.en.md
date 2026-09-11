@@ -301,7 +301,7 @@ separate freshness gate needed:
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). |
 | `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer (died before verifying, implementation may be incomplete, #971-type) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
 | `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `needs-human` + `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the human signal survives even with no linked issue), closeout leaves it (no auto-progress). |
-| `active` | in progress · buffer not reached · not our shape, **or the ✅'s freshness could not be proven** (✅ predates the head commit, or either timestamp could not be obtained, #171). (Whether CONFLICTING or MERGEABLE, a bounce round in flight or undecidable is already filtered to `active` by the 1) gate and never reaches here — #218, #196) **A PR with an unresolved `마감 검증: ⚠ 보류` must not end here** (#198) — ①-c reads the release direction: *correction* means **bounce** (`closeout-redispatch`), not `active`, and *ambiguous* means `closeout-blocked` (human). Left untouched it simply becomes a candidate again next tick | **Leave it** (next tick). |
+| `active` | in progress · buffer not reached · not our shape, **or the ✅'s freshness could not be proven** (✅ predates the head commit, or either timestamp could not be obtained, #171). (Whether CONFLICTING or MERGEABLE, a bounce round in flight or undecidable is already filtered to `active` by the 1) gate and never reaches here — #218, #196) **A PR with an unresolved `마감 검증: ⚠ 보류` must not end here** (#198) — ①-c reads the release direction: *correction* means **bounce** (`closeout-redispatch`), not `active`, and *ambiguous* means `closeout-blocked` (human). Left untouched it simply becomes a candidate again next tick | **If there's an unresolved `마감 검증: ⚠ 보류`, go to ①-c** (*correction* → `closeout-redispatch` bounce, *ambiguous* → `closeout-blocked`, *rejected* → ② Pick) — **otherwise leave it** (next tick). |
 
 **`flow:*` supplementary signal**: finish-classify judges by comments, but a stale PR with
 `flow:codex`/`flow:ci` and no `flow:ready` is itself evidence of "worker died during verify"
@@ -394,8 +394,15 @@ exits 1, the state is **unproven** — do not let it through; go to *ambiguous* 
   and each re-call of `closeout-redispatch` strips `agent:claimed` from whatever live attempt-N+1
   worker was dispatched in the meantime (measured on the verify lane — the whole window from
   dispatch-wait through implementation time was a re-call window every tick). If the head commit
-  **is later** than the marker (a new commit landed), a new worker has already started, so follow
-  the same path as "Resolved?" ⑵ above — **resolved** → ② Pick. If no such marker exists at all
+  **is later** than the marker (a new commit landed), that only proves the new worker has
+  **started** — not that it has **finished**. Conflating "started" with "finished" into one signal
+  (the first commit) lets a half-done commit get picked (#198 review/P1). In this case too,
+  **leave this tick alone** — stay `active`, do not re-post the marker, and do not re-call
+  `closeout-redispatch`. The wait ends when a **new completion verdict** lands — the redispatched
+  worker's own fresh `머지 판정: ✅` posted **after** this marker — at which point `finish-classify`
+  independently classifies the PR as `done_verdict` (①-b's `done_verdict` row), and ①-c re-enters
+  normally, joining the "Resolved?" path above (no new judgment rule invented — the existing
+  `done_verdict` classification itself is the completion signal). If no such marker exists at all
   (first pass through this section) → go to 2).
 
 **2) Identify the release decision comment.** Among comments **after that source's own** hold

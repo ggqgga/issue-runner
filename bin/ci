@@ -929,6 +929,45 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f ①-c 1) 절이 transition.sh closeout-redispatch 재호출 자체를 막는다는 문구 없음(#198 attempt3-P1)"; exit 1; }
 done
 
+echo "[closeout] ①-c 1) 멱등 분기 마지막 갈래 — 착수≠완결, 새 완결 판정까지 active (반증형, #198 재심/P1)"
+# 재심 지적: attempt3 가 더한 멱등 분기의 마지막 갈래가 '마커 이후 새 커밋 있음' 을 곧장
+# 위 해소 판정 ⑵ 와 같은 경로로 '해소 → ② Pick' 으로 보냈다 — 새 워커의 착수(첫 커밋)를
+# 완결로 읽어 절반짜리 커밋이 그대로 머지 후보가 됐다. 사람이 못박은 방향은 '새 완결
+# 판정까지 active'(무접촉, 재호출도 안 함) — 단 attempt3 가 닫은 진짜 구멍('마커 이후
+# 새 커밋 **없을 때** 매 틱 재디스패치 재호출')은 그대로 닫혀 있어야 한다(둘 다 같은
+# "이번 틱은 손대지 마라" 결론으로 끝나므로 양쪽 갈래를 한 문구로 함께 문다 — 반증형: 옛
+# '첫 커밋=해소' 문구가 되살아나거나 '새 커밋 없음' 갈래의 손대지 마라 가 지워지면 카운트가
+# 2에서 1 이하로 떨어진다).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  sec=$(awk '/^## ①-c /{on=1} on && /^## / && !/^## ①-c /{exit} on' "$f")
+  step1=$(printf '%s\n' "$sec" | awk '/^\*\*1\)/{on=1} on && /^\*\*2\)/{exit} on')
+  case "$f" in
+    *.en.md) phrase='leave this tick alone'; needverd='new completion verdict' ;;
+    *) phrase='이번 틱은 손대지 마라'; needverd='새 완결 판정' ;;
+  esac
+  n=$(printf '%s' "$step1" | grep -oF "$phrase" | wc -l | tr -d ' ')
+  [ "$n" -ge 2 ] \
+    || { echo "  ✗ $f ①-c 1) 절 — '$phrase' 가 두 갈래(마커 이후 새 커밋 없음 · 새 커밋 있으나 미완) 모두에 없음(#198 재심/P1, count=$n)"; exit 1; }
+  printf '%s' "$step1" | grep -qF "$needverd" \
+    || { echo "  ✗ $f ①-c 1) 절에 '$needverd' 배선 없음(#198 재심/P1)"; exit 1; }
+done
+
+echo "[closeout] ①-b active 행 조치 칸 — 미해소 보류면 ①-c 로 조건부화 (#198 재심/P2)"
+# 재심 지적: active 행의 '뜻' 칸은 이미 '미해소 보류면 ①-c 로' 를 설명하는데, '조치' 칸은
+# 여전히 무조건 '무접촉'(옛 문구) 이었다 — 무인 워커가 조치 칸만 읽고 지나치면 해제된
+# 시정이 영구 정체한다(#191 가족: 판정 술어를 좁힐 때 표의 조치 칸도 같은 조건으로
+# 고쳐야 한다). 조치 칸 자체에 조건 분기(①-c 로 vs 무접촉)가 있는지를 직접 뽑아 확인한다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  row=$(grep -n '^| `active`' "$f" | head -1 | cut -d: -f1)
+  [ -n "$row" ] || { echo "  ✗ $f 에 finish-classify 표의 active 행 없음"; exit 1; }
+  line=$(sed -n "${row}p" "$f")
+  action=$(printf '%s\n' "$line" | awk -F'|' '{print $(NF-1)}')
+  printf '%s' "$action" | grep -qF '①-c' \
+    || { echo "  ✗ $f active 행의 조치 칸이 ①-c 로 조건부화돼 있지 않음(#198 재심/P2)"; exit 1; }
+  printf '%s' "$action" | grep -qiE '무접촉|leave it' \
+    || { echo "  ✗ $f active 행의 조치 칸에 '없으면 무접촉' 조건이 없음(#198 재심/P2)"; exit 1; }
+done
+
 echo "[closeout] ①-c 인용 의무 — 결정 코멘트 부재·조회 실패는 면제 (반증형, #198 attempt3-P2)"
 # 검증 레인 실측 P2: 모호 행 신호에는 '결정 코멘트 부재'·'코멘트 조회 실패' 가 명시돼
 # 있는데, 바로 아래 인용 의무 문장은 세 조치 모두에 결정문 원문 한 줄 인용을 요구해 그
