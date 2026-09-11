@@ -48,14 +48,22 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
   before they are resolved). The verifier does not read this SKILL.md, so the
   call's prompt string must carry this contract verbatim — the prompt is the only
   delivery path.
-  **Fallback**: use `general-purpose` as the verifier (invoked with the same
-  prompt, so the same contract applies) if either — (a) the codex plugin is
-  missing (the type above is absent from the Agent tool's subagent_type list, or
-  the call fails with an unknown subagent type error), or (b) codex stalls/fails
-  and produces no verdict (BLOCKER/WARN/NIT/CLEAN) — including network block,
-  timeout, or a verdict-less response (demonstrated 2026-06-24 #54: codex
-  produced no verdict because gh network was blocked in the sandbox). If the
-  fallback call also produces no verdict, treat it as a BLOCKER and exit on hold
+  **Fallback**: use `general-purpose` as the verifier if either — (a) the codex
+  plugin is missing (the type above is absent from the Agent tool's
+  subagent_type list, or the call fails with an unknown subagent type error), or
+  (b) codex stalls/fails and produces no verdict (BLOCKER/WARN/NIT/CLEAN) —
+  including network block, timeout, or a verdict-less response (demonstrated
+  2026-06-24 #54: codex produced no verdict because gh network was blocked in
+  the sandbox). **Not the same prompt (#207).** The fallback is invoked with
+  `references/verifier-prompt-fallback.md` — the output contract above
+  (BLOCKER/WARN/NIT/CLEAN classification) still applies, but the prompt body
+  differs from the native path (`references/verifier-prompt.md`): a
+  `general-purpose` subagent has no Agent-tool equivalent of `--cd`, so it is
+  not scoped to a worktree — its cwd is the loop session's cwd, not the PR's
+  worktree. Giving it the native template's "this worktree is current" premise
+  would be false, so the fallback template instead embeds the diff, issue body,
+  and lessons directly in the prompt (see Step 1 below). If the fallback call
+  also produces no verdict, treat it as a BLOCKER and exit on hold
   (gate fail-closed).
 - `VERIFIER_TIMEOUT_MIN = 10` — wall-clock cap in minutes per `VERIFIER` (and
   fallback) spawn. Poll against a deadline of spawn time + this value; if the
@@ -313,9 +321,19 @@ no subagent spawn, polling, or `TaskStop` wiring:
 The helper has its own timeout (`CODEX_GATE_TIMEOUT`, default 900s = in step with `VERIFIER_TIMEOUT_MIN`). If either
 call returns **exit 2 (`verdict=NONE`) = no verdict** (codex missing · model error · timeout — and, on the plan
 conformance call, the reviewer omitting the contract's structural line or answering `no-basis`, #207), only then use the
-`VERIFIER` fallback from ## Constants (general-purpose, with the diff, issue body, and lessons embedded in the prompt,
-`run_in_background` + the `VERIFIER_TIMEOUT_MIN` deadline + `TaskStop` on overrun). If the fallback also produces no
-verdict, exit on hold via the BLOCKER path below (fail-closed — never proceed to merge, #96). A model error in the
+`VERIFIER` fallback from ## Constants (general-purpose). **The fallback prompt is
+`references/verifier-prompt-fallback.md` — not the same file as the native templates above
+(`references/verifier-prompt.md`, #207).** A `general-purpose` subagent has no Agent-tool equivalent of `--cd`, so it
+is not scoped to a worktree — its cwd is the loop session's cwd, not the PR's worktree. Giving it the native
+template's "this worktree is current" premise would be a false premise (demonstrated: a fallback call given that
+premise asserted the wrong checkout was "current" while judging). `verifier-prompt-fallback.md` instead embeds the
+diff, issue body, and lessons **directly** in the prompt: `<DIFF>` = the output of `gh pr diff <pr> --repo <repo>`,
+`<ISSUE_BODY>`·`<PLAN_REF>`·`<LESSONS_OR_"없음">` are filled the same way as the native call. The response contract
+(structural line) is not carried into the fallback — that line is appended automatically by `codex-review-gate.sh`
+for `--prompt` calls only; the fallback instead follows the plain BLOCKER/WARN/NIT/CLEAN output contract from the
+`VERIFIER` entry above (see Constants). Spawn with `run_in_background` + the `VERIFIER_TIMEOUT_MIN` deadline + `TaskStop` on
+overrun. If the fallback also produces no verdict, exit on hold via the BLOCKER path below (fail-closed — never
+proceed to merge, #96). A model error in the
 helper's stderr (404 · not supported · requires a newer version) is not a stall — quote it verbatim in the comment.
 - Combining verdicts: BLOCKER from either call → BLOCKER. Both CLEAN/NIT/WARN → pass (`[P3+]` = NIT is non-blocking; WARN counts add up).
   Machine-comment marker (required): the closeout-verification comment posted below via

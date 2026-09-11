@@ -35,13 +35,18 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
   변경 금지)·발견마다 BLOCKER/WARN/NIT 분류·발견 없으면 'CLEAN'·BLOCKER 는
   하드게이트(해결 전 종료 금지). 검증자는 이 SKILL.md 를 읽지 않으므로 호출
   프롬프트 문자열에 이 계약이 그대로 담겨야 한다 — 프롬프트가 유일한 전달 경로다.
-  **폴백**: 아래 둘 중 하나면 `general-purpose` 를 검증자로 쓴다 (같은 프롬프트로
-  호출하므로 계약도 동일하게 적용된다) — (a) codex 플러그인 미설치(Agent 툴의
-  subagent_type 목록에 위 타입이 없거나, 호출이 unknown subagent type 오류로 실패),
-  (b) codex 가 stall/실패해 verdict(BLOCKER/WARN/NIT/CLEAN)를 못 냄 — 네트워크
-  차단·타임아웃·verdict 없는 응답 포함(실증 2026-06-24 #54: codex 가 sandbox 에서
-  gh 네트워크 차단으로 verdict 미산출). 폴백 호출도 verdict 를 못 내면 BLOCKER 로
-  간주해 보류 종료한다 (게이트 fail-closed).
+  **폴백**: 아래 둘 중 하나면 `general-purpose` 를 검증자로 쓴다 — (a) codex 플러그인
+  미설치(Agent 툴의 subagent_type 목록에 위 타입이 없거나, 호출이 unknown subagent
+  type 오류로 실패), (b) codex 가 stall/실패해 verdict(BLOCKER/WARN/NIT/CLEAN)를 못 냄
+  — 네트워크 차단·타임아웃·verdict 없는 응답 포함(실증 2026-06-24 #54: codex 가
+  sandbox 에서 gh 네트워크 차단으로 verdict 미산출). **같은 프롬프트가 아니다(#207).**
+  폴백은 `references/verifier-prompt-fallback.md` 로 호출한다 — 위 출력 계약(BLOCKER/
+  WARN/NIT/CLEAN 분류)은 동일하게 적용되지만, 프롬프트 본문은 네이티브 경로(내장
+  리뷰어, `references/verifier-prompt.md`)와 다르다: `general-purpose` 서브에이전트는
+  Agent 툴에 `--cd` 대응 인자가 없어 워크트리에 스코프되지 않는다(cwd = 세션 cwd)
+  — 그래서 "이 워크트리는 최신이다" 라는 네이티브 템플릿의 전제가 폴백에서는 거짓이고,
+  대신 diff·이슈 본문·lessons 를 프롬프트에 **실제로 동봉**한다(아래 ③-1 참조). 폴백
+  호출도 verdict 를 못 내면 BLOCKER 로 간주해 보류 종료한다 (게이트 fail-closed).
 - `VERIFIER_TIMEOUT_MIN = 10` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
   시각 + 이 값을 데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict
   미산출로 간주한다 — codex 외부 CLI 스톨이 틱을 무한정 묶는 것을 막는 방어선(#96).
@@ -272,9 +277,18 @@ Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에
    연속 fail-open 을 냈다(#207 round2~4).
 헬퍼는 자체 타임아웃(`CODEX_GATE_TIMEOUT` 기본 900s = `VERIFIER_TIMEOUT_MIN` 과 동조)을 가진다. 두 호출 중 하나라도
 **exit 2(`verdict=NONE`) = 미산출**(codex 부재·모델 오류·타임아웃, 그리고 계획 부합 호출에서 리뷰어가
-응답 계약의 구조 줄을 안 냈거나 `no-basis` 로 답한 경우 — #207)이면 그때만 ## 상수의 `VERIFIER` 폴백(general-purpose,
-diff·이슈 본문·lessons 를 프롬프트에 동봉, `run_in_background` + `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을
-쓴다. 폴백도 미산출이면 아래 BLOCKER 경로로 보류 종료한다(fail-closed — 절대 머지로 진행하지 않는다, #96).
+응답 계약의 구조 줄을 안 냈거나 `no-basis` 로 답한 경우 — #207)이면 그때만 ## 상수의 `VERIFIER` 폴백(general-purpose)을
+쓴다. **폴백 프롬프트는 `references/verifier-prompt-fallback.md` 다 — 위 1·2 의 네이티브 템플릿
+(`references/verifier-prompt.md`)과 같은 파일이 아니다(#207).** `general-purpose` 서브에이전트는 Agent 툴에
+`--cd` 대응 인자가 없어 워크트리에 스코프되지 않는다 — cwd 는 이 세션(루프)의 cwd 이지 검증 대상 PR 의 워크트리가
+아니다. 그래서 네이티브 템플릿의 "이 워크트리는 최신이다" 전제를 폴백에 그대로 주면 거짓 전제가 된다(실측: 그
+전제를 준 폴백 호출이 엉뚱한 체크아웃을 "최신"이라 단언한 채 판정). `verifier-prompt-fallback.md` 는 그 전제
+대신 diff·이슈 본문·lessons 를 프롬프트에 **실제로 동봉**한다: `<DIFF>`=`gh pr diff <pr> --repo <repo>` 출력,
+`<ISSUE_BODY>`·`<PLAN_REF>`·`<LESSONS_OR_"없음">` 는 네이티브 호출과 같은 방식으로 채운다. 응답 계약(구조 줄)은
+`--prompt` 호출에서 `codex-review-gate.sh` 가 자동으로 붙이는 것이라 폴백엔 실리지 않는다 — 폴백은 ## 상수
+`VERIFIER` 의 출력 계약(BLOCKER/WARN/NIT/CLEAN 산문 분류)만 따른다. 스폰은 `run_in_background` + `VERIFIER_TIMEOUT_MIN`
+데드라인 + 초과 시 `TaskStop`. 폴백도 미산출이면 아래 BLOCKER 경로로 보류 종료한다(fail-closed — 절대 머지로
+진행하지 않는다, #96).
 헬퍼 stderr 의 모델 오류 원문(404·not supported·requires a newer version)은 "스톨"이 아니다 — 코멘트에 그대로 남긴다.
 - 판정 합산: 두 호출 중 하나라도 BLOCKER → BLOCKER. 둘 다 CLEAN/NIT/WARN → 통과(`[P3+]` = NIT 는 비차단, WARN 수는 합산).
   머신 코멘트 마커(필수): 아래 `gh pr comment` 로 남기는 마감 검증 코멘트는 **마지막 줄에
