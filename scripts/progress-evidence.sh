@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
-# progress-evidence.sh --now <epoch> --commit-at <ISO8601|none> --head-sha <sha|none>
+# progress-evidence.sh --now <epoch> --commit-at <ISO8601|none|unknown> --head-sha <sha|none|unknown>
 #
 # 질문 하나에만 답한다: **이 브랜치의 워커가 지금도 진행 중이라는 증거가 있는가.**
 # 판정 입력은 두 가지뿐이고(커밋 시각·head SHA), 큐 로그는 이 스크립트가 직접 읽는다.
+#
+# ── 입력 어휘는 **3값**이다 (#206 회차2) ─────────────────────────────────────
+#   <실제 값>  조회에 성공했고 이것이 그 값이다
+#   none       조회에 성공했고 **그런 것이 없다**(브랜치에 커밋 없음 등)
+#   unknown    **조회 자체가 실패**했다 — 값이 있는지조차 모른다
+# 호출자가 `unknown` 을 `none` 으로 접으면 조회 실패가 "증거 없음" 으로 둔갑해, 이 파일이
+# 지키려는 계약(아래 35행 부근)이 호출부에서 깨진다. 그래서 어휘를 입력 쪽에도 둔다 —
+# 실패를 표현할 말이 없으면 호출자는 결국 `none` 을 쓴다(회차1 이 그렇게 반송됐다).
 #
 # 출력(한 줄, 공백 구분):
 #   <verdict> <reason> commit=<분>m|none|- queue=<state>|-
@@ -45,7 +53,7 @@ STALL_MIN="${STALL_MIN:-25}"
 QUEUE_LOG="${PE_QUEUE_LOG:-$HOME/.claude/.local-ci/queue.log}"
 
 usage() {
-  echo "usage: progress-evidence.sh --now <epoch> --commit-at <ISO8601|none> --head-sha <sha|none>" >&2
+  echo "usage: progress-evidence.sh --now <epoch> --commit-at <ISO8601|none|unknown> --head-sha <sha|none|unknown>" >&2
   exit 64
 }
 
@@ -92,7 +100,12 @@ iso_to_epoch() {
 # 구분하라). 아래 iso_to_epoch 이 형식 불량으로 걸러 `unknown commit_at_invalid` 가 된다.
 # 호출자가 "커밋 증거 없음" 을 말하고 싶으면 **문자열 `none` 을 명시**해야 한다.
 commit_recent=0
-if [ "$commit_at" = none ]; then
+if [ "$commit_at" = unknown ]; then
+  # 호출자가 **조회에 실패했다**고 명시한 경우. `none`(부재)과 갈라 판정 불가로 낸다 —
+  # 이 갈래가 없으면 호출자에겐 실패를 말할 단어가 없어 결국 `none` 으로 접는다.
+  commit_field=unknown
+  emit unknown commit_at_unknown 2
+elif [ "$commit_at" = none ]; then
   commit_field=none
 elif commit_epoch=$(iso_to_epoch "$commit_at"); then
   commit_age=$((now - commit_epoch))
@@ -143,7 +156,12 @@ EOF
   esac
 }
 
-if [ "$head_sha" = none ] || [ -z "$head_sha" ]; then
+if [ "$head_sha" = unknown ]; then
+  # SHA 를 못 얻었으면 큐 티켓을 **물을 수 없다** — "큐에 없다"(none)가 아니다.
+  # 아래 logerr(로그를 못 읽음)와 같은 취급이다: 조회 실패는 증거가 아니라 판정 불가다.
+  queue_state=unknown
+  emit unknown head_sha_unknown 2
+elif [ "$head_sha" = none ] || [ -z "$head_sha" ]; then
   queue_state=none
 else
   queue_state=$(queue_alive "$head_sha")
