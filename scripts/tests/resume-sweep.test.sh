@@ -49,6 +49,8 @@ ts() {  # ts <분 전> → RFC3339 UTC
 sut_dir="$tmp/scripts"
 mkdir -p "$sut_dir" "$tmp/bin" "$tmp/work/.loop"
 cp "$DIR/resume-sweep.sh" "$sut_dir/resume-sweep.sh"
+# 인용 제거 정의는 형제 헬퍼 한 자리(#301) — SUT 사본 옆에 같이 둬야 SUT 가 정의를 얻는다.
+cp "$DIR/jq-unquote.sh" "$sut_dir/jq-unquote.sh"
 cat > "$sut_dir/gh-login.sh" <<'STUB'
 #!/bin/sh
 echo tester
@@ -1183,8 +1185,8 @@ check "[bare] 맨몸 policy-review: 재심으로 센다(due 없음)" "$(no_ev po
 # 반복됐다 — 이번엔 `unquoted` 정의를 스크립트에서 그대로 뽑아(손타이핑 대조 금지) CommonMark
 # 규칙 그대로의 17건을 **직접** 문다(세 판정 지점은 전부 이 정의 하나를 공유하므로 — 위
 # 동기화 검사로 이미 보장 — 여기서 한 번만 확인하면 충분하다).
-grid_unq=$(grep -o 'def unquoted:.*;' "$DIR/resume-sweep.sh" | head -1)
-check "격자: 스크립트에 인용 제거 정의(def unquoted)" "$([ -n "$grid_unq" ] && echo ok || echo no)"
+grid_unq=$(grep -o 'def unquoted:.*;' "$DIR/jq-unquote.sh" | head -1)
+check "격자: jq-unquote.sh 에 인용 제거 정의(def unquoted)" "$([ -n "$grid_unq" ] && echo ok || echo no)"
 
 GRID_MARKER='<!-- ladder-resume: 1 -->'
 
@@ -1293,8 +1295,8 @@ grid_check "h3 CRLF 본문의 정상 닫힌 펜스 뒤 맨몸 마커" \
 # 두 번째 계산기가 다른 수를 센다. **스크립트에서 뽑은 문자열**을 두 SKILL 에서 grep -F 로
 # 대조한다(손타이핑 대조는 한글·백틱이 뭉개져 오탐을 낸다).
 root=$(cd "$DIR/.." && pwd)
-unq=$(grep -o 'def unquoted:.*;' "$DIR/resume-sweep.sh" | head -1)
-check "스크립트에 인용 제거 정의(def unquoted)" "$([ -n "$unq" ] && echo ok || echo no)"
+unq=$(grep -o 'def unquoted:.*;' "$DIR/jq-unquote.sh" | head -1)
+check "jq-unquote.sh 에 인용 제거 정의(def unquoted)" "$([ -n "$unq" ] && echo ok || echo no)"
 for f in SKILL.md SKILL.en.md; do
   check "$f 의 재개 횟수 jq 가 같은 정의를 쓴다" \
     "$([ -n "$unq" ] && grep -qF -- "$unq" "$root/$f" && echo ok || echo no)"
