@@ -68,6 +68,14 @@ fi
 if printf '%s' "$pre" | jq -e '.labels | map(.name) | index("needs-human")' >/dev/null; then
   echo "skip: $repo#$num needs-human" >&2; exit 1
 fi
+# hold:* 재확인 (#242) — 기계 정지(verify-held·closeout-blocked·runner-held). 위
+# needs-human 과 같은 이유로 claim 직전에 다시 본다. 지금은 둘이 항상 쌍이지만
+# `needs-human` 부착이 사유별로 걷히면 이 줄만 남아 정지를 지킨다(플랜 1단계).
+# 판별은 **접두사** `hold:` — 사유가 늘어도 안 깨지고, `hold:` 로 시작하지 않는 라벨
+# (`holding`·`on-hold`·`area:hold`)은 걸리지 않는다(과잉 제외 = 정상 후보 소실).
+if printf '%s' "$pre" | jq -e '.labels | map(.name) | any(startswith("hold:"))' >/dev/null; then
+  echo "skip: $repo#$num hold:*" >&2; exit 1
+fi
 
 # ── 원자적 잠금 (#108) ──
 # 앵커 결정: 원격 브랜치가 있으면 그 head sha(재투입), 없으면 기본 브랜치 head 를
