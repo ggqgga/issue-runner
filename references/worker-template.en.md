@@ -113,8 +113,20 @@ Procedure:
      just because you hit a tool timeout. **Ask the queue directly** — this one command
      distinguishes queued, running, finished and never-ran:
      ```bash
-     ~/.claude/skills/issue-runner/scripts/ci-queue.sh wait <current HEAD SHA> --timeout 540
+     ~/.claude/skills/issue-runner/scripts/ci-queue.sh wait "$(git rev-parse HEAD)" --timeout 540
      ```
+     **This `wait` call too must use the Bash tool `timeout: 600000`.** The tool default
+     is 120000ms, so typing it as-is cuts a 540s `wait` off at 120s and you **never see
+     its exit code**. The worse branch is the tool backgrounding it instead of killing
+     it — which is exactly the failure mode this document's opening pins down: a
+     subagent never receives a background completion notification and hangs forever.
+     **The SHA must be the full 40-character SHA from `git rev-parse HEAD`** — for
+     `wait` and for `status` alike, and
+     **never the 8-character abbreviation printed in `queue.log`**: the queue looks the result file up by exact match
+     (`<40-char SHA>.result`) and compares tickets by full SHA, so an 8-character query
+     returns `none` **even when a pass result exists** → `wait` returns **exit 2** after
+     the grace period (60s by default) and you fall into branch 3 below, **re-queuing a
+     CI run that already passed (or is running right now)**.
      Do not omit `--timeout 540` — the default is 7200s, so the command itself would die
      on the tool cap. At 540 the verdict comes back inside your tool budget. **Branch on
      the exit code:**
@@ -157,6 +169,10 @@ Procedure:
    23:19:57 pid=34001 b4885ba9 폐기 — 실행 시점 HEAD 가 15c6e96e ≠ b4885ba9 (새 push 가 있었거나 로컬 HEAD 만 움직임)
    23:31:12 pid=86456 75979c9c 중단(INT/TERM)
    ```
+   **The `b6dde06c`-style SHAs in the log above are 8-character abbreviations** — good
+   for reading, never for querying. The SHA you pass to `wait`/`status` is always the
+   full 40 characters from `git rev-parse HEAD` (an 8-character query returns `none`
+   even when the result exists → `exit 2` → a pointless re-queue).
    - **queued / result (pass·fail)** — normal progress. Take the result the call
      returns with.
    - **폐기 (discard) — HEAD mismatch.** The queue discards a SHA when the HEAD at
@@ -183,9 +199,21 @@ Procedure:
    **If you must end your turn, never end it silently.** If the above foreground call
    exceeds 10 minutes without finishing and you must end this turn without a result,
    your final message must read exactly
-   `CI 대기 중 — <current HEAD SHA> 대기열 N번째, 다음 할 일: <one line>`. A silent
-   finish makes the dispatcher misread you as dead and reclaim the worktree — this one
-   line is the only signal that tells it "resume me, I am not dead."
+   `CI 대기 중 — <SHA 40자> <queued N|running|none>, 다음 할 일: <한 줄>` (the literal
+   is Korean because the dispatcher matches it verbatim; `<한 줄>` is your next step in
+   one line). The state token is not something you word yourself — copy whichever of the
+   three values `~/.claude/skills/issue-runner/scripts/ci-queue.sh status "$(git rev-parse HEAD)"`
+   gives back:
+   - `queued N` — waiting Nth in the queue (this is the old `대기열 N번째` case).
+   - `running` — your job is **already running**. There is **no queue position** in this
+     state — do not invent a number, write `running`.
+   - `none` — the ticket was reclaimed, so there is neither a queue entry nor a result
+     (the call died on TERM). On resume this is the state that takes one re-queue of the
+     same SHA.
+   At a tool timeout the common states are in fact `running` and `none` — which is why
+   the format carries all three. **All three mean the same thing: I am alive, resume
+   me.** A silent finish makes the dispatcher misread you as dead and reclaim the
+   worktree — this one line is the only signal that tells it "resume me, I am not dead."
 9-b. **Pre-PR review — once, non-gating.** After local CI passes and before opening the
    PR, nest a fresh-context reviewer via the Agent tool — `subagent_type: "general-purpose"`
    (**no codex-family types** — the verification gate is owned by verify-runner and a codex

@@ -132,8 +132,9 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
 - `working` — a worker is in progress. Use TaskList to check whether that
   background agent is actually alive. **Do not assume "looks dead" (the task has
   ended in TaskList) means actually dead** — first read the task's last message with
-  `TaskOutput(task_id)`. If it reads `CI 대기 중 — <SHA> 대기열 N번째, 다음 할 일:
-  <...>`, the worker only ended its turn while waiting in the `run-local-ci.sh` queue
+  `TaskOutput(task_id)`. If its last line reads
+  `CI 대기 중 — <SHA 40자> <queued N|running|none>, 다음 할 일: <한 줄>`
+  (the signal is a verbatim Korean literal), the worker only ended its turn while waiting in the `run-local-ci.sh` queue
   — it is not dead (#185). **Do not remove the worktree or release the claim** —
   wake the worker with `SendMessage` to that task, telling it to resume (pick up the
   "다음 할 일" / next step it reported). Once resumed, record it in ④ Report's
@@ -145,6 +146,18 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   queue takes 550~750s from enqueue to finish, so a rework round easily pushes the
   claim age past `ISSUE_TIMEBOX_HOURS`, and then ⓐ `TaskStop`, ⓑ worktree removal and
   ⓒ claim release **immediately kill the worker you just resumed.**
+  **The state token is one of `queued N`, `running`, `none` —**
+  **all three states are resume signals.** Whichever one arrives, resume exactly as
+  above; **in all three cases**
+  do not remove the worktree and do not release the claim. `queued N` means that
+  worker's SHA is Nth in line; `running` means its job is already executing (this state
+  has no queue position at all — under the old fixed wording `대기열 N번째` the worker
+  had nothing truthful to write, so it ended silently, which is the very death-misread
+  this branch exists to prevent); `none` means the ticket was reclaimed, so there is
+  neither a queue entry nor a result. **`none` does not mean the worker died** — what
+  was reclaimed is the ticket, not the worker; once woken it re-queues the same SHA once
+  and carries on. The three values are not the worker's own words — they are the output
+  of `ci-queue.sh status <SHA>` (`running` / `queued <n>` / `none`).
   If the message is not in that
   format (a genuine death), continue below.
   **Evidence — a background subagent whose turn has ended is still resumable with

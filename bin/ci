@@ -1570,14 +1570,87 @@ grep -qF -- 'CI 와 무관한 일' references/worker-template.md \
 grep -qF -- 'CI-independent work' references/worker-template.en.md \
   || { echo "  ✗ references/worker-template.en.md 에 'CI-independent work' 불릿 없음"; exit 1; }
 
-echo "[#185] 턴 종료 시 'CI 대기 중' 보고 형식 검사 — 워커 템플릿 한/영"
-# 조용한 종료를 막는 게 이 이슈의 핵심 — 대기열 번호·다음 할 일을 담은 정확한
-# 종료 보고 형식이 명문화돼 있는지 본다(형식 문구가 사라지면 워커마다 표현이
-# 갈려 디스패처가 다시 못 알아본다).
-for f in references/worker-template.md references/worker-template.en.md; do
-  grep -qF -- '대기열 N번째, 다음 할 일:' "$f" \
-    || { echo "  ✗ $f 에 'CI 대기 중' 종료 보고 형식(대기열 N번째, 다음 할 일:) 없음"; exit 1; }
+echo "[#185] 턴 종료 시 'CI 대기 중' 3상태 보고 형식 검사 — 워커 템플릿·SKILL 한/영"
+# 조용한 종료를 막는 게 이 이슈의 핵심인데, 옛 고정 문형(`대기열 N번째`)은 큐가 내는
+# 세 상태 중 queued 하나만 말할 수 있었다 — `ci-queue.sh` cmd_status 는 running* 이면
+# `running`, 티켓이 없으면 `none` 을 낸다(cmd_status:124-132). 그리고 툴 타임아웃
+# 시점의 가장 흔한 상태가 바로 running(내 잡이 이미 돌고 있다)·none(호출이 TERM 으로
+# 죽어 티켓까지 회수됐다)이다. 그 두 경우 워커는 정직하게 쓸 문장이 없어 조용히
+# 끝내고, 디스패처는 형식 불일치를 사망으로 읽어 worktree 를 걷어간다(#189 리뷰
+# BLOCKER). 그래서 문형이 상태 토큰을 품는다:
+#   CI 대기 중 — <SHA 40자> <queued N|running|none>, 다음 할 일: <한 줄>
+# 이 문형은 워커가 쓰고 디스패처가 읽는 **한 계약**이라 네 파일이 같은 리터럴을 들어야
+# 한다. 상태 토큰 셋은 전체 문형과 별개로 **각각** 문다 — 전체 문형 검사 하나만 두면
+# "세 토큰을 다 물고 있다"가 증명되지 않는다(하나를 지웠을 때 그 토큰 검사가 단독으로
+# 빨개지는지가 증거다).
+for f in references/worker-template.md references/worker-template.en.md SKILL.md SKILL.en.md; do
+  # 토큰별 검사를 전체 문형 검사보다 **먼저** 둔다 — 전체 문형이 먼저 걸리면 어떤 상태
+  # 토큰이 빠졌는지 말해주지 못해, 뮤테이션으로 "세 토큰을 각각 물고 있다"를 보일 수 없다.
+  # 토큰은 **문형 줄 안에서** 찾는다: 맨몸 `running`·`none` 은 문서 다른 곳
+  # (`ci-queue.sh status` 설명 등)에도 있어 문형에서 지워져도 안 걸리고, 반대로
+  # `|running|` 처럼 양옆 구분자를 함께 무는 형태는 **이웃 토큰**이 지워져도 같이
+  # 빨개져 어느 토큰이 빠졌는지 가리지 못한다.
+  # 문형 줄을 먼저 뽑아 변수에 담는다(`grep | grep -q` 는 -q 가 먼저 끝나며 상류에
+  # SIGPIPE 를 줘 pipefail 아래서 깜빡일 수 있다). 줄이 없으면 빈 문자열이라 세 토큰이
+  # 전부 안 맞아 그대로 빨개진다 — 빈 결과가 통과로 새지 않는다.
+  fmt_line=$(grep -F -- 'CI 대기 중 — <SHA 40자>' "$f" || true)
+  for tok in 'queued N' 'running' 'none'; do
+    case "$fmt_line" in
+      *"$tok"*) ;;
+      *) echo "  ✗ $f 의 'CI 대기 중' 문형에 상태 토큰 없음: $tok"; exit 1 ;;
+    esac
+  done
+  grep -qF -- 'CI 대기 중 — <SHA 40자> <queued N|running|none>, 다음 할 일: <한 줄>' "$f" \
+    || { echo "  ✗ $f 에 'CI 대기 중' 3상태 종료 보고 문형 없음"; exit 1; }
+  # 옛 고정 문형이 남아 있으면 워커가 둘 중에서 고르고, 디스패처는 새 문형만 안다.
+  if grep -qF -- '대기열 N번째, 다음 할 일:' "$f"; then
+    echo "  ✗ $f 에 옛 고정 문형(대기열 N번째, 다음 할 일:)이 남음 — 3상태 문형으로 대체하라"
+    exit 1
+  fi
 done
+# 디스패처 쪽 — 문형만 옮겨서는 부족하다. running·none 도 재개 신호라는 것과, 세 경우
+# 모두 worktree 제거·claim 해제를 하지 않는다는 것이 working 갈래에 명문화돼야 한다
+# (none 은 "티켓이 회수됐다"이지 "워커가 죽었다"가 아니다 — 워커가 살아서 재큐한다).
+grep -qF -- '세 상태 다 재개 신호다' SKILL.md \
+  || { echo "  ✗ SKILL.md working 갈래에 '세 상태 다 재개 신호' 명문화 없음"; exit 1; }
+grep -qF -- 'all three states are resume signals' SKILL.en.md \
+  || { echo "  ✗ SKILL.en.md working 갈래에 'all three states are resume signals' 명문화 없음"; exit 1; }
+grep -qF -- '`none` 이어도 워커는 살아 있다' SKILL.md \
+  || { echo "  ✗ SKILL.md 에 none = 티켓 회수지 사망 아님 명문화 없음"; exit 1; }
+grep -qF -- '`none` does not mean the worker died' SKILL.en.md \
+  || { echo "  ✗ SKILL.en.md 에 none = 티켓 회수지 사망 아님 명문화 없음"; exit 1; }
+
+echo "[#185] wait/status 인자는 40자 full SHA — 8자 약어 금지 검사 (#189 WARN①)"
+# 실측: `ci-queue.sh result <40자>` 는 pass 를 내지만 같은 SHA 를 8자로 물으면 none 이다
+# (cmd_result 는 `$CACHE/*/"$1.result"` 완전일치 글롭, cmd_status 는 티켓 full sha 와
+# 문자열 비교). 그래서 short SHA 로 건 `wait` 는 grace 뒤 **항상 exit 2** 를 내고,
+# 워커는 3번 갈래로 흘러 이미 pass 한(또는 지금 돌고 있는) CI 를 재큐한다 — 3분기
+# 계약이 가장 흔한 경로에서 오답을 낸다. 문서가 SHA 를 확인하라고 가리키는 자리가
+# 하필 8자를 찍는 queue.log 라 경고를 같은 자리에 둔다.
+grep -qF -- 'SHA 는 `git rev-parse HEAD` 의 40자 전체다' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 wait/status 인자 = 40자 full SHA 명시 없음"; exit 1; }
+grep -qF -- '`queue.log` 에 찍히는 8자 약어를 그대로 쓰지 마라' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 에 8자 약어 금지 문구 없음"; exit 1; }
+grep -qF -- 'the full 40-character SHA from `git rev-parse HEAD`' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 wait/status 인자 = 40자 full SHA 명시 없음"; exit 1; }
+grep -qF -- 'never the 8-character abbreviation printed in `queue.log`' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 에 8자 약어 금지 문구 없음"; exit 1; }
+# queue.log 예시 블록 자체가 8자를 찍는다 — 그 옆에 약어임을 못박지 않으면 워커가
+# 예시를 그대로 복사한다.
+grep -qF -- '위 로그가 찍는 `b6dde06c` 류는 8자 약어다' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 의 queue.log 예시에 '8자 약어' 주석 없음"; exit 1; }
+grep -qF -- 'The `b6dde06c`-style SHAs in the log above are 8-character abbreviations' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 의 queue.log 예시에 '8자 약어' 주석 없음"; exit 1; }
+
+echo "[#185] ci-queue.sh wait 호출도 Bash 툴 timeout 600000 검사 (#189 WARN②)"
+# `--timeout 540` 은 "툴 예산 안에서 판정이 돌아온다"를 전제하는데 Bash 툴 기본
+# timeout 은 120000ms 다 — 새 회수 문단만 읽고 그대로 친 워커는 120초에 잘려 540초짜리
+# wait 의 종료 코드를 영영 못 본다. 더 나쁜 갈래는 kill 대신 백그라운드 이관으로,
+# 서브에이전트가 완료 알림을 못 받아 영원히 멈추는 바로 그 실패 모드다.
+grep -qF -- '이 `wait` 호출도 Bash 툴 `timeout: 600000` 으로' references/worker-template.md \
+  || { echo "  ✗ references/worker-template.md 의 wait 코드블록 밑에 툴 timeout 600000 지시 없음"; exit 1; }
+grep -qF -- 'This `wait` call too must use the Bash tool `timeout: 600000`' references/worker-template.en.md \
+  || { echo "  ✗ references/worker-template.en.md 의 wait 코드블록 밑에 툴 timeout 600000 지시 없음"; exit 1; }
 
 echo "[#185] SKILL working 항목 — CI 대기 재개 갈래(사망 오독 방지) 검사 — 한/영"
 # SKILL.md/SKILL.en.md ① Reconcile 의 working 항목이 'CI 대기 중' 마지막 보고를

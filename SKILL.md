@@ -133,8 +133,9 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 - `pr_open` — ② Maintain 의 입력.
 - `working` — 워커 진행 중. TaskList 로 해당 백그라운드 에이전트가 실제 살아있는지
   확인. **"죽어 보임"(TaskList 상 종료)을 바로 사망으로 단정하지 마라** — 그 태스크의
-  `TaskOutput(task_id)` 로 마지막 메시지를 먼저 읽어라. `CI 대기 중 — <SHA> 대기열
-  N번째, 다음 할 일: <...>` 형식이면 `run-local-ci.sh` 큐 대기 중 턴만 끝낸 것이지
+  `TaskOutput(task_id)` 로 마지막 메시지를 먼저 읽어라. 마지막 줄이
+  `CI 대기 중 — <SHA 40자> <queued N|running|none>, 다음 할 일: <한 줄>`
+  형식이면 `run-local-ci.sh` 큐 대기 중 턴만 끝낸 것이지
   사망이 아니다(#185) — **worktree 제거·claim 해제를 하지 말고** `SendMessage` 로
   그 태스크에 재개 메시지를 보내 워커를 깨워라(보고에 적힌 "다음 할 일"을 이어가게
   하라는 한 줄이면 된다). 재개했으면 ④ Report 의 `보수` 에 `#<num>(CI 대기 재개)`
@@ -144,6 +145,15 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   내려가면 timebox 문단에 그대로 걸린다. 이 박스 CI 큐는 인큐→완료가 550~750초라
   반송 회차가 겹치면 claim 경과가 쉽게 `ISSUE_TIMEBOX_HOURS` 를 넘고, 그러면
   ⓐ `TaskStop` ⓑ worktree 제거 ⓒ claim 해제가 **막 재개한 워커를 즉시 죽인다.**
+  **상태 토큰은 `queued N`·`running`·`none` 셋이고 — 세 상태 다 재개 신호다.** 어느
+  값이 왔든 위와 똑같이 재개하라(worktree 제거·claim 해제는 **세 경우 모두** 하지
+  않는다). `queued N` 은 그 워커의 SHA 가 큐에서 N번째로 줄 서 있는 것, `running` 은
+  이미 그 잡이 돌고 있는 것(이 상태엔 대기열 번호가 아예 없다 — 옛 고정 문형
+  `대기열 N번째` 로는 쓸 말이 없어 워커가 조용히 끝냈고, 그게 이 갈래가 막으려던 바로
+  그 사망 오독이었다), `none` 은 티켓이 회수돼 큐에도 결과도 없는 것이다.
+  **`none` 이어도 워커는 살아 있다** — 회수된 것은 티켓이지 워커가 아니고, 깨우면 같은 SHA 로
+  1회 재큐해 이어간다. 세 값은 워커가 지어낸 말이 아니라 `ci-queue.sh status <SHA>` 의
+  출력 그대로다(`running` / `queued <n>` / `none`).
   이 형식이 아니면(진짜 사망) 아래로 이어간다.
   **근거 — 턴이 끝난 백그라운드 서브에이전트도 `SendMessage` 로 깨어난다.** ⑴ Agent 툴
   계약문이 `SendMessage` 를

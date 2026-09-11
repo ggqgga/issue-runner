@@ -106,8 +106,18 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
      안 됐다"고 단정해 재큐하지 마라. **큐에 직접 물어라** — 이 한 명령이 대기·실행·
      완료·미실행을 전부 구분해 준다:
      ```bash
-     ~/.claude/skills/issue-runner/scripts/ci-queue.sh wait <지금 HEAD SHA> --timeout 540
+     ~/.claude/skills/issue-runner/scripts/ci-queue.sh wait "$(git rev-parse HEAD)" --timeout 540
      ```
+     **이 `wait` 호출도 Bash 툴 `timeout: 600000` 으로 걸어라.** 툴 기본값은
+     120000ms 라 그대로 치면 540초짜리 `wait` 가 120초에 잘려 **종료 코드를 영영 못
+     본다**. 더 나쁜 갈래는 툴이 kill 대신 백그라운드로 옮기는 경우다 — 이 문서 맨 앞이
+     못박은 "서브에이전트는 백그라운드 완료 알림을 못 받아 영원히 멈춘다"가 그대로
+     일어난다.
+     **SHA 는 `git rev-parse HEAD` 의 40자 전체다** — `wait` 도 `status` 도 같다.
+     `queue.log` 에 찍히는 8자 약어를 그대로 쓰지 마라: 큐는 결과 파일을 완전일치로
+     찾고(`<40자 SHA>.result`) 티켓도 full SHA 로 비교해서, 8자로 물으면 **pass 결과가
+     실재해도** `none` 이 돌아온다 → `wait` 는 grace(기본 60초) 뒤 **exit 2** 를 내고,
+     너는 아래 3번 갈래로 흘러 **이미 pass 한(또는 지금 돌고 있는) CI 를 재큐**한다.
      `--timeout 540` 을 생략하지 마라 — 기본값이 7200초라 이 명령 자체가 툴 상한에
      걸려 죽는다. 540 이면 툴 예산 안에서 판정이 돌아온다. **종료 코드로 갈라라:**
      1. **0(pass)·1(fail)** — 판정이 났다. 그 결과를 그대로 받아라. **재큐 금지.**
@@ -144,6 +154,9 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    23:19:57 pid=34001 b4885ba9 폐기 — 실행 시점 HEAD 가 15c6e96e ≠ b4885ba9 (새 push 가 있었거나 로컬 HEAD 만 움직임)
    23:31:12 pid=86456 75979c9c 중단(INT/TERM)
    ```
+   **위 로그가 찍는 `b6dde06c` 류는 8자 약어다** — 읽는 용도일 뿐이다. `wait`/`status`
+   에 넣을 SHA 는 언제나 `git rev-parse HEAD` 의 40자 전체다(8자로 물으면 결과가
+   실재해도 `none` → `exit 2` → 헛된 재큐).
    - **대기열 / 결과(pass·fail)** — 정상 진행. 호출이 돌아올 때까지 그 결과를 그대로
      받아라.
    - **폐기 — HEAD 불일치.** 큐는 실행 시점 HEAD 가 건 시점의 SHA 와 다르면 그 SHA 를
@@ -166,7 +179,17 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 
    **턴을 끝내야 하면 조용히 끝내지 마라.** 위 포그라운드 호출이 10분을 넘겨도
    안 끝나 이번 턴에서 결과를 못 보고 마쳐야 한다면, 마지막 메시지를 반드시
-   `CI 대기 중 — <지금 HEAD SHA> 대기열 N번째, 다음 할 일: <한 줄>` 형식으로 남겨라.
+   `CI 대기 중 — <SHA 40자> <queued N|running|none>, 다음 할 일: <한 줄>` 형식으로
+   남겨라. 상태 토큰은 지어내는 말이 아니라
+   `~/.claude/skills/issue-runner/scripts/ci-queue.sh status "$(git rev-parse HEAD)"`
+   가 돌려주는 세 값 중 하나를 그대로 옮겨 적는 것이다:
+   - `queued N` — 큐에서 N번째로 기다리는 중(옛 `대기열 N번째` 가 이 경우다).
+   - `running` — 내 잡이 **이미 돌고 있다**. 이 상태엔 대기열 번호가 **없다** —
+     없는 번호를 지어내지 말고 `running` 이라고 써라.
+   - `none` — 티켓이 회수돼 큐에도 결과도 없다(호출이 TERM 으로 죽은 경우). 재개하면
+     같은 SHA 로 1회 재큐하면 되는 상태다.
+   툴 타임아웃 시점에 흔한 것은 오히려 `running` 과 `none` 이다 — 그래서 형식이 세
+   상태를 다 품는다. **세 상태 다 뜻은 하나다: 나는 살아 있고 재개 대상이다.**
    조용한 종료는 디스패처가 "죽었다"로 오독해 worktree 를 걷어간다 — 이 한 줄이
    "재개 대상이지 사망이 아니다"를 알리는 유일한 신호다.
 9-b. **PR 전 사전 리뷰 — 1회, 비게이트.** 로컬 CI 가 pass 인 뒤 PR 을 열기 전에, 새 컨텍스트의
