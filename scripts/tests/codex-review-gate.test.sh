@@ -60,7 +60,8 @@ STUB_MODE=clean run --base base --model gpt-5.6-terra --effort low
 grep -q -- '-m gpt-5.6-terra' "$STUB_LOG" && grep -q 'model_reasoning_effort="low"' "$STUB_LOG" && ok || bad "오버라이드 미전달"
 case "$last" in *"model=gpt-5.6-terra"*) ok ;; *) bad "verdict 줄 model: $last" ;; esac
 STUB_MODE=clean run --prompt "계획 부합 검토"
-grep -q '^exec review 계획 부합 검토 -m' "$STUB_LOG" && ok || bad "--prompt 미전달: $(tail -1 "$STUB_LOG")"
+# 프롬프트 뒤에 응답 계약(구조 줄 형식)이 덧붙으므로 지시문은 argv 첫 줄로 끝난다(4b-3 이 계약문을 문다)
+grep -q '^exec review 계획 부합 검토$' "$STUB_LOG" && ok || bad "--prompt 미전달: $(head -1 "$STUB_LOG")"
 STUB_MODE=clean run --base base --prompt "계획 부합"
 grep -q 'exec review Review ONLY the committed changes `git diff base...HEAD`' "$STUB_LOG" && ok || bad "--prompt+--base 범위 머리말 없음: $(tail -1 "$STUB_LOG" | cut -c1-120)"
 grep -q -- 'code_mode_host' "$STUB_LOG" && bad "code_mode_host 를 끄면 리뷰어가 도구를 못 쓴다 — 넘기지 말 것" || ok
@@ -87,135 +88,116 @@ mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub
 UNABLE="$TMP/unable.md" run --base base; assert_eq "볼드 [P1] BLOCKER" "$rc" 1; case "$last" in "verdict=BLOCKER p1=1 "*) ok ;; *) bad "볼드 P1 집계: $last" ;; esac
 mv "$TMP/stub/codex.real" "$TMP/stub/codex"
 
-echo "[gate] 4b-2) 한국어 '판정 근거 없음' 응답 → CLEAN 아니라 미산출(#207 — fail-open 게이트 재발)"
-# #207 실측 재현: diff 를 못 본 리뷰어가 항목([Pn]) 없이 "판정할 근거가 없다" 산문만 남기면
-# 옛 분류는 이걸 CLEAN 으로 읽었다(머지 게이트의 절반이 fail-open). 미산출(exit 2)이어야 한다.
-printf '판정 근거로 지정된 diff가 메시지에 포함되어 있지 않아 변경 내용과 수용 기준 충족 여부를 검증할 수 없습니다. 명시된 금지사항에 따라 로컬 git 명령으로 diff를 조회하지 않았으며, 따라서 CLEAN으로 판정할 근거도 없습니다.\n' > "$TMP/unable.md"
-mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
-UNABLE="$TMP/unable.md" run --base base; assert_eq "한국어 '판정 근거 없음' exit" "$rc" 2; case "$last" in "verdict=NONE "*) ok ;; *) bad "한국어 판정불가 verdict(CLEAN 으로 샘): $last" ;; esac
-mv "$TMP/stub/codex.real" "$TMP/stub/codex"
-
-echo "[gate] 4b-3) 한국어 진짜 CLEAN(항목 0·근거 있음)은 여전히 CLEAN — 과잉 차단 금지(#207)"
-# 4b-2 의 분류를 넓혀 잡다 "판정"·"검증" 같은 낱말만으로 걸면, 실제로 다 보고 결함이
-# 없다고 답한 정상 CLEAN 까지 미산출로 떨어뜨린다 — 그러면 이 이슈가 막으려던 fail-open
-# 을 반대편(과잉 fail-closed)에서 깨뜨린다.
-printf '이 변경 사항을 검토했습니다. 추가된 함수의 예외 처리와 테스트를 확인했으며 결함을 발견하지 못했습니다. 판정: CLEAN\n' > "$TMP/unable.md"
-mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
-UNABLE="$TMP/unable.md" run --base base; assert_eq "한국어 진짜 CLEAN 과잉차단 방지" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "한국어 진짜 CLEAN 오탐(미산출로 샘): $last" ;; esac
-mv "$TMP/stub/codex.real" "$TMP/stub/codex"
-
-echo "[gate] 4b-4) 사전 리뷰 WARN 반증(#207): '근거 없는 폴백은 없습니다' 류의 정상 CLEAN 은 과잉 차단되지 않는다"
-# 4b-2 의 정규식을 "근거...없" 만으로 넓게 잡으면, 이 레포 리뷰 기준(silent-failure-hunter:
-# 근거 없는 폴백 지적)을 정상적으로 통과한 CLEAN 리뷰가 "근거 없는 폴백은 없습니다" 같은
-# 문장을 남길 때 오탐한다(사전 리뷰가 실측 WARN). 판정 동사(판정/검증/확인)가 근처에 없는
-# "근거...없" 는 걸리지 않아야 한다.
-printf '이 diff 는 근거 없는 폴백을 추가하지 않았습니다. 결함을 발견하지 못했습니다. CLEAN
-' > "$TMP/unable.md"
-mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
-UNABLE="$TMP/unable.md" run --base base; assert_eq "'근거 없는 폴백은 없습니다' 과잉차단 방지" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "'근거 없는 폴백' 정상 서술 오탐: $last" ;; esac
-mv "$TMP/stub/codex.real" "$TMP/stub/codex"
-
-echo "[gate] 4b-5) 사전 리뷰 WARN 반증(#207): '판정 불가능할 정도로 미미합니다' 류의 정도 서술은 과잉 차단되지 않는다"
-# "(판정|검증) 불가능/불가" 를 허용하면 "부작용은 판정 불가능할 정도로 미미합니다" 처럼
-# 정도를 서술하는 정상 CLEAN 까지 미산출로 떨어진다(사전 리뷰가 실측 WARN) — "할 수 없"
-# 처럼 판정 동사에 직접 붙는 형태만 잡아야 한다.
-printf '이 변경의 부작용은 판정 불가능할 정도로 미미합니다. 결함을 발견하지 못했습니다. CLEAN
-' > "$TMP/unable.md"
-mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
-UNABLE="$TMP/unable.md" run --base base; assert_eq "'판정 불가능할 정도로' 과잉차단 방지" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "'판정 불가능할 정도로' 정상 서술 오탐: $last" ;; esac
-mv "$TMP/stub/codex.real" "$TMP/stub/codex"
-
-echo "[gate] 4b-6) 반송 격자(#207 attempt4, f1) — [P1] 항목의 설명문에 '누락' 이 있어도 BLOCKER 로 산다"
-# 옛 분류는 우선순위 집계보다 먼저 본문 전체를 grep 해, 정당한 [P1] 의 설명문이 산문
-# 패턴에 걸리면 verdict=NONE 으로 지워버렸다(폴백이 CLEAN 을 내면 BLOCKER 가 조용히 증발).
-printf -- '- [P1] 필수 변경이 diff에서 누락 — scripts/foo.sh:12\n' > "$TMP/unable.md"
-mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
-UNABLE="$TMP/unable.md" run --base base; assert_eq "f1 [P1] 설명문 '누락' 은 BLOCKER 로 산다" "$rc" 1; case "$last" in "verdict=BLOCKER p1=1 "*) ok ;; *) bad "f1: $last" ;; esac
-mv "$TMP/stub/codex.real" "$TMP/stub/codex"
-
-echo "[gate] 4b-7) 반송 격자(f2) — '누락은 없습니다'(부정문) 는 CLEAN 으로 남는다(과잉 차단 금지)"
-printf 'CLEAN. diff에 테스트 누락은 없습니다. 수용 기준을 모두 충족합니다.\n' > "$TMP/unable.md"
-mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
-UNABLE="$TMP/unable.md" run --base base; assert_eq "f2 '누락은 없습니다' CLEAN" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "f2: $last" ;; esac
-mv "$TMP/stub/codex.real" "$TMP/stub/codex"
-
-echo "[gate] 4b-8) 반송 격자(f3) — 일부만 정적 검증 불가라 밝힌 정상 CLEAN 은 과잉 차단되지 않는다"
-printf 'CLEAN. 나머지는 런타임 동작이라 정적으로는 검증할 수 없지만, 변경분 자체는 부합합니다.\n' > "$TMP/unable.md"
-mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
-UNABLE="$TMP/unable.md" run --base base; assert_eq "f3 부분 서술 CLEAN" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "f3: $last" ;; esac
-mv "$TMP/stub/codex.real" "$TMP/stub/codex"
-
-echo "[gate] 4b-9) 반송 격자(f4) — 동의어('검토') + '정보만으로' 축이 함께면 미산출로 차단된다"
-printf '제공된 정보만으로 변경 내용을 검토할 수 없습니다.\n' > "$TMP/unable.md"
-mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
-UNABLE="$TMP/unable.md" run --base base; assert_eq "f4 '검토할 수 없습니다' 미산출" "$rc" 2; case "$last" in "verdict=NONE "*) ok ;; *) bad "f4: $last" ;; esac
-mv "$TMP/stub/codex.real" "$TMP/stub/codex"
-
-echo "[gate] 4b-10) 반송 격자(f7) — 한 속성만 못 쟀다는 곁다리 '제공된 정보만으로' 는 결론(결함 없음)이 있으면 과잉 차단되지 않는다(#207 round2 P2)"
-# round2 검증자 실측: "제공된 정보만으로 성능은 검증할 수 없습니다. 코드 변경은 검토했고
-# 결함은 없습니다." 처럼 리뷰가 실제로 diff 를 보고 결론(결함 없음)까지 낸 정상 CLEAN 인데,
-# '제공된...만으로' 가 응답 어디에 있든 매치돼 CLEAN → NONE 으로 뒤집혔다. 결함이 새지는
-# 않지만(NONE 은 폴백행이라 fail-closed) closeout 이 불필요하게 막힌다.
-printf '제공된 정보만으로 성능은 검증할 수 없습니다. 코드 변경은 검토했고 결함은 없습니다.\n' > "$TMP/unable.md"
-mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
-UNABLE="$TMP/unable.md" run --base base; assert_eq "f7 결함없음 결론 있는 '정보만으로' 과잉차단 방지" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "f7: $last" ;; esac
-mv "$TMP/stub/codex.real" "$TMP/stub/codex"
-
-echo "[gate] 4b-11) 반송 격자(f8) — 결론 없이 리뷰 전체가 '제공된 정보만으로' 판정 불가로 끝나면 여전히 미산출(f7 의 반증)"
-# f7 의 완화가 과해지면 진짜 미산출(리뷰 전체가 실패)까지 CLEAN 으로 새는 반대 방향
-# fail-open 이 재발한다 — 결론 문장(결함 없음/CLEAN 류)이 없는 순수 '못 봤다' 응답은
-# 계속 차단돼야 한다.
-printf '제공된 정보만으로는 diff 내용을 확인할 수 없어 판정할 수 없습니다.\n' > "$TMP/unable.md"
-mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
-UNABLE="$TMP/unable.md" run --base base; assert_eq "f8 결론 없는 '정보만으로' 는 계속 미산출" "$rc" 2; case "$last" in "verdict=NONE "*) ok ;; *) bad "f8: $last" ;; esac
-mv "$TMP/stub/codex.real" "$TMP/stub/codex"
-
-echo "[gate] 4b-12) 판정-결론 격자(#207 round3 attempt3) — REVIEW_CONCLUDED 는 '부합'·'CLEAN' 의 긍정 단정만 결론으로 센다"
-# 판정 규칙(말로): 항목([Pn]) 0건에 캐비엇(BASIS_ABSENT_CAVEAT)·판정불능 동사(CANNOT_VERB)가
-# 함께 있을 때만 "미산출 후보"다. 그 상태에서 리뷰 본문이 이미 긍정 단정 결론을 냈으면
-# (REVIEW_CONCLUDED — '결함 없'·'이상 없'·'문제 없'·'부합한다/합니다/함'·bare CLEAN) 캐비엇은
-# 곁다리로 보고 CLEAN 을 유지한다. 그런데 '부합'·'CLEAN' 두 토큰은 의문형·부정형 문장 안에도
-# 맨몸으로 나타난다(부합하는지·부합하지 않·CLEAN 이라고/인지) — 그 경우는 결론이 아니라
-# 오히려 "못 봤다"는 뜻이므로 결론으로 세면 안 된다(REVIEW_CONCLUDED_NEGATED 로 되돌린다).
-# want=NONE ⇢ verdict=NONE(exit 2) · want=CLEAN ⇢ verdict=CLEAN(exit 0). 각 행은 별도 UNABLE
-# 파일로 돌려 독립 검증한다(grep -q 는 파일 어디에서든 매치되면 참이라 문장을 줄로 나눠도 무방).
-grid_row() {
+echo "[gate] 4b-2) 응답 계약(구조 신호) — --prompt 호출은 리뷰어의 고정 형식 줄로만 판정한다(#207 재심 (c))"
+# 이 이슈는 세 라운드를 **한국어 산문 정규식**으로 "리뷰어가 결론을 냈는가"를 가리려다 태웠다
+# (round2 캐비엇 어형 · round3 '부합하는지' · round4 '부합함을' — 어형은 닫히지 않는다).
+# 재심 결정(c): 산문을 판정 입력에서 **빼고**, 프롬프트가 요구한 고정 형식 줄의 유무로 가른다.
+#   구조 줄 있음 → 그 값대로(reviewed = 항목 집계로 판정, no-basis = 미산출)
+#   구조 줄 없음/형식 깨짐 → verdict=NONE(exit 2, fail-closed)
+# 이 격자는 (구조 줄 있음/없음) × (CLEAN·발견·긍정 산문·부정 산문·빈 출력·깨진 형식) 을
+# `want` 열로 전수 단언한다 — 개별 반례만 차례로 닫는 접근(PR#202 교훈)을 쓰지 않는다.
+# 계약은 `--prompt` 호출에만 붙는다(내장 스코프 리뷰는 프롬프트를 실을 자리가 없다) — 그래서
+# 모든 행을 `--base base --prompt` 로 돌린다. 비계약 경로의 회귀는 4b-3 에서 따로 문다.
+srow() {
   name="$1"; want="$2"; printf '%s' "$3" > "$TMP/unable.md"
   mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
+  UNABLE="$TMP/unable.md" run --base base --prompt "계획 부합 검토"
   case "$want" in
-    NONE)  UNABLE="$TMP/unable.md" run --base base; assert_eq "격자: $name" "$rc" 2
-           case "$last" in "verdict=NONE "*) ok ;; *) bad "격자[$name] want=NONE 실제: $last" ;; esac ;;
-    CLEAN) UNABLE="$TMP/unable.md" run --base base; assert_eq "격자: $name" "$rc" 0
-           case "$last" in "verdict=CLEAN "*) ok ;; *) bad "격자[$name] want=CLEAN 실제: $last" ;; esac ;;
+    NONE)    assert_eq "격자: $name" "$rc" 2; case "$last" in "verdict=NONE "*)    ok ;; *) bad "격자[$name] want=NONE 실제: $last" ;; esac ;;
+    CLEAN)   assert_eq "격자: $name" "$rc" 0; case "$last" in "verdict=CLEAN "*)   ok ;; *) bad "격자[$name] want=CLEAN 실제: $last" ;; esac ;;
+    BLOCKER) assert_eq "격자: $name" "$rc" 1; case "$last" in "verdict=BLOCKER "*) ok ;; *) bad "격자[$name] want=BLOCKER 실제: $last" ;; esac ;;
+    WARN)    assert_eq "격자: $name" "$rc" 0; case "$last" in "verdict=WARN "*)    ok ;; *) bad "격자[$name] want=WARN 실제: $last" ;; esac ;;
   esac
   mv "$TMP/stub/codex.real" "$TMP/stub/codex"
 }
-# name                                              | want  | input
-grid_row "의문 — 부합하는지 확인할 수 없다(round3 BLOCKER 원문)" NONE \
+
+# ── 구조 줄 있음(reviewed) ──────────────────────────────────────────────────
+# 과잉 차단 반증(이슈 Test plan 의 명시 요구): 구조 줄을 갖춘 진짜 CLEAN 은 캐비엇 문장이
+# 섞여 있어도 CLEAN 이다 — round2 가 고친 f7(곁다리 캐비엇)이 여기서 산문 판정 없이 유지된다.
+srow "구조 줄 reviewed + 발견 0 = 진짜 CLEAN" CLEAN \
+  '변경 전체를 읽고 수용 기준과 대조했습니다. 결함 없음.
+REVIEW_STATUS: reviewed'
+srow "구조 줄 reviewed + 한 속성만 못 쟀다는 캐비엇 동반(과잉 차단 금지, round2 f7)" CLEAN \
+  '제공된 정보만으로 성능은 검증할 수 없습니다. 코드 변경은 검토했고 결함은 없습니다.
+REVIEW_STATUS: reviewed'
+srow "구조 줄 reviewed + '부합하는지 확인할 수 없다' 문장이 섞인 부분 서술(과잉 차단 금지)" CLEAN \
+  '런타임 동작이 계획에 부합하는지 확인할 수 없지만, 변경분 자체는 수용 기준을 충족합니다.
+REVIEW_STATUS: reviewed'
+srow "구조 줄 reviewed + [P1] 발견 = BLOCKER" BLOCKER \
+  '- [P1] 필수 변경이 diff에서 누락 — scripts/foo.sh:12
+REVIEW_STATUS: reviewed'
+srow "구조 줄 reviewed + [P2] 발견 = WARN" WARN \
+  '- [P2] 사소한 편차 — scripts/foo.sh:12
+REVIEW_STATUS: reviewed'
+srow "구조 줄 reviewed 가 닫는 코드펜스 앞(마지막 비어있지 않은 줄 창 안)" CLEAN \
+  '```
+결함 없음.
+REVIEW_STATUS: reviewed
+```'
+
+# ── 구조 줄 no-basis ────────────────────────────────────────────────────────
+# 리뷰어가 스스로 "근거 없음"을 구조로 밝힌 경우 — 산문 해석 없이 곧장 미산출.
+srow "구조 줄 no-basis (#207 원문 산문 동반)" NONE \
+  '판정 근거로 지정된 diff가 메시지에 포함되어 있지 않아 검증할 수 없습니다.
+REVIEW_STATUS: no-basis'
+srow "구조 줄 no-basis + [P1] 항목 병존(계약 모순 응답은 신뢰하지 않는다)" NONE \
+  '- [P1] 무언가 — a.sh:1
+REVIEW_STATUS: no-basis'
+
+# ── 구조 줄 없음 ────────────────────────────────────────────────────────────
+# 산문이 긍정이든 부정이든, 발견이 있든 없든 **전부 미산출**이다. 세 라운드를 태운
+# 어형 판별을 여기서 통째로 버린다. (미산출은 통과가 아니라 폴백행이다 — SKILL ③-1.)
+srow "구조 줄 없음 + 긍정 산문(다 봤고 부합한다)" NONE \
+  '변경 전체를 읽고 대조했습니다. 이 변경은 계획에 부합합니다. 결함 없음. CLEAN'
+srow "구조 줄 없음 + 부정 산문(round3 BLOCKER 원문 — 부합하는지 확인할 수 없다)" NONE \
   '제공된 정보만으로 변경 사항이 계획에 부합하는지 확인할 수 없습니다.'
-grid_row "의문 — 부합하는지 판단할 수 없다" NONE \
-  '제공된 정보만으로는 계획에 부합하는지 판단할 수 없습니다.'
-grid_row "부정 — 부합하지 않는다(캐비엇 동반, 결론 아님)" NONE \
-  '제공된 정보만으로는 판단할 수 없습니다만, 이 변경은 계획에 부합하지 않습니다.'
-grid_row "CLEAN 부정 — CLEAN 이라고 볼 수 없다" NONE \
-  '제공된 정보만으로는 판정할 수 없습니다.
-계획 부합 여부가 CLEAN 이라고 볼 수 없습니다.'
-grid_row "CLEAN 부정 — CLEAN 인지 확신할 수 없다" NONE \
-  '제공된 정보만으로는 검증할 수 없습니다.
-이 변경이 CLEAN 인지 확신할 수 없습니다.'
-grid_row "긍정 단정 — 부합한다(캐비엇 동반, 결론 유지)" CLEAN \
-  '제공된 정보만으로는 부하 테스트를 확인할 수 없습니다. 이 변경은 계획에 부합한다.'
-grid_row "긍정 단정 — 부합합니다(캐비엇 동반, 결론 유지)" CLEAN \
-  '제공된 정보만으로는 검증할 수 없습니다. 이 변경은 계획에 부합합니다.'
-grid_row "긍정 단정 — 부합함(캐비엇 동반, 결론 유지)" CLEAN \
-  '제공된 정보만으로는 확인할 수 없습니다. 구현은 계획에 부합함.'
-grid_row "긍정 단정 — 이상 없음(캐비엇 동반, 결론 유지)" CLEAN \
-  '제공된 정보만으로는 검토할 수 없습니다. 이상 없음.'
-grid_row "긍정 단정 — 문제 없습니다(캐비엇 동반, 결론 유지)" CLEAN \
-  '제공된 정보만으로는 판정할 수 없습니다. 문제 없습니다.'
-grid_row "긍정 단정 — bare CLEAN(캐비엇 동반, 결론 유지)" CLEAN \
-  '제공된 정보만으로는 검증할 수 없습니다. 이 변경은 CLEAN 입니다.'
-unset -f grid_row
+srow "구조 줄 없음 + 부정 산문(round4 BLOCKER 원문 — 부합함을 확인할 수 없다)" NONE \
+  '제공된 정보만으로는 변경이 계획에 부합함을 확인할 수 없습니다.'
+srow "구조 줄 없음 + #207 원문(fail-open 을 낳은 그 응답)" NONE \
+  '판정 근거로 지정된 diff가 메시지에 포함되어 있지 않아 변경 내용과 수용 기준 충족 여부를 검증할 수 없습니다. 따라서 CLEAN으로 판정할 근거도 없습니다.'
+srow "구조 줄 없음 + 공백뿐인 출력" NONE '
+'
+srow "구조 줄 없음 + [P1] 발견(출력 계약 위반 응답 — 미산출, f1 과 달리 산문 우연 매치가 아니다)" NONE \
+  '- [P1] 필수 변경이 diff에서 누락 — scripts/foo.sh:12'
+
+# ── 형식이 깨진 구조 줄 ─────────────────────────────────────────────────────
+# 파서가 읽는 형식 = 프롬프트가 요구한 형식(codex-review-gate.sh 의 STATUS_* 상수 한 자리).
+# 값·구분자·꼬리표가 어긋나면 형식이 아니므로 미산출이다.
+srow "형식 깨짐 — 값이 사전에 없음(yes)" NONE \
+  '다 봤습니다.
+REVIEW_STATUS: yes'
+srow "형식 깨짐 — 구분자가 콜론이 아님" NONE \
+  '다 봤습니다.
+REVIEW_STATUS = reviewed'
+srow "형식 깨짐 — 값 뒤 꼬리 텍스트" NONE \
+  '다 봤습니다.
+REVIEW_STATUS: reviewed (범위 일부 제외)'
+srow "형식 깨짐 — 키 없이 값만" NONE \
+  '다 봤습니다.
+reviewed'
+srow "형식 깨짐 — 구조 줄이 본문 중간(마지막 줄 창 밖)" NONE \
+  'REVIEW_STATUS: reviewed
+그 뒤로 판정을 이어 적었습니다.
+추가 서술 1.
+추가 서술 2.
+추가 서술 3.'
+unset -f srow
+
+echo "[gate] 4b-3) 계약 줄은 프롬프트로 실제로 요구된다 — 파서가 읽는 형식과 같은 문자열(한 자리 정의)"
+# 이 이슈가 고치려던 결함은 SKILL↔템플릿이 서로 다른 말을 한 것이다. 형식을 두 자리에
+# 적으면 그 불일치가 파서 쪽에서 재발한다 — 그래서 형식은 codex-review-gate.sh 의 STATUS_*
+# 상수 한 자리에서만 정의하고, 프롬프트 계약문·파서가 둘 다 그것을 참조한다. 아래는 실제로
+# 나간 프롬프트(스텁이 기록한 argv)에 파서가 받아들이는 두 값이 그대로 들어 있는지 본다.
+: > "$STUB_LOG"; STUB_MODE=clean run --base base --prompt "계획 부합 검토"
+grep -q 'REVIEW_STATUS: reviewed' "$STUB_LOG" && grep -q 'REVIEW_STATUS: no-basis' "$STUB_LOG" && ok \
+  || bad "프롬프트에 응답 계약(구조 줄 형식)이 안 실렸다: $(head -c 200 "$STUB_LOG")"
+grep -q '계획 부합 검토' "$STUB_LOG" && ok || bad "--prompt 본문 미전달"
+# 비계약 경로(--prompt 없는 내장 스코프 리뷰)는 계약을 실을 자리가 없다 — 구조 줄을 요구하지
+# 않고 main 의 영문 '도구 부재' 휴리스틱(#137)만 유지한다. 여기까지 구조 줄을 요구하면 모든
+# correctness 호출이 미산출이 되어 게이트가 통째로 멈춘다.
+: > "$STUB_LOG"; STUB_MODE=clean run --base base
+grep -q 'REVIEW_STATUS' "$STUB_LOG" && bad "비계약 경로에 계약문이 실렸다" || ok
+assert_eq "비계약 경로 CLEAN 유지" "$rc" 0
 
 echo "[gate] 4c) [P0] 도 BLOCKER · events 의 오류 문자열은 오탐 안 냄(codex stderr 만 본다, #137)"
 STUB_MODE=p0 run --base base; assert_eq "P0 exit" "$rc" 1; case "$last" in "verdict=BLOCKER p1=1 p2=0 p3=0 "*) ok ;; *) bad "P0 집계: $last" ;; esac

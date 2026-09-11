@@ -10,6 +10,14 @@
 #       + 절감 오버라이드(web_search 끔·memories 생성 끔·reasoning 숨김). 리뷰는 작업 트리를 바꾸지 않는다.
 # 판정(내장 리뷰어 출력은 마크다운 — 요약 문단 + `- [P<n>] 제목 — 파일:줄` 항목; --json 스트림엔 agent_message 텍스트만
 # 있고 구조화 findings 는 없다, 0.153.4 실측): 리뷰 본문의 `[P1]` → BLOCKER · `[P2]` → WARN · `[P3]`/기타 항목 → NIT · 항목 0 → CLEAN.
+# **응답 계약(구조 신호, #207)** — `--prompt` 호출에 한해 이 스크립트가 프롬프트 끝에 "마지막 줄은
+# `REVIEW_STATUS: reviewed|no-basis` 여야 한다"는 계약을 덧붙이고, 판정은 **그 줄로만** 가른다:
+# `reviewed` → 위 항목 집계대로 · `no-basis`/줄 없음/형식 깨짐 → `verdict=NONE`(미산출, fail-closed).
+# 산문(한국어/영어 "판정할 근거가 없다" 류)은 판정 입력이 **아니다** — 어형 열거는 닫히지 않아
+# 세 라운드 연속 fail-open 을 냈다(#207 round2~4). 형식 문자열은 아래 STATUS_* 상수 **한 자리**에서
+# 정의하고 프롬프트 계약문과 파서가 둘 다 그것을 참조한다(두 자리에 적으면 이 이슈가 고치려던
+# SKILL↔템플릿 불일치가 파서 쪽에서 재발한다). `--prompt` 없는 내장 스코프 리뷰는 계약을 실을
+# 자리가 없어 main 의 영문 '도구 부재' 휴리스틱(#137)만 유지한다.
 # 출력: 진행은 stderr. stdout **마지막 줄** `verdict=<BLOCKER|WARN|NIT|CLEAN> p1=<n> p2=<n> p3=<n> model=<M> secs=<t>`
 #       (호출자가 파싱). 본문은 <out>/review.md (기본 out = mktemp -d, 경로를 stderr 에 찍는다).
 # 종료: 0 = 비차단(CLEAN/NIT/WARN) · 1 = BLOCKER · 2 = 리뷰 미산출(codex 부재·모델 오류·타임아웃·본문 없음 —
@@ -22,6 +30,17 @@ MODEL="${CODEX_GATE_MODEL:-gpt-5.6-sol}"
 EFFORT="${CODEX_GATE_EFFORT:-medium}"
 TIMEOUT="${CODEX_GATE_TIMEOUT:-900}"
 OUT=""; CD=""; SCOPE=(); PROMPT=""
+
+# ── 응답 계약(구조 신호) 형식 — **여기가 유일한 정의 자리**(#207). 아래 프롬프트 계약문과
+# 판정부의 파서가 둘 다 이 상수들로 만들어진다: 요구하는 형식과 읽는 형식이 갈릴 수 없다.
+STATUS_KEY='REVIEW_STATUS'
+STATUS_REVIEWED='reviewed'
+STATUS_NO_BASIS='no-basis'
+STATUS_CONTRACT_TEXT="출력 계약(필수) — 아래를 지키지 않은 응답은 판정이 아니라 **미산출**로 버려지고 리뷰가 다시 돌려진다.
+리뷰 본문의 **마지막 줄**은 다음 둘 중 하나여야 한다(그 뒤에는 빈 줄이나 닫는 코드펜스 외의 텍스트를 두지 마라):
+${STATUS_KEY}: ${STATUS_REVIEWED}
+${STATUS_KEY}: ${STATUS_NO_BASIS}
+'${STATUS_REVIEWED}' = 지정된 범위의 변경을 실제로 열어 읽고 판정했다는 뜻이다. 범위를 읽지 못했거나 판정 근거를 얻지 못했으면 '${STATUS_NO_BASIS}' 를 쓰고, 그때는 발견 항목을 지어내지 마라. 키와 값은 위 문자열 그대로 쓰고 값 뒤에 다른 텍스트를 붙이지 마라."
 
 usage() {
   printf 'usage: codex-review-gate.sh (--base <ref> | --commit <sha> | --uncommitted | --prompt <text>) [--model M] [--effort E] [--out <dir>] [--cd <dir>]\n' >&2
@@ -54,6 +73,16 @@ if [ -n "$PROMPT" ] && [ ${#SCOPE[@]} -gt 0 ]; then
   RANGE_CHECK=("${SCOPE[@]}"); SCOPE=()
 else
   RANGE_CHECK=("${SCOPE[@]+"${SCOPE[@]}"}")   # bash 3.2: 빈 배열 확장은 set -u 에 걸린다
+fi
+# 커스텀 프롬프트에는 응답 계약을 **끝에** 덧붙이고(최근성), 그 호출에서만 구조 줄을 요구한다.
+# 내장 스코프 리뷰(--prompt 없음)는 프롬프트를 실을 자리가 없다 — 거기까지 구조 줄을 요구하면
+# 모든 correctness 호출이 미산출이 되어 게이트가 통째로 멈춘다.
+STATUS_CONTRACT=0
+if [ -n "$PROMPT" ]; then
+  PROMPT="$PROMPT
+
+$STATUS_CONTRACT_TEXT"
+  STATUS_CONTRACT=1
 fi
 
 command -v codex >/dev/null 2>&1 || { log "codex CLI 없음 — 폴백(general-purpose)으로"; echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=0"; exit 2; }
@@ -125,62 +154,51 @@ fi
 # 판정 — 내장 리뷰어 항목 형식 `- [P1] 제목 — 파일:줄`. 본문에 항목이 하나도 없으면 CLEAN.
 # 항목 = `- ` 로 시작하는 줄 안의 `[P<n>]` 토큰(볼드·번호 변형 허용). 항목 줄에 없는 `[P1]` 언급은 세지 않는다.
 # P0 은 P1 과 함께 BLOCKER 로 센다 — 안 그러면 최우선 발견이 어느 카운터에도 안 잡혀 CLEAN 으로 샌다(#137).
-# 우선순위 집계를 산문 휴리스틱(바로 아래)보다 **먼저** 한다(#207 attempt4) — 순서가 뒤집혀
-# 있으면 정당한 [P1]/[P2]/[P3] 항목의 *설명문*이 "diff 못 봄" 패턴에 걸려 verdict=NONE 으로
-# 지워지고, 폴백이 CLEAN 을 내면 BLOCKER 가 조용히 증발한다(실증: f1 아래).
+# 우선순위 집계 — 아래 판정부가 쓴다(`reviewed` 로 계약이 충족된 뒤에만 verdict 로 이어진다).
 p1=$(grep -c -E '^\s*[-*]\s.*\[P[01]\]' "$REVIEW"); p2=$(grep -c -E '^\s*[-*]\s.*\[P2\]' "$REVIEW")
 p3=$(grep -c -E '^\s*[-*]\s.*\[P[3-9]\]' "$REVIEW")
 
-# 한국어/영어 "판정 근거 없음" 패턴(#207): 리뷰어가 "판정 근거로 지정된 diff가 메시지에
-# 포함되어 있지 않아 ... 검증할 수 없습니다 ... 판정할 근거도 없습니다" 류의 산문만 남기면
-# 옛 분류는 이걸 CLEAN 으로 읽었다(머지 게이트의 절반이 fail-open — 실증: PR #195 closeout
-# ③-1, 10초 만에 verdict=CLEAN). [Pn] 항목이 **하나도 없을 때만**(위에서 이미 집계) 적용한다
-# — 항목이 있는 리뷰는 정의상 미산출이 아니라서 이 산문 휴리스틱을 탈 이유가 없다(#207 반송:
-# 항목 있는 [P1] 설명문의 "누락" 이 이 grep 에 걸려 BLOCKER 가 NONE 으로 증발했었다).
+# ── 응답 계약 판정(#207 재심 (c) — 구조 신호 요구) ─────────────────────────────
+# 이 이슈의 결함은 "CLEAN 이 틀렸다"가 아니라 **"안 본 CLEAN 과 본 CLEAN 을 게이트가 구분하지
+# 못한다"** 였다(diff 를 한 줄도 못 본 리뷰가 항목 0 → CLEAN 으로 통과). 초 수로도 못 가른다
+# (10s vs 30s 가 겹친다 — 이슈 본문 실측). 앞선 세 라운드는 한국어 산문을 정규식으로 읽어
+# "결론이 섰는가"를 가리려다 어형마다 fail-open 을 냈다(round2 캐비엇 · round3 '부합하는지'
+# · round4 '부합함을'). 열거는 닫히지 않는다 — 그래서 **구분자를 산문이 아니라 형식에 둔다.**
 #
-# 항목 0일 때: "근거/대상이 없다"는 축(diff 미포함·근거/정보 부족)과 "판정/검증/확인/검토/
-# 판단/평가할 수 없다"는 축이 **함께** 나올 때만 잡는다(동사 하나만으로는 "정적으로는
-# 검증할 수 없지만 변경분 자체는 부합" 같은 정상 CLEAN 의 부분 서술과 못 가른다, f3).
-# "diff...누락"(부정문 "diff에 테스트 누락은 없습니다" 와 겹쳐 뺐다, f2) 대신 "diff...포함되어
-# 있지" 만 남긴다 — 실제 fail-open 원문(f5)은 이 표현으로 이미 걸린다. "불가능"·"불가"는
-# 여전히 뺀다("판정 불가능할 정도로 미미합니다" 처럼 정도를 서술하는 정상 CLEAN 과 겹친다).
+# 규칙(전부 이 한 곳): 계약 줄이 있으면 그 값대로, 없으면 미산출.
+#   `$STATUS_KEY: $STATUS_REVIEWED` → 위 항목 집계로 판정(항목 0이면 CLEAN — 과잉 차단 금지:
+#      캐비엇 문장이 섞였다는 이유로 접지 않는다. 이슈 Test plan 의 명시 요구다)
+#   `$STATUS_KEY: $STATUS_NO_BASIS` → 미산출(리뷰어 스스로 근거 없음을 구조로 밝혔다)
+#   줄이 없음 / 형식이 다름        → 미산출(fail-closed — 계약을 어긴 응답은 판정으로 신뢰하지 않는다)
+# 미산출은 **통과가 아니라 폴백행**이다(SKILL ③-1: exit 2 → VERIFIER 폴백 → 그것도 미산출이면
+# BLOCKER 보류). 그래서 항목이 있는 응답이라도 계약 줄이 없으면 미산출로 접는다 — 옛 반송 f1
+# ([P1] 설명문이 산문 패턴에 우연히 걸려 발견이 지워짐)과는 성격이 다르다: 여기서 접히는 것은
+# 리뷰어가 **출력 계약 자체를 어긴** 응답뿐이고, 계약을 지킨 발견은 산문과 무관하게 그대로 산다.
 #
-# "제공된 (정보|diff|자료)만으로" 갈래는 응답 어디에 있든 매치돼 왔는데, 정상 리뷰가
-# **한 속성만 못 쟀다고 곁들이는 문장**("제공된 정보만으로 성능은 검증할 수 없습니다.
-# 코드 변경은 검토했고 결함은 없습니다")도 걸려 CLEAN → NONE 으로 뒤집혔다(#207 round2
-# 검증자 실측 P2, f7). 이 갈래만 **리뷰 전체가 실패했을 때로 한정**한다 — 리뷰가 결함
-# 없음/CLEAN 류 결론을 이미 냈으면(REVIEW_CONCLUDED) 그 caveat 은 곁다리일 뿐이므로
-# 미산출로 접지 않는다. 결론이 없는 순수 "못 봤다" 응답(f8)은 그대로 차단된다. 나머지
-# 세 갈래(diff 미포함·근거 없음/부족 앞뒤)는 **항상** 리뷰 전체 실패를 뜻해 이 완화가
-# 필요 없다 — 그대로 무조건 적용한다(BASIS_ABSENT_STRONG).
-#
-# REVIEW_CONCLUDED 는 **긍정 단정**만 결론으로 센다(#207 round3) — '결함 없'·'이상 없'·
-# '문제 없'은 이미 단정형이라 문제가 없지만, '부합'·'CLEAN' 두 토큰은 맨몸으로 매치하면
-# 의문형·부정형 문장에도 걸린다("계획에 **부합**하는지 확인할 수 없습니다" — 뜻은 "못 봤다"
-# 인데 REVIEW_CONCLUDED 가 참이 되어 caveat 이 곁다리로 읽히고 verdict=CLEAN 으로 샜다,
-# round3 검증자 실측 BLOCKER). '부합' 은 단정 어미(한다/합니다/함)를 요구해 '부합하는지'·
-# '부합하지 않' 을 애초에 안 걸리게 좁히고, 'CLEAN' 은 맨몸 매치를 유지하는 대신
-# REVIEW_CONCLUDED_NEGATED 로 뒤에 의문·부정 조사('이라고'·'인지')+무산 동사('없'·'어렵')가
-# 붙은 경우만 걸러 결론에서 뺀다("CLEAN 이라고 볼 수 없다"·"CLEAN 인지 확신할 수 없다").
-# round2 회귀 금지: 캐비엇+긍정 결론 병존(f7)은 그대로 CLEAN 이어야 한다 — 격자로 전수
-# 검증: scripts/tests/codex-review-gate.test.sh 4b-12.
-if [ "$p1" -eq 0 ] && [ "$p2" -eq 0 ] && [ "$p3" -eq 0 ]; then
+# 위치 판정은 "마지막 줄"이다 — 빈 줄과 닫는 코드펜스 같은 꼬리 artifact 를 허용하려고 마지막
+# 비어있지 않은 3줄 창 안에서 찾는다(계약문도 같은 예외를 명시한다). 형식 자체는 관대하지
+# 않다: 키·구분자·값이 STATUS_* 와 정확히 같아야 하고 값 뒤 꼬리 텍스트는 형식 위반이다.
+if [ "$STATUS_CONTRACT" = 1 ]; then
+  status=$(grep -v '^[[:space:]]*$' "$REVIEW" 2>/dev/null | tail -3 \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+    | grep -E "^${STATUS_KEY}:[[:space:]]+(${STATUS_REVIEWED}|${STATUS_NO_BASIS})$" \
+    | tail -1 | sed -e "s/^${STATUS_KEY}:[[:space:]]*//")
+  case "$status" in
+    "$STATUS_REVIEWED") : ;;   # 계약 충족 — 아래 항목 집계가 verdict 를 낸다
+    "$STATUS_NO_BASIS")
+      log "리뷰어가 판정 근거 없음으로 답함($STATUS_KEY: $STATUS_NO_BASIS) — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
+      none "$secs" ;;
+    *)
+      log "응답 계약 위반 — 마지막 줄에 '$STATUS_KEY: $STATUS_REVIEWED|$STATUS_NO_BASIS' 가 없다(P1 $p1 · P2 $p2 · P3+ $p3) — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
+      none "$secs" ;;
+  esac
+elif [ "$p1" -eq 0 ] && [ "$p2" -eq 0 ] && [ "$p3" -eq 0 ]; then
+  # 비계약 경로(내장 스코프 리뷰) — 프롬프트를 실을 자리가 없어 구조 줄을 요구할 수 없다.
+  # main 부터 있던 영문 '도구 부재' 휴리스틱(#137)을 그대로 유지한다(리뷰어가 도구를 못 써
+  # 아무것도 못 본 채 항목 0을 냈다고 스스로 적는 정형 문구들). 항목이 0일 때만 본다 —
+  # 항목이 있는 리뷰는 정의상 미산출이 아니다.
   LEGACY_UNABLE='unable to inspect|could not be inspected|execution tool was unavailable|tool (was|is) unavailable|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review|not a substantive'
-  BASIS_ABSENT_STRONG='diff.{0,40}포함되어 있지|(판정|검증|확인).{0,20}근거.{0,15}(없|부족)|근거.{0,15}(없|부족).{0,20}(판정|검증|확인)'
-  BASIS_ABSENT_CAVEAT='제공된 (정보|diff|자료)만으로'
-  CANNOT_VERB='(판정|검증|확인|검토|판단|평가).{0,10}할 수 없'
-  REVIEW_CONCLUDED='결함.{0,6}(없|발견)|이상[[:space:]]*없|문제[[:space:]]*없|부합(한다|합니다|함)|CLEAN'
-  REVIEW_CONCLUDED_NEGATED='(부합|CLEAN).{0,12}(이라고|인지|하는지).{0,12}(없|어렵)'
-  matched=0
   if grep -q -i -E "$LEGACY_UNABLE" "$REVIEW" 2>/dev/null; then
-    matched=1
-  elif grep -q -E "$BASIS_ABSENT_STRONG" "$REVIEW" 2>/dev/null && grep -q -E "$CANNOT_VERB" "$REVIEW" 2>/dev/null; then
-    matched=1
-  elif grep -q -E "$BASIS_ABSENT_CAVEAT" "$REVIEW" 2>/dev/null && grep -q -E "$CANNOT_VERB" "$REVIEW" 2>/dev/null \
-    && { ! grep -q -E "$REVIEW_CONCLUDED" "$REVIEW" 2>/dev/null || grep -q -E "$REVIEW_CONCLUDED_NEGATED" "$REVIEW" 2>/dev/null; }; then
-    matched=1
-  fi
-  if [ "$matched" = 1 ]; then
     log "리뷰어가 대상을 못 봤다고 답함 — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
     none "$secs"
   fi
