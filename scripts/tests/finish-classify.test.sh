@@ -577,5 +577,189 @@ got=$(FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 \
 check_hc "FC_COMMENTS_FILE대용량→done_verdict" done_verdict "$got"
 rm -rf "$cf"
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# #206 격자 — ①-b 라우팅 전수 단언 (mergeable × 최신 판정 × 단계 라벨 × 커밋 신선도)
+#
+# 왜 개별 케이스가 아니라 격자인가(PR#202 교훈): 이 축은 지적된 반례만 하나씩 닫으면
+# 같은 자리가 여러 회차를 돈다. `want` 열을 가진 표로 전수 단언한다.
+#
+# `route_1b` 는 skills/closeout/SKILL.md ①-b 산문을 **그대로 옮긴 드라이버**다 —
+# 결함이 단위(finish-classify 한 개)가 아니라 **조합**(어느 PR 이 어느 헬퍼를 지나는가)
+# 에 있었으므로 조합을 재현해야 격자가 의미를 갖는다. 산문과 벌어지지 않게 bin/ci 가
+# 같은 문서에 `progress-evidence.sh`·`bounced`+`finish-classify` 배선을 함께 문다.
+#
+# want 값(= ①-b 가 그 PR 에 취하는 조치):
+#   adopt_rebase   CONFLICTING 입양(rebase 경로) — ② Pick 후보
+#   adopt_merge    stale_inline 입양(머지) — ② Pick 후보
+#   redispatch     closeout-redispatch 전이(issue-runner 가 같은 브랜치로 재투입)
+#   needs_human    closeout-blocked 전이
+#   eligible_path  done_verdict — eligible.sh 정상 경로 소유, 스윕은 skip
+#   untouched      무접촉(다음 틱)
+# ══════════════════════════════════════════════════════════════════════════════
+
+GT=$(mktemp -d)
+
+# queue.log 픽스처 — `$G_SHA` 티켓이 큐에 **살아 있는** 로그와, 아무 줄도 없는 로그.
+G_SHA="7ac1f0e91234567890abcdef1234567890abcdef"   # short = 7ac1f0e9
+printf '%s\n' "2026-07-05T11:30:00 pid=11111 7ac1f0e9 대기열 2번째" > "$GT/queued.log"
+: > "$GT/empty.log"
+
+# 시각 축 — NOW = 12:00:00Z.
+G_OLD="2026-07-05T10:00:00Z"    # 120분 전 — 커밋 오래됨(STALL_MIN 25·STALE_FINISH_MIN 30 둘 다 초과)
+G_FRESH="2026-07-05T11:50:00Z"  # 10분 전 — 커밋 신선
+
+# 코멘트 픽스처 (본문은 실제 워커·verify-runner 가 찍는 접두를 그대로 쓴다).
+cat > "$GT/bounced_noverifier.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: E2E 1건 실패 — 반송\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:35:00Z"}
+]
+J
+cat > "$GT/bounced_verifier_clean.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:31:00Z"},
+  {"body":"재검증 실패: E2E 1건 실패 — 반송\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:35:00Z"}
+]
+J
+cat > "$GT/verdict_ok.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:31:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:32:00Z"}
+]
+J
+cat > "$GT/verifier_clean.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:31:00Z"}
+]
+J
+cat > "$GT/held.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 정책 질문\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:32:00Z"}
+]
+J
+
+# run_fc <comments-file> <head_at> <head_sha> <queue.log>
+run_fc() {
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 STALL_MIN=25 \
+    FC_COMMENTS_FILE="$1" FC_HEAD_AT="$2" FC_HEAD_SHA="$3" FC_QUEUE_LOG="$4" \
+    "$SUT" owner/repo 1 2>/dev/null
+}
+
+# route_1b <mergeable> <comments-file> <head_at> <head_sha> <queue.log> <labels(csv)>
+route_1b() {
+  local mergeable="$1" cfile="$2" head_at="$3" head_sha="$4" qlog="$5" labels="$6"
+  local fc bs rc=0
+
+  # 대상 필터 — `flow:verify`(verify-runner 소유)·`harvesting`(이미 입양)·`needs-human`
+  # (사람 대기)은 ①-b 가 애초에 판정하지 않는다.
+  case ",$labels," in
+    *,flow:verify,*|*,harvesting,*|*,needs-human,*) printf 'untouched\n'; return 0 ;;
+  esac
+
+  if [ "$mergeable" = CONFLICTING ]; then
+    bs=$(BOUNCE_COMMENTS_FILE="$cfile" "$DIR/bounce-state.sh" owner/repo 1 2>/dev/null) || rc=$?
+    # 판정 실패(exit≠0·무출력)는 `bounced` 와 같은 방향 — 무접촉(fail-closed, #196).
+    if [ "$rc" != 0 ] || [ -z "$bs" ]; then printf 'untouched\n'; return 0; fi
+    if [ "$bs" = ok ]; then printf 'adopt_rebase\n'; return 0; fi
+    # `bounced` → **finish-classify 로 분류한다**(#206). 재디스패치 갈래만 연다 —
+    # 반송 회차의 CLEAN 검증자 코멘트는 반송 *이전* 것일 수 있어 `stale_inline` 입양은
+    # 반송된 코드를 머지하는 길이 된다(#196 이 막은 방향).
+    fc=$(run_fc "$cfile" "$head_at" "$head_sha" "$qlog")
+    case "$fc" in
+      stale_reverify) printf 'redispatch\n' ;;
+      *)              printf 'untouched\n' ;;
+    esac
+    return 0
+  fi
+
+  fc=$(run_fc "$cfile" "$head_at" "$head_sha" "$qlog")
+  case "$fc" in
+    done_verdict)   printf 'eligible_path\n' ;;
+    stale_inline)   printf 'adopt_merge\n' ;;
+    stale_reverify) printf 'redispatch\n' ;;
+    held)           printf 'needs_human\n' ;;
+    *)              printf 'untouched\n' ;;
+  esac
+}
+
+# row <이름> <want> <mergeable> <comments-file> <head_at> <head_sha> <queue.log> <labels>
+row() {
+  local name="$1" want="$2" got
+  shift 2
+  got=$(route_1b "$@")
+  if [ "$got" = "$want" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "  ✗ [격자] $name — want=$want got=$got"
+  fi
+}
+
+echo "  [#206 격자] CONFLICTING × 반송마커 최신 × 단계 라벨 × 커밋 신선도"
+
+# ── A. 이 이슈가 여는 칸 — 반송 뒤 워커가 ✅ 직전에 죽고 커밋이 오래됨 ──────────
+row "A1 CONFLICTING·반송마커·라벨없음·커밋오래됨" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+
+# ── B. 살아 있는 워커 보호(#196 무회귀) — 신선도 두 갈래 모두 무접촉 ───────────
+row "B1 CONFLICTING·반송마커·커밋신선" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_FRESH" "$G_SHA" "$GT/empty.log" ""
+# 커밋은 120분 전이지만 그 head SHA 의 CI 티켓이 **큐에 살아 있다** — 박스 전역 직렬 큐
+# 대기는 워커가 통제 못 하는 시간이다(#200 실측 72분). 이 칸이 없으면 CI 를 기다리는
+# 워커가 매번 재디스패치된다.
+row "B2 CONFLICTING·반송마커·커밋오래됨·CI큐티켓살아있음" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/queued.log" ""
+# 큐에 그 SHA 줄이 없으면(=티켓 없음) 증거가 아니다 — A1 과 같은 결론으로 돌아온다.
+row "B3 CONFLICTING·반송마커·커밋오래됨·남의티켓만" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+
+# ── C. #196 입양 판별식 무회귀 — 최신 판정이 ✅ 면 신선도와 무관하게 입양 ───────
+row "C1 CONFLICTING·✅최신·커밋오래됨" adopt_rebase \
+  CONFLICTING "$GT/verdict_ok.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+row "C2 CONFLICTING·✅최신·커밋신선" adopt_rebase \
+  CONFLICTING "$GT/verdict_ok.json" "$G_FRESH" "$G_SHA" "$GT/empty.log" ""
+
+# ── D. 반송 뒤 CLEAN 검증자 코멘트가 남아 있어도 입양하지 않는다 ───────────────
+# (그 CLEAN 은 반송 *이전* 회차의 것이다 — 입양하면 반송된 코드를 머지한다.)
+row "D1 CONFLICTING·반송마커+검증자CLEAN·커밋오래됨" untouched \
+  CONFLICTING "$GT/bounced_verifier_clean.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+
+# ── E. 반송 판정 실패는 통과가 아니다(fail-closed) ─────────────────────────────
+row "E1 CONFLICTING·반송판정실패(코멘트입력부재)" untouched \
+  CONFLICTING "$GT/does-not-exist.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+
+# ── F. 단계 라벨이 있으면 ①-b 대상이 아니다 ───────────────────────────────────
+row "F1 CONFLICTING·반송마커·flow:verify"  untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" "flow:verify"
+row "F2 CONFLICTING·반송마커·harvesting"   untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" "harvesting"
+row "F3 CONFLICTING·반송마커·needs-human"  untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" "needs-human"
+
+# ── G. MERGEABLE 축 무회귀 — 같은 신선도 규칙이 2) 경로에도 그대로 적용된다 ────
+row "G1 MERGEABLE·반송마커·커밋오래됨"          redispatch \
+  MERGEABLE "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+row "G2 MERGEABLE·반송마커·커밋신선"            untouched \
+  MERGEABLE "$GT/bounced_noverifier.json" "$G_FRESH" "$G_SHA" "$GT/empty.log" ""
+row "G3 MERGEABLE·✅최신(head 이후)"            eligible_path \
+  MERGEABLE "$GT/verdict_ok.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+row "G4 MERGEABLE·검증자CLEAN+🔄·커밋오래됨"    adopt_merge \
+  MERGEABLE "$GT/verifier_clean.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+row "G5 MERGEABLE·검증자CLEAN+🔄·커밋신선"      untouched \
+  MERGEABLE "$GT/verifier_clean.json" "$G_FRESH" "$G_SHA" "$GT/empty.log" ""
+# G4 와 같은데 CI 티켓만 살아 있음 — 자동 머지(입양)를 막아야 한다. 살아 있는 워커가
+# 곧 ✅ 를 찍을 PR 을 closeout 이 먼저 가져가면 그게 #196 이 막은 사고의 머지판이다.
+row "G6 MERGEABLE·검증자CLEAN+🔄·CI큐티켓살아있음" untouched \
+  MERGEABLE "$GT/verifier_clean.json" "$G_OLD" "$G_SHA" "$GT/queued.log" ""
+row "G7 MERGEABLE·⚠ 최신"                       needs_human \
+  MERGEABLE "$GT/held.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+
+rm -rf "$GT"
+
 echo "finish-classify.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]
