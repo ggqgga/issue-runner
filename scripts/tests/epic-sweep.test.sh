@@ -14,6 +14,9 @@
 #   ⑨ 조회·쓰기 실패는 "해당 없음" 으로 위장되지 않는다(warn + exit 1) — 코멘트가 실패하면
 #      close 까지 가지 않는다(다음 틱이 코멘트부터 다시 시도).
 #   ⑩ leaf 판정 정규식은 loop-status.sh(#260)와 **같은 문자열**이다(두 계산기 금지).
+#   ⑪ 도구(jq) 실패는 fail-closed — 라벨을 못 읽으면 deploy-wait 가드가 "없다" 로 새면 안 되고,
+#      leaf 번호 목록을 못 만들면 근거 빈 코멘트로 닫으면 안 된다(데이터로는 못 닿는 경로라
+#      표식 붙은 그 한 호출만 jq 스텁으로 실패시킨다 — resume-sweep.test.sh 와 같은 수법).
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -87,6 +90,21 @@ exit 1
 STUB
 chmod +x "$tmp/bin/gh"
 
+# ── jq 스텁 — 기본은 진짜 jq 로 그대로 넘긴다 ──────────────────────────────
+# 쓰는 곳은 둘: 라벨 파싱(`# epic-labels`)과 leaf 번호 목록(`# leaf-list`)의 **도구 실패**가
+# fail-closed 인지. 둘 다 입력이 이미 유효 JSON 이라 데이터(픽스처)로는 못 닿는다 — 유일한
+# 도달 경로가 도구 실패라, 인자에 표식이 있는 **그 한 호출만** 실패시킨다.
+REAL_JQ=$(command -v jq)
+export REAL_JQ
+cat > "$tmp/bin/jq" <<'STUB'
+#!/usr/bin/env bash
+if [ -n "${STUB_JQ_FAIL_PAT:-}" ]; then
+  case "$*" in *"$STUB_JQ_FAIL_PAT"*) echo "jq: stubbed failure" >&2; exit 5 ;; esac
+fi
+exec "$REAL_JQ" "$@"
+STUB
+chmod +x "$tmp/bin/jq"
+
 # ── 픽스처 헬퍼 ────────────────────────────────────────────────────────────
 # epics <json배열> — 열린 epic 라벨 이슈 목록
 epics() { printf '%s' "$1" > "$tmp/epics.json"; }
@@ -105,7 +123,7 @@ reset() {
   comments '[]'
   : > "$tmp/gh.log"
   STUB_EPICS_FAIL=""; STUB_SEARCH_FAIL=""; STUB_COMMENT_FAIL=""; STUB_CLOSE_FAIL=""
-  STUB_COMMENTS_FAIL=""
+  STUB_COMMENTS_FAIL=""; STUB_JQ_FAIL_PAT=""
   WORKDIR="$tmp/work"; LIMIT=100; PER=100; ARGS=()
 }
 
@@ -120,7 +138,7 @@ run() {
 export STUB_LOG="$tmp/gh.log" STUB_EPICS="$tmp/epics.json" STUB_SEARCH="$tmp/search.json"
 export STUB_COMMENTS="$tmp/comments.json"
 export STUB_EPICS_FAIL="" STUB_SEARCH_FAIL="" STUB_COMMENT_FAIL="" STUB_CLOSE_FAIL=""
-export STUB_COMMENTS_FAIL=""
+export STUB_COMMENTS_FAIL="" STUB_JQ_FAIL_PAT=""
 RC=0
 out=""
 
@@ -248,7 +266,9 @@ run
 check "closed 이벤트" "$(has_ev closed)"
 check "dry_run:true" "$([ "$(ev closed | jq -r '.dry_run')" = 'true' ] && echo ok || echo no)"
 check "쓰기 0" "$(no_writes)"
-check "코멘트 조회조차 안 한다" "$([ "$(count_cmd 'api repos')" = 0 ] && echo ok || echo no)"
+# 위치 무관으로 센다 — `^api repos` 는 pr-comments.sh 가 인자 순서를 바꾸면(예 `--paginate`
+# 를 앞으로) 조용히 매치 0 이 되어 단언이 영구 참이 된다(사전 리뷰 WARN).
+check "코멘트 조회조차 안 한다" "$([ "$(count_cmd 'api .*comments')" = 0 ] && echo ok || echo no)"
 reset
 ARGS=(--dry-run)
 search '[]'
@@ -263,6 +283,9 @@ run
 check "closed 이벤트" "$(has_ev closed)"
 check "코멘트 0회" "$([ "$(count_cmd 'issue comment')" = 0 ] && echo ok || echo no)"
 check "close 1회" "$([ "$(count_cmd 'issue close')" = 1 ] && echo ok || echo no)"
+# 양성 짝 — ⑥ 의 "조회조차 안 한다"(0건) 가 한쪽으로만 걸리지 않게, 실제 경로에선 1건인지 센다.
+check "마커 확인을 위해 코멘트를 조회한다(1회)" \
+  "$([ "$(count_cmd 'api .*comments')" = 1 ] && echo ok || echo no)"
 
 echo "── ⑧ deploy-wait 에픽은 건드리지 않는다 ──"
 reset
@@ -325,6 +348,26 @@ run
 check "마커 조회 실패 → warn" "$(has_ev warn)"
 check "마커 조회 실패 → rc 1" "$([ "$RC" = 1 ] && echo ok || echo no)"
 check "마커 조회 실패 → 쓰기 0(중복 코멘트 위험)" "$(no_writes)"
+
+reset
+epics '[{"number":100,"title":"에픽","labels":[{"name":"epic"},{"name":"deploy-wait"}]}]'
+search "$(jq -n --argjson a "$(leaf 101 100 closed)" '[$a]')"
+STUB_JQ_FAIL_PAT="epic-labels"
+run
+check "라벨 파싱 실패 → warn" "$(has_ev warn)"
+check "라벨 파싱 실패 → rc 1" "$([ "$RC" = 1 ] && echo ok || echo no)"
+check "라벨 파싱 실패 → 쓰기 0(deploy-wait 를 '없다' 로 읽지 않는다)" "$(no_writes)"
+check "라벨 파싱 실패 → 검색조차 안 한다" \
+  "$([ "$(count_cmd 'api .*search/issues')" = 0 ] && echo ok || echo no)"
+
+reset
+search "$(jq -n --argjson a "$(leaf 101 100 closed)" '[$a]')"
+STUB_JQ_FAIL_PAT="leaf-list"
+run
+check "leaf 목록 생성 실패 → warn" "$(has_ev warn)"
+check "leaf 목록 생성 실패 → rc 1" "$([ "$RC" = 1 ] && echo ok || echo no)"
+check "leaf 목록 생성 실패 → 쓰기 0(근거 빈 코멘트로 닫지 않는다)" "$(no_writes)"
+check "leaf 목록 생성 실패 → closed 이벤트 없음" "$(no_ev closed)"
 
 echo "── ⑩ 스코프 ──"
 reset

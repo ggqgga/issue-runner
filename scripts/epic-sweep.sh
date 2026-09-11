@@ -30,7 +30,14 @@
 # `<!-- epic-sweep -->` 코멘트 마커가 보장한다: 마커가 이미 있으면 코멘트를 다시 달지 않고
 # close 만 재시도한다(코멘트는 성공했는데 close 가 실패한 중간 상태의 재개 경로).
 #
-# 알려진 느슨함(숨기지 않는다): 마커 탐지는 인용 구간(코드펜스·백틱)을 걷어내지 않는다
+# 알려진 느슨함 ⑴ (숨기지 않는다): **검색 인덱싱 지연**. leaf 를 GitHub 검색으로 찾으므로,
+# 방금 열린 leaf 가 아직 색인되지 않았으면 세 상한 신호(items·total_count·incomplete)가 전부
+# 정상인 채 그 leaf 만 안 보인다 — 그 순간 에픽이 닫힐 수 있다. 이슈 #258 이 "검색 한 번" 을
+# 설계로 지정했으므로 여기서 뒤집지 않는다(이슈 목록 전수 스캔은 레포당 비용이 전혀 다르다).
+# 피해는 되돌릴 수 있다: 에픽 재오픈은 사람이 클릭 한 번이고, 근거 코멘트에 그때 세어진 leaf
+# 번호가 그대로 남아 무엇을 못 봤는지 바로 대조된다.
+#
+# 알려진 느슨함 ⑵: 마커 탐지는 인용 구간(코드펜스·백틱)을 걷어내지 않는다
 # (resume-sweep.sh 의 `JQ_UNQUOTE` 같은 장치가 없다). 누군가 코멘트에 마커를 **인용**하면
 # 그 틱은 코멘트를 건너뛰고 close 만 한다 — 방향이 "덜 쓴다" 쪽이고, 에픽 종료는 코멘트가
 # 아니라 close 가 본체라 실질 피해가 없다. 반대 방향(마커를 못 봐서 코멘트가 하나 더 붙는
@@ -165,6 +172,10 @@ has_label() {  # has_label <콤마목록> <라벨>
 # **추출 후 수 비교**라 `Epic #1000` 이 `Epic #100` 의 leaf 로 새지 않는다.
 # 이 capture 문자열이 loop-status.sh 와 갈라지면 두 계산기가 다른 leaf 를 센다 —
 # scripts/tests/epic-sweep.test.sh ⑪ 이 두 파일에서 뽑아 대조한다.
+# 끝 앵커(`$`)는 **일부러 없다**: 이슈 #258 은 `…#N$` 계열이라 적었지만 `loop-status.sh` 가
+# 이미 앵커 없이 세고 있어(`Epic #100 (부모)` 같은 줄도 leaf 로 본다), 여기만 좁히면 같은
+# 에픽에 대해 `에픽 leaf 전부 종료` warn 과 실제 종료가 **다른 leaf 집합**으로 갈린다.
+# 좁힐 거면 두 파일을 같은 커밋에서 함께 좁혀야 한다(그건 이 이슈의 범위가 아니다).
 JQ_EPIC_OF='def epic_of($body):
   ([($body // "") | split("\n")[]
       | capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)"; "i") | .n]
@@ -184,7 +195,17 @@ sweep_epic() {  # sweep_epic <repo> <에픽 JSON 한 줄>
     return 0
   fi
 
-  labels=$(printf '%s' "$row" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null) || labels=""
+  # 라벨 파싱 실패는 **fail-closed** — 빈 값으로 떨어뜨리면 `deploy-wait` 가드가 "라벨이
+  # 없다" 로 읽혀 배포 게이트 에픽을 닫는 방향으로 샌다(하필 §되돌리지 마라 의 "절대 닫지
+  # 마라" 조항의 가드다). 빈 결과(라벨 0개)와 실패를 rc 로 가른다.
+  # 필터 첫 줄의 `# epic-labels` 는 스위트가 **이 한 호출만** 실패시켜 fail-closed 를
+  # 실증하기 위한 표식이다 — row 는 이미 유효 JSON 이라 데이터로는 이 경로에 못 닿는다.
+  if ! labels=$(printf '%s' "$row" | jq -r '# epic-labels (#258)
+        [.labels[]?.name] | join(",")' 2>/dev/null); then
+    emit_warn "$repo" "$num" "라벨 파싱 실패 — deploy-wait 여부를 몰라 건드리지 않는다"
+    rc=1
+    return 0
+  fi
   # 배포 대기 이슈는 에픽이 **아니어야** 하지만(라벨이 잘못 겹칠 수 있다) 방어한다 —
   # 사람이 답해야 풀리는 게이트를 루프가 닫아 버리면 그 배포가 통째로 증발한다.
   if has_label "$labels" "deploy-wait"; then
@@ -249,8 +270,16 @@ EOF
   fi
 
   # ── leaf ≥ 1 · 전부 CLOSED → 코멘트 + close ────────────────────────────
+  # 근거 목록 — 빈 값으로 떨어뜨리지 않는다. 이 스크립트는 "왜 닫혔는지" 를 남기려고
+  # 코멘트를 close **앞에** 다는데(아래), `leaf ` 뒤가 빈 코멘트를 남기고 닫으면 그 설계가
+  # 바로 그 자리에서 무너진다. 표식 `# leaf-list` 의 이유는 위 `# epic-labels` 와 같다.
   local leaves_txt
-  leaves_txt=$(printf '%s' "$leaves_json" | jq -r 'map("#" + tostring) | join(" ")' 2>/dev/null) || leaves_txt=""
+  if ! leaves_txt=$(printf '%s' "$leaves_json" | jq -r '# leaf-list (#258)
+        map("#" + tostring) | join(" ")' 2>/dev/null) || [ -z "$leaves_txt" ]; then
+    emit_warn "$repo" "$num" "leaf 번호 목록 생성 실패 — 근거 없는 종료를 만들지 않는다"
+    rc=1
+    return 0
+  fi
   if [ "$dry_run" = 1 ]; then
     emit_closed "$repo" "$num" "$leaves_json"
     return 0
@@ -274,6 +303,9 @@ EOF
   fi
 
   if [ "$marker" -eq 0 ]; then
+    # 마커 둘: `epic-sweep` 는 이 스크립트의 **멱등 판정 축**이고, `bodat:worker` 는 이
+    # 레포의 기계 코멘트 표식이다(resume-sweep.sh 의 재개·승격 코멘트와 같은 관행).
+    # 멱등은 `epic-sweep` 만 본다 — 표식이 바뀌어도 판정이 흔들리지 않게.
     ctext="leaf 전부 종료로 자동 종료 — leaf $leaves_txt <!-- epic-sweep --><!-- bodat:worker -->"
     # 코멘트를 **먼저**, close 는 그다음. 반대로 하면 close 가 성공하고 코멘트가 실패했을 때
     # 닫힌 에픽에 근거가 없다(사람이 왜 닫혔는지 못 읽고, 다음 틱은 열린 에픽만 보므로
