@@ -1233,6 +1233,37 @@ case "$out $rc" in
   "unknown commit_at_invalid commit=- queue=- 2") : ;;
   *) echo "  ✗ progress-evidence: 형식 불량 커밋 시각 → '$out' rc=$rc (기대 unknown commit_at_invalid rc=2)"; exit 1 ;;
 esac
+# 입력 어휘 3값 스모크 (#206 회차2) — 호출자가 **조회 실패**를 말할 단어(`unknown`)를 갖고,
+# 그것이 `none`(부재)과 다른 판정으로 나오는지. 이 어휘가 없으면 호출자는 결국 실패를
+# `none` 으로 접고, 그 순간 살아 있는 워커가 재디스패치된다(회차1 BLOCKER).
+rc=0
+out=$(scripts/progress-evidence.sh --now 1780000000 --commit-at unknown --head-sha unknown 2>/dev/null) || rc=$?
+case "$out $rc" in
+  "unknown commit_at_unknown commit=unknown queue=- 2") : ;;
+  *) echo "  ✗ progress-evidence: --commit-at unknown → '$out' rc=$rc (기대 unknown commit_at_unknown rc=2)"; exit 1 ;;
+esac
+rc=0
+out=$(scripts/progress-evidence.sh --now 1780000000 --commit-at none --head-sha unknown 2>/dev/null) || rc=$?
+case "$out $rc" in
+  "unknown head_sha_unknown commit=none queue=unknown 2") : ;;
+  *) echo "  ✗ progress-evidence: --head-sha unknown → '$out' rc=$rc (기대 unknown head_sha_unknown rc=2)"; exit 1 ;;
+esac
+# 과잉 보수 반증 — `none`(진짜 부재)은 여전히 `none no_progress` rc=0 이다(전부 unknown 으로
+# 접으면 완결 유실 회수가 통째로 멈춘다).
+rc=0
+out=$(PE_QUEUE_LOG=/nonexistent/queue.log scripts/progress-evidence.sh \
+  --now 1780000000 --commit-at none --head-sha none 2>/dev/null) || rc=$?
+case "$out $rc" in
+  "none no_progress commit=none queue=none 0") : ;;
+  *) echo "  ✗ progress-evidence: --commit-at none → '$out' rc=$rc (기대 none no_progress rc=0)"; exit 1 ;;
+esac
+# 호출부 tripwire — head 조회의 **종료코드를 버리면**(`|| head_raw=''`) 실패가 부재로
+# 둔갑한다(PR#139). 헬퍼가 아무리 3값을 구분해도 호출부가 삼키면 계약은 거기서 깨진다.
+if grep -qE 'pr-head-at\.sh[^|]*\|\|[[:space:]]*head_raw=' scripts/finish-classify.sh; then
+  echo "  ✗ finish-classify.sh: pr-head-at.sh 의 종료코드를 버린다(head_rc 로 보존하라)"; exit 1
+fi
+grep -qF 'head_lookup=unknown' scripts/finish-classify.sh \
+  || { echo "  ✗ finish-classify.sh: 조회 실패를 기억하는 head_lookup 플래그가 없다"; exit 1; }
 
 echo "[#206] iso_to_epoch 형식 패턴은 모든 사본에서 동일 (한쪽만 느슨해지면 조용히 갈린다)"
 # finish-classify.sh 와 progress-evidence.sh 는 같은 시각 문자열을 각자 파싱한다. 패턴이
@@ -1261,6 +1292,15 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   # 는 옛 단락에 없던 토큰이라 이 가드가 실제로 새 배선을 고정한다.
   awk 'BEGIN{RS="";ok=0} /bounced/ && /finish-classify/ && /stale_reverify/ {ok=1} END{exit ok?0:1}' "$f" \
     || { echo "  ✗ $f: bounced 갈래를 finish-classify 로 넘겨 stale_reverify 만 여는 지시가 없다"; exit 1; }
+  # 같은 단락의 **무접촉 열거**에 `stale_inline` 이 다시 들어가면 빨갛게 한다(#206 회차2).
+  # 반송 회차의 `stale_inline` 은 입양(머지) 금지이면서 동시에 무접촉도 아니다 — 교체
+  # 워커가 커밋까지 하고 죽은 형상이라 무접촉으로 두면 이 이슈가 없애려는 정체가 그
+  # 칸에 그대로 남는다. 열거문(`` `held`…`stale_inline` ``)은 한/영 산문이 같은 형태라
+  # 한 패턴으로 둘 다 문다(옛 산문은 실제로 이 형태였다 — 이 가드가 되돌림을 잡는다).
+  if awk 'BEGIN{RS=""} /bounced/ && /finish-classify/ && /stale_reverify/' "$f" \
+       | grep -qE '`held`[^)]*`stale_inline`'; then
+    echo "  ✗ $f: bounced 갈래의 무접촉 열거에 stale_inline 이 있다 — 입양 금지이되 재디스패치다"; exit 1
+  fi
 done
 
 echo "[test] timebox-check.sh 진행 증거 판정·queue.log 마지막 줄·유예 상한 (#200)"
