@@ -573,12 +573,20 @@ and that fact must be visible to a human.
 
   ```
   gh issue create --repo <repo> --title "배포 대기: PR #<pr> — <summary>[ (승격만)]" \
-    --body-file <body-file> --label needs-human --label deploy-wait [--label <P1|P2>]
+    --body-file <body-file> --label deploy-wait [--label <P1|P2>]
   ```
 
-  `needs-human` stays for compatibility with the existing human-gate collection
-  (deploy-bodat etc.), and `deploy-wait` is the bucket label `loop-status.sh` uses to
-  separate deploy-waiting from human-waiting — **both** are needed. After issuance leave the
+  `deploy-wait` is the bucket label `loop-status.sh` uses to separate deploy-waiting from
+  human-waiting, and it is **the lane mark the deploy-cycle loop picks this ticket up by** —
+  that one label is required.
+  **`needs-human` is deliberately not attached (#243, plan step 2) — do not revert it.**
+  All three consumers of a deploy-pending issue ignore that label: ⑴ the dispatch gate
+  **requires** `label:agent-ready` (`scripts/eligible-issues.sh`), which a deploy-pending
+  issue never has, so it is not a candidate to begin with; ⑵ the bucket decision at
+  `scripts/loop-status.sh:474` lets `deploy-wait` **win over** `needs-human`; ⑶ deploy-bodat
+  collects by **title regex** (`배포 대기: PR #<M>`), not by label. All that was left was a
+  duplicate mark that blurred what `needs-human` means (= a stop a human raised) (#190).
+  After issuance leave the
   marker `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
   **exit as approval-required**.
 - **Missing label — fail closed, never lose the ticket (same shape as the step-6 spinoff
@@ -587,13 +595,22 @@ and that fact must be visible to a human.
   rerun, so without this rule the first closeout after upgrading ends with the PR merged but
   no ticket and no marker. On a `'deploy-wait' not found`-style failure, run
   `$SCRIPTS/setup-labels.sh <repo>` **once** and retry the same command **once**. If the
-  retry also fails, do not loop — file with **`--label needs-human` only** (no lost ticket —
-  `loop-status.sh` still counts it as deploy-waiting via the `배포 대기:` title fallback) and
-  report `BLOCKED: deploy-wait label attach failed on deploy issue — #<number>` in ④ Report.
+  retry also fails, do not loop — file it with **no `--label` at all** (no lost ticket —
+  `loop-status.sh` still counts it as deploy-waiting via the `배포 대기:` title fallback).
+  The result is an issue with **no labels whatsoever**, and that state is not normal — the
+  deploy-cycle loop cannot find it by its lane mark — so
+  report `BLOCKED: deploy-wait label attach failed on deploy issue — #<number>` in ④ Report
+  and demand a **three-step human recovery** (skipping the second step leaves the ticket
+  labelless even if the human does exactly what was asked — `setup-labels.sh` only recreates
+  the label *definition*, it never attaches labels to an existing issue): ⑴
+  **`$SCRIPTS/setup-labels.sh <repo>` rerun** to restore the `deploy-wait` label definition,
+  ⑵ `gh issue edit <number> --repo <repo> --add-label deploy-wait` to attach it **to that
+  issue**, then ⑶ `gh issue view <number> --repo <repo> --json labels` to confirm it landed.
+  Never pass over it silently.
 - **Verify right after issuance (same shape as step 6).** Check with
-  `gh issue view <number> --repo <repo> --json labels` that **both** `needs-human` and
-  `deploy-wait` actually landed; if either is missing, top it up with
-  `gh issue edit <number> --repo <repo> --add-label needs-human --add-label deploy-wait`
+  `gh issue view <number> --repo <repo> --json labels` that
+  `deploy-wait` actually landed; if it is missing, top it up with
+  `gh issue edit <number> --repo <repo> --add-label deploy-wait`
   (the 8/8 miss behind this fix was not only the command sitting mid-prose — step 4 never
   had this verify step at all, while step 6 did and did not leak).
 
@@ -654,7 +671,9 @@ structure/empty-state confirmation from real-data render confirmation in the res
   original PR (this comment is the step-5 completion marker — a resumed tick does not
   re-smoke). Then remove the `needs-human` label from the deploy issue and close the
   deploy issue (the only remaining gate was verification and it passed, so closeout
-  finalizes — the recommended option of the open decision).
+  finalizes — the recommended option of the open decision). Since #243 a step-4 issue
+  never carries `needs-human` in the first place — this removal is harmless leftover
+  cleanup for issues filed before that (`--remove-label` is a no-op for an absent label).
 - **fail (any item fails)** → do not fix it directly; use the existing publish path: an
   agent-ready issue via `references/spinoff-issue.md` if auto-fixable (**use step 6's
   "issuance command" form verbatim** — `--label agent-ready --label spinoff --label <P1|P2>`;
@@ -704,7 +723,8 @@ duplicate-issuance marker).
   `open + agent-ready + ¬agent:claimed`, so without it the issue is created but
   issue-runner **never picks it up** (measured 2026-08-13 on BoDAT: step 6 attached only
   the 3-axis convention labels and dropped agent-ready, stranding 17 open issues outside
-  the loop — while step 4, whose command literally carries `--label needs-human`, was
+  the loop — while step 4, whose command literally carries the label (back then
+  `--label needs-human`, today `--label deploy-wait`, #243), was
   correct on all 186. The step with a command did not leak; the prose-only step did).
   Attach a priority (`P1`/`P2`) too — without one it sorts last (`P0 > P1 > P2 > none`).
   Add the other axes per repo convention (BoDAT: `difficulty:*`·`frontend` (only when UI is

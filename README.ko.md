@@ -233,7 +233,7 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 | `P0` / `P1` / `P2` | 우선순위 (최우선 → 낮음). 없으면 최하순위 |
 | `blocked-by:<N>` / `Blocked by #N` | 의존성. 라벨 또는 전용 본문 라인 중 하나. OPEN 인 블로커가 하나라도 있으면 디스패치 제외. `<N>` 은 **이슈** 번호이며, 블로커가 닫히면 게이트가 자동 해제 |
 | `spinoff` | closeout 6단계가 발행한 파생 이슈라는 출처 표식. `loop-status.sh` 의 `파생` 집계가 이 라벨로만 센다 |
-| `deploy-wait` | closeout 4단계가 만든 배포 대기 이슈. `loop-status.sh` 가 배포대기와 사람대기를 가르는 버킷 라벨(`needs-human` 과 함께 붙는다) |
+| `deploy-wait` | closeout 4단계·full-cycle §7 이 만든 배포 대기 이슈 — **deploy-cycle 루프의 레인**(사람 정지가 아니다). `loop-status.sh` 가 배포대기와 사람대기를 가르는 버킷 라벨이기도 하다. `needs-human` 은 붙이지 않는다(#243) — 디스패치 게이트는 `agent-ready` 를 요구하고, 버킷은 `deploy-wait` 가 이기며, deploy-bodat 수집은 제목 정규식이라 그 라벨을 아무도 안 본다 |
 | `hold:conflict` · `hold:policy` · `hold:ladder` | `needs-human` 의 **사유**. `transition.sh verify-held|closeout-blocked --reason <사유>` 가 함께 붙인다(사유 없는 `needs-human` 은 만들 수 없다). `ladder` 만 재개 스윕이 자동 재개한다. 디스패치·검증·마감 게이트는 이 **접두**를 직접 본다(#242) — 사람이 홀드를 풀 때는 `needs-human` 과 함께 뗀다. `hold:dup`·`hold:hardware` 는 일부러 없다 — 중복은 `closeout-dup` 이 닫고, 실장비는 사다리를 오른다 |
 | `dup` | `closeout-dup` 으로 머지 없이 닫힌 PR(이미 main 에 반영·중복). `loop-status.sh` 가 `실패` 와 갈라 `중복종료` 로 센다 |
 
