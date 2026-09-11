@@ -268,6 +268,225 @@ else
 fi
 if [ ! -d "$tmp/race.md.lock" ]; then ok; else bad "(동시성) 레이스 후 lock 디렉터리 잔존"; fi
 
+# ── (#232 h1) `- [` bullet 뒤의 독립 산문은 그 bullet 이 지워져도 남는다 ──────
+# bullet 은 정의상 그 한 줄뿐이다 — 다음 경계 직전까지를 통째로 그 bullet 소유로 보면
+# (구 버전 결함) 뒤따르는 산문까지 함께 지워진다. PR#1 만 드롭되는 캡으로 부른다.
+cat > "$tmp/h1.md" <<'EOF'
+- [2026-08-01 PR#1] one
+independent prose after one — 이 줄은 살아남아야 한다
+- [2026-08-02 PR#2] two
+- [2026-08-03 PR#3] three
+- [2026-08-04 PR#4] four
+EOF
+out=$(bash "$SUT" "$tmp/h1.md" 3 2>/dev/null); rc=$?
+if [ "$rc" = 0 ] && [ "$out" = "- [2026-08-01 PR#1] one" ] \
+  && grep -qF -- 'independent prose after one — 이 줄은 살아남아야 한다' "$tmp/h1.md" \
+  && ! grep -qF 'PR#1]' "$tmp/h1.md" \
+  && grep -qF 'PR#2]' "$tmp/h1.md" && grep -qF 'PR#3]' "$tmp/h1.md" && grep -qF 'PR#4]' "$tmp/h1.md"; then
+  ok
+else
+  bad "(h1) bullet 삭제해도 독립 산문은 남아야 한다 — rc=$rc out=[$out] file=$(cat "$tmp/h1.md")"
+fi
+
+# ── (#232 h1 회귀) `##` 블록의 산문은 블록이 지워질 때 함께 지워진다 ─────────
+# h1 수정이 "bullet 뒤 산문 보존"과 정반대 방향(`##` 산문도 항상 보존)으로 과잉교정
+# 되지 않았는지를 전용 픽스처로 문다(기존 (c) 케이스와 별도로, 이슈가 지정한 6개
+# 픽스처 중 하나로 명시).
+cat > "$tmp/h1reg.md" <<'EOF'
+## [2026-08-11 PR#11] title eleven
+prose eleven line A — 지워져야 한다
+prose eleven line B — 지워져야 한다
+- [2026-08-12 PR#12] twelve
+- [2026-08-13 PR#13] thirteen
+- [2026-08-14 PR#14] fourteen
+EOF
+out=$(bash "$SUT" "$tmp/h1reg.md" 3 2>/dev/null); rc=$?
+expected_removed='## [2026-08-11 PR#11] title eleven'
+if [ "$rc" = 0 ] && [ "$out" = "$expected_removed" ] \
+  && ! grep -qF 'title eleven' "$tmp/h1reg.md" \
+  && ! grep -qF 'prose eleven line' "$tmp/h1reg.md"; then
+  ok
+else
+  bad "(h1 회귀) ## 블록 삭제 시 산문도 함께 지워져야 한다 — rc=$rc out=[$out] file=$(cat "$tmp/h1reg.md")"
+fi
+
+# ── (#232 h2) 잠금 획득 후 mktemp 실패해도 <file>.lock 이 남지 않는다 ────────
+# macOS mktemp 는 `-t` 기본 템플릿에서 `_CS_DARWIN_USER_TEMP_DIR` 를 TMPDIR 보다
+# 우선해 TMPDIR 조작만으로는 실패를 재현할 수 없다(실측). PATH 앞단에 항상 실패하는
+# mktemp 스텁을 얹어 OS 무관하게 결정론적으로 재현한다.
+h2tmp=$(mktemp -d)
+mkdir "$h2tmp/stubbin"
+cat > "$h2tmp/stubbin/mktemp" <<'STUB'
+#!/bin/sh
+exit 1
+STUB
+chmod +x "$h2tmp/stubbin/mktemp"
+cat > "$tmp/h2.md" <<'EOF'
+- [2026-08-05 PR#5] five
+EOF
+rc=0
+out=$(PATH="$h2tmp/stubbin:$PATH" bash "$SUT" "$tmp/h2.md" 5 2>/dev/null) || rc=$?
+if [ "$rc" != 0 ] && [ ! -d "$tmp/h2.md.lock" ]; then
+  ok
+else
+  bad "(h2) mktemp 실패 시 lock 잔존 — rc=$rc lockdir_exists=$([ -d "$tmp/h2.md.lock" ] && echo yes || echo no)"
+fi
+rm -rf "$h2tmp"
+
+# ── (#232 h2 회귀) 정상 경로에서 임시파일 3개 + lock 디렉터리가 여전히 치워진다 ──
+# 실제 mktemp 를 그대로 호출하되 만들어진 경로를 로그에 남기는 스텁으로 감싸,
+# 트랩이 그 경로들을 실제로 rm 했는지(=존재하지 않는지) 정면으로 단언한다.
+h2rtmp=$(mktemp -d)
+mkdir "$h2rtmp/stubbin"
+real_mktemp=$(command -v mktemp)
+cat > "$h2rtmp/stubbin/mktemp" <<STUB
+#!/bin/sh
+p=\$("$real_mktemp" "\$@")
+rc=\$?
+echo "\$p" >> "$h2rtmp/created.log"
+echo "\$p"
+exit \$rc
+STUB
+chmod +x "$h2rtmp/stubbin/mktemp"
+cat > "$tmp/h2reg.md" <<'EOF'
+- [2026-08-06 PR#6] six
+EOF
+PATH="$h2rtmp/stubbin:$PATH" bash "$SUT" "$tmp/h2reg.md" 5 >/dev/null 2>&1
+leftover=""
+if [ -f "$h2rtmp/created.log" ]; then
+  while IFS= read -r p; do
+    [ -e "$p" ] && leftover="$leftover $p"
+  done < "$h2rtmp/created.log"
+fi
+if [ -s "$h2rtmp/created.log" ] && [ -z "$leftover" ] && [ ! -d "$tmp/h2reg.md.lock" ]; then
+  ok
+else
+  bad "(h2 회귀) 정상 경로 후 임시파일·lock 잔존 — leftover=[$leftover] created_log_size=$(wc -l < "$h2rtmp/created.log" 2>/dev/null || echo 0)"
+fi
+rm -rf "$h2rtmp"
+
+# ── (#232 h3) 종결 개행 없는 파일에 append 하면 새 항목이 자기 줄에서 시작한다 ──
+printf -- '- [2026-08-07 PR#7] seven' > "$tmp/h3.md"
+out=$(bash "$SUT" append "$tmp/h3.md" 5 "- [2026-08-08 PR#8] eight" 2>/dev/null); rc=$?
+nb=$(grep -c '^- \[' "$tmp/h3.md")
+if [ "$rc" = 0 ] && [ -z "$out" ] && [ "$nb" = 2 ] \
+  && grep -qF -- '- [2026-08-07 PR#7] seven' "$tmp/h3.md" \
+  && grep -qF -- '- [2026-08-08 PR#8] eight' "$tmp/h3.md"; then
+  ok
+else
+  bad "(h3) 종결개행 없는 파일 append — rc=$rc out=[$out] nb=$nb file=$(cat "$tmp/h3.md")"
+fi
+
+# ── (#232 h3 회귀) 이미 개행으로 끝나는 정상 파일에 append 해도 빈 줄이 안 늘어난다 ──
+printf -- '- [2026-08-09 PR#9] nine\n' > "$tmp/h3reg.md"
+out=$(bash "$SUT" append "$tmp/h3reg.md" 5 "- [2026-08-10 PR#10] ten" 2>/dev/null); rc=$?
+blank_count=$(grep -c '^$' "$tmp/h3reg.md" || true)
+line_count=$(wc -l < "$tmp/h3reg.md" | tr -d ' ')
+if [ "$rc" = 0 ] && [ -z "$out" ] && [ "$blank_count" = 0 ] && [ "$line_count" = 2 ]; then
+  ok
+else
+  bad "(h3 회귀) 정상 파일 append 후 빈 줄 증가 — rc=$rc blank_count=$blank_count line_count=$line_count file=$(cat "$tmp/h3reg.md")"
+fi
+
+# ── (#232 h1 격자 — 빈 줄 구분자 gap) 사전 리뷰 BLOCKER 실측·회귀 ──────────
+# 사전 리뷰가 지적한 실측 재현: gap 을 드롭 여부와 무관하게 항상 흘리면, 원장의
+# 지배적 패턴인 "빈 줄만 있는 gap" 도 살아남아 bstart[1] 이전 프리앰블로 편입되고,
+# 프리앰블은 이후 모든 실행에서 무조건 통과되는 구간이라 트림을 반복할 때마다 빈
+# 줄이 영구 누적된다(실측: `- [A] a / 빈줄 / - [B] b / 빈줄 / - [C] c` 에 cap=1 →
+# A·B 드롭 후 파일 맨 앞에 빈 줄 2개가 영구 잔존). 개별 반례 하나만 막지 않고
+# 입력 형태 × cap × 기대 출력(want) 격자로 전수 단언한다(PR#202 교훈 — 근사가
+# "더 지우는" 방향과 "덜 지우는" 방향 둘 다에서 틀릴 수 있다).
+check_gap_case() {
+  label="$1"; input="$2"; cap="$3"; expected_removed="$4"; expected_final="$5"
+  printf '%s' "$input" > "$tmp/gap-case.md"
+  out=$(bash "$SUT" "$tmp/gap-case.md" "$cap" 2>/dev/null); rc=$?
+  actual_final=$(cat "$tmp/gap-case.md")
+  if [ "$rc" = 0 ] && [ "$out" = "$expected_removed" ] && [ "$actual_final" = "$expected_final" ]; then
+    ok
+  else
+    bad "(h1 격자: $label) rc=$rc removed=[$out] want_removed=[$expected_removed] file=[$actual_final] want_file=[$expected_final]"
+  fi
+}
+
+# 1) 빈 줄 구분자만 있는 gap — 연속 2건 드롭(원 BLOCKER 재현 형태) → 잔존 없이 완전 제거.
+check_gap_case "빈 줄 gap, 연속 드롭 2건" \
+  "- [2026-09-02 PR#33] a
+
+- [2026-09-03 PR#34] b
+
+- [2026-09-04 PR#35] c
+" \
+  1 \
+  "- [2026-09-02 PR#33] a
+- [2026-09-03 PR#34] b" \
+  "- [2026-09-04 PR#35] c"
+# 1-idempotent) 같은 cap 으로 한 번 더 불러도(=멱등 구간) 바이트 불변 — 빈 줄이 또
+# 늘어나지 않는지 직접 확인한다.
+before_idem=$(shasum "$tmp/gap-case.md")
+bash "$SUT" "$tmp/gap-case.md" 1 >/dev/null 2>&1
+after_idem=$(shasum "$tmp/gap-case.md")
+if [ "$before_idem" = "$after_idem" ]; then ok; else bad "(h1 격자: 빈 줄 gap 멱등) 2차 실행 후 파일이 또 바뀜 — before=$before_idem after=$after_idem"; fi
+
+# 2) 독립 산문이 있는 gap — 드롭돼도 산문은 보존(h1 의 원래 목적).
+check_gap_case "산문 gap, 드롭" \
+  "- [2026-08-18 PR#18] a
+prose line — 지워지면 안 됨
+- [2026-08-19 PR#19] b
+- [2026-08-20 PR#20] c
+" \
+  2 \
+  "- [2026-08-18 PR#18] a" \
+  "prose line — 지워지면 안 됨
+- [2026-08-19 PR#19] b
+- [2026-08-20 PR#20] c"
+
+# 3) 빈 줄 + 산문 + 빈 줄이 섞인 gap — 드롭돼도 gap 전체(빈 줄 포함) 보존.
+check_gap_case "혼합 gap(빈줄+산문+빈줄), 드롭" \
+  "- [2026-08-21 PR#21] a
+
+prose in middle — 지워지면 안 됨
+
+- [2026-08-22 PR#22] b
+- [2026-08-23 PR#23] c
+- [2026-08-24 PR#24] d
+" \
+  3 \
+  "- [2026-08-21 PR#21] a" \
+  "
+prose in middle — 지워지면 안 됨
+
+- [2026-08-22 PR#22] b
+- [2026-08-23 PR#23] c
+- [2026-08-24 PR#24] d"
+
+# 4) 빈 줄 gap — 유지되는(kept) bullet 뒤에서는 기존과 동일하게 그대로 보존(회귀:
+# 이번 수정은 "드롭되는" 쪽 분기만 좁혔다 — kept 쪽은 안 건드렸는지 확인).
+check_gap_case "빈 줄 gap, kept 항목 뒤(불변 확인)" \
+  "- [2026-08-28 PR#28] a
+
+- [2026-08-29 PR#29] b
+
+- [2026-08-30 PR#30] c
+" \
+  2 \
+  "- [2026-08-28 PR#28] a" \
+  "- [2026-08-29 PR#29] b
+
+- [2026-08-30 PR#30] c"
+
+# 5) 공백 문자만 있는 gap(완전 빈 줄이 아니라 스페이스 3개) — 드롭 시 여전히 "빈 줄"로
+# 취급돼 제거된다(정규식이 완전 공백뿐 아니라 공백 문자도 블랭크로 인식하는지 확인).
+check_gap_case "공백 전용 gap, 드롭" \
+  "- [2026-09-05 PR#36] a
+   
+- [2026-09-06 PR#37] b
+- [2026-09-07 PR#38] c
+" \
+  2 \
+  "- [2026-09-05 PR#36] a" \
+  "- [2026-09-06 PR#37] b
+- [2026-09-07 PR#38] c"
+
 # ── 오류 경계 ────────────────────────────────────────────────────────
 rc=0
 out=$(bash "$SUT" 2>/dev/null) || rc=$?
