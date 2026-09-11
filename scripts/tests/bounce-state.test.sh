@@ -266,26 +266,41 @@ run_file_case "주입 파일이 빈 문자열→판정 실패(코멘트 0건과 
 printf '%s' '[]' > "$tmp/zero.json"
 run_file_case "주입 파일이 []→ok(코멘트 0건은 정상 판정)" ok "$tmp/zero.json"
 
-# ── #221 ①: 구분자 격자 — "마커가 낱말로 끝나는가" 를 전수 단언 ──────────
-# **규칙 한 줄**: 반송 마커는 코멘트 첫 줄 맨 앞에서 **낱말로 끝나야** 한다 — 마커 바로
-# 뒤에 한글 음절이 이어지면(조사·어미가 붙어 한 낱말의 일부로 쓰인 것) 그 줄은 마커
-# 단어로 시작할 뿐인 **평범한 문장**이므로 반송이 아니고, 그 외(줄 끝·개행·공백·문장
-# 부호·숫자·라틴 문자)는 전부 구분자로 본다.
+# ── 마커 뒤 형태 격자(#221 · #251) — "마커 뒤가 무엇이냐" 를 전수 단언 ──────
+# **규칙 한 줄**(#251 이 두 축을 닫으며 한 술어로 다시 씀): 반송 마커는 코멘트 **첫 줄
+# 맨 앞**에 있어야 하고, 그 뒤에 남는 꼬리(`$t`)의 형태가 셋 중 어디냐로 갈린다.
+#   ⑴ **반송 관용 구분자**로 시작한다(`:` · 공백?+`#` · 공백?+`(` · 공백?+대시 ·
+#      공백?+숫자 · 줄 끝/개행) → **무조건 bounced**. `bounce-comment.sh` 가 찍는 기계
+#      채널 본문(`마커: #N — 사유`)이 전부 여기 들어와 아래 예외로도 안 샌다.
+#   ⑵ **산문이 이어진다**(한글 음절이 바로 붙거나 — 조사·어미 — 공백 뒤에 낱말이 온다)
+#      → 마커가 문장 안 낱말로 쓰인 것이다. 여기서만 두 축을 가른다:
+#        · **해소 보고 표식**(`완료`·`해소`, 부정 접두 `미`/`불` 제외)이 꼬리에 있으면
+#          → `ok`. 반송이 아니라 **반송을 푼 보고**다(#251 ② — 원장 실측 6건).
+#        · 없으면 **반송 표식**(`#숫자` · `attempt` · 대시 · `반송`)이 있을 때만
+#          `bounced`(#251 ① — 조사가 붙은 진짜 반송), 없으면 `ok`.
+#   ⑶ 그 밖(공백 없는 문장부호·라틴 부착 등) → bounced.
 #
-# 왜 "구분자 화이트리스트"(`:` · 공백+`#` · 공백+`(` · 공백+`attempt` 열거)가 아닌가:
-# 열거는 근사라서 열거 밖의 **진짜 반송 형태**(` — 사유`, ` 3회차`, ` [attempt 3]` …)를
-# 놓치고, 그 방향의 오류는 **fail-open** 이다 — #212 가 막은 사고(반송된 PR 이 머지
-# 후보로 되올라옴)로 그대로 되돌아간다.
+# 왜 ⑴ 을 열거로 두고도 안전한가: 열거 밖으로 새는 형태는 ⑵ 의 **반송 표식**이 다시
+# 받는다 — 두 겹이라 `[attempt 3] — 사유`·` 3회차` 같은 진짜 반송이 열거 밖에 있어도
+# 잡힌다(#212 가 막은 fail-open 으로 되돌아가지 않는다).
 # (PR#202 교훈: 리뷰가 짚은 개별 반례만 차례로 막지 말고 규칙 자체를 옮긴 뒤 `want`
 # 열을 가진 격자로 전수 단언하라 — 근사가 '더 지우는' 방향으로 틀리면 원래 버그보다
 # 나쁘다.)
 #
-# 규칙의 두 방향을 격자가 **둘 다** 못박는다(SUT 헤더 주석의 "값과 대가" 절과 짝):
-#   · fail-closed 로 남긴 것 — 마커 + 공백 + 평범한 명사는 여전히 `bounced`(아래 마지막
-#     `bounced` 행). 정체는 남지만 사고는 아니다.
-#   · fail-open 으로 연 것 — 마커 + 한글 조사는 `ok`. 손으로 쓴 `재검증 실패로 반송합니다`
-#     같은 반송 문장은 이제 안 잡힌다. 그래서 반송은 `bounce-comment.sh` 로만 남긴다는
-#     계약이 짝이고, 그 계약은 `bin/ci` 의 생성 본문 판정 스모크가 지킨다.
+# #251 이 뒤집은 두 칸(SUT 헤더 주석의 "값과 대가" 절과 짝 — 그 절도 같이 고쳤다):
+#   · **①(fail-open 이었다)** — 마커 + 한글 조사 + 반송 표식(`재검증 실패로 반송합니다
+#     — #193`)은 이제 `bounced`. 손으로 쓴 반송이 안전망을 조용히 지나가던 구멍이다.
+#     표식이 전혀 없는 `…가 필요한지 확인했습니다`·`…를 분석합니다` 는 `ok` 그대로다.
+#   · **②(fail-closed 였다)** — 마커 + 공백 + 평범한 명사/해소 보고(`재디스패치 필요
+#     여부를 검토합니다`, `재디스패치 attempt 2 — … 해소.`)는 이제 `ok`. 아무도 반송하지
+#     않은 PR 을 마감 레인이 다음 판정성 코멘트까지 뺐던 정체다.
+#
+# 경계 판단(#251 이 고른 쪽, 이슈가 "본문에 근거를 적고 want 열에 못박아라" 한 칸):
+# `재검증 실패로 반송합니다` — 뒤에 `#N`·`attempt`·대시가 **하나도 없는** 반송 문장 —
+# 은 `bounced` 로 정한다. `반송` 을 반송 표식 어휘에 넣어 닫았다. 근거: 이 축은
+# **유실(fail-open)이 정체(fail-closed)보다 나쁘다**(이슈 ① 절). 대가는 `재디스패치
+# 반송 규칙을 정리했습니다` 류가 `bounced` 로 정체하는 것인데, 그건 다음 판정성
+# 코멘트 한 건으로 풀리고 반송 유실은 **잘못된 코드가 머지되는 것**이라 값이 다르다.
 #
 # 격자의 마커는 **SUT 에서 읽는다** — 테스트가 리터럴을 복제하면 ②와 똑같은 "두 벌" 이
 # 된다(SSOT 마커를 바꿨을 때 격자가 낡은 채로 초록).
@@ -330,16 +345,30 @@ for gm in "$@"; do
     [ -n "$g_want" ] || continue
     grid_case "격자[$gm]$g_label" "$g_want" "$gm$g_suffix"
   done 3<<'GRID'
-bounced|: #193 — 마감 검증 BLOCKER(코드 회귀)|+콜론
-bounced| #193 — 반송|+공백 #N
-bounced| (round 2) — E2E 실패|+공백 (괄호
-bounced| attempt 3 — 마감 검증 BLOCKER|+공백 attempt N
-bounced| — 사유만 대시로|+공백 대시(화이트리스트 밖이지만 진짜 반송 형태)
-bounced|2회차 — 반송|+숫자 직접 부착(한글 아니면 구분자)
-bounced||마커만·줄 끝
-ok|가 필요한지 확인했습니다|+조사 '가'(한글이 이어짐=낱말 계속)
-ok|를 분석합니다|+조사 '를'(한글이 이어짐=낱말 계속)
-bounced| 필요 여부를 검토합니다|+공백 평범한 명사(공백은 구분자 — 이 경계는 fail-closed 로 남긴다)
+bounced|: #193 — 마감 검증 BLOCKER(코드 회귀)|⑴+콜론(기계 채널 bounce-comment.sh 형태)
+bounced|: #193 — 지적 사항 해소 요망|⑴+콜론은 '해소' 어휘로도 안 풀린다(기계 채널 불가침)
+bounced| #193 — 반송|⑴+공백 #N
+bounced| #193 — 이전 지적 해소 요망|⑴+공백 #N 은 '해소' 어휘로도 안 풀린다
+bounced| (round 2) — E2E 실패|⑴+공백 (괄호
+bounced| — 사유만 대시로|⑴+공백 대시
+bounced|2회차 — 반송|⑴+숫자 직접 부착
+bounced| 3회차 — 반송|⑴+공백 숫자
+bounced||⑴마커만·줄 끝
+bounced|[attempt 3] — 사유|⑶+공백 없는 대괄호 부착(열거 밖이어도 잡힌다)
+ok|가 필요한지 확인했습니다|①대조 +조사 '가'·반송 표식 없음
+ok|를 분석합니다|①대조 +조사 '를'·반송 표식 없음
+ok|가 fail-open 인지 확인했습니다|①대조 하이픈은 대시가 아니다(반송 표식 아님)
+bounced|로 반송합니다 — #193|① +조사 '로'+반송 표식(#N·대시)
+bounced|했습니다 — #193|① +어미+반송 표식(#N·대시)
+bounced|했다(attempt 3)|① +어미+attempt
+bounced|로 반송합니다|① 경계 판단 — '반송' 낱말만으로도 bounced(유실이 더 나쁘다)
+ok| 필요 여부를 검토합니다|② +공백 평범한 명사(#251 이 연 칸)
+ok| 회차 완료 — 마감 검증 BLOCKER 를 고쳤다|② 해소 보고(완료) — 원장 형태
+ok| 반영 완료(BLOCKER 1건 해소) — 재푸시했다|② 해소 보고(완료·해소) — 원장 형태
+ok| 반영(attempt 3) — P1 BLOCKER·P2 WARN 해소|② 해소 보고(attempt 를 달고 있어도) — 원장 형태
+ok| attempt 2 — 마감 검증 BLOCKER(#193) 해소.|② 해소 보고(attempt+#N+대시 전부 달고 있어도) — 원장 형태
+bounced| attempt 3 — 마감 검증 BLOCKER|① 같은 형태라도 해소 어휘가 없으면 반송이다(②의 과잉 예외 반증)
+bounced| attempt 3 — 마감 검증 BLOCKER 미해소|② 과잉 예외 반증 — 부정 접두 '미' 는 해소가 아니다
 GRID
   # 마커 바로 뒤 **개행** 도 구분자다(첫 줄이 마커 하나로만 이뤄진 반송).
   grid_case "격자[$gm]+개행" bounced "$gm
@@ -350,15 +379,122 @@ GRID
 done
 
 # 격자가 **실제로 다 돌았는지** 를 센다 — 행이 조용히 사라져도 스위트가 초록이면 격자는
-# 아무것도 못 막는다(PR#219: 안 돌린 테스트는 CI 를 못 빨갛게 한다). 마커당 12행
-# (heredoc 10 + 개행 1 + 중간 인용 1).
-grid_expected=$((grid_markers * 12))
+# 아무것도 못 막는다(PR#219: 안 돌린 테스트는 CI 를 못 빨갛게 한다). 마커당 26행
+# (heredoc 24 + 개행 1 + 중간 인용 1).
+grid_expected=$((grid_markers * 26))
 if [ "$grid_ran" = "$grid_expected" ]; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
   echo "  ✗ 격자 실행 건수 — 기대=$grid_expected(마커 $grid_markers × 12) 실제=$grid_ran"
 fi
+# ── 원장 실측 형태(#251 ②) — 워커의 **반송 해소 보고** 6건을 원문 그대로 ───────
+# 이슈 #251 이 세 레포 최근 PR 141건에서 "마커로 시작하는 첫 줄" 58건을 세어 뽑은
+# 형태다. 전부 반송이 **아니라** 반송을 푼 보고였고, 옛 규칙에선 `bounced` 로 읽혀
+# 마감 레인이 다음 판정성 코멘트까지 그 PR 을 후보에서 뺐다(정체).
+#
+# 격자 행은 마커를 파라미터로 조립하므로 원문 그대로는 아니다 — 여기서는 **실제로
+# 원장에 있던 문자열**을 한 글자도 안 바꾸고 먹인다(격자가 조립 과정에서 형태를
+# 놓치면 이 절이 잡는다). 픽스처 형상은 이슈가 적은 실패 시나리오 그대로다:
+# **최신 `머지 판정: ✅` 뒤에** 보고가 달린다.
+lit_ran=0
+lit_case() {
+  local want="$1" body="$2"
+  jq -n --arg b "$body" '[
+    {body:"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->", createdAt:"2026-09-11T07:00:00Z"},
+    {body:$b, createdAt:"2026-09-11T07:30:00Z"}
+  ]' > "$tmp/lit.json"
+  lit_ran=$((lit_ran + 1))
+  run_file_case "원장[$want] $body" "$want" "$tmp/lit.json"
+}
+while IFS='|' read -r l_want l_body <&3; do
+  [ -n "$l_want" ] || continue
+  lit_case "$l_want" "$l_body"
+done 3<<'LIT'
+ok|재디스패치 회차 완료 — 마감 검증 BLOCKER 를 닫았다
+ok|재디스패치 반영 완료(BLOCKER 1건 해소) — 재푸시·로컬 CI pass
+ok|재디스패치 반영(attempt 3) — P1 BLOCKER·P2 WARN 해소, 로컬 CI pass
+ok|재디스패치 attempt 2 — 마감 검증 BLOCKER(계획 부합) 해소.
+ok|재디스패치 필요 여부를 검토합니다
+ok|재검증 실패를 분석합니다
+LIT
+lit_expected=6
+if [ "$lit_ran" = "$lit_expected" ]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "  ✗ 원장 형태 실행 건수 — 기대=$lit_expected 실제=$lit_ran"
+fi
+
+# ── 뮤테이션 방증(#251) — ①·② 가드를 **따로** 지우면 **서로 다른** 케이스가 빨개진다 ──
+# 이슈가 명시적으로 요구한 방증이다: "각 축의 가드를 따로 지우는 뮤테이션이 서로 다른
+# 테스트를 빨갛게 하는지 실측하라 — 한 테스트가 두 축을 동시에 물면 한 축이 조용히
+# 회귀한다." 두 분기는 결과식이 같지만(둘 다 `$bmark and ($resolved|not)`) **입력 형태가
+# 달라** 서로 다른 케이스를 받는다. 그래서 한 분기만 옛 값으로 되돌려 갈라 잰다:
+#   MUT-1 제거 → `false`  = 구 #221 규칙(조사·어미가 붙으면 **무조건** 반송 아님) = ① 재발
+#   MUT-2 제거 → `true`   = 구 #221 규칙(공백은 **무조건** 구분자 = 반송)        = ② 재발
+mut1_sut="$tmp/mut1-bounce-state.sh"
+mut2_sut="$tmp/mut2-bounce-state.sh"
+sed 's/.*# MUT-1:.*/                        false/' "$SUT" > "$mut1_sut"
+sed 's/.*# MUT-2:.*/                        true/'  "$SUT" > "$mut2_sut"
+for mpair in "MUT-1:$mut1_sut" "MUT-2:$mut2_sut"; do
+  mname=${mpair%%:*}; mfile=${mpair#*:}
+  if cmp -s "$SUT" "$mfile"; then
+    fail=$((fail + 1))
+    echo "  ✗ 뮤테이션 앵커($mname)를 못 찾았다 — 방증이 아무것도 안 바꾼다"
+  else
+    pass=$((pass + 1))
+  fi
+done
+
+ax_pass=0
+ax_fail=0
+# ax_run <sut> <라벨> <want> <후보 본문>  — 격자와 같은 형상(선행 ✅ + 후보)으로 먹인다.
+ax_run() {
+  local sut="$1" label="$2" want="$3" body="$4" out rc=0
+  jq -n --arg b "$body" '[
+    {body:"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->", createdAt:"2026-09-11T07:00:00Z"},
+    {body:$b, createdAt:"2026-09-11T07:30:00Z"}
+  ]' > "$tmp/ax.json"
+  out=$(PATH="$tmp/bin:$PATH" STUB_FAIL_COMMENTS=1 BOUNCE_COMMENTS_FILE="$tmp/ax.json" \
+    bash "$sut" owner/repo 5 2>/dev/null) || rc=$?
+  if [ "$rc" = 0 ] && [ "$out" = "$want" ]; then
+    ax_pass=$((ax_pass + 1))
+  else
+    ax_fail=$((ax_fail + 1))
+    echo "  ✗ 뮤테이션 대조 — $label 기대=$want 실제 rc=$rc out=[$out]"
+  fi
+}
+
+# ① 케이스(조사·어미 + 반송 표식)와 ② 케이스(공백 뒤 산문·해소 보고)를 한 표로 두고
+# **원본 / MUT-1 / MUT-2** 세 벌에 같은 입력을 먹여 어느 칸이 뒤집히는지 본다.
+#   want 열: <원본>|<MUT-1>|<MUT-2>
+while IFS='|' read -r a_base a_m1 a_m2 a_body <&3; do
+  [ -n "$a_base" ] || continue
+  ax_run "$SUT"      "원본   [$a_body]" "$a_base" "$a_body"
+  ax_run "$mut1_sut" "MUT-1 [$a_body]" "$a_m1"   "$a_body"
+  ax_run "$mut2_sut" "MUT-2 [$a_body]" "$a_m2"   "$a_body"
+done 3<<'AX'
+bounced|ok|bounced|재검증 실패로 반송합니다 — #193
+bounced|ok|bounced|재디스패치했습니다 — #193
+bounced|ok|bounced|재디스패치했다(attempt 3)
+bounced|ok|bounced|재검증 실패로 반송합니다
+ok|ok|bounced|재디스패치 필요 여부를 검토합니다
+ok|ok|bounced|재디스패치 회차 완료 — 마감 검증 BLOCKER 를 닫았다
+ok|ok|bounced|재디스패치 반영 완료(BLOCKER 1건 해소) — 재푸시·로컬 CI pass
+ok|ok|bounced|재디스패치 attempt 2 — 마감 검증 BLOCKER(계획 부합) 해소.
+ok|ok|ok|재디스패치가 필요한지 확인했습니다
+bounced|bounced|bounced|재디스패치: #193 — 완결 유실(검증 전 사망)
+bounced|bounced|bounced|재디스패치 attempt 3 — 마감 검증 BLOCKER
+AX
+if [ "$ax_fail" = 0 ] && [ "$ax_pass" = 33 ]; then
+  pass=$((pass + 1))
+  echo "  ✓ 뮤테이션 방증(#251): MUT-1 은 ① 4건만, MUT-2 는 ② 4건만 옛 값으로 뒤집는다(축이 겹치지 않는다, ax_pass=$ax_pass)"
+else
+  fail=$((fail + 1))
+  echo "  ✗ 뮤테이션 방증(#251) 실패 — ax_pass=$ax_pass ax_fail=$ax_fail (기대 ax_pass=33)"
+fi
+
 # ── held(#218 attempt 2 — codex BLOCKER) ─────────────────────────────────
 # attempt 1 은 bounced 를 무조건 조기 종료해, 반송 뒤 교체 워커가 새로 올린
 # `머지 판정: ⚠ 보류` 를 영원히 못 봤다. ✅ 와 대칭으로 ⚠ 도 마지막 매칭 인덱스로 잰다.
