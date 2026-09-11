@@ -94,6 +94,126 @@ Procedure:
    exit non-zero so a fail lands in the cache, that is not a state you can fix — leave
    a `BLOCKED:` comment on the issue with the reason and stop (a human enables
    link-secrets or narrows the test scope). Never bypass the cache or fake a green.
+
+   **CI queue-wait discipline (#185).** `run-local-ci.sh` is a **synchronous call** —
+   it puts your SHA on the box-wide **serial queue** and does not return until the wait
+   plus the run both finish. If another worker's CI is already ahead of yours, that one
+   call can take several minutes, and mishandling that wait makes the worker quietly
+   end its turn, which the dispatcher **misreads as death** (an observed incident).
+   - **Do not call `bin/ci` directly** — use only `run-local-ci.sh` above. Skipping the
+     queue can overlap with another CI run on the same box and both die sharing a test
+     DB/fixtures.
+   - **Always call it in the foreground with a long timeout** — the "no background
+     execution" rule at the top of this document already names `run-local-ci.sh`: raise
+     the Bash tool's `timeout` to **up to 600000ms (10 minutes)**.
+   - **"Tool timeout ≠ work stopped"** (#185 re-review, observed 2026-09-11
+     `bodat#5046`). Even if this call is cut off by the Bash tool's 10-minute cap, the
+     job you put on the queue is usually still alive — what gets cut off is only **the
+     tool call you were waiting on**. So do not conclude "it never ran" and re-queue
+     just because you hit a tool timeout. **Ask the queue directly** — this one command
+     distinguishes queued, running, finished and never-ran:
+     ```bash
+     ~/.claude/skills/issue-runner/scripts/ci-queue.sh wait "$(git -C <WT_PATH> rev-parse HEAD)" --timeout 540
+     ```
+     **This `wait` call too must use the Bash tool `timeout: 600000`.** The tool default
+     is 120000ms, so typing it as-is cuts a 540s `wait` off at 120s and you **never see
+     its exit code**. The worse branch is the tool backgrounding it instead of killing
+     it — which is exactly the failure mode this document's opening pins down: a
+     subagent never receives a background completion notification and hangs forever.
+     **The SHA must be the full 40-character SHA from `git rev-parse HEAD`** — for
+     `wait` and for `status` alike, and
+     **never the 8-character abbreviation printed in `queue.log`**: the queue looks the result file up by exact match
+     (`<40-char SHA>.result`) and compares tickets by full SHA, so an 8-character query
+     returns `none` **even when a pass result exists** → `wait` returns **exit 2** after
+     the grace period (60s by default) and you fall into branch 3 below, **re-queuing a
+     CI run that already passed (or is running right now)**.
+     Do not omit `--timeout 540` — the default is 7200s, so the command itself would die
+     on the tool cap. At 540 the verdict comes back inside your tool budget. **Branch on
+     the exit code:**
+     1. **0 (pass) / 1 (fail)** — a verdict exists. Take it as-is. **Do not re-queue.**
+     2. **124 (timeout)** — still queued or running. The job is alive, so do not
+        re-queue: **re-issue the same `wait` in your next tool call** — you may re-enter
+        as many times as it takes. `wait` only polls for the result file and does not own
+        the job, so killing this command does not kill the queued job (unlike a
+        `run-local-ci.sh` call, which takes its ticket down with it — that is exactly why
+        recovery goes through `wait`).
+     3. **2 (not in the queue and no result)** — only this means there was no execution.
+        Re-queue `run-local-ci.sh` **once** with the same SHA (current HEAD).
+     You may also check `TaskList`/`TaskOutput(block: true, timeout: 600000)` for whether
+     it got backgrounded, but **the exit code above is what decides**. Do not judge by
+     hunting for a `bin/ci` process with `ps`: while your SHA is **waiting** in the queue
+     your `bin/ci` does not exist yet (what you own is a ticket, not a process), and what
+     `ps` shows you then is **another worker's CI**. Mistaking it for yours makes you wait
+     out their run and then fall through to "no result = never ran", **re-queuing your own
+     perfectly healthy ticket a second time**.
+   - **Do not police overlap yourself — the queue does it.** Never scan with `ps` for
+     another running CI and conclude "one is running, so I should not queue": that check
+     also matches `bin/ci` in **another worktree or another repo**, so it stops you from
+     even **getting in line** — it removes the very wait the serial queue exists to give
+     you. `ci-queue.sh` runs `bin/ci` one at a time box-wide (ticket FIFO) and reuses the
+     result for an identical SHA (dedup), so **just queue it and wait.** To see where
+     your SHA sits, ask `~/.claude/skills/issue-runner/scripts/ci-queue.sh status <SHA>` (`running` / `queued <n>` /
+     `none`). Overlap is already prevented by "do not call it directly" (first bullet) —
+     only a `bin/ci` invoked outside the queue can share a test DB/fixtures and kill both
+     runs.
+   - If the wait looks likely to be long (another worker's CI is ahead), **finish**
+     CI-independent work first (drafting the PR body, preparing 9-b) **before** making
+     the call — so that if the single call eats the rest of this turn's time, it is not
+     wasted.
+
+   Queue state is observed at `~/.claude/.local-ci/queue.log`. It produces four
+   outcomes:
+   ```
+   23:26:26 pid=69013 b6dde06c 대기열 2번째
+   23:42:13 pid=69013 b6dde06c fail (460s) → /Users/…/<sha>.result
+   23:19:57 pid=34001 b4885ba9 폐기 — 실행 시점 HEAD 가 15c6e96e ≠ b4885ba9 (새 push 가 있었거나 로컬 HEAD 만 움직임)
+   23:31:12 pid=86456 75979c9c 중단(INT/TERM)
+   ```
+   **The `b6dde06c`-style SHAs in the log above are 8-character abbreviations** — good
+   for reading, never for querying. The SHA you pass to `wait`/`status` is always the
+   full 40 characters from `git rev-parse HEAD` (an 8-character query returns `none`
+   even when the result exists → `exit 2` → a pointless re-queue).
+   - **queued / result (pass·fail)** — normal progress. Take the result the call
+     returns with.
+   - **폐기 (discard) — HEAD mismatch.** The queue discards a SHA when the HEAD at
+     run time differs from the SHA it was queued with. **The SHA you wait on must
+     always be "HEAD right now"** — if you pushed a new commit, queue the new SHA
+     instead. Do not hold your turn waiting for the result of an old SHA that will
+     never exist.
+   - **중단(INT/TERM) (abort) — a short timeout kills the waiting/running process
+     too.** `run-local-ci.sh` runs synchronously **including the queue wait** — a short
+     timeout on that call kills the process whether it is still waiting in the queue or
+     already running `bin/ci`. **Do not set a short bash timeout.**
+   - **유령 티켓 회수 (ghost-ticket reclaim, pid died) — the queue clears a ticket
+     whose waiting process died.** This too means it was never actually executed.
+
+   **Policy (#185 re-review): 폐기 (discard), 중단(INT/TERM) (abort), and 유령 티켓
+   회수 (ghost-ticket reclaim) are all not a CI failure — they are non-execution.** If
+   the foreground call was cut off and `<sha>.result` never appeared, do not dig through
+   the log guessing why — just check `queue.log`'s last line for the current SHA
+   (`tail -20 ~/.claude/.local-ci/queue.log`). If it is one of the three, no pass/fail
+   verdict was ever produced, so there is no code to fix — immediately
+   re-queue the same SHA (current HEAD) with `run-local-ci.sh` (the runner's own
+   queue policy and timeouts stay out of scope for this issue — do not touch them).
+
+   **If you must end your turn, never end it silently.** If the above foreground call
+   exceeds 10 minutes without finishing and you must end this turn without a result,
+   your final message must read exactly
+   `CI 대기 중 — <SHA 40자> <queued N|running|none>, 다음 할 일: <한 줄>` (the literal
+   is Korean because the dispatcher matches it verbatim; `<한 줄>` is your next step in
+   one line). The state token is not something you word yourself — copy whichever of the
+   three values `~/.claude/skills/issue-runner/scripts/ci-queue.sh status "$(git -C <WT_PATH> rev-parse HEAD)"`
+   gives back:
+   - `queued N` — waiting Nth in the queue (this is the old `대기열 N번째` case).
+   - `running` — your job is **already running**. There is **no queue position** in this
+     state — do not invent a number, write `running`.
+   - `none` — the ticket was reclaimed, so there is neither a queue entry nor a result
+     (the call died on TERM). On resume this is the state that takes one re-queue of the
+     same SHA.
+   At a tool timeout the common states are in fact `running` and `none` — which is why
+   the format carries all three. **All three mean the same thing: I am alive, resume
+   me.** A silent finish makes the dispatcher misread you as dead and reclaim the
+   worktree — this one line is the only signal that tells it "resume me, I am not dead."
 9-b. **Pre-PR review — once, non-gating.** After local CI passes and before opening the
    PR, nest a fresh-context reviewer via the Agent tool — `subagent_type: "general-purpose"`
    (**no codex-family types** — the verification gate is owned by verify-runner and a codex

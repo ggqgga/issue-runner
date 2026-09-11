@@ -130,7 +130,52 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   Report so a human sees it.
 - `pr_open` — input to ② Maintain.
 - `working` — a worker is in progress. Use TaskList to check whether that
-  background agent is actually alive. If it is dead and there are pushed commits,
+  background agent is actually alive. **Do not assume "looks dead" (the task has
+  ended in TaskList) means actually dead** — first read the task's last message with
+  `TaskOutput(task_id)`. If its last line reads
+  `CI 대기 중 — <SHA 40자> <queued N|running|none>, 다음 할 일: <한 줄>`
+  (the signal is a verbatim Korean literal), the worker only ended its turn while waiting in the `run-local-ci.sh` queue
+  — it is not dead (#185). **Do not remove the worktree or release the claim** —
+  wake the worker with `SendMessage` to that task, telling it to resume (pick up the
+  "다음 할 일" / next step it reported). Once resumed, record it in ④ Report's
+  `maintained` line as `#<num>(resumed from CI wait)` — and **once the resume
+  succeeds, this issue is finished for this tick: do not run the genuine-death path
+  below, and do not run the timebox cleanup at its end; move on to the next event**
+  (in code terms, `continue` here). A worker you just woke is by definition *alive*,
+  so simply reading on would catch it in the timebox paragraph below. This box's CI
+  queue takes 550~750s from enqueue to finish, so a rework round easily pushes the
+  claim age past `ISSUE_TIMEBOX_HOURS`, and then ⓐ `TaskStop`, ⓑ worktree removal and
+  ⓒ claim release **immediately kill the worker you just resumed.**
+  **The state token is one of `queued N`, `running`, `none` —**
+  **all three states are resume signals.** Whichever one arrives, resume exactly as
+  above; **in all three cases**
+  do not remove the worktree and do not release the claim. `queued N` means that
+  worker's SHA is Nth in line; `running` means its job is already executing (this state
+  has no queue position at all — under the old fixed wording `대기열 N번째` the worker
+  had nothing truthful to write, so it ended silently, which is the very death-misread
+  this branch exists to prevent); `none` means the ticket was reclaimed, so there is
+  neither a queue entry nor a result. **`none` does not mean the worker died** — what
+  was reclaimed is the ticket, not the worker; once woken it re-queues the same SHA once
+  and carries on. The three values are not the worker's own words — they are the output
+  of `ci-queue.sh status <SHA>` (`running` / `queued <n>` / `none`).
+  If the message is not in that
+  format (a genuine death), continue below.
+  **Evidence — a background subagent whose turn has ended is still resumable with
+  `SendMessage`.** (1) The Agent tool contract defines `SendMessage` as
+  "continue a previously spawned agent with its context intact"
+  (a sentence premised on the spawn being over). (2) The note on a background task's completion notification
+  (task-notification) states: "The user can send it another message and resume it, so
+  the same task-id may notify more than once" — **a completion notification means "the
+  turn ended", not "the task is gone".** (3) Observed in operation: over 2026-09-10~11,
+  five workers (bodat #4959·#4927·#4957·#4971 · runner #188) were woken this way and
+  **all of them resumed and finished their work** (the same task-id notified twice).
+  **Fallback — if the resume message also gets no response** (the rare case where the
+  task really is gone), do not release the claim: **dispatch a replacement worker
+  reusing the existing worktree and branch** — `make-worktree.sh` reuses an existing
+  tree via `exists:`, and the pushed commits are the asset. **Do not create a new claim
+  and do not open a new PR** (if a PR is already open, have it continue that one). Only
+  if this fallback also fails do you fall through to the genuine-death path below.
+  If it is dead and there are pushed commits,
   treat it as a maintenance target for ②. If there are no commits at all, check
   the issue's latest comment **before** releasing the claim —
   `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body | test("<!--\\s*timebox-grace:")) | not)] | last.body'`
@@ -150,11 +195,14 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   'guardrails' convention). If the latest comment is not
   a BLOCKED comment, remove the worktree and release the claim (returning the
   issue to a re-dispatchable state).
-  **Timebox (no-progress detection)**: even if it is alive, check whether it is **making
-  progress** — the decision input is progress evidence, not elapsed time (#200: the
-  elapsed time swallows the box-wide serial CI queue wait, which the worker does not
-  control; in two measured cases that nearly killed workers that were still working).
-  Get the claim timestamp with
+  **Timebox (no-progress detection)** — **an issue resumed via `SendMessage` in this
+  tick is exempt** (the resume branch above already finished handling it: that worker
+  was waiting in the CI queue, not stalled, so cleaning it up here would kill the
+  worker you just woke). For an issue you did not resume, check whether it is **making
+  progress** even if it is alive — the decision input is progress evidence, not elapsed
+  time (#200: the elapsed time swallows the box-wide serial CI queue wait, which the
+  worker does not control; in two measured cases that nearly killed workers that were
+  still working). Get the claim timestamp with
   `gh api repos/<repo>/issues/<num>/timeline --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed")] | last.created_at'`
   (if the response is empty, fall back to the worktree directory's creation time) and
   hand it to `$SCRIPTS/timebox-check.sh <repo> <num> --claim-at <ISO8601>` (`working` by

@@ -132,7 +132,44 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 - `warn` — dirty/unpushed worktree. **건드리지 말고** Report에 그대로 올려 사람이 보게 하라.
 - `pr_open` — ② Maintain 의 입력.
 - `working` — 워커 진행 중. TaskList 로 해당 백그라운드 에이전트가 실제 살아있는지
-  확인. 죽었고 push 된 커밋이 있으면 ② 의 보수 대상으로. 커밋이 전혀 없으면
+  확인. **"죽어 보임"(TaskList 상 종료)을 바로 사망으로 단정하지 마라** — 그 태스크의
+  `TaskOutput(task_id)` 로 마지막 메시지를 먼저 읽어라. 마지막 줄이
+  `CI 대기 중 — <SHA 40자> <queued N|running|none>, 다음 할 일: <한 줄>`
+  형식이면 `run-local-ci.sh` 큐 대기 중 턴만 끝낸 것이지
+  사망이 아니다(#185) — **worktree 제거·claim 해제를 하지 말고** `SendMessage` 로
+  그 태스크에 재개 메시지를 보내 워커를 깨워라(보고에 적힌 "다음 할 일"을 이어가게
+  하라는 한 줄이면 된다). 재개했으면 ④ Report 의 `보수` 에 `#<num>(CI 대기 재개)`
+  로 적어라 — 그리고 **재개에 성공했으면 이 이슈는 이번 틱에서 여기까지다. 아래 진짜
+  사망 경로도, 그 끝의 timebox 청소도 실행하지 말고 다음 이벤트로 넘어가라**(코드로
+  치면 여기서 `continue`). 방금 깨운 워커는 정의상 **살아있으므로** 그냥 아래로 읽어
+  내려가면 timebox 문단에 그대로 걸린다. 이 박스 CI 큐는 인큐→완료가 550~750초라
+  반송 회차가 겹치면 claim 경과가 쉽게 `ISSUE_TIMEBOX_HOURS` 를 넘고, 그러면
+  ⓐ `TaskStop` ⓑ worktree 제거 ⓒ claim 해제가 **막 재개한 워커를 즉시 죽인다.**
+  **상태 토큰은 `queued N`·`running`·`none` 셋이고 — 세 상태 다 재개 신호다.** 어느
+  값이 왔든 위와 똑같이 재개하라(worktree 제거·claim 해제는 **세 경우 모두** 하지
+  않는다). `queued N` 은 그 워커의 SHA 가 큐에서 N번째로 줄 서 있는 것, `running` 은
+  이미 그 잡이 돌고 있는 것(이 상태엔 대기열 번호가 아예 없다 — 옛 고정 문형
+  `대기열 N번째` 로는 쓸 말이 없어 워커가 조용히 끝냈고, 그게 이 갈래가 막으려던 바로
+  그 사망 오독이었다), `none` 은 티켓이 회수돼 큐에도 결과도 없는 것이다.
+  **`none` 이어도 워커는 살아 있다** — 회수된 것은 티켓이지 워커가 아니고, 깨우면 같은 SHA 로
+  1회 재큐해 이어간다. 세 값은 워커가 지어낸 말이 아니라 `ci-queue.sh status <SHA>` 의
+  출력 그대로다(`running` / `queued <n>` / `none`).
+  이 형식이 아니면(진짜 사망) 아래로 이어간다.
+  **근거 — 턴이 끝난 백그라운드 서브에이전트도 `SendMessage` 로 깨어난다.** ⑴ Agent 툴
+  계약문이 `SendMessage` 를
+  "continue a previously spawned agent with its context intact"
+  로 규정한다(스폰이 끝난 뒤를 전제한 문장이다). ⑵ 백그라운드 태스크의 완료
+  알림(task-notification) note 도 "The user can send it another message and resume it,
+  so the same task-id may notify more than once" 라고 못박는다 — **완료 알림은 "턴이
+  끝났다"이지 "태스크가 소멸했다"가 아니다.** ⑶ 운영 실측: 2026-09-10~11 하루에 5건
+  (bodat #4959·#4927·#4957·#4971 · runner #188)을 이 경로로 깨워 **전부 재개돼 작업을
+  마쳤다**(같은 task-id 로 완료 알림이 두 번 왔다).
+  **폴백 — 재개 메시지에도 응답이 없으면**(태스크가 정말 회수된 드문 경우) claim 을 풀지
+  말고 **기존 worktree·브랜치를 그대로 재사용해 대체 워커를 디스패치**하라 —
+  `make-worktree.sh` 가 기존 트리를 `exists:` 로 재사용하고, push 된 커밋이 자산이다.
+  **새 claim 도, 새 PR 도 만들지 않는다**(열린 PR 이 있으면 그걸 이어 쓰게 하라). 이
+  폴백까지 실패하면 그때 아래 진짜 사망 경로로 내려간다.
+  죽었고 push 된 커밋이 있으면 ② 의 보수 대상으로. 커밋이 전혀 없으면
   claim 해제 **전에** 이슈 최신 코멘트를 확인하라 —
   `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body | test("<!--\\s*timebox-grace:")) | not)] | last.body'`
   (timebox 유예 마커 코멘트는 건너뛴다 — 마커가 최신 코멘트 자리를 차지하면 워커가 남긴
@@ -146,9 +183,12 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   게이트가 `hold:` 접두도 보므로 한쪽만 떼면 후보로 안 돌아온다, #242. README
   '가드레일' 규약). BLOCKED 코멘트가 아니면 worktree 제거 후 claim 해제
   (재디스패치 가능 상태로 복귀).
-  **timebox (무진전 감지)**: 살아있어도 **진행이 있는지** 확인하라 — 판정 입력은 경과
-  시간이 아니라 진행 증거다(#200: 경과에는 워커가 통제할 수 없는 박스 전역 직렬 CI 큐
-  대기가 통째로 들어가, 실측 2건에서 진행 중인 워커를 죽일 뻔했다).
+  **timebox (무진전 감지)** — **이번 틱에 `SendMessage` 로 재개한 이슈는 면제다**
+  (위 재개 갈래에서 이 이슈 처리는 이미 끝났다: 그 워커는 무진전이 아니라 CI 큐를
+  기다린 것이라, 여기서 청소하면 방금 깨운 워커를 죽인다). 재개하지 않은 건이면
+  살아있어도 **진행이 있는지** 확인하라 — 판정 입력은 경과 시간이 아니라 진행
+  증거다(#200: 경과에는 워커가 통제할 수 없는 박스 전역 직렬 CI 큐 대기가 통째로
+  들어가, 실측 2건에서 진행 중인 워커를 죽일 뻔했다).
   `gh api repos/<repo>/issues/<num>/timeline --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed")] | last.created_at'`
   로 claim 시각을 구하고 (빈 응답이면 worktree 디렉토리 생성 시각으로 대체),
   `$SCRIPTS/timebox-check.sh <repo> <num> --claim-at <ISO8601>` 에 넘겨라 (`working` 은
