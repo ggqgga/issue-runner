@@ -166,18 +166,14 @@ bounce marker (`머지 판정: ✅`/`⚠ 보류`/`🔄`), the latest one decides
 ⚠ → `held`, `🔄` → `bounced` (a `🔄` is the strongest evidence that a replacement worker is
 working right now, so the worker lane owns it — #218 attempt 4).
 
-- `held` (the **last** verdict after the bounce marker is `머지 판정: ⚠ 보류`) →
-  **needs-human** — same action as the `held` row of the table in 2) below:
-  `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note
-  "<one-line question>"`, closeout leaves it alone. Stop here (do not check `mergeable`, and
-  **never** fall through to a `stale_reverify` re-dispatch — that lane conflicts with a live
-  replacement worker, so it stays blocked).
-- If it is `bounced`, or **there is no output (exit 1 — undecidable)** → treat as `active`,
-  **leave it right here** (do not even check `mergeable`, do not call 2) finish-classify).
-  A bounce round in flight is owned by the worker lane (fail-closed — open only once "not
-  bounced" is *proven*, same direction as #171). **A PR whose `held` a human just released
-  (labels removed) and whose replacement worker resumed with `머지 판정: 🔄` lands here too**
-  — that is how `held` is released (#218 attempt 4).
+- If it is `held`, `bounced`, or **there is no output (exit 1 — undecidable)** → treat as
+  `active`, **leave it right here** (do not even check `mergeable`, do not call 2)
+  finish-classify). A bounce round in flight is owned by the worker lane (fail-closed — open
+  only once "not bounced" is *proven*, same direction as #171).
+  **The sweep no longer promotes `held` to needs-human either** (#218 second pass — human
+  decision (c), see "Why the sweep no longer promotes `held`" below). **A PR whose `held` a
+  human just released (labels removed) and whose replacement worker resumed with `머지 판정:
+  🔄` lands here too** — that is the `bounced`-side release path (#218 attempt 4).
 - Only when the output is exactly `ok` → branch on
   `gh pr view <pr> --repo <repo> --json mergeable`:
   - CONFLICTING → **Adopt (rebase path)**: hand to ② Pick; ③ step 2 has closeout rebase
@@ -232,6 +228,29 @@ tick, so the regression repeats silently. The fix keeps the rule and only fills 
 set symmetrically — add `🔄`, but map it to `bounced`, **not** `ok` (mapping it to `ok` would
 bring back the incident attempt 1 closed: the CONFLICTING branch adopting/rebasing a live
 worker's PR).
+
+**Why the sweep no longer promotes `held`** (#218 second pass, human decision (c)): attempt
+4's release path only fixes things **after** the replacement worker has already posted `🔄`.
+A window remains between ⑶ a human clearing the hold's labels and ⑷ the replacement worker
+posting `🔄` — inside that window the comment array is byte-for-byte identical to how it read
+at ⑵, so `bounce-state.sh` still returns `held`. That function is a pure function of the
+comment array, so it cannot tell "the sweep already consumed this `held` once, attached
+needs-human, and a human just released it" apart from "the sweep has never seen this `held`
+before" (attempt 2's original target) — both read as the same string. Reading the release off
+signals outside the comments (a timeline history, a release marker) was considered and
+rejected — a release marker breaks the instant a human removes just the label, and a timeline
+history is the wider axis #174's episode key owns (that PR decides "what counts as a release";
+this one narrows "who may re-attach after one").
+
+So, (c): **the sweep treats `held` exactly like `bounced` and an undecidable judgment — hands
+off, unconditionally** — the promote-to-needs-human branch is removed here entirely. This is a
+known regression, accepted on purpose: the original incident attempt 2 closed (a post-bounce
+`⚠` never becoming needs-human) comes back **at this specific gate**. One path survives —
+a plain `⚠` with **no bounce marker at all** (where `bounce-state.sh`'s `$bi == null` already
+returns `ok`) never reaches this gate; it still gets promoted by `finish-classify.sh`'s own
+`held` row in 2) below, unmodified by this change, because a PR that was never bounced carries
+none of this ambiguity. `bounce-state.sh`'s own `held` computation is unchanged (the value is
+still correct) — what is retired is only what this one caller (the sweep) does with it.
 
 **Discipline (bitten three times at this spot)**: when you introduce a new terminal state, do
 not design only its entry path — build the **exit path in the same change.** Entry-only means
