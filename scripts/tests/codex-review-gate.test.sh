@@ -125,6 +125,32 @@ mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub
 UNABLE="$TMP/unable.md" run --base base; assert_eq "'판정 불가능할 정도로' 과잉차단 방지" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "'판정 불가능할 정도로' 정상 서술 오탐: $last" ;; esac
 mv "$TMP/stub/codex.real" "$TMP/stub/codex"
 
+echo "[gate] 4b-6) 반송 격자(#207 attempt4, f1) — [P1] 항목의 설명문에 '누락' 이 있어도 BLOCKER 로 산다"
+# 옛 분류는 우선순위 집계보다 먼저 본문 전체를 grep 해, 정당한 [P1] 의 설명문이 산문
+# 패턴에 걸리면 verdict=NONE 으로 지워버렸다(폴백이 CLEAN 을 내면 BLOCKER 가 조용히 증발).
+printf -- '- [P1] 필수 변경이 diff에서 누락 — scripts/foo.sh:12\n' > "$TMP/unable.md"
+mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
+UNABLE="$TMP/unable.md" run --base base; assert_eq "f1 [P1] 설명문 '누락' 은 BLOCKER 로 산다" "$rc" 1; case "$last" in "verdict=BLOCKER p1=1 "*) ok ;; *) bad "f1: $last" ;; esac
+mv "$TMP/stub/codex.real" "$TMP/stub/codex"
+
+echo "[gate] 4b-7) 반송 격자(f2) — '누락은 없습니다'(부정문) 는 CLEAN 으로 남는다(과잉 차단 금지)"
+printf 'CLEAN. diff에 테스트 누락은 없습니다. 수용 기준을 모두 충족합니다.\n' > "$TMP/unable.md"
+mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
+UNABLE="$TMP/unable.md" run --base base; assert_eq "f2 '누락은 없습니다' CLEAN" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "f2: $last" ;; esac
+mv "$TMP/stub/codex.real" "$TMP/stub/codex"
+
+echo "[gate] 4b-8) 반송 격자(f3) — 일부만 정적 검증 불가라 밝힌 정상 CLEAN 은 과잉 차단되지 않는다"
+printf 'CLEAN. 나머지는 런타임 동작이라 정적으로는 검증할 수 없지만, 변경분 자체는 부합합니다.\n' > "$TMP/unable.md"
+mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
+UNABLE="$TMP/unable.md" run --base base; assert_eq "f3 부분 서술 CLEAN" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "f3: $last" ;; esac
+mv "$TMP/stub/codex.real" "$TMP/stub/codex"
+
+echo "[gate] 4b-9) 반송 격자(f4) — 동의어('검토') + '정보만으로' 축이 함께면 미산출로 차단된다"
+printf '제공된 정보만으로 변경 내용을 검토할 수 없습니다.\n' > "$TMP/unable.md"
+mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
+UNABLE="$TMP/unable.md" run --base base; assert_eq "f4 '검토할 수 없습니다' 미산출" "$rc" 2; case "$last" in "verdict=NONE "*) ok ;; *) bad "f4: $last" ;; esac
+mv "$TMP/stub/codex.real" "$TMP/stub/codex"
+
 echo "[gate] 4c) [P0] 도 BLOCKER · events 의 오류 문자열은 오탐 안 냄(codex stderr 만 본다, #137)"
 STUB_MODE=p0 run --base base; assert_eq "P0 exit" "$rc" 1; case "$last" in "verdict=BLOCKER p1=1 p2=0 p3=0 "*) ok ;; *) bad "P0 집계: $last" ;; esac
 STUB_MODE=selfref run --base base; assert_eq "events 자기참조 exit" "$rc" 0; case "$last" in "verdict=WARN p1=0 p2=1 "*) ok ;; *) bad "events 자기참조로 오탐: $last" ;; esac

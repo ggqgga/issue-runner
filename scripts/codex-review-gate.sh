@@ -117,20 +117,6 @@ if grep -q -E 'does not exist or you do not have access|not supported when using
   log "가용 모델 확인: codex debug models · config 의 model 은 유효 모델로(0.153 은 미설정 시 Astra 기본)"
   echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=$secs"; exit 2
 fi
-# 한국어 패턴(#207): 리뷰어가 "판정 근거로 지정된 diff가 메시지에 포함되어 있지 않아
-# ... 검증할 수 없습니다 ... 판정할 근거도 없습니다" 류의 산문만 남기면 [Pn] 항목이
-# 하나도 없어 옛 분류는 이걸 CLEAN 으로 읽었다(머지 게이트의 절반이 fail-open —
-# 실증: PR #195 closeout ③-1, 10초 만에 verdict=CLEAN). "diff가 없어 못 본다" ·
-# "검증/판정할 수 없다"(동사 바로 뒤에 붙는 "할 수 없" 만, "불가능"·"불가"는 뺐다 —
-# "판정 불가능할 정도로 미미합니다" 처럼 정도를 서술하는 정상 CLEAN 과 겹친다) ·
-# "(판정/검증/확인) ↔ 근거 ... 없다" 가 한 문장 안에서 같이 나올 때만(근거 단독으로는
-# 안 걸리게 — "근거 없는 폴백은 없습니다" 같은 정상 리뷰 서술과 겹친다, #207 사전
-# 리뷰 WARN) 좁게 잡는다. 실제로 다 보고 결함 없다고 답한 정상 CLEAN 을 과잉 차단
-# 하지 않는지 각각 픽스처로 검증: scripts/tests/codex-review-gate.test.sh.
-if grep -q -i -E 'unable to inspect|could not be inspected|execution tool was unavailable|tool (was|is) unavailable|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review|not a substantive|diff.{0,40}(포함되어 있지|누락)|(판정|검증)할 수 없|(판정|검증|확인).{0,20}근거.{0,15}(없|부족)|근거.{0,15}(없|부족).{0,20}(판정|검증|확인)' "$REVIEW" 2>/dev/null; then
-  log "리뷰어가 대상을 못 봤다고 답함 — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
-  none "$secs"
-fi
 if [ "$rc" != 0 ] || [ ! -s "$REVIEW" ]; then
   log "리뷰 미산출(exit $rc, review.md $( [ -s "$REVIEW" ] && echo 있음 || echo 없음)) — fail-closed. 로그: $ERR"
   echo "verdict=NONE p1=0 p2=0 p3=0 model=$MODEL secs=$secs"; exit 2
@@ -139,8 +125,37 @@ fi
 # 판정 — 내장 리뷰어 항목 형식 `- [P1] 제목 — 파일:줄`. 본문에 항목이 하나도 없으면 CLEAN.
 # 항목 = `- ` 로 시작하는 줄 안의 `[P<n>]` 토큰(볼드·번호 변형 허용). 항목 줄에 없는 `[P1]` 언급은 세지 않는다.
 # P0 은 P1 과 함께 BLOCKER 로 센다 — 안 그러면 최우선 발견이 어느 카운터에도 안 잡혀 CLEAN 으로 샌다(#137).
+# 우선순위 집계를 산문 휴리스틱(바로 아래)보다 **먼저** 한다(#207 attempt4) — 순서가 뒤집혀
+# 있으면 정당한 [P1]/[P2]/[P3] 항목의 *설명문*이 "diff 못 봄" 패턴에 걸려 verdict=NONE 으로
+# 지워지고, 폴백이 CLEAN 을 내면 BLOCKER 가 조용히 증발한다(실증: f1 아래).
 p1=$(grep -c -E '^\s*[-*]\s.*\[P[01]\]' "$REVIEW"); p2=$(grep -c -E '^\s*[-*]\s.*\[P2\]' "$REVIEW")
 p3=$(grep -c -E '^\s*[-*]\s.*\[P[3-9]\]' "$REVIEW")
+
+# 한국어/영어 "판정 근거 없음" 패턴(#207): 리뷰어가 "판정 근거로 지정된 diff가 메시지에
+# 포함되어 있지 않아 ... 검증할 수 없습니다 ... 판정할 근거도 없습니다" 류의 산문만 남기면
+# 옛 분류는 이걸 CLEAN 으로 읽었다(머지 게이트의 절반이 fail-open — 실증: PR #195 closeout
+# ③-1, 10초 만에 verdict=CLEAN). [Pn] 항목이 **하나도 없을 때만**(위에서 이미 집계) 적용한다
+# — 항목이 있는 리뷰는 정의상 미산출이 아니라서 이 산문 휴리스틱을 탈 이유가 없다(#207 반송:
+# 항목 있는 [P1] 설명문의 "누락" 이 이 grep 에 걸려 BLOCKER 가 NONE 으로 증발했었다).
+#
+# 항목 0일 때: "근거/대상이 없다"는 축(diff 미포함·근거/정보 부족)과 "판정/검증/확인/검토/
+# 판단/평가할 수 없다"는 축이 **함께** 나올 때만 잡는다(동사 하나만으로는 "정적으로는
+# 검증할 수 없지만 변경분 자체는 부합" 같은 정상 CLEAN 의 부분 서술과 못 가른다, f3).
+# "diff...누락"(부정문 "diff에 테스트 누락은 없습니다" 와 겹쳐 뺐다, f2) 대신 "diff...포함되어
+# 있지" 만 남긴다 — 실제 fail-open 원문(f5)은 이 표현으로 이미 걸린다. "불가능"·"불가"는
+# 여전히 뺀다("판정 불가능할 정도로 미미합니다" 처럼 정도를 서술하는 정상 CLEAN 과 겹친다).
+# 각 갈래를 픽스처로 검증: scripts/tests/codex-review-gate.test.sh.
+if [ "$p1" -eq 0 ] && [ "$p2" -eq 0 ] && [ "$p3" -eq 0 ]; then
+  LEGACY_UNABLE='unable to inspect|could not be inspected|execution tool was unavailable|tool (was|is) unavailable|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review|not a substantive'
+  BASIS_ABSENT='diff.{0,40}포함되어 있지|(판정|검증|확인).{0,20}근거.{0,15}(없|부족)|근거.{0,15}(없|부족).{0,20}(판정|검증|확인)|제공된 (정보|diff|자료)만으로'
+  CANNOT_VERB='(판정|검증|확인|검토|판단|평가).{0,10}할 수 없'
+  if grep -q -i -E "$LEGACY_UNABLE" "$REVIEW" 2>/dev/null \
+    || { grep -q -E "$BASIS_ABSENT" "$REVIEW" 2>/dev/null && grep -q -E "$CANNOT_VERB" "$REVIEW" 2>/dev/null; }; then
+    log "리뷰어가 대상을 못 봤다고 답함 — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
+    none "$secs"
+  fi
+fi
+
 if   [ "$p1" -gt 0 ]; then verdict=BLOCKER; code=1
 elif [ "$p2" -gt 0 ]; then verdict=WARN; code=0
 elif [ "$p3" -gt 0 ]; then verdict=NIT; code=0
