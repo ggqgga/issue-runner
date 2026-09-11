@@ -144,13 +144,32 @@ p3=$(grep -c -E '^\s*[-*]\s.*\[P[3-9]\]' "$REVIEW")
 # "diff...누락"(부정문 "diff에 테스트 누락은 없습니다" 와 겹쳐 뺐다, f2) 대신 "diff...포함되어
 # 있지" 만 남긴다 — 실제 fail-open 원문(f5)은 이 표현으로 이미 걸린다. "불가능"·"불가"는
 # 여전히 뺀다("판정 불가능할 정도로 미미합니다" 처럼 정도를 서술하는 정상 CLEAN 과 겹친다).
+#
+# "제공된 (정보|diff|자료)만으로" 갈래는 응답 어디에 있든 매치돼 왔는데, 정상 리뷰가
+# **한 속성만 못 쟀다고 곁들이는 문장**("제공된 정보만으로 성능은 검증할 수 없습니다.
+# 코드 변경은 검토했고 결함은 없습니다")도 걸려 CLEAN → NONE 으로 뒤집혔다(#207 round2
+# 검증자 실측 P2, f7). 이 갈래만 **리뷰 전체가 실패했을 때로 한정**한다 — 리뷰가 결함
+# 없음/CLEAN 류 결론을 이미 냈으면(REVIEW_CONCLUDED) 그 caveat 은 곁다리일 뿐이므로
+# 미산출로 접지 않는다. 결론이 없는 순수 "못 봤다" 응답(f8)은 그대로 차단된다. 나머지
+# 세 갈래(diff 미포함·근거 없음/부족 앞뒤)는 **항상** 리뷰 전체 실패를 뜻해 이 완화가
+# 필요 없다 — 그대로 무조건 적용한다(BASIS_ABSENT_STRONG).
 # 각 갈래를 픽스처로 검증: scripts/tests/codex-review-gate.test.sh.
 if [ "$p1" -eq 0 ] && [ "$p2" -eq 0 ] && [ "$p3" -eq 0 ]; then
   LEGACY_UNABLE='unable to inspect|could not be inspected|execution tool was unavailable|tool (was|is) unavailable|cannot (access|inspect|read) the (commit|diff|repository)|no changes to review|not a substantive'
-  BASIS_ABSENT='diff.{0,40}포함되어 있지|(판정|검증|확인).{0,20}근거.{0,15}(없|부족)|근거.{0,15}(없|부족).{0,20}(판정|검증|확인)|제공된 (정보|diff|자료)만으로'
+  BASIS_ABSENT_STRONG='diff.{0,40}포함되어 있지|(판정|검증|확인).{0,20}근거.{0,15}(없|부족)|근거.{0,15}(없|부족).{0,20}(판정|검증|확인)'
+  BASIS_ABSENT_CAVEAT='제공된 (정보|diff|자료)만으로'
   CANNOT_VERB='(판정|검증|확인|검토|판단|평가).{0,10}할 수 없'
-  if grep -q -i -E "$LEGACY_UNABLE" "$REVIEW" 2>/dev/null \
-    || { grep -q -E "$BASIS_ABSENT" "$REVIEW" 2>/dev/null && grep -q -E "$CANNOT_VERB" "$REVIEW" 2>/dev/null; }; then
+  REVIEW_CONCLUDED='결함.{0,6}(없|발견)|이상[[:space:]]*없|문제[[:space:]]*없|부합|CLEAN'
+  matched=0
+  if grep -q -i -E "$LEGACY_UNABLE" "$REVIEW" 2>/dev/null; then
+    matched=1
+  elif grep -q -E "$BASIS_ABSENT_STRONG" "$REVIEW" 2>/dev/null && grep -q -E "$CANNOT_VERB" "$REVIEW" 2>/dev/null; then
+    matched=1
+  elif grep -q -E "$BASIS_ABSENT_CAVEAT" "$REVIEW" 2>/dev/null && grep -q -E "$CANNOT_VERB" "$REVIEW" 2>/dev/null \
+    && ! grep -q -E "$REVIEW_CONCLUDED" "$REVIEW" 2>/dev/null; then
+    matched=1
+  fi
+  if [ "$matched" = 1 ]; then
     log "리뷰어가 대상을 못 봤다고 답함 — 미산출(fail-closed): $(head -c 160 "$REVIEW")"
     none "$secs"
   fi

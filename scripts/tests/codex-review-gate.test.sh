@@ -151,6 +151,25 @@ mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub
 UNABLE="$TMP/unable.md" run --base base; assert_eq "f4 '검토할 수 없습니다' 미산출" "$rc" 2; case "$last" in "verdict=NONE "*) ok ;; *) bad "f4: $last" ;; esac
 mv "$TMP/stub/codex.real" "$TMP/stub/codex"
 
+echo "[gate] 4b-10) 반송 격자(f7) — 한 속성만 못 쟀다는 곁다리 '제공된 정보만으로' 는 결론(결함 없음)이 있으면 과잉 차단되지 않는다(#207 round2 P2)"
+# round2 검증자 실측: "제공된 정보만으로 성능은 검증할 수 없습니다. 코드 변경은 검토했고
+# 결함은 없습니다." 처럼 리뷰가 실제로 diff 를 보고 결론(결함 없음)까지 낸 정상 CLEAN 인데,
+# '제공된...만으로' 가 응답 어디에 있든 매치돼 CLEAN → NONE 으로 뒤집혔다. 결함이 새지는
+# 않지만(NONE 은 폴백행이라 fail-closed) closeout 이 불필요하게 막힌다.
+printf '제공된 정보만으로 성능은 검증할 수 없습니다. 코드 변경은 검토했고 결함은 없습니다.\n' > "$TMP/unable.md"
+mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
+UNABLE="$TMP/unable.md" run --base base; assert_eq "f7 결함없음 결론 있는 '정보만으로' 과잉차단 방지" "$rc" 0; case "$last" in "verdict=CLEAN "*) ok ;; *) bad "f7: $last" ;; esac
+mv "$TMP/stub/codex.real" "$TMP/stub/codex"
+
+echo "[gate] 4b-11) 반송 격자(f8) — 결론 없이 리뷰 전체가 '제공된 정보만으로' 판정 불가로 끝나면 여전히 미산출(f7 의 반증)"
+# f7 의 완화가 과해지면 진짜 미산출(리뷰 전체가 실패)까지 CLEAN 으로 새는 반대 방향
+# fail-open 이 재발한다 — 결론 문장(결함 없음/CLEAN 류)이 없는 순수 '못 봤다' 응답은
+# 계속 차단돼야 한다.
+printf '제공된 정보만으로는 diff 내용을 확인할 수 없어 판정할 수 없습니다.\n' > "$TMP/unable.md"
+mv "$TMP/stub/codex" "$TMP/stub/codex.real"; cp "$TMP/stub/codex.bak" "$TMP/stub/codex"
+UNABLE="$TMP/unable.md" run --base base; assert_eq "f8 결론 없는 '정보만으로' 는 계속 미산출" "$rc" 2; case "$last" in "verdict=NONE "*) ok ;; *) bad "f8: $last" ;; esac
+mv "$TMP/stub/codex.real" "$TMP/stub/codex"
+
 echo "[gate] 4c) [P0] 도 BLOCKER · events 의 오류 문자열은 오탐 안 냄(codex stderr 만 본다, #137)"
 STUB_MODE=p0 run --base base; assert_eq "P0 exit" "$rc" 1; case "$last" in "verdict=BLOCKER p1=1 p2=0 p3=0 "*) ok ;; *) bad "P0 집계: $last" ;; esac
 STUB_MODE=selfref run --base base; assert_eq "events 자기참조 exit" "$rc" 0; case "$last" in "verdict=WARN p1=0 p2=1 "*) ok ;; *) bad "events 자기참조로 오탐: $last" ;; esac
