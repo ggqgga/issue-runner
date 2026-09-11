@@ -52,10 +52,15 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # PR 에서 `flow:verify` 를 떼므로 위 서버 쿼리(label:flow:verify)에 애초에 안 잡혀서
   # 가려져 있었을 뿐이고, `runner-held`(#151)는 **flow:verify 를 떼지 않는다** — 디스패처가
   # 방금 정지시킨 PR 이 그대로 검증 후보로 떠서 정지가 무시된다. 순수 추가로 그 구멍을 막는다.
+  # → 그래서 **이 한 자리는 오늘 동작이 바뀐다**(나머지 세 자리와 달리 무동작 안전망이 아니다):
+  #   runner-held 로 정지된 PR 이 이 틱부터 verify 후보에서 빠진다.
   #
   # `hold:` 는 **접두사** 판별이라 사유가 늘어도 안 깨지고, `hold:` 로 시작하지 않는 라벨
   # (`holding`·`on-hold`·`area:hold`)은 걸리지 않는다 — 과잉 제외는 검증 대기 PR 을 조용히
   # 큐에서 지우는 방향이라 원래 결함보다 나쁘다.
+  #
+  # 해제는 **두 라벨 다** 떼는 것이다 — `needs-human` 만 떼면 `hold:*` 가 남아 후보로
+  # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
   printf '%s' "$meta" | jq -e '[.labels[].name]|index("needs-human")' >/dev/null && continue
   printf '%s' "$meta" | jq -e '[.labels[].name]|any(startswith("hold:"))' >/dev/null && continue
 

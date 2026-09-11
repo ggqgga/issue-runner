@@ -69,6 +69,9 @@ while [ "$i" -lt "$count" ]; do
   # 서버 쿼리(위 search/issues)는 **일부러 안 건드린다**: `gh` 검색은 부정 라벨을
   # 오파싱하고(#21) `-label:hold:policy` 는 콜론이 둘이라 더 위험하다 — 필터는
   # 클라이언트 쪽에만 둔다(needs-human 의 서버측 제외는 기존 그대로 유지).
+  #
+  # 해제는 **두 라벨 다** 떼는 것이다 — `needs-human` 만 떼면 `hold:*` 가 남아 후보로
+  # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
   case ",$labels," in *",hold:"*) continue ;; esac
 
   # 검증/마감 레인 이슈 제외 (진행 라벨 미러) — 원 이슈에 flow:verify/flow:ready/harvesting

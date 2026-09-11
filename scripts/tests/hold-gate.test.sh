@@ -171,6 +171,12 @@ grid=(
   'area:hold → 통과(과잉 제외 금지)|["area:hold"]|pass'
   'hold-ladder(하이픈) → 통과(과잉 제외 금지)|["hold-ladder"]|pass'
   'holder:x → 통과(과잉 제외 금지)|["holder:x"]|pass'
+  # 사유 없는 `hold:` 도 접두를 만족한다 — 두 구현(글롭·startswith)이 같은 답을 내는지.
+  'hold:(사유 없음) → 제외|["hold:"]|block'
+  # 대소문자는 **구분한다**(글롭도 startswith 도). 라벨을 만드는 건 setup-labels.sh 와
+  # transition.sh 뿐이고 전부 소문자라 실물이 없지만, 손으로 `Hold:ladder` 를 붙여도
+  # 게이트가 안 선다는 사실 자체를 여기 못박아 조용한 드리프트를 막는다.
+  'Hold:ladder(대문자) → 통과(대소문자 구분 · 실물 라벨 아님)|["Hold:ladder"]|pass'
 )
 
 for sut in eligible claim closeout verify; do
