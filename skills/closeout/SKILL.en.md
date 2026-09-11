@@ -70,10 +70,11 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
   deadline is exceeded, cut it off with `TaskStop` and treat it as no verdict
   produced — the guard rail that stops an external-CLI codex stall from
   blocking the tick indefinitely (#96).
-- Absolutely forbidden: unattended production deploys (step 4 is a human gate — no
-  real deploy) · unattended promotion of a production pointer branch (release etc. —
-  pushing a verified SHA to a branch that production/workers pull is a human gate on
-  par with a deploy) · pushing directly to main (doc reconcile also goes through the PR
+- Absolutely forbidden: unattended production deploys (step 4 is a **deploy-lane
+  (deploy-cycle) hand-off** — closeout itself never deploys for real) · unattended
+  promotion of a production pointer branch (release etc. — pushing a verified SHA to a
+  branch that production/workers pull is deploy-grade and belongs to the **deploy lane
+  (deploy-cycle)**) · pushing directly to main (doc reconcile also goes through the PR
   branch) · merging without `harvesting` occupation · touching worktrees/branches
   that issue-runner created · breaking issue-runner's "never merges" invariant.
 
@@ -100,7 +101,7 @@ resume):
 | 2 merge | PR `MERGED` | if MERGED, merge is done (includes post-merge worktree cleanup) |
 | 3 reconcile | plan-doc diff (merge commit) + epic comment | if in the merge, done |
 | 4 deploy | `배포 대기:` comment / `deployed:<sha>` | if present, do not re-request |
-| 5 post | `✅ 스모크` comment / deploy issue CLOSED + verification·deploy-complete comment | if present, do not re-smoke (including when the human gate finished verification and closed it) |
+| 5 post | `✅ 스모크` comment / deploy issue CLOSED + verification·deploy-complete comment | if present, do not re-smoke (including when the deploy lane (deploy-cycle) finished verification and closed it) |
 | 6 spinoff | created-issue number comment | if present, do not re-issue |
 
 ## ①-b Stuck-PR sweep — lost-finish recovery (every tick)
@@ -614,7 +615,10 @@ comment.
   neither exists, this step is a no-op — **since there is no new doc commit·push, skip
   the cache supplement above too** (no new HEAD SHA to fill).
 
-**Step 4 — deploy (human gate, dry-run).** **Do not deploy for real.** Fill
+**Step 4 — deploy-lane hand-off (dry-run).** **closeout does not deploy for real; it
+hands the deploy-wait issue to the deploy-cycle loop.** The reason is not human approval
+but **lane separation** — deploying, promoting, real-device testing and closing are owned
+by deploy-cycle's unattended cycle. Fill
 `references/deploy-check-issue.md` (`<DEPLOY_CMD>`=the repo's deploy entrypoint, or
 "the repo's deploy procedure" if unknown; `<VERIFY_URL>`=the production base URL the
 step-5 smoke drives — leave it blank if unknown so step 5 falls back as URL-unreachable;
@@ -624,9 +628,10 @@ hardware/real-device checks; this is the sole hand-off destination
 for out-of-merge-scope verification the step-1 verifier excluded from the merge gate).
 
 **`<LIVE_CHECKS>` must take one of two shapes — no free prose.**
-- If there is **nothing at all** for a human to do after deploy, exactly the one word
+- If there is **nothing at all** to step through after deploy, exactly the one word
   `없음`. Do not append an explanation after it.
-- Otherwise a **`- [ ]` checkbox list**. One line = one action a human performs.
+- Otherwise a **`- [ ]` checkbox list**. One line = one action deploy-cycle ⑦ performs
+  once (on real hardware, a TEST-worker profile #18 dry run).
   Background·rationale·caveats go in `## 변경 요약`; leave only the actions here.
 
 Why the shape is enforced: the branch below reads this section to decide whether an issue
@@ -638,14 +643,15 @@ to a human but is not `없음` to a machine branch.
 **Before carrying an item over, closeout climbs the ladder once (an untried `[ ]` is not
 carried over as-is).** Unfinished items the worker left as a bare `[ ]` **with no rung
 attempt and no citation** (no attempted rung, no failure output in the PR test plan) must
-not be copied into this section as-is — doing so promotes work nobody attempted into a
-human's lap. closeout attempts **rung ① (dev server — `bin/rails runner`·localhost) and
+not be copied into this section as-is — doing so shoves work nobody attempted straight
+into the deploy lane. closeout attempts **rung ① (dev server — `bin/rails runner`·localhost) and
 rung ② (`bin/dry-run`·the AdsPower relay)** of
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-**once each** first (rung ③, real hardware, is not closeout's job — record it with the
-attempt results).
-- If rung ①② **yields a verdict**, **drop** the item from `<LIVE_CHECKS>` (it is not a human
-  action any more). Record the basis in a PR comment.
+**once each** first. **Rung ③ (the TEST worker) is deploy-cycle ⑦'s job** — that is why
+the item moves into `<LIVE_CHECKS>` rather than being escalated into a human's lap, and
+the ①② attempt results ride along so ⑦ does not repeat the same rungs.
+- If rung ①② **yields a verdict**, **drop** the item from `<LIVE_CHECKS>` (it is not a
+  deploy-lane action any more). Record the basis in a PR comment.
 - If they **fail**, carry the item over as `- [ ]` but **cite the rung attempted and its
   failure output (the command plus its last 20 lines)**. The citation goes in the
   `## 변경 요약` section — `<LIVE_CHECKS>` keeps the shape discipline above and holds
@@ -746,8 +752,9 @@ structure/empty-state confirmation from real-data render confirmation in the res
   reason as a comment instead: `스모크 생략: 밟을 항목 0`.
 - **Already-closed deploy issue — skip the smoke.** If the deploy issue is already
   CLOSED and has a verification/deploy-complete comment, treat step 5 as complete —
-  do not re-smoke, proceed to the next step (the case where the human gate finished
-  verification and closed it — the standard finalization in a promotion-model repo).
+  do not re-smoke, proceed to the next step (the case where the deploy lane
+  (deploy-cycle) finished verification and closed it — the standard finalization in a
+  promotion-model repo).
 - **Degrade — no silent skip.** If the chrome-devtools MCP is absent from the session
   (headless/cron — interactive-auth MCP may be missing) or `<VERIFY_URL>` is blank or
   unreachable, skip the smoke and fall back to the existing human-report path, but leave
@@ -914,7 +921,7 @@ State the 7 exit states — for **each** PR processed (per-PR when the drain han
 - **dup** — step-1 verification judged it "already on `origin/main`·duplicate", so
   `closeout-dup` closed the PR and the issue without merging (no `needs-human` — the loop
   finished it). Counted as `dup-closed N` (`중복종료 N` in the Korean report line).
-- **approval-required** — step 4 issued a deploy issue and is awaiting the human gate.
+- **approval-required** — step 4 issued a deploy issue and handed it to the deploy-cycle lane.
 - **exhausted** — the same step-5 failure recurred `REPAIR_RECUR_LIMIT` times,
   escalated to needs-human.
 - **stagnated** — quiet for `QUIET_TICKS` consecutive ticks.
@@ -930,8 +937,11 @@ Non-operational notes — they do not affect tick execution.
   invariants), closeout = the closing dock (monopolizes merging). The two loops
   prevent conflict via `harvesting` label occupation — issue-runner ② Maintain does
   not touch a PR that closeout has picked.
-- Human gate: only production deploys are human-approved (step-4 dry-run issue →
-  approval). The rest — merge, doc reconcile, follow-up issuance — is unattended.
+- Deploy lane (deploy-cycle): closeout does not deploy to production or promote
+  release — step 4 files a dry-run deploy-wait issue and hands it to the deploy-cycle
+  loop, whose ⑦ owns deploying, promoting, real-device testing (rung ③, the TEST worker)
+  and closing. The rest — merge, doc reconcile, follow-up issuance — closeout does
+  unattended.
 - Operation: run closeout as a `/loop` session separate from issue-runner
   (e.g. `/loop 20m /closeout`) — the two coordinate occupation purely by label.
 - Dependencies: the deterministic helpers (`closeout-reconcile.sh`·
