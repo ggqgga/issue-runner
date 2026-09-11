@@ -650,14 +650,16 @@ fi
 if ! grep -q '\${STATUS_KEY}: \${STATUS_REVIEWED}' "$gate" || ! grep -q '\${STATUS_KEY}: \${STATUS_NO_BASIS}' "$gate"; then
   echo "  ✗ $gate 의 프롬프트 계약문이 STATUS_* 상수로 만들어지지 않았다"; exit 1
 fi
-if ! grep -qF '"(^|[[:space:]])${STATUS_KEY}:[[:space:]]+(${STATUS_REVIEWED}|${STATUS_NO_BASIS})$"' "$gate"; then
+if ! grep -qF 'contract_re="(^|[[:space:]])${STATUS_KEY}:[[:space:]]+(${STATUS_REVIEWED}|${STATUS_NO_BASIS})$"' "$gate"; then
   echo "  ✗ $gate 의 판정 파서가 STATUS_* 상수로 만들어지지 않았다 — 요구 형식과 갈라진다"; exit 1
 fi
 # 판정 창의 경계(#283) — codex 가 렌더하는 발견 섹션 헤더도 형식 문자열이다. 여기도 정의 1곳으로
 # 묶고 파서가 그 상수를 실제로 참조하는지 문다: 헤더 리터럴이 awk 안에 따로 적히면 codex 가
 # 헤더 문구를 바꿨을 때 한쪽만 고쳐져 게이트가 조용히 옛 동작(발견 있는 리뷰 전부 미산출)으로 돈다.
+# **값까지** 문다 — 빈 값(`RENDER_HEADER_ONE=''`)이면 awk 의 `s == h1` 이 첫 빈 줄에 걸려 구역이
+# 총평 첫 문단에서 잘린다(방향은 fail-closed 지만 게이트가 조용히 쓸모없어진다).
 for v in RENDER_HEADER_ONE RENDER_HEADER_MANY; do
-  grep -qE "^$v=" "$gate" || { echo "  ✗ $gate 에 $v 정의 없음 — 판정 창 경계의 단일 정의 자리(#283)"; exit 1; }
+  grep -qE "^$v='[^']+'\$" "$gate" || { echo "  ✗ $gate 의 $v 가 없거나 값이 비었다 — 판정 창 경계의 단일 정의 자리(#283)"; exit 1; }
 done
 grep -qF 'awk -v h1="$RENDER_HEADER_ONE" -v hn="$RENDER_HEADER_MANY"' "$gate" \
   || { echo "  ✗ $gate 의 판정 창이 RENDER_HEADER_* 상수를 참조하지 않는다 — 헤더 리터럴이 두 자리로 갈라진다(#283)"; exit 1; }

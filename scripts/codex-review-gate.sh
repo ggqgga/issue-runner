@@ -232,9 +232,22 @@ if [ "$STATUS_CONTRACT" = 1 ]; then
         print s; exit
       }
     }' "$REVIEW" 2>/dev/null)
-  status=$(printf '%s\n' "$last_line" \
-    | grep -E "(^|[[:space:]])${STATUS_KEY}:[[:space:]]+(${STATUS_REVIEWED}|${STATUS_NO_BASIS})$" \
-    | sed -e "s/^.*${STATUS_KEY}:[[:space:]]*//")
+  # 값 앞의 같은 줄 텍스트는 허용하되, 그 텍스트가 **산문**일 때만이다. 마크다운 인용(`> `)·
+  # 목록(`- `)·번호(`1. `)·헤딩(`# `) 표식뿐이라면 그건 리뷰어가 계약문을 **인용**한 것이지
+  # 판정을 **주장**한 것이 아니다 — #197 계열("인용된 마커는 제어 신호가 아니다")을 여기서 닫는다.
+  # 접두가 표식뿐인 줄은 형식 위반으로 접는다(fail-closed). 접두가 아예 없는 맨몸 계약 줄은
+  # 당연히 통과다 — 그게 계약문이 요구하는 본래 형태다.
+  contract_re="(^|[[:space:]])${STATUS_KEY}:[[:space:]]+(${STATUS_REVIEWED}|${STATUS_NO_BASIS})$"
+  status=""
+  if printf '%s\n' "$last_line" | grep -qE "$contract_re"; then
+    prefix=${last_line%"${STATUS_KEY}:"*}                  # 마지막 키 앞의 같은 줄 텍스트
+    prose=$(printf '%s' "$prefix" | tr -d '[:space:]0-9>#*+.():-')   # 표식·공백·번호를 걷어낸 나머지
+    if [ -z "$prefix" ] || [ -n "$prose" ]; then
+      status=$(printf '%s\n' "$last_line" | sed -e "s/^.*${STATUS_KEY}:[[:space:]]*//")
+    else
+      log "계약 줄 앞이 인용·목록 표식뿐이다([$prefix]) — 리뷰어가 계약문을 인용한 것으로 보고 판정으로 안 읽는다(fail-closed)"
+    fi
+  fi
   case "$status" in
     "$STATUS_REVIEWED") : ;;   # 계약 충족 — 아래 항목 집계가 verdict 를 낸다
     "$STATUS_NO_BASIS")
@@ -246,7 +259,9 @@ if [ "$STATUS_CONTRACT" = 1 ]; then
       # 사람이 알아야 할 것은 두 가지다: ⑴ 판정에 실제로 쓴 줄이 무엇이었나 ⑵ 그런데 본문엔
       # 발견이 몇 건이나 있었나. 발견이 있는데 계약 줄만 없다면 그건 "리뷰어가 게을렀다"가
       # 아니라 **출력 구조가 계약을 담을 수 없다**는 신호다(이 이슈가 정확히 그 모양이었다).
-      log "진단: 판정에 쓴 줄(모델 통제 구역 마지막) = [$(printf '%s' "$last_line" | cut -c1-100)]"
+      # 자르기는 `cut -c` 가 아니라 awk substr — C 로케일의 `cut -c` 는 바이트로 잘라 한국어 총평을
+      # UTF-8 중간에서 토막 내고, 사람이 첫 틱에 읽으라고 만든 이 줄이 깨진 바이트로 끝난다.
+      log "진단: 판정에 쓴 줄(모델 통제 구역 마지막) = [$(printf '%s\n' "$last_line" | awk '{print substr($0, 1, 100)}')]"
       if [ "$((p1 + p2 + p3))" -gt 0 ]; then
         log "진단: 본문엔 발견이 $((p1 + p2 + p3))건 있었는데 계약 줄만 없다 — 리뷰어가 판정을 못 낸 게 아니라 그 판정이 버려졌다. codex 렌더 헤더('$RENDER_HEADER_ONE'/'$RENDER_HEADER_MANY') 뒤는 모델 통제 밖이니 구역 판정을 의심하라: $REVIEW"
       fi
