@@ -273,8 +273,10 @@ no subagent spawn, polling, or `TaskStop` wiring:
    last stdout line `verdict=… p1= p2=`, body in `a/review.md`. `[P1]` = BLOCKER.
 2. plan conformance: `codex-review-gate.sh --base origin/<default> --prompt "<instructions>" --cd <worktree> --out <scratch>/b`
    (the helper prefixes the `--base` range to the prompt so the reviewer actually reads the committed diff — without it, only the working tree) —
-   the instructions are `references/verifier-prompt.md` with placeholders filled: `<PR>`·`<REPO>`·`<BASE>`=default
-   branch·`<PLAN_REF>`=the issue's `## Plan` or the referenced `Plans/*.md` (empty string if none)·`<ISSUE_BODY>`=
+   the instructions are `references/verifier-prompt.md` with placeholders filled: `<PR>`·`<REPO>`·`<BASE>`=the same
+   origin-scoped ref passed to the `--base` flag right above (e.g. `origin/<default>` — not the bare local
+   `<default>`; if they diverge and local is stale, the reviewer gets two conflicting range instructions, #207)·
+   `<PLAN_REF>`=the issue's `## Plan` or the referenced `Plans/*.md` (empty string if none)·`<ISSUE_BODY>`=
    `gh issue view <issue> --repo <repo>` output (empty string if no linked issue)·`<LESSONS_OR_"없음">`=the contents
    of **`.loop/lessons-verifier.md`** (the verdict casebook — injects past misjudgment patterns; fall back to
    `.loop/lessons.md`, `없음` if both are missing or empty. `lessons.md` is for the **implementing worker** — do not

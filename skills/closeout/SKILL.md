@@ -239,7 +239,9 @@ Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에
    stdout 마지막 줄 `verdict=… p1= p2=`, 본문 `a/review.md`. `[P1]` = BLOCKER.
 2. 계획 부합: `codex-review-gate.sh --base origin/<default> --prompt "<지시>" --cd <worktree> --out <스크래치>/b`
    (헬퍼가 `--base` 범위를 프롬프트 머리에 명시해 리뷰어가 커밋된 diff 를 실제로 본다 — 없으면 작업 트리만 본다) — 지시문은
-   `references/verifier-prompt.md` 의 placeholder 를 채운 것: `<PR>`·`<REPO>`·`<BASE>`=default branch·
+   `references/verifier-prompt.md` 의 placeholder 를 채운 것: `<PR>`·`<REPO>`·`<BASE>`=바로 위 호출의
+   `--base` 에 넘긴 것과 같은 origin 한정 ref(예: `origin/<default>` — 로컬 `<default>` 가 아니다.
+   둘이 갈리면 로컬이 뒤처진 상태에서 상충하는 두 범위 지시가 된다, #207)·
    `<PLAN_REF>`=이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<ISSUE_BODY>`=`gh issue view <issue>
    --repo <repo>` 출력(연결 이슈 없으면 빈 문자열)·`<LESSONS_OR_"없음">`=`$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑
    **`.loop/lessons-verifier.md`**(검증 판정 사례집 — 과거 오판 패턴 주입; 없으면 `.loop/lessons.md` 폴백, 둘 다
