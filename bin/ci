@@ -968,6 +968,30 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f active 행의 조치 칸에 '없으면 무접촉' 조건이 없음(#198 재심/P2)"; exit 1; }
 done
 
+echo "[closeout] ①-b held 행 — 해제 경로가 ①-c 로 배선 (반증형, #198 흡수 #174)"
+# #225 가 못박은 가족: 새 종결 상태를 더할 때 **진입만** 재고 해제 경로를 안 재면, held 가
+# 사람이 방금 푼 보류를 매 틱 `closeout-blocked` 로 되살려 루프가 사람과 싸운다. 워커가 찍은
+# `머지 판정: ⚠ 보류` 의 해제도 ①-c 의 같은 판정(2) 의 논리곱)을 써야 한다 — 판정 로직을
+# 두 벌로 만들지 않는다(#174 흡수분이 요구한 칸). active 행 가드와 동형으로 **조치 칸**을
+# 직접 뽑아, 조건 분기(①-c 로 vs 아직 해제 전이면 needs-human)가 있는지 본다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  row=$(grep -n '^| `held`' "$f" | head -1 | cut -d: -f1)
+  [ -n "$row" ] || { echo "  ✗ $f 에 finish-classify 표의 held 행 없음"; exit 1; }
+  line=$(sed -n "${row}p" "$f")
+  # 행 안에 '①-c'·'needs-human' 이 다른 자리에도 있으므로(논리곱 인용·라벨명) 맨몸 문자열로
+  # 물면 배선을 지워도 통과한다 — **배선 문장 자체**와 **해제 전 갈래 문장 자체**로 좁힌다.
+  case "$f" in
+    *.en.md) routew='send it to ①-c'; elsew='not yet released' ;;
+    *)       routew='①-c 로 보낸다';   elsew='아직 해제 전이면' ;;
+  esac
+  printf '%s' "$line" | grep -qF "$routew" \
+    || { echo "  ✗ $f held 행이 해제 경로를 ①-c 로 보내지 않음(사람 해제를 매 틱 되살린다, #198 흡수 #174)"; exit 1; }
+  printf '%s' "$line" | grep -qF '#225' \
+    || { echo "  ✗ $f held 행에 해제 경로 미재기의 근거(#225) 없음(#198 흡수 #174)"; exit 1; }
+  printf '%s' "$line" | grep -qF "$elsew" \
+    || { echo "  ✗ $f held 행에 '아직 해제 전' 갈래가 없음(무조건 closeout-blocked 로 되돌아갔다, #198 흡수 #174)"; exit 1; }
+done
+
 echo "[closeout] ①-c 인용 의무 — 결정 코멘트 부재·조회 실패는 면제 (반증형, #198 attempt3-P2)"
 # 검증 레인 실측 P2: 모호 행 신호에는 '결정 코멘트 부재'·'코멘트 조회 실패' 가 명시돼
 # 있는데, 바로 아래 인용 의무 문장은 세 조치 모두에 결정문 원문 한 줄 인용을 요구해 그
