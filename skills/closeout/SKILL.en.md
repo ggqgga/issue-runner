@@ -148,8 +148,15 @@ that hold (#151) — never pick it until a human removes the label:
 
 **1) Bounce-marker gate first — before the branch splits, common to CONFLICTING and
 MERGEABLE** (#218): run `$SCRIPTS/bounce-state.sh <repo> <pr>` once, **before** looking at
-`mergeable` at all.
+`mergeable` at all. Output is one of three values — `ok`/`bounced`/`held` (#218 attempt 2 —
+`held` is new).
 
+- `held` (a new `머지 판정: ⚠ 보류` was posted **after** the latest bounce marker) →
+  **needs-human** — same action as the `held` row of the table in 2) below:
+  `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note
+  "<one-line question>"`, closeout leaves it alone. Stop here (do not check `mergeable`, and
+  **never** fall through to a `stale_reverify` re-dispatch — that lane conflicts with a live
+  replacement worker, so it stays blocked).
 - If it is `bounced`, or **there is no output (exit 1 — undecidable)** → treat as `active`,
   **leave it right here** (do not even check `mergeable`, do not call 2) finish-classify).
   A bounce round in flight is owned by the worker lane (fail-closed — open only once "not
@@ -170,6 +177,30 @@ verifying) and re-dispatches it, stamping a false idempotency marker
 wrong cause of death). The same overlap happens when verify bounces right after a worker
 posts `held` (`⚠ 보류`); pulling the gate ahead of the branch covers CONFLICTING ·
 `stale_reverify` · `held` in one place, so a fourth branch would be covered automatically too.
+
+**Attempt 1 → attempt 2 — the reasoning that splits ⓐ/ⓑ** (#218 attempt 2, codex BLOCKER on
+re-verify of PR #225): attempt 1 unconditionally short-circuited here on `bounced`. But
+`bounced` was carrying two meanings at once — "bounce in flight right now" and "activity has
+piled up after the bounce" (the same shape as the PR#168 lesson: one shared sentinel hides
+which cause fired). Post-bounce activity splits into two branches:
+- **ⓐ replacement worker died (neither ✅ nor ⚠)**: another lane already covers this — the
+  bounce transition returns the linked issue to `agent-ready`, so the dispatcher attaches a
+  fresh worker, and if that one dies too the timebox judge (`scripts/timebox-check.sh`, #200)
+  reclaims the claim and returns it to `agent-ready` again. Not permanent stranding, so **not
+  fixed here.**
+- **ⓑ a `머지 판정: ⚠ 보류` posted after the bounce**: no lane covers this. The worker
+  explicitly signaled "a human needs to decide," but the gate stopped at `bounced` before
+  ever calling `finish-classify`, so `held` (→ needs-human) **never ran.** The human signal
+  goes silently missing — exactly the shape this sweep exists to recover, so this round
+  fixes it.
+
+The split lives **inside** `bounce-state.sh` (no new freshness predicate gets hand-rolled into
+SKILL prose) — it is the exact same rule already used for ✅ (last-matching **index**, not
+createdAt) applied to ⚠ as well, yielding a third output value `held` (see
+`scripts/bounce-state.sh`). `stale_reverify`/`stale_inline`/`done_verdict` still do not get
+promoted while `bounced` — ⓐ is already proven non-regressing above, and promoting those
+values while `bounced` would resurrect exactly the incident #218 attempt 1 closed (misclassifying
+bounced code as finished).
 
 Why CONFLICTING originally needed it (#196, measured: bodat PR #5009 / issue #4973): a bounced
 PR has no `머지 판정: ✅`, so it never shows up in `closeout-eligible.sh`, and the
