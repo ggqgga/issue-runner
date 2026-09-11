@@ -334,10 +334,14 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
   prevention action>` to **`.loop/lessons-verifier.md`** under the path output by
   `$SCRIPTS/repo-dir.sh <repo>` (create it if absent — this is the verifier's
   casebook, kept separate from the worker's `lessons.md`). **Cap: 20 entries** —
-  on overflow drop the oldest **entry as a whole**, not by line: this file mixes
-  multi-line cases starting with `##`, and cutting by line tears the prose apart
-  (an entry = one line starting with `- [`, or a `##` header through just before the
-  next entry). This record is fed back into
+  on overflow, drop the oldest entries as whole units **until the entry count is
+  at or below the cap**, not by line: this file mixes multi-line cases starting
+  with `##`, and cutting by line tears the prose apart (an entry = one line
+  starting with `- [`, or a `##` header through just before the next entry).
+  Don't count by hand — call `scripts/lessons-trim.sh <file> 20` in one place
+  right after appending (#208: the old rule dropped only **one** oldest entry,
+  so append(+1)/delete(-1) netted zero and overflow never shrank once past the
+  cap). This record is fed back into
   the next verification via the `<LESSONS_OR_"없음">` injection above, preventing
   recurrence of the same misjudgment (citation misreads·base blind spots·etc.).
   (If it was not a reversal — a normal CLEAN — do not record.)
