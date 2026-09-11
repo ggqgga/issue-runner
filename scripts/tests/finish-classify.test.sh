@@ -604,10 +604,14 @@ GT=$(mktemp -d)
 G_SHA="7ac1f0e91234567890abcdef1234567890abcdef"   # short = 7ac1f0e9
 printf '%s\n' "2026-07-05T11:30:00 pid=11111 7ac1f0e9 대기열 2번째" > "$GT/queued.log"
 : > "$GT/empty.log"
+printf '%s\n' "2026-07-05T11:30:00 pid=11111 7ac1f0e9 대기열 2번째" > "$GT/unreadable.log"
+chmod 000 "$GT/unreadable.log"
 
 # 시각 축 — NOW = 12:00:00Z.
 G_OLD="2026-07-05T10:00:00Z"    # 120분 전 — 커밋 오래됨(STALL_MIN 25·STALE_FINISH_MIN 30 둘 다 초과)
 G_FRESH="2026-07-05T11:50:00Z"  # 10분 전 — 커밋 신선
+G_15M="2026-07-05T11:45:00Z"    # 15분 전 — STALL_MIN(25) 이내이지만 버퍼 10분은 넘김
+G_40M="2026-07-05T11:20:00Z"    # 40분 전 — STALL_MIN 밖
 
 # 코멘트 픽스처 (본문은 실제 워커·verify-runner 가 찍는 접두를 그대로 쓴다).
 cat > "$GT/bounced_noverifier.json" <<'J'
@@ -643,16 +647,17 @@ cat > "$GT/held.json" <<'J'
 ]
 J
 
-# run_fc <comments-file> <head_at> <head_sha> <queue.log>
+# run_fc <comments-file> <head_at> <head_sha> <queue.log> [STALE_FINISH_MIN]
 run_fc() {
-  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 STALL_MIN=25 \
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN="${5:-30}" STALL_MIN=25 \
     FC_COMMENTS_FILE="$1" FC_HEAD_AT="$2" FC_HEAD_SHA="$3" FC_QUEUE_LOG="$4" \
     "$SUT" owner/repo 1 2>/dev/null
 }
 
-# route_1b <mergeable> <comments-file> <head_at> <head_sha> <queue.log> <labels(csv)>
+# route_1b <mergeable> <comments-file> <head_at> <head_sha> <queue.log> <labels(csv)> [STALE_FINISH_MIN]
 route_1b() {
   local mergeable="$1" cfile="$2" head_at="$3" head_sha="$4" qlog="$5" labels="$6"
+  local sfm="${7:-30}"
   local fc bs rc=0
 
   # 대상 필터 — `flow:verify`(verify-runner 소유)·`harvesting`(이미 입양)·`needs-human`
@@ -669,7 +674,7 @@ route_1b() {
     # `bounced` → **finish-classify 로 분류한다**(#206). 재디스패치 갈래만 연다 —
     # 반송 회차의 CLEAN 검증자 코멘트는 반송 *이전* 것일 수 있어 `stale_inline` 입양은
     # 반송된 코드를 머지하는 길이 된다(#196 이 막은 방향).
-    fc=$(run_fc "$cfile" "$head_at" "$head_sha" "$qlog")
+    fc=$(run_fc "$cfile" "$head_at" "$head_sha" "$qlog" "$sfm")
     case "$fc" in
       stale_reverify) printf 'redispatch\n' ;;
       *)              printf 'untouched\n' ;;
@@ -677,7 +682,7 @@ route_1b() {
     return 0
   fi
 
-  fc=$(run_fc "$cfile" "$head_at" "$head_sha" "$qlog")
+  fc=$(run_fc "$cfile" "$head_at" "$head_sha" "$qlog" "$sfm")
   case "$fc" in
     done_verdict)   printf 'eligible_path\n' ;;
     stale_inline)   printf 'adopt_merge\n' ;;
@@ -717,6 +722,24 @@ row "B2 CONFLICTING·반송마커·커밋오래됨·CI큐티켓살아있음" unt
 # 큐에 그 SHA 줄이 없으면(=티켓 없음) 증거가 아니다 — A1 과 같은 결론으로 돌아온다.
 row "B3 CONFLICTING·반송마커·커밋오래됨·남의티켓만" redispatch \
   CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
+
+# 진행 증거를 **판정하지 못하면**(queue.log 를 읽을 수 없음) 그건 "증거 없음" 이 아니다 —
+# 그 방향으로 접으면 파일 하나 깨진 박스가 살아 있는 워커를 전부 재디스패치한다.
+row "B4 CONFLICTING·반송마커·커밋오래됨·큐로그읽기실패" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_OLD" "$G_SHA" "$GT/unreadable.log" ""
+
+# 커밋 신선도 축을 **독립적으로** 문다. 기본값에서는 시간버퍼(STALE_FINISH_MIN 30) >
+# 신선도 임계(STALL_MIN 25) 라 "커밋이 신선" 한 칸이 스테일 클록에도 걸려 두 보호가
+# 겹친다 — 겹치면 격자가 커밋 축을 실제로는 안 무는 것이다(뮤테이션으로 확인: 커밋
+# 시각을 헬퍼에 안 넘겨도 기본값 행은 전부 초록이었다). 두 상수는 독립 knob 이므로
+# 버퍼를 10분으로 좁혀 그 겹침을 풀면, 커밋 15분 전(= STALL_MIN 이내)인 워커를 살리는
+# 것은 **오직 신선도 술어**다.
+row "B5 CONFLICTING·반송마커·버퍼10분·커밋15분전(STALL_MIN 이내)" untouched \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_15M" "$G_SHA" "$GT/empty.log" "" 10
+# 같은 버퍼에서 커밋이 STALL_MIN 밖(40분 전)이면 보호는 사라진다 — 위 칸이 "항상 untouched"
+# 가 아니라 신선도 때문에 untouched 임을 고정한다.
+row "B6 CONFLICTING·반송마커·버퍼10분·커밋40분전(STALL_MIN 밖)" redispatch \
+  CONFLICTING "$GT/bounced_noverifier.json" "$G_40M" "$G_SHA" "$GT/empty.log" "" 10
 
 # ── C. #196 입양 판별식 무회귀 — 최신 판정이 ✅ 면 신선도와 무관하게 입양 ───────
 row "C1 CONFLICTING·✅최신·커밋오래됨" adopt_rebase \
@@ -759,6 +782,7 @@ row "G6 MERGEABLE·검증자CLEAN+🔄·CI큐티켓살아있음" untouched \
 row "G7 MERGEABLE·⚠ 최신"                       needs_human \
   MERGEABLE "$GT/held.json" "$G_OLD" "$G_SHA" "$GT/empty.log" ""
 
+chmod 644 "$GT/unreadable.log" 2>/dev/null || true
 rm -rf "$GT"
 
 echo "finish-classify.test: pass=$pass fail=$fail"

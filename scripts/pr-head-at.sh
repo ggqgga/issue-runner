@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# pr-head-at.sh <repo> <pr>
+# pr-head-at.sh [--with-sha] <repo> <pr>
 #
 # PR **head 커밋**의 시각을 ISO8601(`...Z`) 로 stdout 에 낸다.
+# `--with-sha` 를 주면 `<head SHA> <ISO8601>` 두 필드로 낸다(#206) — 진행 증거 ②(그 SHA 의
+# CI 티켓이 큐에 살아 있는가, `progress-evidence.sh`)를 물으려면 시각만으로는 부족하고,
+# SHA 를 따로 한 번 더 조회하면 이 파일이 없애려던 "두 자리" 가 다시 생긴다. 이미 여기서
+# headRefOid 를 받아 쓰고 있으므로 같은 조회의 값을 함께 낼 뿐, 조회 횟수는 그대로다.
 # 성공하면 exit 0, 얻지 못하면 **아무것도 안 내고 exit 1**.
 #
 # 왜 헬퍼가 따로 있나 (#171 반송 4회차 [P1-1]):
@@ -28,6 +32,11 @@
 # #175 의 몫이다 — 이 파일이 SHA 를 다룬다고 해서 그 축을 여기로 끌어오지 마라.
 set -uo pipefail
 
+with_sha=0
+if [ "${1:-}" = "--with-sha" ]; then
+  with_sha=1
+  shift
+fi
 repo=${1:?repo}
 pr=${2:?pr_num}
 
@@ -46,4 +55,8 @@ raw=$(gh api "repos/$repo/commits/$sha" 2>/dev/null) || exit 1
 at=$(printf '%s' "$raw" | jq -r '.commit.committer.date // empty' 2>/dev/null) || exit 1
 [ -n "$at" ] || exit 1
 
-printf '%s\n' "$at"
+if [ "$with_sha" = 1 ]; then
+  printf '%s %s\n' "$sha" "$at"
+else
+  printf '%s\n' "$at"
+fi
