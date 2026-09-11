@@ -27,14 +27,41 @@ trap 'rm -rf "$tmp"' EXIT
 pass=0
 fail=0
 
-# ── 새 규칙(#218) — SKILL.md ①-b 1)·2) 절을 그대로 거울 재현 ────────────────
-#   bounce != ok            → active(무접촉), mergeable 도 finish-classify 도 안 본다
+# ── 새 규칙(#218 attempt 2) — SKILL.md ①-b 1)·2) 절을 그대로 거울 재현 ───────
+#   bounce == held           → held(needs-human, mergeable·finish-classify 안 본다)
+#   bounce != ok(그 외)        → active(무접촉), mergeable 도 finish-classify 도 안 본다
 #   bounce == ok, CONFLICTING → adopt_conflict(입양)
 #   bounce == ok, 그 외        → finish-classify 결과를 그대로 조치로 사용
 sweep_decide() {
   local mergeable="$1" bounce_file="$2" fc_json="$3" fc_now="$4" fc_head_at="$5"
   local bstate rc=0
   bstate=$(BOUNCE_COMMENTS_FILE="$bounce_file" bash "$DIR/bounce-state.sh" owner/repo 9 2>/dev/null) || rc=$?
+  if [ "$rc" = 0 ] && [ "$bstate" = "held" ]; then
+    echo "held"
+    return
+  fi
+  if [ "$rc" != 0 ] || [ "$bstate" != "ok" ]; then
+    echo "active"
+    return
+  fi
+  if [ "$mergeable" = "CONFLICTING" ]; then
+    echo "adopt_conflict"
+    return
+  fi
+  FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
+    bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null
+}
+
+# ── attempt-1 규칙(#218 첫 회차 — 이번 회차가 고치는 codex BLOCKER) ──────────
+# bounce-state.sh 는 이제 held 를 3치로 내지만, attempt-1 코드는 그걸 몰랐다 —
+# `bounced`/`held` 를 구분 없이 한 방향(무접촉)으로만 받았다. 여기서는 bounce-state.sh
+# 를 되돌리지 않고, **호출자가 held 를 bounced 로 접어 읽던** 그 시절 판정 분기를
+# 그대로 재현해 뮤테이션 대조에 쓴다(아래).
+sweep_decide_attempt1() {
+  local mergeable="$1" bounce_file="$2" fc_json="$3" fc_now="$4" fc_head_at="$5"
+  local bstate rc=0
+  bstate=$(BOUNCE_COMMENTS_FILE="$bounce_file" bash "$DIR/bounce-state.sh" owner/repo 9 2>/dev/null) || rc=$?
+  [ "$bstate" = "held" ] && bstate="bounced"   # attempt-1 은 held 를 모른다
   if [ "$rc" != 0 ] || [ "$bstate" != "ok" ]; then
     echo "active"
     return
@@ -145,6 +172,23 @@ run "(e) MERGEABLE·held 형상+ok→held(무회귀)" sweep_decide \
 run "(f) MERGEABLE·held 형상+bounced→무접촉" sweep_decide \
   MERGEABLE "$tmp/held_bounced.json" "$held_bounced_comments" "$now_epoch" "$head_at" active
 
+# ── #218 attempt 2 픽스처 — codex BLOCKER 가 지적한 진짜 구멍 ──────────────
+# (g): **반송 마커 → 그 뒤 ⚠ 보류**(순서가 (f) 의 역방향). 재검증 실패로 반송된
+#     PR 에 교체 워커가 새로 붙어 "사람이 판단해야 한다" 고 명시적으로 올린 경우 —
+#     이게 이번 회차가 닫는 진짜 구멍(ⓑ)이다. attempt 1 은 bounced 에서 무조건
+#     조기 종료해 이 held 신호를 영원히 놓쳤다(codex: "a later ⚠ verdict never
+#     becomes held"). 실측 재현: PR #225 검증자 리뷰(2026-09-11 00:50 UTC).
+marker_then_held_comments='[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-09-11T00:00:00Z"},
+  {"body":"검증자 리뷰: BLOCKER 1건\n<!-- bodat:worker -->","createdAt":"2026-09-11T00:30:00Z"},
+  {"body":"재검증 실패: #218 — codex BLOCKER (attempt 1)\n<!-- bodat:worker -->","createdAt":"2026-09-11T00:50:00Z"},
+  {"body":"머지 판정: ⚠ 보류 — 반송 게이트 갈래 확정 필요\n<!-- bodat:worker -->","createdAt":"2026-09-11T02:00:00Z"}
+]'
+printf '%s' "$marker_then_held_comments" > "$tmp/marker_then_held.json"
+
+run "(g) MERGEABLE·반송 마커 뒤 새 ⚠ 보류→held(needs-human, #218 attempt 2)" sweep_decide \
+  MERGEABLE "$tmp/marker_then_held.json" "$marker_then_held_comments" "$now_epoch" "$head_at" held
+
 # ── 뮤테이션 방증 — 게이트를 갈래 안으로 되돌리면 (a)·(c)·(f) 가 빨개진다 ──
 # `sweep_decide_pre218` (게이트가 CONFLICTING 갈래 안에만 있던 구형상)로 같은
 # 입력을 판정하면: (a)·(c)·(f) 는 MERGEABLE 이라 bounce-state 를 아예 안 보고
@@ -187,6 +231,49 @@ if [ "$mut_fail" = 0 ]; then
 else
   fail=$((fail + 1))
   echo "  ✗ 뮤테이션 방증 실패 — 대조군이 어긋났다(mut_pass=$mut_pass mut_fail=$mut_fail)"
+fi
+
+# ── 뮤테이션 방증 2 — (g) 를 attempt-1 규칙으로 되돌리면 빨개진다 (#218 attempt 2) ──
+# `sweep_decide_attempt1` 은 bounce-state.sh 가 3치(ok/bounced/held)를 내도 held 를
+# bounced 로 접어 무조건 무접촉 처리하던 이번 회차 이전 판정이다. (g) 를 그 규칙으로
+# 재면 needs-human 승격이 빠져 `active` 로 나와야 한다 — 이게 이번 회차가 고친
+# codex BLOCKER 의 실측 재현이다. (a)·(b)·(c)·(d)·(e)·(f) 는 attempt-1 규칙과 새
+# 규칙이 같은 값을 내야 한다(held 갈래를 새로 여는 것 말고는 손대지 않았다는 대조군).
+mut2_pass=0
+mut2_fail=0
+check_mutation2() {
+  local name="$1" mergeable="$2" bounce_file="$3" fc_json="$4" expect_old="$5"
+  local out
+  out=$(sweep_decide_attempt1 "$mergeable" "$bounce_file" "$fc_json" "$now_epoch" "$head_at")
+  if [ "$out" = "$expect_old" ]; then
+    mut2_pass=$((mut2_pass + 1))
+  else
+    mut2_fail=$((mut2_fail + 1))
+    echo "  ✗ 뮤테이션 대조2 $name — attempt-1 규칙 기대=$expect_old 실제=$out"
+  fi
+}
+check_mutation2 "(g)→attempt-1 규칙에서 오분류(active, held 를 놓침)" \
+  MERGEABLE "$tmp/marker_then_held.json" "$marker_then_held_comments" active
+# 대조군 — held 갈래를 새로 연 것 말고는 attempt-1 과 다르지 않다.
+check_mutation2 "(a)→attempt-1 규칙에서도 무회귀(active)" \
+  MERGEABLE "$tmp/bounced.json" "$stale_reverify_comments" active
+check_mutation2 "(b)→attempt-1 규칙에서도 무회귀(stale_reverify)" \
+  MERGEABLE "$tmp/ok.json" "$no_bounce_comments" stale_reverify
+check_mutation2 "(c)→attempt-1 규칙에서도 무회귀(active)" \
+  MERGEABLE "$tmp/does-not-exist.json" "$stale_reverify_comments" active
+check_mutation2 "(d)→attempt-1 규칙에서도 무회귀(adopt_conflict)" \
+  CONFLICTING "$tmp/ok.json" "$no_bounce_comments" adopt_conflict
+check_mutation2 "(e)→attempt-1 규칙에서도 무회귀(held)" \
+  MERGEABLE "$tmp/held_ok.json" "$held_ok_comments" held
+check_mutation2 "(f)→attempt-1 규칙에서도 무회귀(active)" \
+  MERGEABLE "$tmp/held_bounced.json" "$held_bounced_comments" active
+
+if [ "$mut2_fail" = 0 ]; then
+  pass=$((pass + 1))
+  echo "  ✓ 뮤테이션 방증2: attempt-1 규칙으로 되돌리면 (g) 가 실제로 오분류된다(mut2_pass=$mut2_pass)"
+else
+  fail=$((fail + 1))
+  echo "  ✗ 뮤테이션 방증2 실패 — 대조군이 어긋났다(mut2_pass=$mut2_pass mut2_fail=$mut2_fail)"
 fi
 
 echo "closeout-sweep-gate.test: pass=$pass fail=$fail"

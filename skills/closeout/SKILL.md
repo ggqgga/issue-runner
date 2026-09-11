@@ -133,7 +133,14 @@ head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify`
 
 **1) 반송 마커 게이트 먼저 — 갈래를 가르기 전에, CONFLICTING·MERGEABLE 공통**(#218):
 mergeable 값을 보기 **전에** `$SCRIPTS/bounce-state.sh <repo> <pr>` 를 한 번 돌려라.
+출력은 `ok`/`bounced`/`held` 세 값이다(#218 attempt 2 — `held` 신설).
 
+- `held` 면(최신 반송 마커보다 **뒤에** 새 `머지 판정: ⚠ 보류` 가 찍혔다) →
+  **needs-human** — 아래 2) 표의 `held` 행과 같은 조치: `$SCRIPTS/transition.sh
+  closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`,
+  closeout 무접촉. 여기서 멈춘다(mergeable 도 안 보고 `stale_reverify` 재디스패치로는
+  **절대** 가지 않는다 — 살아있는 교체 워커와 충돌하는 건 재디스패치 쪽이라 그
+  갈래는 계속 막는 게 안전하다).
 - `bounced` 이거나 **출력이 없으면(exit 1 — 판정 실패)** → `active` 취급 **무접촉**,
   여기서 멈춘다(mergeable 도 안 보고 2) finish-classify 도 안 부른다). 진행 중인
   반송 회차는 워커 레인 소유다(fail-closed — 반송되지 않았음을 *증명*했을 때만 연다,
@@ -154,6 +161,26 @@ mergeable 값을 보기 **전에** `$SCRIPTS/bounce-state.sh <repo> <pr>` 를 �
 뒤에 verify 가 반송한 순서도 같은 겹침이라, 게이트를 갈래 앞으로 끌어올리면
 CONFLICTING·`stale_reverify`·`held` 세 갈래가 한 자리로 덮인다 — 갈래가 하나 더
 생겨도 이 자리 하나로 자동 덮인다.
+
+**attempt 1 에서 attempt 2 로 — ⓐ/ⓑ 를 가른 근거**(#218 attempt 2, codex BLOCKER 재검증
+실패 PR #225): attempt 1 은 `bounced` 를 무조건 여기서 조기 종료했다. 그런데 `bounced`
+는 "지금 반송 중"과 "반송 뒤 활동이 쌓인 상태" 두 뜻을 겸하고 있었다(PR#168 교훈과
+같은 형상 — 공유 센티널 하나가 두 사유를 가린다). 반송 뒤 활동은 갈래가 둘이다:
+- **ⓐ 교체 워커 사망(✅ 도 ⚠ 도 없음)**: 다른 레인이 덮는다 — 반송 전이가 연결
+  이슈를 `agent-ready` 로 되돌리므로 디스패처가 새 워커를 붙이고, 그 워커가 죽으면
+  타임박스 판정(`scripts/timebox-check.sh`, #200)이 claim 을 회수해 다시
+  `agent-ready` 로 돌린다. 영구 정체가 아니므로 **여기서 고치지 않는다.**
+- **ⓑ 반송 뒤의 `머지 판정: ⚠ 보류`**: 덮는 레인이 없다. 워커가 "사람이 판단해야
+  한다" 고 명시적으로 올린 신호인데 게이트가 `bounced`에서 멈춰 `finish-classify`를
+  안 부르니 `held`(→needs-human)가 **한 번도 실행되지 않았다.** 사람 신호가 조용히
+  묻히는 것 — 이 스윕이 애초에 없애려던 그 형상이라 여기서 고친다.
+
+이 구분을 `bounce-state.sh` **안**에 뒀다(새 신선도 술어를 SKILL 프로즈에 짜 넣지
+않는다) — ✅ 축과 정확히 같은 규칙(마지막 매칭 **인덱스**, createdAt 아님)을 ⚠ 축에도
+그대로 적용해 세 번째 출력값 `held` 를 냈을 뿐이다(`scripts/bounce-state.sh` 참조).
+`stale_reverify`·`stale_inline`·`done_verdict` 는 `bounced` 일 때 여전히 승격하지
+않는다 — ⓐ 는 위에서 이미 무회귀가 증명됐고, `bounced` 인 채로 그 값들을 승격하면
+#218 attempt 1 이 막았던 사고(반송된 코드를 완결로 오분류)가 되살아난다.
 
 CONFLICTING 갈래에 왜 원래 필요했나(#196 실측: bodat PR #5009 / 이슈 #4973): 반송된
 PR 은 `머지 판정: ✅` 가 없어 `closeout-eligible.sh` 목록에 애초에 안 뜨고,
