@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# resume-sweep.sh — 사다리 검증에서 멈춘 이슈(needs-human + hold:ladder)를 창이 지나면
+# resume-sweep.sh — 사다리 검증에서 멈춘 이슈(hold:ladder)를 창이 지나면
 # 자동으로 재개한다. "사람이 '진행해' 를 치던 것을 틱이 대신 친다" (플랜 §4 · 원칙 4).
 #
 # 사용: resume-sweep.sh          (인자 없음)
@@ -11,16 +11,18 @@
 #               건드리지 않는다(이미 깨끗하다). number=짝 이슈 · pr=고친 PR ·
 #               issue_state=그 이슈의 OPEN/CLOSED · removed=뗀 라벨(정렬·콤마 구분).
 #   resumed   — 라벨을 되돌려 재디스패치 가능 상태로. attempt = 이번이 몇 번째 재개인가.
-#   escalated — 재개 상한 초과 → hold:policy 로 승격(needs-human 유지). 그때만 사람.
+#   escalated — 재개 상한 초과 → hold:policy 로 승격. 사람 호출(needs-human)이 되는 것은
+#               그 뒤 재심(③)이 "사람 몫 유지" 로 끝났을 때뿐이다(#244 — 디스패처가 판정).
 #   waiting   — 아직 창(RESUME_AFTER_MIN) 안. minutes = 마지막 갱신 후 경과 분.
 #   warn      — **아무것도 안 건드린** 채 넘긴 사유(사유 라벨 부재 · 경합 · 첫 쓰기 실패).
 #   warn_after_edit — 쓰기가 **이미 반영된 뒤** 후속 단계가 실패했다(라벨·PR 미러·readback).
 #               warn 과 섞으면 "손대지 않았다" 가 거짓이 되어, 보고를 읽는 쪽이 GitHub 상태를
 #               되짚어야 할 때(사람 확인)와 그냥 다음 틱을 기다리면 될 때를 못 가른다.
 #   note      — **아무것도 안 건드린** 정보 줄. warn 과 달리 조치할 것이 **없는** 정상 상태다
-#               (배포 대기 이슈의 사유 없는 needs-human · #201: 배포 대기 이슈의 질문 없는
-#               hold:policy · #217: 배포 대기 이슈의 hold:ladder — 창이 지나도 재개·승격
-#               대상이 아니다). 버리지 않고 남기는 이유는 emit_note 주석.
+#               (#244: 사유 라벨 없는 needs-human — 사람이 직접 세운 정지 · 배포 대기 이슈의
+#               needs-human · #201: 배포 대기 이슈의 질문 없는 hold:policy · #217: 배포 대기
+#               이슈의 hold:ladder — 창이 지나도 재개·승격 대상이 아니다).
+#               버리지 않고 남기는 이유는 emit_note 주석.
 #
 # 상태 파일 없음 — 재개 횟수는 **이슈 코멘트에 붙은 마커**(`<!-- ladder-resume: N -->`)의
 # 개수가 SSOT 다. 재개 코멘트가 자기 마커를 품으므로 카운터와 알림이 한 번의 append 로 끝나고,
@@ -28,11 +30,12 @@
 # 사람이 쓴 글을 통째로 덮어쓸 수 있었다(마커 한 줄 때문에 남의 글이 사라지는 경로).
 # append-only 라 경합에 안전하고, 상태 = 값의 존재라는 레포 규약과도 같은 모양이다.
 #
-# 왜 `hold:ladder` 만 자동 재개하나 (플랜 갈림길 3): `hold:conflict`·`hold:policy` 는
-# **사람이 결정해야 하는 것**이고, 사유 라벨이 아예 없는 needs-human 은 사람이 손으로
-# 붙였을 수 있다 — 루프가 사람의 손을 떼는 일은 없어야 한다. 그래서 그 둘은 무편집.
+# 왜 `hold:ladder` 만 자동 재개하나 (플랜 갈림길 3): `hold:conflict` 는 사람이 결정해야
+# 하는 것이고, `hold:policy` 는 재심 1회를 루프가 맡는다(#155 — ③ 이 이벤트만 낸다).
+# `needs-human` 은 **사람이 직접 세운 정지**다(#244) — 루프가 사람의 손을 떼는 일은 없어야
+# 하므로, 맨 `needs-human` 은 물론이고 `hold:ladder` 옆에 함께 붙은 것도 무편집이다.
 #
-# PR 미러: `transition.sh verify-held`·`closeout-blocked` 는 정지 라벨을 이슈와 **PR 양쪽**에
+# PR 미러: `transition.sh verify-held`·`closeout-blocked` 는 사유 라벨을 이슈와 **PR 양쪽**에
 # 붙인다. 이슈만 되돌리면 PR 은 영구 사람대기로 남고, 뒤 전이(handoff-verify·verify-pass·
 # closeout-pick)는 그 라벨을 떼지 않아 사람이 손으로 지워야 흐른다. 그래서 재개·승격은
 # 연결된 열린 PR 의 같은 라벨까지 **같은 단계에서** 함께 되돌린다.
@@ -418,9 +421,10 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate>
   printf '%s\n' "$prs" | while IFS=$'\t' read -r prnum prlabels; do
     [ -n "$prnum" ] || continue
     if [ "$mode" = resume ]; then
-      has_label "$prlabels" "needs-human" || has_label "$prlabels" "hold:ladder" || continue
+      # `needs-human` 은 떼지 않는다(#244) — 사람이 PR 에 직접 세운 정지다.
+      has_label "$prlabels" "hold:ladder" || continue
       if ! gh pr edit "$prnum" --repo "$repo" \
-           --remove-label "needs-human" --remove-label "hold:ladder" >/dev/null 2>&1; then
+           --remove-label "hold:ladder" >/dev/null 2>&1; then
         emit_warn_after_edit "$repo" "$num" "PR #$prnum 미러 라벨 해제 실패 — PR 이 사람대기로 남는다"
         continue
       fi
@@ -428,7 +432,7 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate>
         emit_warn_after_edit "$repo" "$num" "PR #$prnum 미러 readback 조회 실패 — 반영 여부 미상"
         continue
       fi
-      if has_label "$back" "needs-human" || has_label "$back" "hold:ladder"; then
+      if has_label "$back" "hold:ladder"; then
         emit_warn_after_edit "$repo" "$num" "PR #$prnum 미러 readback 불일치(정지 라벨이 남아 있다)"
       fi
     else
@@ -673,7 +677,7 @@ sweep_hold_mirror() {  # sweep_hold_mirror <repo> <PR row-json>
 
 rc=0
 
-# ── 이슈 1건 처리 (재개 대상 = needs-human ∧ hold:ladder ∧ ¬deploy-wait, #217) ─────
+# ── 이슈 1건 처리 (재개 대상 = hold:ladder ∧ ¬needs-human ∧ ¬deploy-wait, #217·#244) ──
 # 세 조건 모두 **편집 직전 재조회(read_state)** 결과로 판정한다 — 목록 스냅샷(row)은 그 뒤에
 # 붙은 라벨을 모른다(#229). row 는 창 판정(updatedAt)과 파싱 가능성 검사에만 쓴다.
 sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
@@ -729,22 +733,22 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
   fi
 
   # ── 편집 직전 재조회(경합 가드) ───────────────────────────────────────
-  # 목록 조회와 편집 사이에 사람이 needs-human 을 뗐을 수 있다. 그 경우 편집은 **성공**
+  # 목록 조회와 편집 사이에 사람이 hold:ladder 를 뗐을 수 있다. 그 경우 편집은 **성공**
   # 하고(없는 라벨 제거는 no-op) 편집 후 readback 도 기대와 똑같아 보인다 — 사후
   # readback 만으로는 이 경합을 절대 구분 못 한다. 그래서 편집 **전에** 한 번 더 읽는다.
   if ! cur=$(read_state "$repo" "$num" "$tmp/updated.live"); then
     emit_warn "$repo" "$num" "재조회 실패(라벨·updatedAt) — 경합 판별 불가라 건드리지 않는다"
     return 0
   fi
-  if ! has_label "$cur" "needs-human" || ! has_label "$cur" "hold:ladder"; then
-    emit_warn "$repo" "$num" "재조회 시 needs-human·hold:ladder 가 이미 없다(사람 조작 경합) — 자동 재개 안 함"
+  if ! has_label "$cur" "hold:ladder"; then
+    emit_warn "$repo" "$num" "재조회 시 hold:ladder 가 이미 없다(사람 조작 경합) — 자동 재개 안 함"
     return 0
   fi
   # ── 배포 대기 축 판정 — **재조회 결과**에 같은 술어를 적용한다(#229) ───────
   # ②·③·위 row 게이트와 같은 한 벌 술어(deploy_wait_row)를 쓰되, `read_state` 가 내는
-  # 콤마 목록 모양만 어댑터(deploy_wait_labels, 위 정의)로 맞춘다. 위 두 술어(needs-human·
-  # hold:ladder) 뒤에 두는 이유: 그 둘을 통과했다는 것이 곧 "재조회에도 needs-human 이
-  # 있다" 라서 아래 note 문구("needs-human 이 정상 상태라")가 실측과 어긋나지 않는다.
+  # 콤마 목록 모양만 어댑터(deploy_wait_labels, 위 정의)로 맞춘다. 재조회 술어(hold:ladder)
+  # 뒤에 두는 이유: 배포 대기 여부는 "이 건을 건드릴 것인가" 의 마지막 갈림길이고, 그 앞에서
+  # 이미 떨어진 건(사람이 라벨을 뗀 경합)에 note 를 내면 "손대지 않았다" 의 이유가 어긋난다.
   # 판정 실패는 "배포 대기 아님" 으로 폴백하지 않는다 — row 쪽(위)과 같은 방향, 같은 이유.
   if ! dw_tsv=$(deploy_wait_labels "$cur"); then
     emit_warn "$repo" "$num" "배포 대기 재판정 실패(재조회 라벨 파싱) — 재개 대상인지 확정 못 해 건드리지 않는다"
@@ -753,13 +757,20 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
   dwlabel=${dw_tsv#*$'\t'}
   if [ -n "$dwlabel" ]; then
     # 문구는 ②·③ 과 **한 글자도 다르지 않게** 재사용한다 — 디스패처 SKILL 이 문구로 분기한다.
-    emit_note "$repo" "$num" "배포 대기(라벨 $dwlabel) — needs-human 이 정상 상태라 warn 아님"
+    emit_note "$repo" "$num" "배포 대기(라벨 $dwlabel) — 배포 레인의 정상 상태라 warn 아님"
     return 0
   fi
   # `hold:ladder` 옆에 사람 몫 사유가 함께 붙어 있으면 자동 재개 대상이 아니다 — 사다리는
   # 재시도로 풀려도 conflict·policy 는 안 풀리는데, 라벨을 떼면 그 사람 몫이 조용히 사라진다.
   if has_label "$cur" "hold:policy" || has_label "$cur" "hold:conflict"; then
     emit_warn "$repo" "$num" "hold:ladder 외 사람 몫 hold:* 동존 — 자동 재개 안 함"
+    return 0
+  fi
+  # `needs-human` 은 **사람이 직접 세운 정지**다(#244). 창이 지나도 루프가 풀지 않는다 —
+  # 그리고 라벨을 떼지도 않으므로, 재개하면 hold:ladder 만 치우고 needs-human 이 남아
+  # 게이트(#242)는 계속 막는데 재개 횟수만 소진되는 "재개했는데 안 풀리는" 상태가 된다.
+  if has_label "$cur" "needs-human"; then
+    emit_warn "$repo" "$num" "사람이 세운 needs-human 동존 — 자동 재개 안 함"
     return 0
   fi
   # 창 재판정 — 스냅샷 이후 사람이 이슈를 건드렸으면 그 시각이 새 기준이다(스펙의 시계는
@@ -785,7 +796,7 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
   _nonneg_int "$attempts" || attempts=0
   next=$((attempts + 1))
 
-  # ── 상한 초과 → hold:policy 승격 (needs-human 유지) ───────────────────
+  # ── 상한 초과 → hold:policy 승격 (재심 ③ 의 대상이 된다, #244) ────────
   if [ "$next" -gt "$LADDER_RESUME_LIMIT" ]; then
     if ! gh issue edit "$num" --repo "$repo" \
          --add-label "hold:policy" --remove-label "hold:ladder" >/dev/null 2>&1; then
@@ -801,9 +812,8 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
       emit_warn_after_edit "$repo" "$num" "승격 readback 조회 실패 — 라벨 반영 여부 미상, 사람 확인 필요"
       return 0
     fi
-    if ! has_label "$back" "hold:policy" \
-       || has_label "$back" "hold:ladder" || ! has_label "$back" "needs-human"; then
-      emit_warn_after_edit "$repo" "$num" "승격 readback 불일치(hold:policy·needs-human 유지·hold:ladder 해제 기대) — 사람 확인 필요"
+    if ! has_label "$back" "hold:policy" || has_label "$back" "hold:ladder"; then
+      emit_warn_after_edit "$repo" "$num" "승격 readback 불일치(hold:policy 부착·hold:ladder 해제 기대) — 사람 확인 필요"
       return 0
     fi
     # attempt 는 **마커가 실제로 기록한 값**(소진한 재개 횟수)이다 — 거절된 next 가 아니다.
@@ -825,9 +835,10 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
     return 0
   fi
   # agent-ready 는 건드리지 않는다 — 그게 재디스패치 자격이고, 재개는 그 앞을 막던
-  # needs-human·hold:ladder 를 치우는 일이다.
+  # hold:ladder 를 치우는 일이다. `needs-human` 은 애초에 여기 올 수 없고(위 가드) 목록에
+  # 넣지도 않는다(#244 — 사람의 손은 루프가 떼지 않는다).
   if ! gh issue edit "$num" --repo "$repo" \
-       --remove-label "needs-human" --remove-label "hold:ladder" >/dev/null 2>&1; then
+       --remove-label "hold:ladder" >/dev/null 2>&1; then
     emit_warn_after_edit "$repo" "$num" "라벨 해제 실패 — 마커는 이미 남았다(다음 틱이 남은 횟수로 재시도)"
     return 0
   fi
@@ -838,8 +849,8 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
     emit_warn_after_edit "$repo" "$num" "재개 readback 조회 실패 — 라벨 반영 여부 미상, 사람 확인 필요"
     return 0
   fi
-  if has_label "$back" "needs-human" || has_label "$back" "hold:ladder"; then
-    emit_warn_after_edit "$repo" "$num" "재개 readback 불일치(needs-human·hold:ladder 가 남아 있다) — 사람 확인 필요"
+  if has_label "$back" "hold:ladder"; then
+    emit_warn_after_edit "$repo" "$num" "재개 readback 불일치(hold:ladder 가 남아 있다) — 사람 확인 필요"
     return 0
   fi
   printf '{"event":"resumed","repo":"%s","number":%s,"attempt":%s}\n' "$repo" "$(_emit_num "$num")" "$next"
@@ -862,18 +873,31 @@ else
   #     실패가 아니라 "0건" 으로 보여 "멈춘 건 없음" 과 구분되지 않는 것이 해악이었다.
   #     PR 배제용 `is:issue` 는 애초에 잉여다 — `gh search issues` 는 이슈만 찾는다.
   #   · `--limit 200` — 기본 limit(30)은 조용히 잘라내 그 레포들이 영영 안 스윕된다.
-  if ! gh search issues "label:needs-human" --owner "$me" --state open --limit "$LIST_LIMIT" \
-       --json repository -q '.[].repository.nameWithOwner' > "$tmp/search.raw" 2>/dev/null; then
-    echo "resume-sweep: 계정 전체 needs-human 탐색 실패 — 스코프를 못 정해 중단(빈 목록과 구분)" >&2
-    exit 2
-  fi
-  search_hits=$(grep -c . "$tmp/search.raw" || true)
+  # **세 라벨을 전부 훑는다**(#244). 기계 정지에서 `needs-human` 을 뗀 뒤로는 `hold:ladder`·
+  # `hold:policy` 만 달린 레포가 생기는데, `needs-human` 하나로만 탐색하면 그 레포가 통째로
+  # 스코프 밖이 되어 **영영 안 스윕된다**(재개가 조용히 죽는 경로). 한 쿼리에 OR 로 합치지
+  # 않는 이유는 #21 — gh search CLI 의 라벨 qualifier 파싱은 신뢰 구간이 좁다. 긍정 라벨
+  # 하나짜리 쿼리(이 파일이 이미 쓰던 형태)를 세 번 돌려 합집합(sort -u)한다. 부정 라벨도
+  # `is:` 질의 토큰도 쓰지 않는다 — 열림 한정은 위 주석대로 `--state open` **플래그**다(#236).
+  # 한 쿼리라도 실패하면 **중단**한다 — 부분 스코프는 "그 레포엔 멈춘 건이
+  # 없다" 로 위장되기 때문이다(빈 목록과 구분한다는 이 파일의 규율).
+  : > "$tmp/search.raw"
+  for _lbl in needs-human hold:ladder hold:policy; do
+    if ! gh search issues "label:$_lbl" --owner "$me" --state open --limit "$LIST_LIMIT" \
+         --json repository -q '.[].repository.nameWithOwner' > "$tmp/search.one" 2>/dev/null; then
+      echo "resume-sweep: 계정 전체 $_lbl 탐색 실패 — 스코프를 못 정해 중단(빈 목록과 구분)" >&2
+      exit 2
+    fi
+    one_hits=$(grep -c . "$tmp/search.one" || true)
+    cat "$tmp/search.one" >> "$tmp/search.raw"
+    # 상한에 정확히 닿았으면 잘렸을 수 있다 — 조용히 지나가면 "그 레포엔 멈춘 건이 없다" 로
+    # 위장된다. 쿼리마다 따로 본다(합친 뒤 세면 어느 쿼리가 잘렸는지 알 수 없다).
+    # repo 는 특정 레포가 아니라는 뜻으로 `*`.
+    if [ "${one_hits:-0}" -ge "$LIST_LIMIT" ]; then
+      printf '{"event":"warn","repo":"*","number":0,"msg":"탐색 상한 도달(%s, label:%s) — 일부 레포가 누락됐을 수 있다. .loop/repos 로 스코프를 좁혀라"}\n' "$LIST_LIMIT" "$_lbl"
+    fi
+  done
   sort -u "$tmp/search.raw" > "$repos_file"
-  # 상한에 정확히 닿았으면 잘렸을 수 있다 — 조용히 지나가면 "그 레포엔 멈춘 건이 없다" 로
-  # 위장된다. repo 는 특정 레포가 아니라는 뜻으로 `*`.
-  if [ "${search_hits:-0}" -ge "$LIST_LIMIT" ]; then
-    printf '{"event":"warn","repo":"*","number":0,"msg":"탐색 상한 도달(%s) — 일부 레포가 누락됐을 수 있다. .loop/repos 로 스코프를 좁혀라"}\n' "$LIST_LIMIT"
-  fi
 fi
 
 # fetch_issues <repo> <출력파일> <쿼리이름> <gh 추가인자…> — 성공 0 / 조회 실패 1.
@@ -920,30 +944,30 @@ while IFS= read -r repo; do
 
   # ① 재개 대상 — 라벨 AND 로 **서버에서** 좁힌다. 클라이언트 필터만 쓰면 창(limit)을
   #    다른 needs-human 이슈들이 채워 진짜 대상이 밀려난다(eligible-issues.sh 와 같은 교훈).
-  if fetch_issues "$repo" "$tmp/issues.ladder" "needs-human+hold:ladder" \
-       --label needs-human --label hold:ladder; then
+  if fetch_issues "$repo" "$tmp/issues.ladder" "hold:ladder" --label hold:ladder; then
     # fd 3 으로 읽는다 — 안에서 부르는 gh 가 stdin 을 건드리면 목록이 통째로 먹힌다.
     while IFS= read -r row <&3; do
       [ -n "$row" ] || continue
       sweep_issue "$repo" "$row"
     done 3< "$tmp/issues.ladder"
   else
-    echo "resume-sweep: $repo needs-human+hold:ladder 목록 조회 실패 — 이 레포는 건너뛴다" >&2
+    echo "resume-sweep: $repo hold:ladder 목록 조회 실패 — 이 레포는 건너뛴다" >&2
     rc=2
   fi
 
-  # ② 사유 없는 needs-human — 사람이 손으로 붙였을 수 있으니 **손대지 않고** 알린다.
+  # ② 사유 없는 needs-human — 사람이 직접 세운 정지다(#244). **손대지 않고** 알린다.
   #    (여기서 코멘트를 달면 updatedAt 이 갱신돼 자기가 자기 창을 밀어버린다 — 무편집이 규율.)
   if fetch_issues "$repo" "$tmp/issues.human" "needs-human" --label needs-human; then
     while IFS= read -r row <&3; do
       [ -n "$row" ] || continue
       if ! printf '%s' "$row" \
            | jq -e '[.labels[].name | select(startswith("hold:"))] | length > 0' >/dev/null 2>&1; then
-        # 배포 대기 이슈는 **사유 라벨 없이 needs-human 으로 쉬는 것이 정상**이다(머지 뒤 사람이
-        # 배포할 때까지). 교정할 불변식 위반이 없는데 매 틱 warn 이면, 머지가 쌓일수록 그 줄들이
-        # 진짜 "사람이 사유 없이 붙인 needs-human" 을 묻어 버린다 — warn 은 **루프가 교정 가능한
-        # 불변식 위반일 때만**(형제 이슈 #188 이 loop-status.sh 에서 정한 정의). 그래서 note 로
-        # 강등한다. 조용히 버리지 않는 이유는 emit_note 주석 참고.
+        # 사유 라벨 없는 `needs-human` 은 **정상 상태**다(#244) — 라벨 하나에 뜻 하나를 준
+        # 뒤로 그것은 "사람이 직접 세운 정지" 하나만 뜻하고, 루프가 교정할 불변식 위반이
+        # 아니다(warn 은 **루프가 교정 가능한 불변식 위반일 때만** — #188/#190 이 세운 정의).
+        # 그래서 두 갈래 모두 note 다. 갈래를 남겨 두는 이유는 **문구**다: 배포 레인이라
+        # 조용한 것과 사람이 직접 세워 조용한 것은 다음 사람이 갈라 읽어야 하는 다른 사실이다.
+        # 조용히 버리지 않는 이유는 emit_note 주석 참고.
         #
         # 제외 판정도 **같은 row 에 대한 jq 테스트**로만 한다: 별도 `gh issue list --label
         # deploy-wait` 로 제외 집합을 만들면 그 조회의 실패가 "배포 대기 이슈 없음" 으로
@@ -953,10 +977,10 @@ while IFS= read -r repo; do
         hnum=${row_tsv%%$'\t'*}
         dwlabel=${row_tsv#*$'\t'}
         if [ -n "$dwlabel" ]; then
-          emit_note "$repo" "$hnum" "배포 대기(라벨 $dwlabel) — needs-human 이 정상 상태라 warn 아님"
+          emit_note "$repo" "$hnum" "배포 대기(라벨 $dwlabel) — 배포 레인의 정상 상태라 warn 아님"
         else
-          emit_warn "$repo" "$hnum" \
-            "needs-human 사유 없음(hold:* 부재) — 사람이 붙였을 수 있어 자동 재개 안 함"
+          emit_note "$repo" "$hnum" \
+            "사람이 직접 세운 정지(hold:* 부재) — 정상 상태라 warn 아님, 자동 재개 안 함"
         fi
       fi
     done 3< "$tmp/issues.human"
@@ -967,8 +991,7 @@ while IFS= read -r repo; do
   # ③ policy 재심 — `hold:policy` 가 창(RESUME_AFTER_MIN)을 넘겼는데 재심 마커 코멘트
   #    `<!-- policy-review: … -->` 가 없으면 **1회** 재심 대상(#155). 스크립트는 판정하지 않고
   #    이벤트만 낸다(판정은 디스패처 ① — 질문 한 줄이 루프가 답할 수 있는 것인지). 무편집.
-  if fetch_issues "$repo" "$tmp/issues.policy" "needs-human+hold:policy" \
-       --label needs-human --label hold:policy; then
+  if fetch_issues "$repo" "$tmp/issues.policy" "hold:policy" --label hold:policy; then
     while IFS= read -r row <&3; do
       [ -n "$row" ] || continue
       pnum=$(printf '%s' "$row" | jq -r '.number')
@@ -1011,7 +1034,7 @@ while IFS= read -r repo; do
       printf '{"event":"policy_review_due","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$(_emit_num "$pnum")" "$pmin"
     done 3< "$tmp/issues.policy"
   else
-    echo "resume-sweep: $repo needs-human+hold:policy 목록 조회 실패 — 재심 점검을 건너뛴다" >&2
+    echo "resume-sweep: $repo hold:policy 목록 조회 실패 — 재심 점검을 건너뛴다" >&2
     rc=2
   fi
 

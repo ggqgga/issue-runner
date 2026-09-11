@@ -266,12 +266,19 @@ setup() {
   jq -n --argjson n 42 --arg l "$labels" --arg u "$(ts "$mins")" \
     '[{number:$n, labels: ($l|split(",")|map(select(length>0)|{name:.})), updatedAt:$u}]' \
     > "$tmp/human.json"
+  cp "$tmp/human.json" "$tmp/row.json"
   case ",$labels," in
-    *,hold:ladder,*) cp "$tmp/human.json" "$tmp/ladder.json" ;;
+    *,hold:ladder,*) cp "$tmp/row.json" "$tmp/ladder.json" ;;
     *) echo '[]' > "$tmp/ladder.json" ;;
   esac
+  # ② 는 `--label needs-human` 으로 거는 서버 쿼리다 — 라벨이 없으면 행이 안 온다.
+  # (#244 로 ① 이 hold:ladder 단독 쿼리가 된 뒤엔 이 구분이 실제로 갈린다.)
   case ",$labels," in
-    *,hold:policy,*) cp "$tmp/human.json" "$tmp/policy.json" ;;
+    *,needs-human,*) : ;;
+    *) echo '[]' > "$tmp/human.json" ;;
+  esac
+  case ",$labels," in
+    *,hold:policy,*) cp "$tmp/row.json" "$tmp/policy.json" ;;
     *) echo '[]' > "$tmp/policy.json" ;;
   esac
   echo '[]' > "$tmp/comments.json"
@@ -345,7 +352,7 @@ saysl()   { if printf '%s' "$out" | grep -q "$1"; then echo ok; else echo no; fi
 markers() { jq '[.[] | select(.body | test("ladder-resume"))] | length' "$tmp/comments.json"; }
 
 # ── ① 창 전 — waiting 만, 무쓰기 ───────────────────────────────────────────
-setup "needs-human,hold:ladder,agent-ready" 10 0
+setup "hold:ladder,agent-ready" 10 0
 run
 check "창 전: waiting 이벤트"            "$(has_ev waiting)"
 check "창 전: minutes 가 실린다"         "$(printf '%s' "$out" | jq -e '.minutes >= 9 and .minutes <= 11' >/dev/null 2>&1 && echo ok || echo no)"
@@ -355,58 +362,55 @@ check "창 전: 코멘트 0회"                "$(none 'issue comment')"
 check "창 전: 코멘트 조회조차 안 한다"    "$(none 'json comments')"
 
 # ── ② 마커 0개 → 1번째 재개 ────────────────────────────────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 run
 check "마커 0: resumed"                  "$(has_ev resumed)"
 check "마커 0: attempt=1"                "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 1' >/dev/null 2>&1 && echo ok || echo no)"
 check "마커 0: 마커 코멘트가 쌓인다"      "$([ "$(markers)" = 1 ] && echo ok || echo no)"
 check "마커 0: 코멘트 본문에 마커"        "$(grep -q 'issue comment .*<!-- ladder-resume: 1 -->' "$tmp/gh.log" && echo ok || echo no)"
-check "마커 0: needs-human 해제"          "$(lacksl needs-human)"
 check "마커 0: hold:ladder 해제"          "$(lacksl hold:ladder)"
 check "마커 0: agent-ready 유지"          "$(hasl agent-ready)"
 check "본문은 건드리지 않는다(--body-file 부재)" "$(none '--body-file')"
 check "기본 상한은 200 (env 미지정)"        "$(grep -q -- '--limit 200' "$tmp/gh.log" && echo ok || echo no)"
-check "비공허 실증: AND 쿼리로 목록을 뜬다" "$(grep -q 'issue list --repo owner/repo .*--label needs-human --label hold:ladder' "$tmp/gh.log" && echo ok || echo no)"
+check "비공허 실증: hold:ladder 단독 쿼리로 목록을 뜬다(#244)" "$(grep -q 'issue list --repo owner/repo .*--label hold:ladder' "$tmp/gh.log" && echo ok || echo no)"
+check "① 쿼리에 needs-human 이 없다(#244)" "$(grep -q 'issue list .*--label needs-human --label hold:ladder' "$tmp/gh.log" && echo no || echo ok)"
 
 # ── ③ 마커 1개 → 2번째 재개 ────────────────────────────────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 1
+setup "hold:ladder,agent-ready" 200 1
 run
 check "마커 1: attempt=2"                "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 2' >/dev/null 2>&1 && echo ok || echo no)"
 check "마커 1: 마커가 2개로"             "$([ "$(markers)" = 2 ] && echo ok || echo no)"
 
 # ── ④ 마커 2개 → 상한 초과 승격 (LIMIT=2) ─────────────────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 2
+setup "hold:ladder,agent-ready" 200 2
 run
 check "마커 2: escalated"                "$(has_ev escalated)"
 check "마커 2: resumed 아님"             "$(no_ev resumed)"
 check "마커 2: attempt=2 · limit=2"      "$(printf '%s' "$out" | jq -e 'select(.event=="escalated") | .attempt == 2 and .limit == 2' >/dev/null 2>&1 && echo ok || echo no)"
 check "마커 2: hold:policy 부착"         "$(hasl hold:policy)"
 check "마커 2: hold:ladder 해제"         "$(lacksl hold:ladder)"
-check "마커 2: needs-human 유지"         "$(hasl needs-human)"
 check "마커 2: 승격 코멘트엔 마커 없음"   "$([ "$(markers)" = 2 ] && echo ok || echo no)"
 check "마커 2: 상한 코멘트"              "$(grep -q 'issue comment .*사다리 재개 상한(2) 초과' "$tmp/gh.log" && echo ok || echo no)"
 
 # ── ⑤ [P1] PR 미러 해제 — 재개 ────────────────────────────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
-with_pr 77 "needs-human,hold:ladder,flow:verify"
+setup "hold:ladder,agent-ready" 200 0
+with_pr 77 "hold:ladder,flow:verify"
 run
 check "PR 재개: resumed"                 "$(has_ev resumed)"
-check "PR 재개: PR needs-human 해제"     "$(lackspl needs-human)"
 check "PR 재개: PR hold:ladder 해제"     "$(lackspl hold:ladder)"
 check "PR 재개: PR flow:verify 유지"     "$(haspl flow:verify)"
 check "PR 재개: pr edit 을 실제로 부른다" "$(some 'pr edit 77')"
 
 # ── ⑥ [P1] PR 미러 승격 ───────────────────────────────────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 2
-with_pr 77 "needs-human,hold:ladder"
+setup "hold:ladder,agent-ready" 200 2
+with_pr 77 "hold:ladder"
 run
 check "PR 승격: escalated"               "$(has_ev escalated)"
 check "PR 승격: PR hold:policy 부착"     "$(haspl hold:policy)"
 check "PR 승격: PR hold:ladder 해제"     "$(lackspl hold:ladder)"
-check "PR 승격: PR needs-human 유지"     "$(haspl needs-human)"
 
 # ── ⑦ 연결 PR 없음 → 이슈만 (정상) ────────────────────────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 run
 check "PR 없음: resumed"                 "$(has_ev resumed)"
 check "PR 없음: pr edit 0회"             "$(none 'pr edit')"
@@ -415,56 +419,93 @@ check "PR 없음: after-edit warn 없음"    "$(no_ev warn_after_edit)"
 
 # ── ⑧ 정지 라벨 없는 PR 은 건드리지 않는다 ────────────────────────────────
 # (레포에 없는 라벨을 remove 하면 gh 가 편집 전체를 실패시키므로 불필요한 편집은 안 낸다.)
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 with_pr 77 "flow:verify"
 run
 check "무관 PR: pr edit 0회"             "$(none 'pr edit')"
 check "무관 PR: resumed"                 "$(has_ev resumed)"
 
 # ── ⑨ PR 편집 실패 → warn_after_edit (이슈는 이미 반영됨) ─────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
-with_pr 77 "needs-human,hold:ladder"
+setup "hold:ladder,agent-ready" 200 0
+with_pr 77 "hold:ladder"
 STUB_PR_EDIT_FAIL=1
 run
 check "PR 편집 실패: warn_after_edit"    "$(has_ev warn_after_edit)"
 check "PR 편집 실패: PR 번호가 문구에"    "$(saysl 'PR #77')"
 check "PR 편집 실패: 이슈 재개는 그대로"  "$(has_ev resumed)"
-check "PR 편집 실패: 이슈 라벨은 반영됨"  "$(lacksl needs-human)"
+check "PR 편집 실패: 이슈 라벨은 반영됨"  "$(lacksl hold:ladder)"
 
 # ── ⑩ [P1] 마커 코멘트 실패 → 라벨 무편집 (순서 계약) ─────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 STUB_COMMENT_FAIL=1
 run
 check "코멘트 실패: warn"                "$(has_ev warn)"
 check "코멘트 실패: resumed 없음"        "$(no_ev resumed)"
-check "코멘트 실패: needs-human 유지"    "$(hasl needs-human)"
 check "코멘트 실패: hold:ladder 유지"    "$(hasl hold:ladder)"
 check "코멘트 실패: 라벨 편집 0회"       "$(none 'issue edit')"
 
 # ── ⑪ 코멘트 조회 실패 → 상한을 못 지키므로 무편집 ────────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 STUB_COMMENTS_FAIL=1
 run
 check "코멘트 조회 실패: warn"           "$(has_ev warn)"
 check "코멘트 조회 실패: 무편집"         "$(none 'issue edit')"
 check "코멘트 조회 실패: 코멘트도 0회"   "$(none 'issue comment')"
 
-# ── ⑫ 사유 라벨 없는 needs-human → warn · 무편집 ──────────────────────────
+# ── ⑫ (#244) 사유 라벨 없는 needs-human = **정상** — note · 무편집 ────────
+# 기계 정지가 hold:* 하나만 붙게 된 뒤, 맨 needs-human 은 "사람이 직접 세웠다" 라는
+# 정상 상태다. 교정할 불변식 위반이 없으므로 warn 이 아니다(#190 이 세운 정의:
+# warn 은 루프가 교정 가능한 불변식 위반일 때만). 관측에서 지우지는 않는다 → note.
 setup "needs-human,agent-ready" 200 0
 run
-check "hold 없음: warn"                  "$(has_ev warn)"
-check "hold 없음: 사유 문구"             "$(saysl 'hold:\* 부재')"
+check "hold 없음: note"                  "$(has_ev note)"
+check "hold 없음: warn 아님"             "$(no_ev warn)"
+check "hold 없음: 사람이 세운 정지 문구"  "$(saysl '사람이 직접 세운 정지')"
 check "hold 없음: 편집 0회"              "$(none 'issue edit')"
 check "hold 없음: resumed 없음"          "$(no_ev resumed)"
 
+# ── ⑫-b (#244) 사람이 세운 needs-human 이 hold:ladder 와 동존 → 자동 재개 금지 ──
+# `needs-human` 은 이제 "사람이 직접 세웠다" 하나만 뜻한다. 루프가 그 손을 떼면 안 되므로
+# (이 파일 머리 주석의 규율) 창이 지나도 재개하지 않는다 — 그리고 **떼지도 않는다**.
+# 이 가드가 없으면 재개가 hold:ladder 만 치우고 needs-human 을 남겨, 게이트(#242)가 계속
+# 막는데 재개 횟수만 소진되는 "재개했는데 안 풀리는" 상태가 된다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+run
+check "needs-human 동존: warn"            "$(has_ev warn)"
+check "needs-human 동존: 문구"            "$(saysl '사람이 세운 needs-human 동존')"
+check "needs-human 동존: resumed 없음"    "$(no_ev resumed)"
+check "needs-human 동존: escalated 없음"  "$(no_ev escalated)"
+check "needs-human 동존: 편집 0회"        "$(none 'issue edit')"
+check "needs-human 동존: 코멘트 0회"      "$(none 'issue comment')"
+check "needs-human 동존: 라벨 그대로"     "$(hasl needs-human)"
+# 상한을 소진한 경우도 같은 답 — 승격 갈래로 새지 않는다
+setup "needs-human,hold:ladder,agent-ready" 200 2
+run
+check "needs-human 동존(상한 소진): escalated 없음" "$(no_ev escalated)"
+check "needs-human 동존(상한 소진): hold:policy 안 붙는다" "$(lacksl hold:policy)"
+
+# ── ⑫-c (#244) 재개·승격은 `hold:ladder` 만 되돌린다 — PR 미러도 같은 축 ──
+# 사람이 PR 에 직접 붙인 needs-human 을 재개가 벗기면 그 손이 조용히 사라진다.
+setup "hold:ladder,agent-ready" 200 0
+with_pr 77 "needs-human,hold:ladder,flow:verify"
+run
+check "PR 미러: resumed"                  "$(has_ev resumed)"
+check "PR 미러: PR hold:ladder 해제"      "$(lackspl hold:ladder)"
+check "PR 미러: PR needs-human 은 안 뗀다" "$(haspl needs-human)"
+check "PR 미러: PR flow:verify 유지"      "$(haspl flow:verify)"
+check "PR 미러: --remove-label needs-human 을 안 보낸다" \
+  "$(grep -q 'pr edit .*--remove-label needs-human' "$tmp/gh.log" && echo no || echo ok)"
+check "이슈 편집도 needs-human 을 안 보낸다" \
+  "$(grep -q 'issue edit .*--remove-label needs-human' "$tmp/gh.log" && echo no || echo ok)"
+
 # ── ⑬ hold:conflict — 재개 대상도 warn 대상도 아니다 ──────────────────────
-setup "needs-human,hold:conflict,agent-ready" 200 0
+setup "hold:conflict,agent-ready" 200 0
 run
 check "hold:conflict: 무이벤트"          "$([ -z "$out" ] && echo ok || echo no)"
 check "hold:conflict: 편집 0회"          "$(none 'issue edit')"
 
 # ── ⑭ 사람 몫 hold 동존 → 자동 재개 안 함 ─────────────────────────────────
-setup "needs-human,hold:ladder,hold:policy,agent-ready" 200 0
+setup "hold:ladder,hold:policy,agent-ready" 200 0
 run
 check "hold 동존: warn"                  "$(has_ev warn)"
 check "hold 동존: 문구"                  "$(saysl '사람 몫 hold:\* 동존')"
@@ -472,8 +513,8 @@ check "hold 동존: resumed 없음"          "$(no_ev resumed)"
 check "hold 동존: 편집 0회"              "$(none 'issue edit')"
 
 # ── ⑮ 사람 조작 경합 — 쓰기 전 재조회가 잡는다 ────────────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
-STUB_STATE_LABELS='hold:ladder,agent-ready'   # 목록 조회 이후 사람이 needs-human 을 뗌
+setup "hold:ladder,agent-ready" 200 0
+STUB_STATE_LABELS='agent-ready'   # 목록 조회 이후 사람이 hold:ladder 를 뗌
 run
 check "경합: warn"                       "$(has_ev warn)"
 check "경합: 사람 조작 문구"             "$(saysl '사람 조작 경합')"
@@ -482,7 +523,7 @@ check "경합: 코멘트 0회(마커도 안 남긴다)" "$(none 'issue comment')
 check "경합: 편집 0회"                   "$(none 'issue edit')"
 
 # ── ⑯ 재조회 실패 → 손대지 않는다 ─────────────────────────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 STUB_STATE_LABELS='__FAIL__'
 run
 check "재조회 실패: warn"                "$(has_ev warn)"
@@ -490,21 +531,21 @@ check "재조회 실패: 문구"                "$(saysl '재조회 실패')"
 check "재조회 실패: 무편집"              "$(none 'issue edit')"
 
 # ── ⑰ readback 라벨 0개는 성공 · 불일치는 warn_after_edit ─────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 STUB_READBACK_LABELS='__EMPTY__'
 run
 check "라벨 0개 readback: resumed"       "$(has_ev resumed)"
 check "라벨 0개 readback: warn 없음"     "$(no_ev warn)"
 check "라벨 0개 readback: after-edit 없음" "$(no_ev warn_after_edit)"
-setup "needs-human,hold:ladder,agent-ready" 200 0
-STUB_READBACK_LABELS='needs-human,hold:ladder,agent-ready'
+setup "hold:ladder,agent-ready" 200 0
+STUB_READBACK_LABELS='hold:ladder,agent-ready'
 run
 check "readback 불일치: warn_after_edit" "$(has_ev warn_after_edit)"
 check "readback 불일치: 순수 warn 아님"  "$(no_ev warn)"
 check "readback 불일치: resumed 없음"    "$(no_ev resumed)"
 
 # ── ⑱ 라벨 편집 실패 → 마커는 이미 남았다(warn_after_edit) ────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 STUB_LABEL_EDIT_FAIL=1
 run
 check "라벨 실패: warn_after_edit"       "$(has_ev warn_after_edit)"
@@ -512,13 +553,13 @@ check "라벨 실패: resumed 없음"          "$(no_ev resumed)"
 check "라벨 실패: 마커는 남았다"         "$([ "$(markers)" = 1 ] && echo ok || echo no)"
 
 # ── ⑲ 두 쿼리 각각의 조회 실패 → exit 2 (fail-loud) ───────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 STUB_LADDER_FAIL=1
 run
 check "ladder 조회 실패: exit 2"         "$([ "$RC" = 2 ] && echo ok || echo no)"
 check "ladder 조회 실패: stderr"         "$(grep -q 'hold:ladder 목록 조회 실패' "$tmp/err" && echo ok || echo no)"
 check "ladder 조회 실패: resumed 없음"   "$(no_ev resumed)"
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 STUB_HUMAN_FAIL=1
 run
 check "human 조회 실패: exit 2"          "$([ "$RC" = 2 ] && echo ok || echo no)"
@@ -528,45 +569,45 @@ check "human 조회 실패: 재개는 그대로"   "$(has_ev resumed)"
 # 상한값 자체는 RESUME_LIST_LIMIT 로 낮춰 재현한다 — 200행 픽스처는 프로세스 수백 개라
 # 박스가 붐빌 때 CI 를 통째로 민다(경로는 값과 무관하게 같다). 기본값이 200 이라는 사실은
 # 위 ②의 `--limit 200` 단언이 지킨다.
-setup "needs-human,hold:ladder,agent-ready" 10 0     # 창 안 = 쓰기 없음
+setup "hold:ladder,agent-ready" 10 0     # 창 안 = 쓰기 없음
 LL=3
-jq -n --arg u "$(ts 10)" '[range(3) | {number: (.+1000), labels: [{name:"needs-human"},{name:"hold:ladder"}], updatedAt: $u}]' \
+jq -n --arg u "$(ts 10)" '[range(3) | {number: (.+1000), labels: [{name:"hold:ladder"}], updatedAt: $u}]' \
   > "$tmp/ladder.json"
 run
 check "ladder 상한: warn"                "$(has_ev warn)"
-check "ladder 상한: 쿼리 이름"           "$(saysl '목록 상한 도달(needs-human+hold:ladder)')"
-setup "needs-human,hold:conflict,agent-ready" 200 0   # hold 있음 = 사유 warn 안 남
+check "ladder 상한: 쿼리 이름"           "$(saysl '목록 상한 도달(hold:ladder)')"
+setup "hold:conflict,agent-ready" 200 0   # hold 있음 = 사유 warn 안 남
 LL=3
 jq -n --arg u "$(ts 200)" '[range(3) | {number: (.+1000), labels: [{name:"needs-human"},{name:"hold:conflict"}], updatedAt: $u}]' \
   > "$tmp/human.json"
 run
 check "human 상한: warn"                 "$(has_ev warn)"
 check "human 상한: 쿼리 이름"            "$(saysl '목록 상한 도달(needs-human)')"
-setup "needs-human,hold:ladder,agent-ready" 10 0
+setup "hold:ladder,agent-ready" 10 0
 run
 check "상한 미만: 상한 warn 없음"        "$(printf '%s' "$out" | grep -q '목록 상한 도달' && echo no || echo ok)"
 
 # ── ㉑ [P2] 상수 값 검증 — GitHub 쓰기 전에 exit 64 ───────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 RA='120m'
 run
 check "잘못된 RESUME_AFTER_MIN: exit 64" "$([ "$RC" = 64 ] && echo ok || echo no)"
 check "잘못된 RESUME_AFTER_MIN: stderr"  "$(grep -q 'RESUME_AFTER_MIN' "$tmp/err" && echo ok || echo no)"
 check "잘못된 RESUME_AFTER_MIN: gh 호출 0" "$([ ! -s "$tmp/gh.log" ] && echo ok || echo no)"
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 RL='-1'
 run
 check "잘못된 LADDER_RESUME_LIMIT: exit 64" "$([ "$RC" = 64 ] && echo ok || echo no)"
 check "잘못된 LADDER_RESUME_LIMIT: gh 호출 0" "$([ ! -s "$tmp/gh.log" ] && echo ok || echo no)"
 
 # ── ㉒ .loop/repos 부재 = 계정 전체 탐색 ──────────────────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 WORKDIR="$tmp/noscope"; STUB_SEARCH_FAIL=1
 run
 check "탐색 실패: exit 2"                "$([ "$RC" = 2 ] && echo ok || echo no)"
 check "탐색 실패: stderr 사유"           "$(grep -q '탐색 실패' "$tmp/err" && echo ok || echo no)"
 check "탐색 실패: 무편집"                "$(none 'issue edit')"
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 WORKDIR="$tmp/noscope"
 echo '[]' > "$tmp/ladder.json"; echo '[]' > "$tmp/human.json"
 LL=3; awk 'BEGIN{for(i=1;i<=3;i++) print "owner/r" i}' > "$tmp/search"
@@ -574,7 +615,7 @@ run
 check "탐색 상한: warn"                  "$(has_ev warn)"
 check "탐색 상한: 문구"                  "$(saysl '탐색 상한 도달')"
 check "탐색 상한: exit 0"                "$([ "$RC" = 0 ] && echo ok || echo no)"
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 WORKDIR="$tmp/noscope"
 echo '[]' > "$tmp/ladder.json"; echo '[]' > "$tmp/human.json"
 LL=3; awk 'BEGIN{for(i=1;i<=2;i++) print "owner/r" i}' > "$tmp/search"
@@ -585,7 +626,10 @@ check "탐색 상한 미만: warn 없음"        "$(no_ev warn)"
 # 옛 질의(`label:needs-human is:open is:issue`)는 gh search 오파싱으로 항상 빈손이라,
 # 스윕이 레포 0개를 훑고 exit 0 · 무출력으로 끝나 "멈춘 건 없음" 과 구분되지 않았다.
 # 닫힌 이슈·PR 배제라는 **의도는 그대로**이고 수단만 `--state open` 플래그로 옮긴다.
-setup "needs-human,hold:ladder,agent-ready" 200 0
+# (#244 로 픽스처 라벨에서 `needs-human` 을 뺐다 — 사람이 세운 정지가 동존하면 재개하지
+#  않는 것이 이 PR 의 설계라, 옛 픽스처는 `resumed` 대신 warn 으로 끝난다. 이 케이스가
+#  묻는 것은 **폴백 질의의 형태**이지 재개 조건이 아니므로 단언은 한 줄도 안 줄인다.)
+setup "hold:ladder,agent-ready" 200 0
 WORKDIR="$tmp/noscope"
 printf 'owner/repo\n' > "$tmp/search"
 run
@@ -596,13 +640,33 @@ check "폴백 열거: 재개까지 간다"         "$(has_ev resumed)"
 check "폴백 열거: exit 0"                "$([ "$RC" = 0 ] && echo ok || echo no)"
 
 # ── ㉒-c (#236) 스코프 갈래(.loop/repos 있음)는 미변경 — 탐색을 아예 안 부른다 ──
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 run
 check "스코프 갈래: search 미호출"       "$(none 'search issues')"
 check "스코프 갈래: 재개까지 간다"       "$(has_ev resumed)"
 
+# ── ㉒-d (#244) 계정 전체 탐색은 세 정지 라벨을 전부 훑는다 ───────────────
+# 스코프 탐색이 `label:needs-human` 하나였던 것은 "기계 정지엔 needs-human 이 늘 붙는다" 는
+# 전제 위에 서 있었다. 그 전제를 이 이슈가 없앴으므로, `hold:ladder`/`hold:policy` 만 달린
+# 레포는 탐색에서 통째로 빠져 **영영 안 스윕된다**(재개가 조용히 죽는 경로).
+# 부정 라벨은 넣지 않는다(#21) — 긍정 라벨 세 번을 합집합(sort -u)한다. 세 쿼리 모두
+# `is:` 한정자 없이 `--state open` 플래그다(#236 — ㉒-b 와 같은 형태).
+setup "hold:ladder,agent-ready" 200 0
+WORKDIR="$tmp/noscope"
+echo '[]' > "$tmp/ladder.json"; echo '[]' > "$tmp/human.json"; echo '[]' > "$tmp/policy.json"
+printf 'owner/repo\n' > "$tmp/search"
+run
+check "탐색: needs-human 쿼리 유지"   "$(some 'search issues label:needs-human .*--state open')"
+check "탐색: hold:ladder 도 훑는다"    "$(some 'search issues label:hold:ladder .*--state open')"
+check "탐색: hold:policy 도 훑는다"    "$(some 'search issues label:hold:policy .*--state open')"
+check "탐색: 부정 라벨은 안 쓴다(#21)" "$(none 'search issues .*-label:')"
+check "탐색: is: 한정자 없음(#236)"    "$(none 'search issues .*is:')"
+# 세 쿼리가 같은 레포를 돌려줘도 스윕은 한 번이다(sort -u) — ① 목록 조회 횟수로 실측한다.
+check "탐색: 중복 레포는 한 번만 스윕" "$([ "$(counts 'issue list --repo owner/repo .*--label hold:ladder')" = 1 ] && echo ok || echo no)"
+check "탐색: exit 0"                   "$([ "$RC" = 0 ] && echo ok || echo no)"
+
 # ── ㉓ 정상 경로 exit 0 ───────────────────────────────────────────────────
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 run
 check "정상 경로: exit 0"                "$([ "$RC" = 0 ] && echo ok || echo no)"
 
@@ -631,14 +695,16 @@ check "full-cycle: warn 없음"            "$(no_ev warn)"
 check "full-cycle: 문구가 라벨을 남긴다" "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("full-cycle"))' >/dev/null 2>&1 && echo ok || echo no)"
 check "full-cycle: 편집 0회"             "$(none 'issue edit')"
 
-# ── ㉖ 회귀 방지 — 배포 대기 라벨이 없으면 종전대로 warn ───────────────────
-# ⑫ 와 같은 픽스처다(의도). 추가 단언은 "note 로는 내려가지 않는다" 쪽 —
-# 강등 조건이 넓어져 진짜 사유 없는 needs-human 까지 조용해지면 이 줄이 잡는다.
+# ── ㉖ (#244) 배포 대기 라벨이 없어도 note 지만 **문구가 다르다** ──────────
+# ⑫ 와 같은 픽스처다(의도). 두 갈래가 note 로 합쳐졌으니 이제 구분되는 것은 문구다 —
+# 어느 이유로 조용해졌는지(배포 레인이라서 / 사람이 직접 세워서)가 뭉개지면 다음 사람이
+# 두 상태를 못 가른다.
 setup "needs-human,agent-ready" 200 0
 run
-check "배포 대기 라벨 없음: 종전대로 warn" "$(has_ev warn)"
-check "배포 대기 라벨 없음: note 아님"     "$(no_ev note)"
-check "배포 대기 라벨 없음: 사유 문구"     "$(saysl 'hold:\* 부재')"
+check "배포 대기 라벨 없음: note"          "$(has_ev note)"
+check "배포 대기 라벨 없음: warn 아님"     "$(no_ev warn)"
+check "배포 대기 라벨 없음: 배포 레인 문구 아님" \
+  "$(printf '%s' "$out" | grep -q '배포 대기(라벨' && echo no || echo ok)"
 
 # ── ㉗ 과도기 축의 부작용을 못박는다 — full-cycle 이면 구현 이슈여도 note ──
 # 제목이 배포 대기 형태가 아닌 구현 이슈(agent-ready 를 달았던 모양)라도 지금은 note 로
@@ -658,7 +724,7 @@ check "제목은 조회조차 안 한다(라벨 축)"   "$(grep -q -- '--json [^
 # 이 테스트가 그대로 #201 Test plan ⓒ(deploy-wait + hold:policy + 노트 **있음** → 종전대로
 # policy_review_due 창 판정)다 — #201 의 no-note 갈래 변경이 이 갈래(due)엔 손대지 않았다는
 # 회귀 증거로 겸한다(사전 리뷰 지적 대응 — 신규 diff 에는 없던 기존 테스트라 안 보였다).
-setup "needs-human,deploy-wait,hold:policy" 200 0
+setup "deploy-wait,hold:policy" 200 0
 jq --arg b "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->" \
   '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/c.tmp" && mv "$tmp/c.tmp" "$tmp/comments.json"
 run
@@ -678,7 +744,7 @@ check "두 축 동존: warn 없음"               "$(no_ev warn)"
 # ── policy 재심 due(#155) — 창 넘긴 hold:policy 에 재심 마커가 없으면 1회 이벤트, 무편집
 note() { jq --arg b "$1" '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/c.tmp" && mv "$tmp/c.tmp" "$tmp/comments.json"; }
 # ⓑ(#201) 회귀 방지 — 배포 대기가 **아닌** no-note 는 계속 warn 이다(진짜 규약 위반).
-setup "needs-human,hold:policy,agent-ready" 200 0
+setup "hold:policy,agent-ready" 200 0
 run
 check "policy 재심 질문 없음: warn(no-note)" "$(printf '%s' "$out" | grep -q 'hold-note' && echo ok || echo no)"
 check "policy 재심 질문 없음: due 안 냄" "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
@@ -688,7 +754,7 @@ check "policy 재심 질문 없음(배포 대기 아님): note 없음" "$(no_ev 
 # ②(사유 없는 needs-human)와 같은 deploy_wait_row 공유 술어를 쓴다. 실측 근거는
 # ggqgga/BodaT#5013 — 배포 레인이 transition.sh 를 거치지 않고 라벨을 직접 붙여 사람이
 # 답할 질문이 코멘트 산문에 있었는데도 `<!-- hold-note: policy -->` 마커가 없었다.
-setup "needs-human,deploy-wait,hold:policy" 200 0
+setup "deploy-wait,hold:policy" 200 0
 run
 check "배포대기 policy no-note: note"          "$(has_ev note)"
 check "배포대기 policy no-note: warn 아님"      "$(no_ev warn)"
@@ -698,22 +764,26 @@ check "배포대기 policy no-note: 문구에 deploy-wait·hold:policy" \
 check "배포대기 policy no-note: 편집 0회"       "$(none 'issue edit')"
 
 # ── ⓐ'(#201) full-cycle 과도기 축도 같은 술어를 공유한다(②와 동일 트레이드오프) ──
-setup "needs-human,full-cycle,hold:policy" 200 0
+setup "full-cycle,hold:policy" 200 0
 run
 check "full-cycle policy no-note: note"        "$(has_ev note)"
 check "full-cycle policy no-note: warn 아님"    "$(no_ev warn)"
 
-setup "needs-human,hold:policy,agent-ready" 200 0
+setup "hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 run
 check "policy 재심: exit 0" "$([ "$RC" = 0 ] && echo ok || echo no)"
 check "policy 재심: policy_review_due 이벤트" "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .number == 42' >/dev/null 2>&1 && echo ok || echo no)"
 check "policy 재심: 무편집" "$(grep -q 'issue edit' "$tmp/gh.log" && echo no || echo ok)"
-setup "needs-human,hold:policy,agent-ready" 30 0
+check "policy 재심: hold:policy 단독 쿼리(#244)" \
+  "$(grep -q 'issue list .*--label needs-human --label hold:policy' "$tmp/gh.log" && echo no || echo ok)"
+check "policy 재심: needs-human 없이도 집는다(#244)" \
+  "$(grep -q 'issue list --repo owner/repo .*--label hold:policy' "$tmp/gh.log" && echo ok || echo no)"
+setup "hold:policy,agent-ready" 30 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 run
 check "policy 재심 창 안: 이벤트 없음" "$(printf '%s' "$out" | grep -q policy_review_due && echo no || echo ok)"
-setup "needs-human,hold:policy,agent-ready" 200 0
+setup "hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 note "재심: 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->"
 run
@@ -723,7 +793,7 @@ note "사람 확인(policy): 이번엔 C인가 <!-- hold-note: policy --><!-- bo
 run
 check "policy 재홀드: 새 질문 뒤엔 다시 due" "$(printf '%s' "$out" | grep -q policy_review_due && echo ok || echo no)"
 # 승격(escalated) 코멘트가 hold-note 를 품는다 — 승격 건도 재심 대상이 된다
-setup "needs-human,hold:ladder,agent-ready" 200 2
+setup "hold:ladder,agent-ready" 200 2
 run
 check "승격 코멘트에 hold-note:policy" "$(grep -q 'hold-note: policy' "$tmp/gh.log" && echo ok || echo no)"
 
@@ -765,8 +835,8 @@ unknown_prefix() {  # unknown_prefix <이벤트> <원본 토큰>
 }
 
 # (가) emit_warn — ① 이 updatedAt 을 못 읽은 줄. 번호도 함께 비어 있다.
-setup "needs-human,hold:ladder,agent-ready" 200 0
-bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" ""
+setup "hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "hold:ladder,agent-ready" ""
 echo '[]' > "$tmp/human.json"
 run
 check "빈 번호 warn: 모든 줄이 유효 JSON"     "$(lines_all_json)"
@@ -787,8 +857,8 @@ check "빈 번호 note: 기존 문구 그대로"         "$(evq note '.msg | tes
 check "빈 번호 note: 번호 미상·원본 토큰이 앞머리에" "$(unknown_prefix note '')"
 
 # (다) emit_warn_after_edit — 쓰기 뒤 readback 조회가 실패한 줄.
-setup "needs-human,hold:ladder,agent-ready" 200 0
-bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+setup "hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "hold:ladder,agent-ready" "$(ts 200)"
 echo '[]' > "$tmp/human.json"
 STUB_READBACK_LABELS="__FAIL__"
 run
@@ -801,14 +871,14 @@ check "빈 번호 warn_after_edit: 번호 미상·토큰 앞머리" "$(unknown_p
 # (라) 정상 경로 무회귀 — 번호가 있으면 표식이 붙지 않는다(문구가 한 바이트도 안 바뀐다).
 setup "needs-human,agent-ready" 200 0
 run
-check "정상 번호: number 유지·표식 없음" "$(evq warn '.number == 42 and (.msg | test("번호 파싱 실패") | not)')"
+check "정상 번호: number 유지·표식 없음" "$(evq note '.number == 42 and (.msg | test("번호 파싱 실패") | not)')"
 
 # ── ㉛ (#193) `msg` 없는 이벤트 넷도 같은 자리를 안전하게 — waiting·escalated·resumed·
 #    policy_review_due. 이쪽은 사실을 적을 `msg` 칸이 없어 **형식 안전만** 취한다(번호 0).
 #    방출 조건은 안 바뀐다 — 특히 waiting 은 원래 조용히 넘기는 이벤트라 줄 수가 늘면 안 된다.
 #    이슈 본문 `## 범위 — 한 자리가 아니라 파일 전역이다` 가 요구한 넓히기.
-setup "needs-human,hold:ladder,agent-ready" 10 0
-bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 10)"
+setup "hold:ladder,agent-ready" 10 0
+bad_num_rows "$tmp/ladder.json" "" "hold:ladder,agent-ready" "$(ts 10)"
 echo '[]' > "$tmp/human.json"
 run
 check "빈 번호 waiting(창 전): 유효 JSON"    "$(lines_all_json)"
@@ -817,8 +887,8 @@ check "빈 번호 waiting(창 전): number 는 0"  "$(evq waiting '.number == 0'
 check "빈 번호 waiting(창 전): minutes 유지"  "$(evq waiting '.minutes >= 9 and .minutes <= 11')"
 
 # 창 재판정 경로(목록 스냅샷 뒤 사람이 건드려 live updatedAt 이 새 기준이 된 경우)의 waiting.
-setup "needs-human,hold:ladder,agent-ready" 200 0
-bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+setup "hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "hold:ladder,agent-ready" "$(ts 200)"
 echo '[]' > "$tmp/human.json"
 printf '%s' "$(ts 5)" > "$tmp/updated.livefile"
 STUB_UPDATED_LIVE="$tmp/updated.livefile"
@@ -828,8 +898,8 @@ check "빈 번호 waiting(창 재판정): number 는 0" "$(evq waiting '.number 
 check "빈 번호 waiting(창 재판정): 무편집"      "$(none 'issue edit')"
 
 # 재개(resumed) — 번호가 비어도 줄은 유효 JSON 이어야 한다.
-setup "needs-human,hold:ladder,agent-ready" 200 0
-bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+setup "hold:ladder,agent-ready" 200 0
+bad_num_rows "$tmp/ladder.json" "" "hold:ladder,agent-ready" "$(ts 200)"
 echo '[]' > "$tmp/human.json"
 run
 check "빈 번호 resumed: 유효 JSON"      "$(lines_all_json)"
@@ -837,8 +907,8 @@ check "빈 번호 resumed: number 는 0"    "$(evq resumed '.number == 0')"
 check "빈 번호 resumed: attempt 유지"   "$(evq resumed '.attempt == 1')"
 
 # 승격(escalated) — 마커 2개로 상한 초과.
-setup "needs-human,hold:ladder,agent-ready" 200 2
-bad_num_rows "$tmp/ladder.json" "" "needs-human,hold:ladder,agent-ready" "$(ts 200)"
+setup "hold:ladder,agent-ready" 200 2
+bad_num_rows "$tmp/ladder.json" "" "hold:ladder,agent-ready" "$(ts 200)"
 echo '[]' > "$tmp/human.json"
 run
 check "빈 번호 escalated: 유효 JSON"        "$(lines_all_json)"
@@ -846,8 +916,8 @@ check "빈 번호 escalated: number 는 0"      "$(evq escalated '.number == 0')
 check "빈 번호 escalated: attempt·limit 유지" "$(evq escalated '.attempt == 2 and .limit == 2')"
 
 # policy 재심 due — ③ 의 pnum 이 빈 경우.
-setup "needs-human,hold:policy,agent-ready" 200 0
-bad_num_rows "$tmp/policy.json" "" "needs-human,hold:policy,agent-ready" "$(ts 200)"
+setup "hold:policy,agent-ready" 200 0
+bad_num_rows "$tmp/policy.json" "" "hold:policy,agent-ready" "$(ts 200)"
 echo '[]' > "$tmp/ladder.json"
 echo '[]' > "$tmp/human.json"
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
@@ -857,16 +927,16 @@ check "빈 번호 policy_review_due: number 는 0" "$(evq policy_review_due '.nu
 check "빈 번호 policy_review_due: 무편집"      "$(none 'issue edit')"
 
 # 정상 번호(42)일 때 넷 다 번호를 그대로 싣는다 — 바이트 무회귀 가드.
-setup "needs-human,hold:ladder,agent-ready" 10 0
+setup "hold:ladder,agent-ready" 10 0
 run
 check "정상 번호 waiting: number 42 유지" "$(evq waiting '.number == 42')"
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 run
 check "정상 번호 resumed: number 42 유지" "$(evq resumed '.number == 42')"
-setup "needs-human,hold:ladder,agent-ready" 200 2
+setup "hold:ladder,agent-ready" 200 2
 run
 check "정상 번호 escalated: number 42 유지" "$(evq escalated '.number == 42')"
-setup "needs-human,hold:policy,agent-ready" 200 0
+setup "hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 run
 check "정상 번호 policy_review_due: number 42 유지" "$(evq policy_review_due '.number == 42')"
@@ -928,8 +998,8 @@ sys.exit(0 if n else 1)' "$tmp/out" >/dev/null 2>&1
   [ "$rc" -eq 0 ] && echo ok || echo no
 }
 emit_line_for() {  # emit_line_for <number 자리에 박을 토큰> — warn 줄 하나로 몬다
-  setup "needs-human,hold:ladder,agent-ready" 200 0
-  bad_num_rows "$tmp/ladder.json" "$1" "needs-human,hold:ladder,agent-ready" ""
+  setup "hold:ladder,agent-ready" 200 0
+  bad_num_rows "$tmp/ladder.json" "$1" "hold:ladder,agent-ready" ""
   echo '[]' > "$tmp/human.json"
   run
 }
@@ -971,21 +1041,21 @@ done
 # ── ㉝ (#193 재심) `_nonneg_int()` 는 안 바꿨다 — env exit 64 게이트 3건 무회귀 ────
 # 방출용 술어를 별도 이름으로 세운 이유가 이것이다: 저 헬퍼까지 정규형으로 좁히면
 # 사람이 `RESUME_AFTER_MIN=060` 으로 써 온 환경이 갑자기 죽는다(이 이슈의 범위 밖).
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 RA='060'
 run
 check "RESUME_AFTER_MIN=060: exit 64 아님(관대함 유지)" "$([ "$RC" != 64 ] && echo ok || echo no)"
 check "RESUME_AFTER_MIN=060: 60분으로 읽혀 재개된다"     "$(has_ev resumed)"
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 RL='02'
 run
 check "LADDER_RESUME_LIMIT=02: exit 64 아님" "$([ "$RC" != 64 ] && echo ok || echo no)"
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 LL='0200'
 run
 check "RESUME_LIST_LIMIT=0200: exit 64 아님" "$([ "$RC" != 64 ] && echo ok || echo no)"
 # 진짜 비정수는 여전히 exit 64 (세 게이트 모두).
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 LL='1000x'
 run
 check "잘못된 RESUME_LIST_LIMIT: exit 64"   "$([ "$RC" = 64 ] && echo ok || echo no)"
@@ -997,27 +1067,25 @@ check "잘못된 RESUME_LIST_LIMIT: gh 호출 0" "$([ ! -s "$tmp/gh.log" ] && ec
 # 에서 대신 낸다 — deploy_wait_row 공유 술어(②·③과 동일, #201) 를 여기서도 쓴다.
 
 # ⓐ deploy-wait + needs-human + hold:ladder, 창 경과 → note 만, 라벨 그대로
-setup "needs-human,hold:ladder,deploy-wait,agent-ready" 200 0
+setup "hold:ladder,deploy-wait,agent-ready" 200 0
 run
 check "ⓐ deploy-wait+hold:ladder 창 경과: note"        "$(has_ev note)"
 check "ⓐ: resumed 아님"                                "$(no_ev resumed)"
 check "ⓐ: warn 아님"                                    "$(no_ev warn)"
-check "ⓐ: needs-human 유지(라벨 그대로)"                "$(hasl needs-human)"
 check "ⓐ: hold:ladder 유지(라벨 그대로)"                "$(hasl hold:ladder)"
 check "ⓐ: 편집 0회"                                     "$(none 'issue edit')"
 check "ⓐ: 마커 코멘트도 0회"                            "$(none 'issue comment')"
 check "ⓐ: 문구에 deploy-wait"                           "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("deploy-wait"))' >/dev/null 2>&1 && echo ok || echo no)"
 
 # ⓑ 회귀 방지 — deploy-wait 없는 needs-human+hold:ladder, 창 경과 → 종전대로 resumed·라벨 해제
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 run
 check "ⓑ 배포 대기 아님: resumed(회귀 없음)"            "$(has_ev resumed)"
-check "ⓑ: needs-human 해제"                             "$(lacksl needs-human)"
 check "ⓑ: hold:ladder 해제"                             "$(lacksl hold:ladder)"
 check "ⓑ: note 아님"                                     "$(no_ev note)"
 
 # ⓒ deploy-wait + hold:ladder, 재개 마커 2개(상한 소진) → escalated 아님, hold:policy 안 붙는다
-setup "needs-human,hold:ladder,deploy-wait,agent-ready" 200 2
+setup "hold:ladder,deploy-wait,agent-ready" 200 2
 run
 check "ⓒ deploy-wait 상한 소진: escalated 아님"          "$(no_ev escalated)"
 check "ⓒ: note"                                          "$(has_ev note)"
@@ -1027,14 +1095,14 @@ check "ⓒ: 편집 0회"                                      "$(none 'issue edi
 check "ⓒ: 상한 초과 코멘트도 안 남긴다"                  "$(none '사다리 재개 상한')"
 
 # ⓓ 회귀 방지 — deploy-wait 없는 상한 소진 → 종전대로 escalated
-setup "needs-human,hold:ladder,agent-ready" 200 2
+setup "hold:ladder,agent-ready" 200 2
 run
 check "ⓓ 배포 대기 아님 상한 소진: escalated(회귀 없음)" "$(has_ev escalated)"
 check "ⓓ: hold:policy 부착"                              "$(hasl hold:policy)"
 check "ⓓ: note 아님"                                      "$(no_ev note)"
 
 # full-cycle(과도기 축)도 같은 술어를 공유한다 — ②·③과 동일 트레이드오프.
-setup "needs-human,hold:ladder,full-cycle,agent-ready" 200 0
+setup "hold:ladder,full-cycle,agent-ready" 200 0
 run
 check "full-cycle+hold:ladder 창 경과: note"             "$(has_ev note)"
 check "full-cycle+hold:ladder: resumed 아님"             "$(no_ev resumed)"
@@ -1044,7 +1112,7 @@ check "full-cycle+hold:ladder: 편집 0회"                 "$(none 'issue edit'
 # fail-open 이면 "배포 대기 아님" 으로 폴백해 그대로 재개해버린다 — 이 이슈가 막으려는
 # 사고를 판정 실패 경로에서 재현하는 것. number·updatedAt 추출은 .labels 를 안 보므로
 # 위 창 판정까지는 정상 통과하고, deploy_wait_row 의 `.labels[].name` 에서만 깨진다.
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 jq -n --argjson n 42 --arg u "$(ts 200)" '[{number:$n, labels:"broken", updatedAt:$u}]' > "$tmp/ladder.json"
 run
 check "ⓔ 판정 실패: warn"                                "$(has_ev warn)"
@@ -1104,18 +1172,17 @@ dw_want() {  # dw_want <이름> <row 라벨csv> <cur 라벨csv|__CUR_FAIL__> <�
     note|warn)
       check "격자 $name: 편집 0회"          "$(none 'issue edit')"
       check "격자 $name: 코멘트 0회"        "$(none 'issue comment')"
-      check "격자 $name: needs-human 유지"  "$(hasl needs-human)"
       check "격자 $name: hold:ladder 유지"  "$(hasl hold:ladder)" ;;
     resumed)
-      check "격자 $name: needs-human 해제"  "$(lacksl needs-human)"
-      check "격자 $name: hold:ladder 해제"  "$(lacksl hold:ladder)" ;;
+      check "격자 $name: hold:ladder 해제"  "$(lacksl hold:ladder)"
+      check "격자 $name: needs-human 안 붙는다" "$(lacksl needs-human)" ;;
     escalated)
       check "격자 $name: hold:policy 부착"  "$(hasl hold:policy)"
-      check "격자 $name: needs-human 유지"  "$(hasl needs-human)" ;;
+      check "격자 $name: needs-human 안 붙는다" "$(lacksl needs-human)" ;;
   esac
 }
 
-NHL='needs-human,hold:ladder,agent-ready'
+NHL='hold:ladder,agent-ready'
 dw_want "row없음/cur없음/재개"        "$NHL"              "$NHL"                          0 resumed
 dw_want "row없음/cur없음/승격"        "$NHL"              "$NHL"                          2 escalated
 dw_want "row없음/cur=deploy-wait/재개" "$NHL"             "$NHL,deploy-wait"              0 note
@@ -1138,7 +1205,7 @@ RA=0
 STUB_STATE_LABELS="$NHL,deploy-wait"
 run
 check "㉟ 문구: 기존 note 문구 재사용" \
-  "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("배포 대기\\(라벨 deploy-wait\\) — needs-human 이 정상 상태라 warn 아님"))' >/dev/null 2>&1 && echo ok || echo no)"
+  "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("배포 대기\\(라벨 deploy-wait\\) — 배포 레인의 정상 상태라 warn 아님"))' >/dev/null 2>&1 && echo ok || echo no)"
 
 setup "$NHL" 200 0
 RA=0
@@ -1156,7 +1223,7 @@ check "㉟ 재조회 판정 실패: 배포 대기 문구"     "$(saysl '배포 �
 # 뒤(range($q+1; …))에는 재심 마커가 없어 판정이 매 틱 `due` 로 되돌아왔다(영구 반복).
 
 # ⓐ 인용된 hold-note + 같은 코멘트 안의 **진짜** 재심 마커 → reviewed (due 아님)
-setup "needs-human,hold:policy,agent-ready" 200 0
+setup "hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 note '재심: 사람 몫 유지 — 이벤트마다 에피소드 경계(마지막 `` `<!-- hold-note: policy -->` ``)를 잡고 그 뒤를 본다 <!-- policy-review: kept --><!-- bodat:worker -->'
 run
@@ -1164,7 +1231,7 @@ check "#174 인용 hold-note: 경계가 아니다(due 재발 없음)" "$(no_ev p
 check "#174 인용 hold-note: warn 도 아니다"              "$(no_ev warn)"
 
 # 코드펜스로 인용한 hold-note 도 같다(같은 코멘트에 진짜 재심 마커가 맨몸으로 붙어 있다).
-setup "needs-human,hold:policy,agent-ready" 200 0
+setup "hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 note '재심: 사람 몫 유지 — 예시는 아래와 같다
 ```
@@ -1176,7 +1243,7 @@ check "코드펜스 인용 hold-note: due 재발 없음" "$(no_ev policy_review_
 
 # ⓑ 진짜 새 hold-note(맨몸 마커) 뒤에 재심 마커가 없으면 여전히 `due` — 인용 제거가
 #    진짜 질문까지 지워 버리면 이 단언이 빨개진다(과다 필터 방증).
-setup "needs-human,hold:policy,agent-ready" 200 0
+setup "hold:policy,agent-ready" 200 0
 note '재심: 지난 홀드는 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->'
 note "사람 확인(policy): 이번엔 C인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 run
@@ -1184,7 +1251,7 @@ check "새 질문 뒤 마커 없음: 여전히 due" "$(printf '%s' "$out" | jq -
 
 # ⓒ 회귀 없음 — 블록쿼트(`>`) 안의 **맨몸** 마커는 정상 신호로 계속 센다. 블록쿼트로 남의
 #    코멘트를 통째 인용하는 일은 이 루프에 없고, 걸러 버리면 진짜 마커를 잃는다(#197 방향 A).
-setup "needs-human,hold:policy,agent-ready" 200 0
+setup "hold:policy,agent-ready" 200 0
 note '> 사람 확인(policy): A인가 B인가
 > <!-- hold-note: policy --><!-- bodat:worker -->'
 run
@@ -1193,7 +1260,7 @@ check "블록쿼트 맨몸 hold-note: warn 없음(no-note 로 안 샌다)" "$(no
 
 # ⓓ 인용된 `ladder-resume` 은 재개 횟수를 올리지 않는다 — 아직 재개 여지가 있는 이슈가
 #    상한(2) 초과로 조기에 사람 대기(hold:policy)로 승격되던 둘째 축.
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 note '디버깅 메모: 스윕은 `<!-- ladder-resume: 1 -->` 를 남긴다'
 note '인수인계 메모:
 ```
@@ -1204,20 +1271,20 @@ check "인용 ladder-resume: 개수 0 → 첫 재개" "$(printf '%s' "$out" | jq
 check "인용 ladder-resume: 조기 승격 없음"    "$(no_ev escalated)"
 
 # 인용 2개 + 진짜 1개 → 진짜 1개만 세어 2번째 재개(상한 2 안쪽)
-setup "needs-human,hold:ladder,agent-ready" 200 1
+setup "hold:ladder,agent-ready" 200 1
 note '참고: `<!-- ladder-resume: 9 -->` 와 `<!-- ladder-resume: 8 -->` 는 인용일 뿐이다'
 run
 check "인용 2 + 진짜 1: attempt=2(승격 아님)" "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 2' >/dev/null 2>&1 && echo ok || echo no)"
 
 # 회귀: 코멘트 **끝에 맨몸으로** 붙은 정상 마커는 계속 세어진다(상한이 그대로 걸린다).
-setup "needs-human,hold:ladder,agent-ready" 200 2
+setup "hold:ladder,agent-ready" 200 2
 run
 check "맨몸 마커 2개: 상한 초과 승격(회귀 없음)" "$(has_ev escalated)"
 
 # ⓔ 과다 필터 방증 — 산문이 한 줄 안에서 백틱 세 개를 **언급**해도(펜스를 여는 게 아니다)
 #    그 사이의 맨몸 마커는 살아남는다. 펜스에 줄 앵커가 없으면 두 언급 사이가 통째로 지워져
 #    재개 횟수가 **과소집계**되고, 상한이 영영 안 걸려 무한 재개가 된다(원래 버그보다 나쁘다).
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 note '펜스는 ``` 로 연다
 재개 1/2: 사다리 재시도 — <!-- ladder-resume: 1 --><!-- bodat:worker -->
 닫을 때도 ``` 를 쓴다'
@@ -1228,7 +1295,7 @@ check "줄 중간 백틱셋 언급 사이의 맨몸 마커: 그대로 센다(att
 # ⓕ 세 번째 지점 — `policy-review` 를 **인용만** 한 코멘트는 재심으로 세지 않는다.
 #    이 방향의 오탐이 셋 중 가장 위험하다: 거짓 `reviewed` 는 사람 정책 게이트를 실제 재심
 #    없이 통과시키고, 그 이슈는 아무도 다시 묻지 않는다(조용한 유실).
-setup "needs-human,hold:policy,agent-ready" 200 0
+setup "hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 note '메모: 재심 코멘트는 `<!-- policy-review: kept -->` 마커를 남긴다(아직 안 남겼다)'
 run
@@ -1255,7 +1322,7 @@ quoted_note() {  # quoted_note <형태> <마커> → 그 마커를 <형태>로 �
 
 for form in single double triple fence; do
   # ① ladder-resume 개수 — 인용은 재개 횟수를 올리지 않는다(조기 승격 금지)
-  setup "needs-human,hold:ladder,agent-ready" 200 0
+  setup "hold:ladder,agent-ready" 200 0
   note "$(quoted_note "$form" '<!-- ladder-resume: 1 -->')"
   run
   check "[$form] 인용 ladder-resume: 안 센다(attempt=1)" \
@@ -1264,7 +1331,7 @@ for form in single double triple fence; do
 
   # ② hold-note 경계 — 인용은 새 에피소드 경계가 아니다
   #    (#174 형태: 인용된 hold-note 과 **진짜** 재심 마커가 한 코멘트 안에 공존)
-  setup "needs-human,hold:policy,agent-ready" 200 0
+  setup "hold:policy,agent-ready" 200 0
   note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
   note "$(quoted_note "$form" '<!-- hold-note: policy -->')
 <!-- policy-review: kept --><!-- bodat:worker -->"
@@ -1272,7 +1339,7 @@ for form in single double triple fence; do
   check "[$form] 인용 hold-note: 경계 아님(due 재발 없음)" "$(no_ev policy_review_due)"
 
   # ③ policy-review — 인용만 한 코멘트는 재심이 아니다(거짓 reviewed = 조용한 유실)
-  setup "needs-human,hold:policy,agent-ready" 200 0
+  setup "hold:policy,agent-ready" 200 0
   note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
   note "$(quoted_note "$form" '<!-- policy-review: kept -->')"
   run
@@ -1281,19 +1348,19 @@ done
 
 # 다섯째 형태 = **맨몸**(대조군). 세 지점 모두 반대 방향으로 나와야 한다 — 인용 제거가
 # **더** 지우는 쪽으로 틀리면(맨몸 마커 유실) 상한이 안 걸려 원래 버그보다 나쁘다.
-setup "needs-human,hold:ladder,agent-ready" 200 0
+setup "hold:ladder,agent-ready" 200 0
 note "재개 1/2: 사다리 재시도 <!-- ladder-resume: 1 --><!-- bodat:worker -->"
 run
 check "[bare] 맨몸 ladder-resume: 센다(attempt=2)" \
   "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 2' >/dev/null 2>&1 && echo ok || echo no)"
 
-setup "needs-human,hold:policy,agent-ready" 200 0
+setup "hold:policy,agent-ready" 200 0
 note "재심: 지난 홀드는 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->"
 note "사람 확인(policy): 이번엔 C인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 run
 check "[bare] 맨몸 hold-note: 새 경계로 센다(due)" "$(has_ev policy_review_due)"
 
-setup "needs-human,hold:policy,agent-ready" 200 0
+setup "hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 note "재심: 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->"
 run
