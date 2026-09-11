@@ -147,6 +147,22 @@ exit 1
 STUB
 chmod +x "$tmp/bin/gh"
 
+# ── jq 스텁 — 기본은 진짜 jq 로 그대로 넘긴다 ──────────────────────────────
+# 쓰는 곳은 하나다: (#229) 재조회 쪽 배포 대기 판정이 **실패**했을 때 fail-closed 인지.
+# 그 실패는 픽스처(데이터)로는 못 만든다 — 어댑터가 라벨 콤마목록에서 row-json 을 **스스로**
+# 만들어 넣기 때문에 어떤 라벨이 와도 JSON 은 항상 정상이다. 즉 유일한 도달 경로가 도구
+# 실패라, 인자에 표식(`deploy-wait-adapter`)이 있는 **그 한 호출만** 실패시킨다.
+REAL_JQ=$(command -v jq)
+export REAL_JQ
+cat > "$tmp/bin/jq" <<'STUB'
+#!/usr/bin/env bash
+if [ -n "${STUB_JQ_FAIL_PAT:-}" ]; then
+  case "$*" in *"$STUB_JQ_FAIL_PAT"*) echo "jq: stubbed failure" >&2; exit 5 ;; esac
+fi
+exec "$REAL_JQ" "$@"
+STUB
+chmod +x "$tmp/bin/jq"
+
 # ── 픽스처 · 실행 헬퍼 ─────────────────────────────────────────────────────
 # setup <이슈라벨csv> <분전> <마커코멘트수>
 #   ladder 쿼리(라벨 AND)는 서버가 거르므로, hold:ladder 가 없으면 빈 배열을 돌려준다.
@@ -179,7 +195,7 @@ setup() {
   # unset 하면 export 속성이 날아가 이후 대입이 스텁에 안 전달된다 — 빈 값으로 되돌린다.
   STUB_LADDER_FAIL=""; STUB_HUMAN_FAIL=""; STUB_LABEL_EDIT_FAIL=""; STUB_COMMENT_FAIL=""
   STUB_COMMENTS_FAIL=""; STUB_SEARCH_FAIL=""; STUB_PR_FAIL=""; STUB_PR_EDIT_FAIL=""
-  STUB_STATE_LABELS=""; STUB_READBACK_LABELS=""; STUB_UPDATED_LIVE=""
+  STUB_STATE_LABELS=""; STUB_READBACK_LABELS=""; STUB_UPDATED_LIVE=""; STUB_JQ_FAIL_PAT=""
   WORKDIR="$tmp/work"; RA=120; RL=2; LL=200
 }
 
@@ -204,7 +220,7 @@ export STUB_COMMENTS="$tmp/comments.json" STUB_SEARCH="$tmp/search"
 export STUB_PR_NUM="$tmp/pr.num" STUB_PR_LABELS="$tmp/pr.labels"
 export STUB_LADDER_FAIL="" STUB_HUMAN_FAIL="" STUB_LABEL_EDIT_FAIL="" STUB_COMMENT_FAIL=""
 export STUB_COMMENTS_FAIL="" STUB_SEARCH_FAIL="" STUB_PR_FAIL="" STUB_PR_EDIT_FAIL=""
-export STUB_STATE_LABELS="" STUB_READBACK_LABELS="" STUB_UPDATED_LIVE=""
+export STUB_STATE_LABELS="" STUB_READBACK_LABELS="" STUB_UPDATED_LIVE="" STUB_JQ_FAIL_PAT=""
 WORKDIR="$tmp/work"
 RC=0
 out=""
@@ -914,6 +930,101 @@ check "ⓔ 판정 실패: resumed 아님"                        "$(no_ev resume
 check "ⓔ 판정 실패: note 아님"                           "$(no_ev note)"
 check "ⓔ 판정 실패: 편집 0회"                            "$(none 'issue edit')"
 check "ⓔ 판정 실패: 코멘트 0회"                          "$(none 'issue comment')"
+
+# ── ㉟ (#229) 배포 대기 제외는 **재조회 결과**로 판정한다 — want 열 격자 전수 단언 ──
+# #217 의 제외는 목록 조회 스냅샷(row)만 봤다. 기본 RESUME_AFTER_MIN=120 에서는 라벨이
+# 붙는 순간 updatedAt 이 갱신돼 창 게이트가 **우연히** 경합 가드 노릇을 했지만, `_nonneg_int`
+# 는 0 을 정상값으로 받으므로 RESUME_AFTER_MIN=0(디버깅·강제 재개)이면 그 우연이 사라지고
+# 낡은 row 로만 판정하는 제외는 사람 게이트를 그대로 벗겨낸다. 그래서 이 격자는 전부 RA=0
+# 에서 돈다 — 120 이면 waiting 으로 빠져 이 경로에 **도달조차 못 한다**.
+# 축: (목록 row 의 배포대기 유/무) × (재조회 cur 의 배포대기 유/무/판정실패) × (재개·승격).
+# 반례를 하나씩 닫지 않고 want 열로 전수 단언한다(PR#202 교훈 — 개별 반례만 막으면 같은
+# 축을 여러 회차 돈다). 경합은 실시간으로 흉내 낼 필요가 없다: 목록 스텁과 read_state
+# 스텁에 **다른 응답**을 주는 것이 곧 "목록 조회와 편집 사이에 라벨이 바뀌었다" 이다.
+#
+#   row(목록)        cur(재조회)      갈래    want        이유
+#   ───────────────  ───────────────  ──────  ──────────  ──────────────────────────────
+#   없음             없음             재개    resumed     #217 정상 재개(회귀 방지)
+#   없음             없음             승격    escalated   종전 승격(회귀 방지)
+#   없음             deploy-wait      재개    note        ← 이 이슈가 막는 사고
+#   없음             deploy-wait      승격    note        ← 승격 갈래도 같은 제외
+#   없음             full-cycle       재개    note        과도기 축도 같은 술어
+#   없음             full-cycle       승격    note        과도기 축도 같은 술어
+#   없음             판정실패         재개    warn        fail-closed(폴백 금지)
+#   없음             판정실패         승격    warn        fail-closed(폴백 금지)
+#   deploy-wait      없음             재개    resumed     ← 반대 방향: 낡은 row 로 막지 않는다
+#   deploy-wait      없음             승격    escalated   ← 반대 방향(승격 갈래)
+#   deploy-wait      deploy-wait      재개    note        ⓐ 와 같은 답(둘 다 있음)
+#   deploy-wait      deploy-wait      승격    note        ⓒ 와 같은 답(둘 다 있음)
+#   deploy-wait      판정실패         재개    warn        fail-closed
+#   full-cycle       없음             재개    resumed     반대 방향(과도기 축)
+#
+# (row 자체가 깨진 경우는 위 ⓔ 가 문다 — 그쪽은 여기 재조회 이전 단계다.)
+dw_want() {  # dw_want <이름> <row 라벨csv> <cur 라벨csv|__CUR_FAIL__> <마커수> <want>
+  local name="$1" rowlab="$2" curlab="$3" mk="$4" want="$5" got
+  setup "$rowlab" 200 "$mk"
+  RA=0
+  if [ "$curlab" = "__CUR_FAIL__" ]; then
+    STUB_STATE_LABELS="$rowlab"          # 라벨 자체는 정상 — 판정 도구만 실패시킨다
+    STUB_JQ_FAIL_PAT='deploy-wait-adapter'
+  else
+    STUB_STATE_LABELS="$curlab"
+  fi
+  run
+  STUB_JQ_FAIL_PAT=""
+  # 이벤트 **집합**으로 비교한다 — 원하는 갈래가 나왔는지뿐 아니라 곁가지가 함께 나오지
+  # 않았는지까지 한 단언이 문다(실측 #5040 은 resumed 와 note 가 **동시에** 난 사고였다).
+  got=$(printf '%s' "$out" | jq -r 'select(.event != null) | .event' 2>/dev/null | sort -u | tr '\n' ' ')
+  got=${got% }
+  check "격자 $name → $want" "$([ "$got" = "$want" ] && echo ok || echo "no($got)")"
+  case "$want" in
+    note|warn)
+      check "격자 $name: 편집 0회"          "$(none 'issue edit')"
+      check "격자 $name: 코멘트 0회"        "$(none 'issue comment')"
+      check "격자 $name: needs-human 유지"  "$(hasl needs-human)"
+      check "격자 $name: hold:ladder 유지"  "$(hasl hold:ladder)" ;;
+    resumed)
+      check "격자 $name: needs-human 해제"  "$(lacksl needs-human)"
+      check "격자 $name: hold:ladder 해제"  "$(lacksl hold:ladder)" ;;
+    escalated)
+      check "격자 $name: hold:policy 부착"  "$(hasl hold:policy)"
+      check "격자 $name: needs-human 유지"  "$(hasl needs-human)" ;;
+  esac
+}
+
+NHL='needs-human,hold:ladder,agent-ready'
+dw_want "row없음/cur없음/재개"        "$NHL"              "$NHL"                          0 resumed
+dw_want "row없음/cur없음/승격"        "$NHL"              "$NHL"                          2 escalated
+dw_want "row없음/cur=deploy-wait/재개" "$NHL"             "$NHL,deploy-wait"              0 note
+dw_want "row없음/cur=deploy-wait/승격" "$NHL"             "$NHL,deploy-wait"              2 note
+dw_want "row없음/cur=full-cycle/재개"  "$NHL"             "$NHL,full-cycle"               0 note
+dw_want "row없음/cur=full-cycle/승격"  "$NHL"             "$NHL,full-cycle"               2 note
+dw_want "row없음/cur판정실패/재개"     "$NHL"             "__CUR_FAIL__"                  0 warn
+dw_want "row없음/cur판정실패/승격"     "$NHL"             "__CUR_FAIL__"                  2 warn
+dw_want "row=deploy-wait/cur없음/재개" "$NHL,deploy-wait" "$NHL"                          0 resumed
+dw_want "row=deploy-wait/cur없음/승격" "$NHL,deploy-wait" "$NHL"                          2 escalated
+dw_want "row=deploy-wait/cur=deploy-wait/재개" "$NHL,deploy-wait" "$NHL,deploy-wait"      0 note
+dw_want "row=deploy-wait/cur=deploy-wait/승격" "$NHL,deploy-wait" "$NHL,deploy-wait"      2 note
+dw_want "row=deploy-wait/cur판정실패/재개"     "$NHL,deploy-wait" "__CUR_FAIL__"          0 warn
+dw_want "row=full-cycle/cur없음/재개"  "$NHL,full-cycle"  "$NHL"                          0 resumed
+
+# 문구 단언 — 기존 note 문구를 그대로 재사용하는지(디스패처 SKILL 이 문구로 분기한다)와
+# 재조회 쪽 warn 이 **어느 쪽 판정이 실패했는지** 구분되는지.
+setup "$NHL" 200 0
+RA=0
+STUB_STATE_LABELS="$NHL,deploy-wait"
+run
+check "㉟ 문구: 기존 note 문구 재사용" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("배포 대기\\(라벨 deploy-wait\\) — needs-human 이 정상 상태라 warn 아님"))' >/dev/null 2>&1 && echo ok || echo no)"
+
+setup "$NHL" 200 0
+RA=0
+STUB_STATE_LABELS="$NHL"
+STUB_JQ_FAIL_PAT='deploy-wait-adapter'
+run
+STUB_JQ_FAIL_PAT=""
+check "㉟ 문구: 재조회 쪽 판정 실패임을 적는다" "$(saysl '재조회')"
+check "㉟ 재조회 판정 실패: 배포 대기 문구"     "$(saysl '배포 대기')"
 
 # ── (#197) 인용된 마커는 제어 신호가 아니다 ────────────────────────────────
 # 마커는 루프끼리 주고받는 신호인데, 그 신호를 **설명하는 글**(백틱 인라인 코드·코드펜스)이
