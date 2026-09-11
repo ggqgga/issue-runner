@@ -1043,6 +1043,20 @@ case "$out $rc" in
   *) echo "  ✗ progress-evidence: 형식 불량 커밋 시각 → '$out' rc=$rc (기대 unknown commit_at_invalid rc=2)"; exit 1 ;;
 esac
 
+echo "[#206] iso_to_epoch 형식 패턴은 모든 사본에서 동일 (한쪽만 느슨해지면 조용히 갈린다)"
+# finish-classify.sh 와 progress-evidence.sh 는 같은 시각 문자열을 각자 파싱한다. 패턴이
+# 갈리면 한쪽은 성공·한쪽은 `commit_at_invalid` 가 되어 🔄 계열 회수가 통째로 멈춘다
+# (전자는 판정을 내고 후자는 항상 active 를 만든다).
+pat_count=$(grep -h -o '\[0-9\]\[0-9\]\[0-9\]\[0-9\]-\[0-9\]\[0-9\]-.*Z) ;;' scripts/*.sh | sort -u | wc -l | tr -d ' ')
+[ "$pat_count" = 1 ] || {
+  echo "  ✗ iso_to_epoch 형식 패턴이 ${pat_count}가지다 — 한 문장으로 통일하라:"
+  grep -hn -o '\[0-9\]\[0-9\]\[0-9\]\[0-9\]-\[0-9\]\[0-9\]-.*Z) ;;' scripts/*.sh | sort -u | sed 's/^/      /'
+  exit 1; }
+for f in $(grep -l '^iso_to_epoch()' scripts/*.sh); do
+  grep -qF '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;' "$f" \
+    || { echo "  ✗ $f: iso_to_epoch 에 형식 검사가 없다(GNU date 가 빈 값을 통과시킨다)"; exit 1; }
+done
+
 echo "[#206] closeout ①-b — CONFLICTING 반송 회차도 finish-classify 로 분류한다"
 # `bounced` 를 무조건 무접촉으로 두면 "반송 뒤 ✅ 직전 사망 + CONFLICTING" PR 이 세 레인
 # 모두에서 빠져 영구 정체한다(#206). 산문이 그 배선과 신선도 출처를 잃으면 격자 테스트가
@@ -1050,8 +1064,12 @@ echo "[#206] closeout ①-b — CONFLICTING 반송 회차도 finish-classify 로
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qF 'progress-evidence.sh' "$f" \
     || { echo "  ✗ $f 에 신선도 출처(progress-evidence.sh) 표기 없음"; exit 1; }
-  awk 'BEGIN{RS="";ok=0} /bounced/ && /finish-classify/ {ok=1} END{exit ok?0:1}' "$f" \
-    || { echo "  ✗ $f: bounced 갈래를 finish-classify 로 넘기는 지시가 없다"; exit 1; }
+  # 세 토큰을 **같은 단락**에서 함께 요구한다. `bounced`+`finish-classify` 둘만 요구하면
+  # 옛 산문도 통과했다 — 옛 불릿 블록에 `ok` 갈래의 "(finish-classify 는 건너뛴다.)" 와
+  # "`bounced` 이거나 …" 가 같은 단락에 있었기 때문이다(사전 리뷰 WARN). `stale_reverify`
+  # 는 옛 단락에 없던 토큰이라 이 가드가 실제로 새 배선을 고정한다.
+  awk 'BEGIN{RS="";ok=0} /bounced/ && /finish-classify/ && /stale_reverify/ {ok=1} END{exit ok?0:1}' "$f" \
+    || { echo "  ✗ $f: bounced 갈래를 finish-classify 로 넘겨 stale_reverify 만 여는 지시가 없다"; exit 1; }
 done
 
 echo "[test] timebox-check.sh 진행 증거 판정·queue.log 마지막 줄·유예 상한 (#200)"
