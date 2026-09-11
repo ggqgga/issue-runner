@@ -118,9 +118,10 @@ the code closeout itself blocked. So `closeout-eligible.sh` never promotes on th
    as a pass is exactly fail-open on a merge gate).
 2. **Bounce-marker safety net** — covers the window right after a bounce, before the replacement
    worker pushes, when the head time is still unchanged. The marker set lives in **one place**
-   (`BOUNCE_MARKERS` in `bounce-state.sh`) and holds both bounce channels: `재디스패치:`
-   (this skill, ①-b) and `재검증 실패:` (verify-runner ④). New bounce wording goes in that array
-   and nowhere else. Ordering is decided by the **last matching index in the comment array**, not
+   (`BOUNCE_MARKERS` in `bounce-state.sh`) and holds both bounce channels: `재디스패치`
+   (this skill, ①-b) and `재검증 실패` (verify-runner ④) — prefix match, no literal colon
+   required (#212). New bounce wording goes in that array and nowhere else. Ordering is
+   decided by the **last matching index in the comment array**, not
    by `createdAt` — GitHub comment times are second-granular, so a ✅ and a marker written in the
    same second cannot be ordered by time.
 
@@ -165,7 +166,8 @@ PR, attached `harvesting`, and ran `git rebase origin/main` inside that worker's
 (nothing was lost only because it had not been pushed yet).
 
 The judgment lives in `bounce-state.sh` **in one place** — both the marker set
-(`재디스패치:` · `재검증 실패:`) and the rule that ordering is measured by the **last matching
+(`재디스패치` · `재검증 실패`, prefix match with no literal colon required — #212) and the
+rule that ordering is measured by the **last matching
 index in the comments array**, not by `createdAt`; `closeout-eligible.sh` calls the same place
 (no second copy of the logic).
 
@@ -197,9 +199,12 @@ separate freshness gate needed:
 (the labels are set outside this skill by the worker runtime — use as a supplement when
 present; judge by finish-classify alone when absent).
 
-**Re-dispatch idempotency marker (required)**: on a `stale_reverify` re-dispatch, leave
-`gh pr comment <pr> --repo <repo> --body "재디스패치: #<issue> — lost finish (died before verify) <!-- bodat:worker -->"`,
-and **if this marker already exists and there has been no new commit / verifier comment since,
+**Re-dispatch idempotency marker (required)**: on a `stale_reverify` re-dispatch, leave the
+comment with `$SCRIPTS/bounce-comment.sh redispatch <repo> <pr> <issue>` (do not hand-type the
+wording — a dropped colon or reordering lets the `bounce-state.sh` bounce safety net miss it,
+#212. The generated body is `재디스패치: #<issue> — 완결 유실(검증 전 사망) <!-- bodat:worker -->`
+— the marker word itself stays Korean across both skill languages, see bounce-state.sh).
+**if this marker already exists and there has been no new commit / verifier comment since,
 do not re-issue** (prevents /loop spam, isomorphic to the step-6 spinoff marker). Re-dispatch
 eligibility is `open + agent-ready + ¬agent:claimed` (eligible-issues.sh), and the
 `closeout-redispatch` transition sets both in one call (do not hand-run `gh issue edit`).

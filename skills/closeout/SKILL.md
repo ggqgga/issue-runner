@@ -96,7 +96,8 @@ closeout 이 머지한다. 그래서 `closeout-eligible.sh` 는 ✅ 존재만으
    `active` 다(머지 게이트에서 증명 실패를 통과로 처리하면 그게 fail-open).
 2. **반송 마커 안전망** — 반송 직후 아직 새 커밋이 없어 head 시각이 그대로인 창을 덮는다.
    마커 집합은 반송 채널 둘을 **한 자리**(`bounce-state.sh` 의 `BOUNCE_MARKERS`)에
-   묶는다: `재디스패치:`(이 스킬 ①-b) · `재검증 실패:`(verify-runner ④). 새 반송 어휘가
+   묶는다: `재디스패치`(이 스킬 ①-b) · `재검증 실패`(verify-runner ④, 콜론 등 뒤에 무엇이
+   오든 접두 매칭 — #212). 새 반송 어휘가
    생기면 그 배열만 고친다. 선후는 `createdAt` 이 아니라 **코멘트 배열의 마지막 매칭
    인덱스**로 잰다 — GitHub 코멘트 시각은 초 단위라 동초에 달린 ✅ 와 마커의 순서를
    시각만으로는 가릴 수 없다.
@@ -145,7 +146,8 @@ head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify`
 형상이기도 하다.** 실제로 closeout 이 살아 있는 워커의 PR 을 입양해 `harvesting` 을 붙이고
 그 워크트리에서 `git rebase origin/main` 까지 돌렸다(원격은 push 전이라 무손상).
 
-판정은 `bounce-state.sh` **한 자리**다 — 마커 집합(`재디스패치:`·`재검증 실패:`)도, 선후를
+판정은 `bounce-state.sh` **한 자리**다 — 마커 집합(`재디스패치`·`재검증 실패`, 콜론
+리터럴을 요구하지 않는 접두 매칭 — #212)도, 선후를
 `createdAt` 이 아니라 **코멘트 배열의 마지막 매칭 인덱스**로 재는 규칙도 거기 있고
 `closeout-eligible.sh` 가 같은 자리를 부른다(로직 두 벌 금지).
 
@@ -176,8 +178,10 @@ CONFLICTING PR 도 그 라벨을 그대로 달고 있다 — 배제 조건으로
 결과만으로 판정).
 
 **재디스패치 멱등 마커 (필수)**: `stale_reverify` 재디스패치 시 PR 에
-`gh pr comment <pr> --repo <repo> --body "재디스패치: #<이슈> — 완결 유실(검증 전 사망) <!-- bodat:worker -->"`
-를 남기고, **이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지
+`$SCRIPTS/bounce-comment.sh redispatch <repo> <pr> <이슈>` 로 코멘트를 남긴다(문구를
+손으로 옮겨 적지 않는다 — 콜론·어순이 변형되면 `bounce-state.sh` 반송 안전망이 놓친다,
+#212. 생성되는 본문은 `재디스패치: #<이슈> — 완결 유실(검증 전 사망) <!-- bodat:worker -->`).
+**이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지
 않는다**(/loop 스팸 방지, 6단계 파생 마커 동형). 재디스패치 자격은 `open + agent-ready +
 ¬agent:claimed`(eligible-issues.sh)이라 `closeout-redispatch` 전이가 그 둘을 한 번에
 맞춘다(손으로 `gh issue edit` 하지 마라). 위 두 전이 모두 **exit 1(readback 불일치)·
