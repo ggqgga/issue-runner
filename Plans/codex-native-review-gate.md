@@ -59,6 +59,27 @@ codex-review-gate.sh --base <ref> | --commit <sha> | --uncommitted  [--model M] 
 
 - `scripts/tests/codex-review-gate.test.sh`: `codex` 스텁으로 (a) P1 포함 → exit 1·verdict BLOCKER, (b) P2 만 → 0·WARN,
   (c) 항목 없음 → 0·CLEAN, (d) 모델 오류 문구 → 2, (e) 타임아웃 → 2, (f) codex 부재 → 2. `bin/ci` 등록.
+
+진행 — **응답 계약(구조 줄) 착지 (#207 / PR #216)**. 위 (a)~(f) 는 그대로 두고 판정 입력이 하나
+바뀌었다: `--prompt` 호출은 리뷰 본문의 **마지막 줄에 오는 고정 형식 줄**(`<키>: reviewed|no-basis`)
+로만 가른다(`reviewed` → 항목 집계대로 · `no-basis`/줄 없음/형식 깨짐 → `verdict=NONE` 미산출 →
+SKILL 의 폴백). 형식 문자열의 유일한 정의 자리는 `codex-review-gate.sh` 의 `STATUS_*` 상수이고
+프롬프트 계약문과 파서가 **둘 다 그 상수로** 만들어진다(`bin/ci` 가 단일 정의를 검사).
+
+**한국어 산문 정규식은 판정 입력에서 뺐다** — 어형 열거는 닫히지 않아 세 라운드 연속 fail-open 을
+냈고(#207 round2~4), 반대 방향으로는 **인용된 문구가 진짜 발견을 지웠다**(실측 2026-09-11: 리뷰
+본문이 예시로 적은 `Unable to inspect the repository` 한 줄에 `[P1]` 둘이 통째로 지워졌다).
+비계약 경로(`--prompt` 없는 내장 스코프 리뷰 — closeout ① correctness · verify-runner ③)는
+프롬프트를 실을 자리가 없어 계약을 요구할 수 없으므로 영문 '도구 부재' 휴리스틱(#137)을 남기되,
+같은 오탐을 막으려 **항목이 0일 때만** 본다(항목이 있는 리뷰는 정의상 미산출이 아니다).
+
+**폴백 프롬프트는 별도 파일이다** — `skills/closeout/references/verifier-prompt-fallback.md`.
+네이티브 템플릿은 "이 워크트리에서 직접 읽어라" 를 전제하는데 `general-purpose` 폴백은 `--cd` 로
+스코프되지 않아 그 전제가 거짓이 된다(엉뚱한 체크아웃을 '최신' 이라 단언한 채 판정). 폴백 쪽은
+diff 를 실제로 동봉한다. `bin/ci` 가 SKILL 문서의 지목을 강제한다.
+
+잔여(비차단): 꼬리 artifact 판정이 **맨몸** 펜스를 여닫이 구분 없이 벗긴다 — 짝 세기로 가르는
+축은 파생 이슈.
 - 라이브: issue-runner 자신의 머지 커밋 하나로 `--commit` 실행 → verdict 줄 + review.md 생성(#131 과 같은 P1 재현).
 
 ## 설치
