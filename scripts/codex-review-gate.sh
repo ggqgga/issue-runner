@@ -191,7 +191,11 @@ if [ "$STATUS_CONTRACT" = 1 ]; then
         s = line[i]
         sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s)
         if (s == "") continue                                 # 빈 줄 — 꼬리 artifact
-        if (s ~ /^(```+|~~~+)[A-Za-z0-9_.+-]*$/) continue     # 닫는 코드펜스 — 꼬리 artifact
+        if (s ~ /^(```+|~~~+)[ \t]*$/) continue                # 닫는 코드펜스(언어 태그 없는 맨 펜스)만 —
+                                                                # 꼬리 artifact. 언어 태그가 붙으면(예: "```python")
+                                                                # 그건 여는 펜스다 — 벗기면 그 뒤(위) 줄을 계약
+                                                                # 줄로 오판해 응답 계약을 어긴 응답이 새는 방향으로
+                                                                # 틀린다(#207 attempt8, 닫는 펜스는 관례상 맨몸이다)
         print s; exit
       }
     }' "$REVIEW" 2>/dev/null)
