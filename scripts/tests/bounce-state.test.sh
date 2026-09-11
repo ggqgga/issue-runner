@@ -260,6 +260,73 @@ run_file_case "주입 파일이 빈 문자열→판정 실패(코멘트 0건과 
 printf '%s' '[]' > "$tmp/zero.json"
 run_file_case "주입 파일이 []→ok(코멘트 0건은 정상 판정)" ok "$tmp/zero.json"
 
+# ── #221 ①: 구분자 격자 — "마커가 낱말로 끝나는가" 를 전수 단언 ──────────
+# **규칙 한 줄**: 반송 마커는 코멘트 첫 줄 맨 앞에서 **낱말로 끝나야** 한다 — 마커 바로
+# 뒤에 한글 음절이 이어지면(조사·어미가 붙어 한 낱말의 일부로 쓰인 것) 그 줄은 마커
+# 단어로 시작할 뿐인 **평범한 문장**이므로 반송이 아니고, 그 외(줄 끝·개행·공백·문장
+# 부호·숫자·라틴 문자)는 전부 구분자로 본다.
+#
+# 왜 "구분자 화이트리스트"(`:` · 공백+`#` · 공백+`(` · 공백+`attempt` 열거)가 아닌가:
+# 열거는 근사라서 열거 밖의 **진짜 반송 형태**(` — 사유`, ` 3회차`, ` [attempt 3]` …)를
+# 놓치고, 그 방향의 오류는 **fail-open** 이다 — #212 가 막은 사고(반송된 PR 이 머지
+# 후보로 되올라옴)로 그대로 되돌아간다. 낱말 경계 규칙은 **반대 방향으로만** 틀린다
+# (경계가 모호하면 `bounced` = fail-closed = 정체일 뿐 사고가 아니다).
+# (PR#202 교훈: 리뷰가 짚은 개별 반례만 차례로 막지 말고 규칙 자체를 옮긴 뒤 `want`
+# 열을 가진 격자로 전수 단언하라 — 근사가 '더 지우는' 방향으로 틀리면 원래 버그보다
+# 나쁘다.)
+#
+# 격자의 마커는 **SUT 에서 읽는다** — 테스트가 리터럴을 복제하면 ②와 똑같은 "두 벌" 이
+# 된다(SSOT 마커를 바꿨을 때 격자가 낡은 채로 초록).
+markers_json=$(grep -m1 '^BOUNCE_MARKERS=' "$SUT" | cut -d= -f2- | tr -d "'")
+if printf '%s' "$markers_json" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "  ✗ SUT 에서 BOUNCE_MARKERS 를 읽지 못했다(격자가 마커 리터럴을 복제하지 않는다는 계약): [$markers_json]"
+fi
+
+# grid_case <name> <want: ok|bounced> <후보 코멘트 본문>
+#   선행 ✅ 하나를 깔고 후보를 마지막 코멘트로 둔다 — `bounced` = 마커로 인식됨,
+#   `ok` = 인식 안 됨. 주입 경로를 쓰므로 네트워크·gh 무접속이다.
+grid_case() {
+  local name="$1" want="$2" body="$3"
+  jq -n --arg b "$body" '[
+    {body:"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->", createdAt:"2026-09-11T07:00:00Z"},
+    {body:$b, createdAt:"2026-09-11T07:30:00Z"}
+  ]' > "$tmp/grid.json"
+  run_file_case "$name" "$want" "$tmp/grid.json"
+}
+
+grid_old_ifs=$IFS
+IFS='
+'
+# shellcheck disable=SC2046
+set -- $(printf '%s' "$markers_json" | jq -r '.[]')
+IFS=$grid_old_ifs
+for gm in "$@"; do
+  while IFS='|' read -r g_want g_suffix g_label; do
+    [ -n "$g_want" ] || continue
+    grid_case "격자[$gm]$g_label" "$g_want" "$gm$g_suffix"
+  done <<'GRID'
+bounced|: #193 — 마감 검증 BLOCKER(코드 회귀)|+콜론
+bounced| #193 — 반송|+공백 #N
+bounced| (round 2) — E2E 실패|+공백 (괄호
+bounced| attempt 3 — 마감 검증 BLOCKER|+공백 attempt N
+bounced| — 사유만 대시로|+공백 대시(화이트리스트 밖이지만 진짜 반송 형태)
+bounced|2회차 — 반송|+숫자 직접 부착(한글 아니면 구분자)
+bounced||마커만·줄 끝
+ok|가 필요한지 확인했습니다|+조사 '가'(한글이 이어짐=낱말 계속)
+ok|를 분석합니다|+조사 '를'(한글이 이어짐=낱말 계속)
+bounced| 필요 여부를 검토합니다|+공백 평범한 명사(공백은 구분자 — 이 경계는 fail-closed 로 남긴다)
+GRID
+  # 마커 바로 뒤 **개행** 도 구분자다(첫 줄이 마커 하나로만 이뤄진 반송).
+  grid_case "격자[$gm]+개행" bounced "$gm
+둘째 줄 — 사유"
+  # 첫 줄 **시작이 아닌** 인용은 여전히 반송이 아니다 — #212 수용 기준 4번의 축은
+  # 그대로 유지된다(구분자 요구는 앵커를 대체하지 않고 덧붙는다).
+  grid_case "격자[$gm]본문 중간 인용" ok "이 코멘트는 $gm 라는 마커가 무엇인지 설명한다."
+done
+
 # 12) 인자 누락 — 호출자 실수를 조용한 `ok` 로 만들지 않는다.
 rc=0
 out=$(PATH="$tmp/bin:$PATH" bash "$SUT" 2>/dev/null) || rc=$?
