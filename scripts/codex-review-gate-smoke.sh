@@ -62,16 +62,26 @@ set -- --base base --prompt '이 변경이 계획에 부합하는지, 그리고 
 [ -n "$EFFORT" ] && set -- "$@" --effort "$EFFORT"
 
 say "실호출 중 — codex exec review (수 분 걸린다)"
+# 게이트의 종료코드를 **파이프 없이** 받는다 — `cmd | tail -1` 로 받으면 `$?` 는 tail 의 것(늘 0)이라
+# BLOCKER(1)·미산출(2)·실행 실패(127)가 전부 "exit 0" 으로 기록돼 진단 줄이 거짓말을 한다.
 rc=0
-last=$("$GATE" "$@" 2>"$TMP/gate.err" | tail -1) || rc=$?
+"$GATE" "$@" >"$TMP/gate.out" 2>"$TMP/gate.err" || rc=$?
 sed 's/^/  | /' "$TMP/gate.err" >&2
-
+last=$(tail -1 "$TMP/gate.out")
 verdict=$(printf '%s\n' "$last" | sed -n 's/^verdict=\([A-Z]*\) .*/\1/p')
-say "게이트 출력: $last (exit $rc)"
+say "게이트 출력: ${last:-<출력 없음>} (exit $rc)"
 
-if [ "$verdict" = NONE ] || [ -z "$verdict" ]; then
-  say "✗ 실패 — verdict=${verdict:-<없음>}. 실호출이 판정을 못 냈다(#283 회귀 또는 새 미산출 사유)."
-  say "  리뷰 본문을 직접 보라: $OUT/review.md · codex stderr: $OUT/stderr.log (--keep 로 보존)"
+# 회귀와 "못 돌림" 을 가른다. 리뷰 본문이 아예 안 나왔으면(codex 부재·모델 오류·타임아웃·인증)
+# 그건 이 이슈의 회귀가 아니라 인프라 실패다 — 헤더가 약속한 exit 2 로 보낸다. 본문은 나왔는데
+# verdict 가 NONE 이면 그게 바로 #283 이 고친 그 실패다(응답 계약을 못 읽었다).
+if [ -z "$verdict" ] || { [ "$verdict" = NONE ] && [ ! -s "$OUT/review.md" ]; }; then
+  say "✗ 못 돌림 — 리뷰 본문이 안 나왔다(verdict=${verdict:-<없음>}, gate exit $rc). codex 부재·모델 오류·타임아웃·인증을 의심하라."
+  say "  codex stderr: $OUT/stderr.log · 게이트 stderr 는 위에 그대로 찍었다 (--keep 로 보존)"
+  exit 2
+fi
+if [ "$verdict" = NONE ]; then
+  say "✗ 실패 — 리뷰 본문은 나왔는데 verdict=NONE 이다. 응답 계약을 못 읽었다 = #283 회귀."
+  say "  리뷰 본문을 직접 보라: $OUT/review.md (--keep 로 보존)"
   exit 1
 fi
 
@@ -83,7 +93,12 @@ hn=$(sed -n "s/^RENDER_HEADER_MANY='\\(.*\\)'\$/\\1/p" "$GATE")
 if [ -z "$h1" ] || [ -z "$hn" ]; then
   say "✗ 게이트에서 RENDER_HEADER_* 를 못 읽었다 — 상수 이름이 바뀌었나?"; exit 1
 fi
-if grep -qxF "$h1" "$OUT/review.md" 2>/dev/null || grep -qxF "$hn" "$OUT/review.md" 2>/dev/null; then
+# 비교 전 앞뒤 공백을 벗긴다 — 게이트의 awk 가 그렇게 비교하므로(그쪽만 트림하면, codex 가 헤더를
+# 들여쓰서 렌더했을 때 게이트는 구역을 잘랐는데 스모크만 "회귀 창 못 건드림"이라고 거짓 보고한다).
+if awk -v h1="$h1" -v hn="$hn" '
+    { s = $0; sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s)
+      if (s == h1 || s == hn) { found = 1 } }
+    END { exit(found ? 0 : 1) }' "$OUT/review.md" 2>/dev/null; then
   say "✓ 통과 — verdict=$verdict · 발견 섹션이 렌더된 응답에서 판정이 났다(#283 회귀 창 통과)"
   exit 0
 fi
