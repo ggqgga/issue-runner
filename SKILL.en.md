@@ -144,8 +144,10 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy --note "<the one-line question a human must answer>"` (this also releases
   the claim — a reason-less `needs-human` is never produced, #151), remove the
   worktree, and surface the BLOCKED reason as a warn in
-  ④ Report (once a human resolves the cause and removes needs-human, the issue
-  flows again — the README 'guardrails' convention). If the latest comment is not
+  ④ Report (once a human resolves the cause and removes **both** `needs-human`
+  **and** `hold:*`, the issue flows again — the gate also reads the `hold:` prefix,
+  so dropping only one of the two leaves it out of the queue, #242. The README
+  'guardrails' convention). If the latest comment is not
   a BLOCKED comment, remove the worktree and release the claim (returning the
   issue to a re-dispatchable state).
   **Timebox (no-progress detection)**: even if it is alive, check whether it is **making

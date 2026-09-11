@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 계정 전체에서 디스패치 가능한 이슈를 우선순위 정렬 JSON 배열로 출력.
-# 자격: open + agent-ready + ¬agent:claimed + ¬needs-human +
+# 자격: open + agent-ready + ¬agent:claimed + ¬needs-human + ¬hold:*(접두, #242) +
 #       모든 블로커가 CLOSED (블로커 = 본문 "Blocked by #N" 라인의 N ∪ blocked-by:<N> 라벨의 N, OR·dedupe)
 # 정렬: P0 > P1 > P2 > 없음, 동순위는 오래된 순.
 # 주의: search API는 인덱스 지연이 있다 — 최종 재확인은 claim-issue.sh가 직접 API로 한다.
@@ -55,6 +55,24 @@ while [ "$i" -lt "$count" ]; do
 
   # 사람 개입 대기(needs-human) 제외 — 사람이 라벨을 떼기 전에는 재디스패치 금지
   case ",$labels," in *",needs-human,"*) continue ;; esac
+
+  # 기계 정지(hold:*) 제외 (#242) — verify-held·closeout-blocked·runner-held 가 붙이는
+  # 정지 사유. 지금은 `needs-human` 과 항상 쌍이라 **동작이 바뀌지 않지만**, held 이슈는
+  # `agent-ready` 를 사다리 내내 달고 있어서 `needs-human` 부착이 사유별로 걷히는 순간
+  # 이 필터가 없으면 정지된 이슈가 곧바로 재디스패치된다(플랜 Plans/label-taxonomy-cleanup.md 1단계).
+  #
+  # 판별은 **접두사** `hold:` — 사유가 늘어도(`hold:<새사유>`) 안 깨진다. 라벨 경계는
+  # 위 join 의 콤마이므로 `,hold:` 로 물어야 한다. 그래야 `hold:` 로 **시작하지 않는**
+  # 라벨(`holding`·`on-hold`·`area:hold`·`hold-ladder`·`holder:x`)이 걸리지 않는다 —
+  # 과잉 제외는 정상 후보를 소리 없이 없애는 방향이라 원래 결함보다 나쁘다.
+  #
+  # 서버 쿼리(위 search/issues)는 **일부러 안 건드린다**: `gh` 검색은 부정 라벨을
+  # 오파싱하고(#21) `-label:hold:policy` 는 콜론이 둘이라 더 위험하다 — 필터는
+  # 클라이언트 쪽에만 둔다(needs-human 의 서버측 제외는 기존 그대로 유지).
+  #
+  # 해제는 **두 라벨 다** 떼는 것이다 — `needs-human` 만 떼면 `hold:*` 가 남아 후보로
+  # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
+  case ",$labels," in *",hold:"*) continue ;; esac
 
   # 검증/마감 레인 이슈 제외 (진행 라벨 미러) — 원 이슈에 flow:verify/flow:ready/harvesting
   # 가 미러링돼 있으면 구현이 끝나 다운스트림(verify-runner·closeout) 소유다. agent:claimed

@@ -91,6 +91,14 @@
 
 - 검증: 기존 테스트 전건 초록 + 신규(hold:* 단독 이슈가 후보에서 빠진다) + 뮤테이션 방증.
 
+진행 — 1단계 착지 (#242 / PR #262). 네 자리 전부에 `hold:` **접두** 필터가 섰고, 격자 단언을
+`scripts/tests/hold-gate.test.sh` 로 세웠다. **단 "동작이 바뀌지 않는다" 는 네 자리 중 셋에만
+맞았다** — `verify-eligible.sh` 에는 `needs-human` 필터가 애초에 **없었다**(평상시엔
+`transition.sh verify-held` 가 PR 에서 `flow:verify` 를 떼 서버 쿼리에 안 잡혀 가려져 있었다).
+`runner-held`(#151)는 단계 라벨을 건드리지 않으므로, 정지된 PR 이 뒤이은 ② Maintain 규칙 0
+재라벨로 `flow:verify` 를 얻으면 그대로 검증 후보로 떴다. 그래서 이 자리만 **오늘 동작이
+바뀐다**(정지된 PR 이 verify 후보에서 빠진다) — 무동작 안전망이 아니라 구멍 메우기였다.
+
 ### 2단계 — 배포 대기 이슈에서 `needs-human` 제거
 
 - `skills/closeout/SKILL.md` · `SKILL.en.md` 4단계 발행 명령에서 `--label needs-human` 제거

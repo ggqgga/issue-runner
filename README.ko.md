@@ -196,7 +196,7 @@ flowchart TD
 | `MAX_TIMEBOX_GRACE` | `3` | 한 claim 안에서 허용하는 누적 유예 횟수 — 완화가 무한 유예가 되지 않게 하는 상한. 판정이 15분 틱에 이뤄지므로 실제 상한은 ~2시간(타임박스 1시간 + 알아채는 데 최대 한 틱 + 유예 3틱). 상태 파일이 아니라 append 전용 이슈 코멘트 마커로 센다 |
 | `SOFT_TOKEN_BUDGET_PER_ISSUE` | `300k` | 관측치 전용 — 중단하지 않고 Report 에 승격 권고만 표시 |
 
-그리고 숫자가 아닌 불변: **issue-runner 는 절대 머지하지 않는다.** `needs-human` 이슈는 루프가 손을 뗀 상태 — 사람이 원인을 보고 라벨을 제거해야 다시 흐른다.
+그리고 숫자가 아닌 불변: **issue-runner 는 절대 머지하지 않는다.** `needs-human` 이슈는 루프가 손을 뗀 상태 — 사람이 원인을 보고 라벨을 제거해야 다시 흐른다. 게이트는 `hold:` **접두** 라벨도 보므로(#242) 기계 정지(`hold:conflict`·`hold:policy`·`hold:ladder`)를 풀 때는 `needs-human` 과 `hold:*` 를 **둘 다** 떼야 한다 — 한쪽만 떼면 후보로 돌아오지 않는다.
 
 ---
 
@@ -234,7 +234,7 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 | `blocked-by:<N>` / `Blocked by #N` | 의존성. 라벨 또는 전용 본문 라인 중 하나. OPEN 인 블로커가 하나라도 있으면 디스패치 제외. `<N>` 은 **이슈** 번호이며, 블로커가 닫히면 게이트가 자동 해제 |
 | `spinoff` | closeout 6단계가 발행한 파생 이슈라는 출처 표식. `loop-status.sh` 의 `파생` 집계가 이 라벨로만 센다 |
 | `deploy-wait` | closeout 4단계가 만든 배포 대기 이슈. `loop-status.sh` 가 배포대기와 사람대기를 가르는 버킷 라벨(`needs-human` 과 함께 붙는다) |
-| `hold:conflict` · `hold:policy` · `hold:ladder` | `needs-human` 의 **사유**. `transition.sh verify-held|closeout-blocked --reason <사유>` 가 함께 붙인다(사유 없는 `needs-human` 은 만들 수 없다). `ladder` 만 재개 스윕이 자동 재개한다. `hold:dup`·`hold:hardware` 는 일부러 없다 — 중복은 `closeout-dup` 이 닫고, 실장비는 사다리를 오른다 |
+| `hold:conflict` · `hold:policy` · `hold:ladder` | `needs-human` 의 **사유**. `transition.sh verify-held|closeout-blocked --reason <사유>` 가 함께 붙인다(사유 없는 `needs-human` 은 만들 수 없다). `ladder` 만 재개 스윕이 자동 재개한다. 디스패치·검증·마감 게이트는 이 **접두**를 직접 본다(#242) — 사람이 홀드를 풀 때는 `needs-human` 과 함께 뗀다. `hold:dup`·`hold:hardware` 는 일부러 없다 — 중복은 `closeout-dup` 이 닫고, 실장비는 사다리를 오른다 |
 | `dup` | `closeout-dup` 으로 머지 없이 닫힌 PR(이미 main 에 반영·중복). `loop-status.sh` 가 `실패` 와 갈라 `중복종료` 로 센다 |
 
 자격 조건: `open + agent-ready + ¬agent:claimed + 모든 블로커 CLOSED`. 정렬: `P0 > P1 > P2 > 없음`, 동순위는 오래된 순.

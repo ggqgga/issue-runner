@@ -142,7 +142,8 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy --note "<사람이 답해야 할 질문 한 줄>"` 로 `needs-human`
   + `hold:policy` 를 부착하고(claim 해제 포함 — 사유 없는 `needs-human` 은 만들지 않는다, #151),
   worktree 제거 후 warn 으로 ④ Report 에 BLOCKED 사유를
-  올려라 (사람이 원인을 해소하고 needs-human 을 떼면 다시 흐른다 — README
+  올려라 (사람이 원인을 해소하고 `needs-human` **과 `hold:*` 를 둘 다** 떼면 다시 흐른다 —
+  게이트가 `hold:` 접두도 보므로 한쪽만 떼면 후보로 안 돌아온다, #242. README
   '가드레일' 규약). BLOCKED 코멘트가 아니면 worktree 제거 후 claim 해제
   (재디스패치 가능 상태로 복귀).
   **timebox (무진전 감지)**: 살아있어도 **진행이 있는지** 확인하라 — 판정 입력은 경과

@@ -199,7 +199,7 @@ The loop is designed to run away safely — each limit bounds "the worst a human
 | `MAX_TIMEBOX_GRACE` | `3` | Cap on cumulative reprieves within one claim, so the relaxation cannot become an endless reprieve. The checks run on the 15-min tick, so the real ceiling is ~2h (1h timebox + up to a tick to notice + 3 reprieve ticks). Counted from append-only issue comment markers, not from any state file |
 | `SOFT_TOKEN_BUDGET_PER_ISSUE` | `300k` | Observation only — never interrupts, just flags a promotion recommendation in Report |
 
-And the invariant that isn't a number: **issue-runner never merges.** A `needs-human` issue means the loop has let go — a human clears the cause and removes the label to let it flow again.
+And the invariant that isn't a number: **issue-runner never merges.** A `needs-human` issue means the loop has let go — a human clears the cause and removes the label to let it flow again. The gate also reads the `hold:` **prefix** (#242), so clearing a machine stop (`hold:conflict` · `hold:policy` · `hold:ladder`) means removing **both** `needs-human` and the `hold:*` label — dropping only one of the two leaves the issue out of the queue.
 
 ---
 
@@ -237,7 +237,7 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 | `blocked-by:<N>` / `Blocked by #N` | Dependency. Either the label or a dedicated body line; a blocker that is still OPEN keeps the issue out of dispatch. `<N>` is an **issue** number, and the gate auto-clears when the blocker closes |
 | `spinoff` | Provenance mark for an issue filed by closeout step 6. `loop-status.sh`'s spinoff tally counts by this label alone |
 | `deploy-wait` | A deploy-pending issue created by closeout step 4. The bucket label `loop-status.sh` uses to separate deploy-waiting from human-waiting (attached alongside `needs-human`) |
-| `hold:conflict` · `hold:policy` · `hold:ladder` | The **reason** behind `needs-human`. Attached together by `transition.sh verify-held|closeout-blocked --reason <reason>` (a reason-less `needs-human` cannot be produced). Only `ladder` is auto-resumed by the resume sweep. `hold:dup` and `hold:hardware` deliberately do not exist — duplicates are closed by `closeout-dup`, and hardware climbs the ladder |
+| `hold:conflict` · `hold:policy` · `hold:ladder` | The **reason** behind `needs-human`. Attached together by `transition.sh verify-held|closeout-blocked --reason <reason>` (a reason-less `needs-human` cannot be produced). Only `ladder` is auto-resumed by the resume sweep. The dispatch/verify/closeout gates read this **prefix** directly (#242) — when a human clears a hold, remove it alongside `needs-human`. `hold:dup` and `hold:hardware` deliberately do not exist — duplicates are closed by `closeout-dup`, and hardware climbs the ladder |
 | `dup` | A PR closed without merge by `closeout-dup` (already on main / duplicate). `loop-status.sh` counts it as dup-closed, apart from failures |
 
 Eligibility: `open + agent-ready + ¬agent:claimed + all blockers CLOSED`. Sort: `P0 > P1 > P2 > none`, ties oldest-first.
