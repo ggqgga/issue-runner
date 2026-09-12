@@ -602,7 +602,9 @@ for f in skills/closeout/references/verifier-prompt.md \
       phs="<PR> <REPO> <PLAN_REF> <ISSUE_BODY> <DIFF>" ;;
     *verifier-prompt.md)    phs="<PR> <REPO> <BASE> <PLAN_REF> <ISSUE_BODY>" ;;
     *deploy-check-issue.md) phs="<PR> <SHA> <SUMMARY> <DEPLOY_CMD> <LIVE_CHECKS> <VERIFY_URL>" ;;
-    *spinoff-issue.md)      phs="<BACKGROUND> <REASON> <PLAN> <TEST_PLAN> <RELATED>" ;;
+    # <EPIC_LINE>: 파생이 부모의 에픽을 본문 **첫 줄**(`Epic #N`)로 물려받는 자리 (#261).
+    # 지우면 파생이 에픽 밖 고아가 되고 loop-status 에픽 절의 leaf 집계에서 사라진다.
+    *spinoff-issue.md)      phs="<EPIC_LINE> <BACKGROUND> <REASON> <PLAN> <TEST_PLAN> <RELATED>" ;;
   esac
   # shellcheck disable=SC2086
   for ph in $phs; do
@@ -611,6 +613,79 @@ for f in skills/closeout/references/verifier-prompt.md \
 done
 # 네이티브↔폴백 파일 간 전제 교차오염 방지 검사는 아래 "③-1 네이티브↔폴백 프롬프트
 # 동기화 검사"(#207 attempt8) 에서 한다.
+
+echo "[#261] spinoff-inherit 헬퍼 — 실행비트·Epic 정규식 SSOT 동기화·격자 테스트"
+# closeout 6단계가 `$SCRIPTS/spinoff-inherit.sh` 로 직접 exec 하므로 실행 비트를 여기서 문다.
+# 비트가 빠지면 조용히 exit 126 → `eval` 이 빈 문자열을 먹어 `$priority` 가 **빈 값**이 되고,
+# `gh issue create --label ""` 로 발행이 통째로 실패하거나 무라벨 이슈가 남는다(PR#173 말미의
+# "새 헬퍼는 실행 비트가 빠지면 값이 항상 빈 값이 되어 조용히 degrade" 와 같은 함정).
+[ -x scripts/spinoff-inherit.sh ] || { echo "  ✗ spinoff-inherit.sh 실행 비트 없음"; exit 1; }
+# `<EPIC_LINE>` 은 머리 주석의 *설명*이 아니라 본문 **첫 줄 자리**여야 한다 — HTML 주석이
+# 끝난 뒤 첫 비지 않은 줄이 정확히 `<EPIC_LINE>` 이어야, 채워진 본문의 첫 줄이 `Epic #N` 이
+# 되고 6단계 '발행 직후 확인' 의 "첫 줄이 Epic #N 인가" 가 참이 될 수 있다. 위 placeholder
+# 검사는 **파일 어딘가**에 문자열이 있으면 통과하므로, 슬롯이 지워지고 주석 언급만 남은
+# 회귀를 못 본다(실측으로 확인한 사각지대 — 그래서 이 줄 앵커 검사가 따로 필요하다).
+tpl_slot=$(sed -n '/-->/,$p' skills/closeout/references/spinoff-issue.md \
+  | sed '1s/.*-->//' | grep -v '^[[:space:]]*$' | head -1)
+[ "$tpl_slot" = '<EPIC_LINE>' ] \
+  || { echo "  ✗ spinoff-issue.md: 머리 주석 뒤 첫 줄이 <EPIC_LINE> 슬롯이 아니다 (실제=[$tpl_slot])"; exit 1; }
+# `Epic #N` **전용 줄** 정규식의 SSOT 는 `loop-status.sh` 의 `epic_of`(#260) 다. 파생의 에픽
+# 판정(spinoff-inherit)과 에픽 절의 leaf 판정(loop-status)이 갈라지면 두 경로가 서로 다른
+# 세계를 재게 된다 — #216 교훈("같은 X 를 쓴다"는 단언은 갈래마다 실제로 참인지 확인하라).
+# 두 파일에 **문자 그대로 같은 문자열**이 있는지 문다(한쪽만 고치면 여기서 빨개진다).
+epic_re_ssot='^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)'
+for f in scripts/loop-status.sh scripts/spinoff-inherit.sh; do
+  grep -qF -- "$epic_re_ssot" "$f" \
+    || { echo "  ✗ $f 에 Epic 전용 줄 정규식 SSOT 없음(두 판정이 갈라졌다): $epic_re_ssot"; exit 1; }
+done
+bash scripts/tests/spinoff-inherit.test.sh
+
+echo "[#261] closeout 6단계 발행 명령이 spinoff-inherit 에 묶여 있는지 검사 (한/영)"
+# 산문 "epic 이 있으면 sub-issue 로 연결" 은 샜다 — 명령이 있는 단계는 안 새고 산문뿐인
+# 단계가 샌다(실증 2026-08-13: 6단계가 규약 라벨만 달고 agent-ready 를 빠뜨려 17건이 루프
+# 밖에 남음). 그래서 상속을 명령 블록에 박고 여기서 그 블록의 구성 요소를 전수로 문다.
+# 스코프는 6단계 헤더 ~ `## ⑤ Drain` 헤더 사이로 좁힌다(#223 규율 — "파일 어딘가"면 블록이
+# 다른 절로 밀려도 초록이라 가드가 무의미해진다). 헤더는 번역되므로 볼드 접두로 앵커한다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) s6_anchor='^\*\*Step 6 —' ;;
+    *)       s6_anchor='^\*\*6단계 —' ;;
+  esac
+  s6_line=$(grep -nE "$s6_anchor" "$f" | head -1 | cut -d: -f1)
+  drain_line=$(grep -n '^## ⑤ Drain' "$f" | head -1 | cut -d: -f1)
+  [ -n "$s6_line" ]    || { echo "  ✗ $f: 6단계 헤더 앵커 없음"; exit 1; }
+  [ -n "$drain_line" ] || { echo "  ✗ $f: ⑤ Drain 헤더 앵커 없음"; exit 1; }
+  seg=$(sed -n "${s6_line},${drain_line}p" "$f")
+  # 발행 명령의 4요소 — 헬퍼 eval · agent-ready · spinoff · 상속받은 우선순위.
+  # `--label <P1|P2>`(손으로 고르던 옛 형태)로 되돌아가면 `--label "$priority"` 가 사라져
+  # 여기서 빨개진다.
+  # 세 라벨은 **한 줄 통째로** 문다 — 따로 세면 6단계 산문 어딘가에 같은 토큰이 있는 것만으로
+  # 통과해(ko 는 "우선순위(`--label \"\$priority\"`)도 생략 불가" 문장이 실제로 있다) 명령
+  # 블록에서 라벨이 빠진 회귀를 못 본다.
+  for tok in 'eval "$($SCRIPTS/spinoff-inherit.sh' \
+             '--label agent-ready' \
+             '--label agent-ready --label spinoff --label "$priority"'; do
+    printf '%s\n' "$seg" | grep -qF -- "$tok" \
+      || { echo "  ✗ $f: 6단계 구간의 발행 명령에 '$tok' 없음"; exit 1; }
+  done
+  # `<EPIC_LINE>` 은 **두 번** 나와야 한다 — ⑴ 본문 채우기 지시 ⑵ '발행 직후 확인' 의
+  # Epic 줄 존재 확인. 확인 쪽 문구가 되돌아가 1회로 줄면 여기서 빨개진다(#243 2회차와
+  # 같은 회수 가드 — 라벨만 확인하고 Epic 줄을 안 보면 고아가 조용히 쌓인다).
+  el_count=$(printf '%s\n' "$seg" | grep -c -- '<EPIC_LINE>')
+  [ "$el_count" -ge 2 ] \
+    || { echo "  ✗ $f: 6단계 구간의 <EPIC_LINE> 등장 ${el_count}회 (기대 2회 이상 — 채우기 + 발행 직후 확인)"; exit 1; }
+  # 마커 꼴은 6단계 PR 코멘트와 ④ Report 가 **같아야** 한다 — 파일 전체에서 2회 이상.
+  mk_count=$(grep -c -F -- '(Epic #<N|없음> · <P>)' "$f")
+  [ "$mk_count" -ge 2 ] \
+    || { echo "  ✗ $f: 파생 마커 꼴 '(Epic #<N|없음> · <P>)' 등장 ${mk_count}회 (기대 2회 이상 — 6단계 PR 코멘트 + ④ Report)"; exit 1; }
+  # 양방향 가드 — 손으로 P 를 고르던 옛 형태가 **파일 어디에도** 되살아나면 안 된다.
+  # 3단계의 "6단계 발행 명령 형태를 그대로 쓴다" 교차참조가 옛 꼴을 인용한 채 남아
+  # 두 절이 서로 다른 명령을 가르치는 형상을 실제로 이 PR 에서 발견했다(#191·#298 가족).
+  if grep -nF -- '--label spinoff --label <P1|P2>' "$f"; then
+    echo "  ✗ $f: 손으로 고르는 옛 꼴 '--label <P1|P2>' 가 되살아남 — spinoff-inherit 의 \"\$priority\" 를 써라"
+    exit 1
+  fi
+done
 
 echo "[closeout] ③-1 1단계 worktree 확보 fetch·reset 검사 (#207)"
 # 1단계 계획 부합 호출의 프롬프트(verifier-prompt.md)가 "이 워크트리는 PR 브랜치의
