@@ -215,7 +215,9 @@ cannot find them, do not invent them — report `스모크 skip: tunnel route un
 categories below as `보류` and **keep them out of both the numerator and the
 denominator.** Pretending Chrome compared them makes both a pass and a fail a lie.
 - **A line carrying the `[칸 ③]` prefix marker** — a real-hardware item (a TEST-worker
-  profile #18 dry run) that Chrome cannot step. **Do not even try.** Decide **by the
+  profile #18 dry run) that Chrome cannot step. **Do not even try.** Only still-open
+  `- [ ]` lines count — a marked line already ticked `- [x]` is not held either (same
+  scope as Step 5). Decide **by the
   marker only** — never read a sentence's meaning to promote an unmarked line to real
   hardware, or to demote a marked one to an ordinary item.
 - **An unmarked line whose means of stepping lives outside the browser, so you could not
