@@ -827,6 +827,31 @@ note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- boda
 run
 check "③-h 대조군: needs-human 없으면 종전대로 due" \
   "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .number == 42' >/dev/null 2>&1 && echo ok || echo no)"
+# ── ③-r (#351) needs-human 배제는 목록 스냅샷이 아니라 **편집 직전 재조회**로 판정한다 ──
+# 목록 조회 → 사람이 needs-human 부착 → 같은 틱에 ③ 이 스냅샷(row)만 보고 due 를 내면
+# 디스패처가 verify-redispatch 로 그 정지를 벗긴다(#151 부류). ①(sweep_issue)이 쓰는
+# read_state 를 ③ 도 due 직전에 다시 부른다 — 스냅샷엔 없고 재조회에만 needs-human 이 있는
+# 픽스처에서 due 0 · note 1 · 전이/편집 0 이어야 한다.
+setup "hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+STUB_STATE_LABELS='needs-human,hold:policy,agent-ready'   # 목록 조회 이후 사람이 needs-human 을 붙임
+run
+check "③-r 재조회 needs-human: exit 0" "$([ "$RC" = 0 ] && echo ok || echo no)"
+check "③-r 재조회 needs-human: policy_review_due 안 냄" "$(no_ev policy_review_due)"
+check "③-r 재조회 needs-human: note 로 남긴다" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="note") | .number == 42 and (.msg | test("needs-human"))' >/dev/null 2>&1 && echo ok || echo no)"
+check "③-r 재조회 needs-human: warn 아님" "$(no_ev warn)"
+check "③-r 재조회 needs-human: 무편집" "$(none 'issue edit')"
+check "③-r 재조회 needs-human: ①과 같은 재조회(labels,updatedAt)를 불렀다" "$(some 'issue view 42 .*--json labels,updatedAt')"
+# 재조회 자체가 실패하면 "needs-human 없음" 으로 폴백하지 않는다(fail-closed, ①의 ⑯과 같은 축) —
+# 폴백하면 정확히 이 갈래가 막으려는 사고(사람 게이트를 조용히 벗기는 것)가 조회 실패 경로에서 재현된다.
+setup "hold:policy,agent-ready" 200 0
+note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
+STUB_STATE_LABELS='__FAIL__'
+run
+check "③-r 재조회 실패: policy_review_due 안 냄" "$(no_ev policy_review_due)"
+check "③-r 재조회 실패: warn 으로 알린다" "$(saysl '재조회 실패')"
+check "③-r 재조회 실패: 무편집" "$(none 'issue edit')"
 setup "hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
 note "재심: 사람 몫 유지 <!-- policy-review: kept --><!-- bodat:worker -->"
