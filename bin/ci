@@ -154,6 +154,34 @@ rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/pr-head-at.sh owner/r 123 2>/dev/null
   || { echo "  ✗ pr-head-at: 커밋 조회 빈값 rc=$rc out='$out' (기대 rc=1·무출력)"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
+echo "[closeout] closeout-step1-marker 헬퍼 fail-closed·실행비트 스모크 (#271)"
+# 1단계 마커 판정을 못 하면 **아무것도 안 내고 exit≠0** 이어야 한다 — 빈 결과를
+# `skip` 쪽으로 둔갑시키면 검증 안 된 head 가 2단계 머지 게이트를 그냥 통과한다.
+# ① Reconcile 프로즈가 `$SCRIPTS/closeout-step1-marker.sh` 로 직접 exec 하므로 실행 비트도
+# 여기서 문다(빠지면 조용히 exit 126 → 판정이 항상 빈 값으로 degrade 된다, PR#173 교훈).
+[ -x scripts/closeout-step1-marker.sh ] || { echo "  ✗ closeout-step1-marker.sh 실행 비트 없음"; exit 1; }
+tmp=$(mktemp -d); mkdir "$tmp/stub"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/stub/gh"; chmod +x "$tmp/stub/gh"
+rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/closeout-step1-marker.sh owner/r 123 2>/dev/null) || rc=$?
+[ "$rc" != 0 ] && [ -z "$out" ] \
+  || { echo "  ✗ closeout-step1-marker: gh 실패 시 rc=$rc out='$out' (기대 rc≠0·무출력)"; rm -rf "$tmp"; exit 1; }
+rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/closeout-step1-marker.sh 2>/dev/null) || rc=$?
+[ "$rc" != 0 ] && [ -z "$out" ] \
+  || { echo "  ✗ closeout-step1-marker: 인자 누락 시 rc=$rc out='$out' (기대 rc≠0·무출력)"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+# `bounce-state.sh --marker-index` 계약 스모크 — 소비자가 이 모드로 반송 선후를 받는다.
+tmp=$(mktemp -d)
+printf '%s' '[{"body":"X","createdAt":"2026-09-11T00:00:00Z"},{"body":"재디스패치: #271 — 사유","createdAt":"2026-09-11T01:00:00Z"}]' > "$tmp/c.json"
+mi=$(BOUNCE_COMMENTS_FILE="$tmp/c.json" scripts/bounce-state.sh --marker-index owner/r 1)
+[ "$mi" = 1 ] || { echo "  ✗ bounce-state --marker-index: 기대 1 실제 '$mi'"; rm -rf "$tmp"; exit 1; }
+printf '%s' '[{"body":"X","createdAt":"2026-09-11T00:00:00Z"}]' > "$tmp/c.json"
+mi=$(BOUNCE_COMMENTS_FILE="$tmp/c.json" scripts/bounce-state.sh --marker-index owner/r 1)
+[ "$mi" = none ] || { echo "  ✗ bounce-state --marker-index: 마커 없을 때 기대 none 실제 '$mi'"; rm -rf "$tmp"; exit 1; }
+# 기본 모드가 안 바뀌었는지(모드 추가가 기존 소비자를 건드리면 안 된다).
+st=$(BOUNCE_COMMENTS_FILE="$tmp/c.json" scripts/bounce-state.sh owner/r 1)
+[ "$st" = ok ] || { echo "  ✗ bounce-state 기본 모드 회귀: 기대 ok 실제 '$st'"; rm -rf "$tmp"; exit 1; }
+rm -rf "$tmp"
+
 echo "[closeout] bounce-state 헬퍼 fail-closed·실행비트 스모크 (#196)"
 # 반송 판정을 못 하면 **아무것도 안 내고 exit≠0** 이어야 한다 — 빈 결과를 유효값으로
 # 둔갑시키면 CONFLICTING 입양 게이트가 증명 없이 열린다(PR#139 교훈).
@@ -386,6 +414,115 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   ' \
     || { echo "  ✗ $f: ① Reconcile 절에 bounce-state.sh 와 closeout-redispatch 가 **한 문단에** 함께 없다 — resume 재개 규칙이 지워졌다(마커표를 타면 반송된 head 가 2단계 머지로 샌다, #271 ⑷)"; exit 1; }
 done
+
+echo "[closeout ① 마커표] 1단계 마커가 head 신선도를 탄다 — 한/영 (#271 ⑸)"
+# 옛 마커표는 1단계를 "`마감 검증:` 코멘트가 **있으면** 건너뜀" 한 줄로 적었다. 그 전제는
+# 세 방향으로 거짓일 수 있고(⒜ 가장 늦은 마감 검증이 `⚠ 보류` · ⒝ 마커가 현재 head 보다
+# 이름 · ⒞ 마커가 최신 반송 마커보다 앞), 셋 다 결말이 같다 — 검증 안 된 head 가 2단계
+# 머지 게이트로 가서 머지된다. 그래서 1단계 행은 **판정 헬퍼를 지명**해야 하고, 옛 문구가
+# 남아 있으면 안 된다(둘 다 걸린다: 지명 없음 → 규칙 소실 · 옛 문구 잔존 → 두 계약 병존).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) row='^\| 1 verify \|'; oldtxt='if present, skip step 1' ;;
+    *)       row='^\| 1 검증 \|';   oldtxt='있으면 1단계 건너뜀' ;;
+  esac
+  s1_row=$(grep -E "$row" "$f" | head -1)
+  [ -n "$s1_row" ] \
+    || { echo "  ✗ $f: 멱등 마커표의 1단계 행을 못 찾았다 — 개명·이동이면 앵커를 고쳐라"; exit 1; }
+  printf '%s\n' "$s1_row" | grep -qF 'closeout-step1-marker.sh' \
+    || { echo "  ✗ $f: 마커표 1단계 행이 판정 헬퍼(closeout-step1-marker.sh)를 안 지명한다 — '있으면 건너뜀' 으로 되돌아가면 검증 안 된 head 가 2단계 머지로 샌다 (#271 ⑸)"; exit 1; }
+  if printf '%s\n' "$s1_row" | grep -qF "$oldtxt"; then
+    echo "  ✗ $f: 마커표 1단계 행에 옛 문구('$oldtxt')가 남아 있다 — 두 계약이 병존한다 (#271 ⑸)"
+    exit 1
+  fi
+  # 세 축이 산문에 남아 있는지 — 축을 하나 지우면 다음 편집자가 그 갈래를 안 의심한다.
+  r_start=$(grep -nE '^## ① Reconcile' "$f" | head -1 | cut -d: -f1)
+  r_end=$(awk -v s="$r_start" 'NR>s && /^## / { print NR; exit }' "$f")
+  { [ -n "$r_start" ] && [ -n "$r_end" ]; } \
+    || { echo "  ✗ $f: ① Reconcile 구간 앵커를 못 찾았다"; exit 1; }
+  seg=$(sed -n "${r_start},$((r_end - 1))p" "$f")
+  printf '%s\n' "$seg" | grep -qF 'bounce-state.sh --marker-index' \
+    || { echo "  ✗ $f: ① Reconcile 절이 반송 선후를 bounce-state.sh --marker-index 한 자리에서 받는다고 적지 않았다 — 마커 매칭이 두 벌이 되면 #171 로 되돌아간다"; exit 1; }
+  for ax in '(A)' '(B)' '(C)'; do
+    printf '%s\n' "$seg" | grep -qF "$ax" \
+      || { echo "  ✗ $f: ① Reconcile 절에 1단계 마커 판정의 축 $ax 설명이 없다 (#271 ⑸)"; exit 1; }
+  done
+done
+# 헬퍼 자신이 세 축을 **전부** 물고 있는지 — 산문만 고치고 코드가 두 축이면 거짓 계약이다.
+for mut in MUT-A MUT-B MUT-C; do
+  grep -qF "# $mut" scripts/closeout-step1-marker.sh \
+    || { echo "  ✗ scripts/closeout-step1-marker.sh 에 $mut 앵커가 없다 — 뮤테이션 방증이 의미를 잃었다 (#271 ⑸)"; exit 1; }
+done
+
+echo "[closeout ③-1 ⓐ] 반송 코멘트 실패 갈래가 사람 보류로 접히는지 — 한/영 (#271 ⑹)"
+# 코멘트 게시가 실패하면 원장에 반송 흔적이 0 이라 다음 틱 `bounce-state.sh` 가 `ok` 를
+# 내고 `resume` 이 마커표 경로로 간다. 그 갈래가 **아무 지속 상태도 안 남기고** 끝나면
+# 이번 틱의 BLOCKER 가 원장 어디에도 없는 채 2단계 머지 게이트가 다시 열릴 수 있다.
+# 그래서 그 갈래는 라벨 채널(`closeout-blocked`)로 사람 보류에 내려야 한다 — 코멘트
+# 채널이 방금 실패했으므로 같은 채널로 남기는 것은 답이 아니다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) fail_anchor='exits non-zero (gh failure / bad args)' ;;
+    *)       fail_anchor='코멘트가 비0으로 끝나면' ;;
+  esac
+  a_line=$(grep -nE '^- ⓐ \*\*' "$f" | head -1 | cut -d: -f1)
+  b_line=$(grep -nE '^- ⓑ \*\*' "$f" | head -1 | cut -d: -f1)
+  { [ -n "$a_line" ] && [ -n "$b_line" ] && [ "$b_line" -gt "$a_line" ]; } \
+    || { echo "  ✗ $f: ③-1 의 ⓐ/ⓑ 갈래 앵커를 못 찾았다"; exit 1; }
+  seg=$(sed -n "${a_line},$((b_line - 1))p" "$f")
+  f_rel=$(printf '%s\n' "$seg" | grep -nF -- "$fail_anchor" | head -1 | cut -d: -f1)
+  cb_rel=$(printf '%s\n' "$seg" | grep -nF -- 'transition.sh closeout-blocked' | head -1 | cut -d: -f1)
+  [ -n "$f_rel" ] \
+    || { echo "  ✗ $f: ③-1 ⓐ 구간에 반송 코멘트 실패 갈래('$fail_anchor')가 없다"; exit 1; }
+  [ -n "$cb_rel" ] \
+    || { echo "  ✗ $f: ③-1 ⓐ 의 코멘트 실패 갈래가 사람 보류(transition.sh closeout-blocked)로 접히지 않는다 — 지속 상태를 아무것도 안 남기면 다음 틱 마커표가 옛 ✅ 로 2단계 머지를 연다 (#271 ⑹)"; exit 1; }
+  [ "$cb_rel" -gt "$f_rel" ] \
+    || { echo "  ✗ $f: ③-1 ⓐ 의 closeout-blocked 호출이 실패 갈래보다 앞이다 — 성공 갈래가 사람 보류로 새어 나간다 (#271 ⑹)"; exit 1; }
+done
+
+echo "[closeout ① Reconcile] OPEN PR 의 사람 보류 게이트 — needs-human 을 resume 으로 태우지 않는다 (#271 ⑺)"
+# `resume` 는 `bounced` 재개 절차로 이어져 `closeout-redispatch` 를 거는데, 그 전이는
+# `needs-human`·`hold:*` 를 뗀다 — 사람이 조사하려고 방금 붙인 보류가 조용히 벗겨진다
+# (①-b 가 대상 필터로 명시 배제하는 바로 그 위험, #151).
+grep -qF 'needs-human' scripts/closeout-reconcile.sh \
+  || { echo "  ✗ closeout-reconcile.sh 의 OPEN 갈래에 needs-human 검사가 없다 (#271 ⑺)"; exit 1; }
+grep -qF 'human_hold' scripts/closeout-reconcile.sh \
+  || { echo "  ✗ closeout-reconcile.sh 에 human_hold 이벤트가 없다 (#271 ⑺)"; exit 1; }
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF 'human_hold' "$f" \
+    || { echo "  ✗ $f 의 ① Reconcile 이벤트 목록에 human_hold 행선지가 없다 — 이벤트에 목적지가 없으면 봇이 무시한다 (#271 ⑺)"; exit 1; }
+done
+# 런타임 3케이스: needs-human 있음 → human_hold · 없음 → resume · 라벨 미상 → human_hold.
+# 스텁은 `gh api search/issues` 가 이미 `-q` 를 적용한 결과를 낸다고 보고 그 자리에 픽스처를
+# 꽂는다(실 gh 와 같은 계약: 이 스크립트는 `-q` 결과만 읽는다).
+hrun() {  # $1 = items JSON(스크립트가 -q 로 받는 형상)
+  tmp=$(mktemp -d); mkdir "$tmp/sc"
+  cp scripts/closeout-reconcile.sh "$tmp/sc/closeout-reconcile.sh"
+  cat > "$tmp/sc/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+  *"api user"*) echo "tester" ;;
+  *"search/issues"*) echo '$1' ;;
+  *"pr view"*state*) echo 'OPEN' ;;
+  *) echo '' ;;
+esac
+STUB
+  chmod +x "$tmp/sc/gh"
+  hout=$(PATH="$tmp/sc:$PATH" bash "$tmp/sc/closeout-reconcile.sh" 2>/dev/null)
+  rm -rf "$tmp"
+}
+hrun '[{"repo":"o/r","num":80,"hh":"true"}]'
+printf '%s' "$hout" | jq -e 'select(.event=="human_hold" and .why=="needs-human")' >/dev/null 2>&1 \
+  || { echo "  ✗ closeout-reconcile: needs-human PR 이 human_hold 가 아니다 out='$hout'"; exit 1; }
+hrun '[{"repo":"o/r","num":80,"hh":"false"}]'
+printf '%s' "$hout" | jq -e 'select(.event=="resume")' >/dev/null 2>&1 \
+  || { echo "  ✗ closeout-reconcile: 보류 없는 OPEN PR 이 resume 이 아니다 out='$hout'"; exit 1; }
+hrun '[{"repo":"o/r","num":80,"hh":false}]'
+printf '%s' "$hout" | jq -e 'select(.event=="resume")' >/dev/null 2>&1 \
+  || { echo "  ✗ closeout-reconcile: 불리언 false(보류 없음)가 resume 이 아니다 — \`.hh // \"unknown\"\` 관용구는 false 에도 걸려 레인을 통째로 멈춘다 out='$hout'"; exit 1; }
+hrun '[{"repo":"o/r","num":80}]'
+printf '%s' "$hout" | jq -e 'select(.event=="human_hold")' >/dev/null 2>&1 \
+  || { echo "  ✗ closeout-reconcile: 라벨 미상(hh 필드 부재)이 human_hold 로 fail-closed 되지 않는다 out='$hout'"; exit 1; }
 
 echo "[worker] 반송 해소 보고 접두가 마커 집합 밖인지 — 한/영 템플릿 (#251 ②)"
 # #251 ② 는 판정기가 아니라 **문안**으로 닫혔다: 워커의 반송 해소 보고가 반송 마커로
@@ -1388,6 +1525,9 @@ bash scripts/tests/eligible-issues.test.sh
 
 echo "[test] bounce-state.sh 반송 판정 — ①-b 입양 안전망·해제 경로 격자 (#196 · #218)"
 bash scripts/tests/bounce-state.test.sh
+
+echo "[test] closeout-step1-marker.sh 1단계 마커 판정 — ⚠보류·head 신선도·반송 선후 3축 격자 (#271)"
+bash scripts/tests/closeout-step1-marker.test.sh
 
 echo "[test] bounce-comment.sh 반송 코멘트 생성 — SKILL.md 문구와 바이트 동일 (#212)"
 bash scripts/tests/bounce-comment.test.sh
