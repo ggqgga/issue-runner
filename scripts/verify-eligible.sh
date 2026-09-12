@@ -16,10 +16,15 @@
 # (verify-runner 는 단일 루프·직렬) — 별도 회수 스윕 없이 여기서 **먼저** 내보내
 # 재개시키고, 그 줄에 `orphan:true` 를 실어 ④ Report 가 `고아 재집` 을 남기게 한다.
 #
-# 순서: `verifying`(고아 재개) 먼저 → 그 뒤 `flow:verify` FIFO(sort=created·order=asc —
-# 오래된 PR 먼저). 두 라벨을 search 쿼리 둘로 각각 읽되(라벨 OR 쿼리에 기대지 않는다),
-# **줄의 자리와 `orphan` 값은 쿼리가 아니라 현재 라벨(meta)로** 정한다 — search 인덱스
-# 지연·부분 전이로 한 PR 이 양쪽에 다 잡혀도 한 줄만 나오고(중복 제거), 라벨이 진실이다.
+# 순서: `verifying`(고아 재개) 먼저 → 그 뒤 `flow:verify` FIFO(created asc — 오래된 PR
+# 먼저). 두 라벨을 search 쿼리 둘로 각각 읽되(라벨 OR 쿼리에 기대지 않는다), **줄의 자리와
+# `orphan` 값은 쿼리가 아니라 현재 라벨(meta)로** 정한다 — search 인덱스 지연·부분 전이로
+# 한 PR 이 양쪽에 다 잡혀도 한 줄만 나오고(중복 제거), 두 라벨이 다 없으면(verify-pass 직후
+# 인덱스에만 남은 PR) 후보가 아니다 — 라벨이 진실이다. 각 줄 안의 FIFO 는 search 갈래
+# 순서가 아니라 PR 의 created 로 정렬한다(갈래 경계에서 순서가 뒤집히지 않게).
+# 두 search 중 하나라도 gh 실패면 **후보를 내지 않는다**(fail-closed + stderr 한 줄) —
+# verifying 갈래만 조용히 비면 "고아 먼저" 가 그 틱에 깨지는데 흔적이 없기 때문이다.
+# 빈 결과(`[]`)는 실패가 아니다.
 #
 # 각 후보에 `ci` 필드(pass|revalidate|fail)를 실어 verify-runner 가 분기한다:
 #   pass       결정적 CI 캐시 pass → 바로 E2E·codex 검증
@@ -44,23 +49,29 @@ buf=$(mktemp -d "${TMPDIR:-/tmp}/verify-eligible.XXXXXX") || exit 0
 trap 'rm -rf "$buf"' EXIT
 : > "$buf/orphan"; : > "$buf/fifo"; : > "$buf/seen"
 
-# search_prs <label> → [{repo,pr}] (created asc)
+# search_prs <label> → [{repo,pr,created}] (created asc). gh 실패면 rc 비0(빈 결과 `[]` 와 구분).
 search_prs() {
   gh api -X GET search/issues \
     -f q="user:$me is:open is:pr label:$1" -f per_page=50 \
     -f sort=created -f order=asc \
-    -q '[.items[] | {repo:(.repository_url|sub(".*/repos/";"")), pr:.number}]' 2>/dev/null
+    -q '[.items[] | {repo:(.repository_url|sub(".*/repos/";"")), pr:.number, created:(.created_at // "")}]' 2>/dev/null
 }
 
 # 고아(verifying) 갈래를 먼저 읽는다 — 같은 PR 이 뒤 갈래에도 오면 seen 으로 거른다.
-prs_orphan=$(search_prs verifying)
-prs_verify=$(search_prs flow:verify)
+# 어느 갈래든 조회 실패면 이 틱은 후보 없음(fail-closed) — 이유는 위 머리 주석.
+if ! prs_orphan=$(search_prs verifying); then
+  echo "verify-eligible: search(verifying) 실패 — 이 틱 후보 없음" >&2; exit 0
+fi
+if ! prs_verify=$(search_prs flow:verify); then
+  echo "verify-eligible: search(flow:verify) 실패 — 이 틱 후보 없음" >&2; exit 0
+fi
 [ -n "$prs_orphan" ] || [ -n "$prs_verify" ] || exit 0
 
 { [ -n "$prs_orphan" ] && printf '%s' "$prs_orphan" | jq -c '.[]'
   [ -n "$prs_verify" ] && printf '%s' "$prs_verify" | jq -c '.[]'; } | while IFS= read -r row; do
   repo=$(printf '%s' "$row" | jq -r '.repo')
   pr=$(printf '%s'  "$row" | jq -r '.pr')
+  created=$(printf '%s' "$row" | jq -r '.created // ""')
   in_scope "$repo" || continue
   # 중복 제거 — 한 PR 이 두 쿼리에 다 잡혀도(인덱스 지연·부분 전이) 한 번만 본다.
   grep -qxF -- "$repo#$pr" "$buf/seen" && continue
@@ -103,14 +114,21 @@ prs_verify=$(search_prs flow:verify)
 
   issue=$(printf '%s' "$meta" | jq -r '.closingIssuesReferences[0].number // empty')
   # 고아 판정은 **현재 라벨**로 — search 갈래가 아니다(라벨이 진실, 위 머리 주석).
+  # 둘 다 없으면 이 루프 소유가 아니다(verify-pass 직후 인덱스 지연) — 후보에서 뺀다.
   if printf '%s' "$meta" | jq -e '[.labels[].name]|index("verifying")' >/dev/null; then
     orphan=true; dest="$buf/orphan"
-  else
+  elif printf '%s' "$meta" | jq -e '[.labels[].name]|index("flow:verify")' >/dev/null; then
     orphan=false; dest="$buf/fifo"
+  else
+    continue
   fi
-  printf '{"repo":"%s","pr":%s,"issue":"%s","head":"%s","ci":"%s","orphan":%s}\n' \
-    "$repo" "$pr" "$issue" "$head" "$ci" "$orphan" >> "$dest"
+  # 줄 안 정렬 키 = created(탭 구분, 마지막에 잘라낸다). 빈 created 는 앞으로 가되 같은 키끼리는
+  # 입력 순서를 유지한다(sort -s) — 갈래 순서가 곧 created 순인 평상시엔 무변동.
+  printf '%s\t{"repo":"%s","pr":%s,"issue":"%s","head":"%s","ci":"%s","orphan":%s}\n' \
+    "$created" "$repo" "$pr" "$issue" "$head" "$ci" "$orphan" >> "$dest"
 done
 
-# 고아(재개) 먼저, 그 뒤 검증대기 FIFO.
-cat "$buf/orphan" "$buf/fifo"
+# 고아(재개) 먼저, 그 뒤 검증대기 — 각 줄은 created asc(FIFO).
+for f in orphan fifo; do
+  sort -s -t "$(printf '\t')" -k1,1 "$buf/$f" | cut -f2-
+done
