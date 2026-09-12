@@ -584,8 +584,9 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       original intended, implement the extra work in the note, push with
       `--force-with-lease`, and continue the existing PR (no new PR · no merge commit). If
       you cannot merge it, stop with `BLOCKED:` quoting the conflicting files and why"**.
-      The worker template's redispatch detection (step 10) recognises this round as
-      "no `재검증 실패:` comment + a `사람 확인(conflict):` comment present".
+      The worker template's redispatch detection (step 10) recognises this round as "the
+      issue's `사람 확인(conflict):` is **later** than the PR's last `재검증 실패:` (or there is
+      none)" and gives this inlined instruction precedence over the bounce branch.
 
 ## ④ Report
 

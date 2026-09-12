@@ -985,19 +985,20 @@ rc=0
 sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄> [ladder|conflict]
   local repo="$1" row="$2" reason="${3:-ladder}"
   local num updated row_tsv then_epoch elapsed attempts next cur back live_updated dw_tsv dwlabel
-  local hold marker_re limit resume_body escalate_body other_hold
+  local hold marker_re limit resume_body escalate_body other_hold other_hold_msg
   case "$reason" in
     ladder)
       hold="hold:ladder"; marker_re='<!--\s*ladder-resume:\s*[0-9]+\s*-->'; limit="$LADDER_RESUME_LIMIT"
-      other_hold="hold:conflict"
+      other_hold="hold:conflict"; other_hold_msg="hold:ladder 외 다른 hold:* 동존 — 자동 재개 안 함"
       resume_body="사다리 재시도 —"
       escalate_body="사다리 재개 상한($limit) 초과 — 마지막 재개 코멘트의 실패 출력을 읽고, 사다리 밖 통로(직접 조작·스펙 변경)가 필요한지 답하라" ;;
     conflict)
       hold="hold:conflict"; marker_re='<!--\s*conflict-resume:\s*[0-9]+\s*-->'; limit="$CONFLICT_RESUME_LIMIT"
-      other_hold="hold:ladder"
+      other_hold="hold:ladder"; other_hold_msg="hold:conflict 외 hold:* 동존 — 충돌 재개 안 함"
       # 재개 워커가 할 일은 디스패처가 인라인하는 홀드 노트(`사람 확인(conflict):` — #344 의
-      # "워커 재개 범위" 한 줄)에 있다. 이 코멘트는 그 지시의 요약 + 횟수 마커다.
-      resume_body="충돌 재시도 — origin/<BASE> 위로 rebase 후 홀드 노트의 범위를 구현"
+      # "워커 재개 범위" 한 줄)에 있다. 이 코멘트는 그 지시의 요약 + 횟수 마커다. `<BASE>` 는
+      # 백틱 안에 둔다 — 맨몸이면 GitHub 마크다운이 HTML 태그로 보고 지워 "origin/ 위로" 로 보인다.
+      resume_body="충돌 재시도 — \`origin/<BASE>\` 위로 rebase 후 홀드 노트의 범위를 구현"
       # 재개 워커도 못 합쳤다 = 실측의 2차 충돌 형상(BoDAT #5103 2차 = ⓑ 사람 인수). 그래서
       # 질문은 "ⓑ 인수인가, 재발행인가" 다 — 그 뒤는 기존 ③ policy 재심 경로.
       escalate_body="충돌 재개 상한($limit) 초과 — 재개 워커도 못 합쳤다. 사람 세션이 full-cycle 로 인수(ⓑ)할지, 재발행할지 답하라" ;;
@@ -1096,14 +1097,9 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄> [ladder|conflict]
   fi
   # 홀드 옆에 **다른** 사유가 함께 붙어 있으면 자동 재개 대상이 아니다 — 이 갈래의 재시도로
   # 풀리는 것은 자기 사유뿐인데, 라벨을 떼면 다른 사유(policy 재심 · 다른 홀드)가 조용히
-  # 사라진다. 문구는 갈래마다 다르다(ladder 의 것은 디스패처 SKILL 이 읽던 그대로).
-  if [ "$reason" = ladder ]; then
-    if has_label "$cur" "hold:policy" || has_label "$cur" "$other_hold"; then
-      emit_warn "$repo" "$num" "hold:ladder 외 사람 몫 hold:* 동존 — 자동 재개 안 함"
-      return 0
-    fi
-  elif has_label "$cur" "hold:policy" || has_label "$cur" "$other_hold"; then
-    emit_warn "$repo" "$num" "hold:conflict 외 hold:* 동존 — 충돌 재개 안 함"
+  # 사라진다. 술어는 한 벌, 문구만 위 표(other_hold_msg)에서 온다.
+  if has_label "$cur" "hold:policy" || has_label "$cur" "$other_hold"; then
+    emit_warn "$repo" "$num" "$other_hold_msg"
     return 0
   fi
   # `needs-human` 은 **사람이 직접 세운 정지**다(#244). 창이 지나도 루프가 풀지 않는다 —

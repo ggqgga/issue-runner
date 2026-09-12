@@ -12,7 +12,7 @@
 #      안 그러면 PR 이 영구 needs-human 으로 남고 뒤 전이가 그 라벨을 안 뗀다. 재개는 이슈 칸에 맞는
 #      PR 미러(flow:agent-ready / flow:claimed)도 같은 편집에서 되붙인다(#420) — 무라벨 창 금지.
 #   ⑤ 두 쿼리(AND 재개 대상 · 사유 점검)가 각각 상한에 닿으면 알린다.
-#   ⑥ 사유 라벨 없는 needs-human 은 손대지 않고 warn 만 · 사람 몫 hold 동존도 재개 금지.
+#   ⑥ 사유 라벨 없는 needs-human 은 손대지 않고 warn 만 · 다른 hold 동존도 재개 금지.
 #      단 배포 대기 라벨(deploy-wait·full-cycle)이면 **정상 상태**라 warn 이 아니라 note (#190).
 #   ⑦ 조회 실패는 "없음" 으로 위장되지 않는다(exit 2) · 상수 오타는 쓰기 전에 exit 64.
 #   ⑧ 사람 조작 경합은 **쓰기 전** 재조회로 잡는다(사후 readback 으론 원리적으로 불가).
@@ -651,11 +651,11 @@ check "conflict+needs-human: note(사람이 세운 정지)" "$(saysl '사람이 
 check "conflict+needs-human: 편집 0회"       "$(none 'issue edit')"
 check "conflict+needs-human: 코멘트 0회"     "$(none 'issue comment')"
 
-# ── ⑭ 사람 몫 hold 동존 → 자동 재개 안 함 ─────────────────────────────────
+# ── ⑭ 다른 hold 동존 → 자동 재개 안 함 (#345 뒤로 conflict 는 루프 몫이라 "사람 몫" 낱말을 뺐다) ──
 setup "hold:ladder,hold:policy,agent-ready" 200 0
 run
 check "hold 동존: warn"                  "$(has_ev warn)"
-check "hold 동존: 문구"                  "$(saysl '사람 몫 hold:\* 동존')"
+check "hold 동존: 문구"                  "$(saysl 'hold:ladder 외 다른 hold:\* 동존')"
 check "hold 동존: resumed 없음"          "$(no_ev resumed)"
 check "hold 동존: 편집 0회"              "$(none 'issue edit')"
 
@@ -2447,7 +2447,7 @@ with_pr 77 "hold:conflict,flow:verify"
 run
 check "conflict ⓐ: resumed"                    "$(has_ev resumed)"
 check "conflict ⓐ: reason=conflict · attempt=1" "$(ev_is resumed '.reason == "conflict" and .attempt == 1')"
-check "conflict ⓐ: 재개 코멘트에 conflict-resume: 1" "$(grep -q 'issue comment .*충돌 재시도 — origin/.* rebase .*<!-- conflict-resume: 1 -->' "$tmp/gh.log" && echo ok || echo no)"
+check "conflict ⓐ: 재개 코멘트에 conflict-resume: 1" "$(grep -q 'issue comment .*충돌 재시도 — `origin/<BASE>` 위로 rebase .*<!-- conflict-resume: 1 -->' "$tmp/gh.log" && echo ok || echo no)"
 check "conflict ⓐ: 마커 1개 쌓임"               "$([ "$(cmarkers)" = 1 ] && echo ok || echo no)"
 check "conflict ⓐ: ladder 마커는 안 쌓인다"      "$([ "$(markers)" = 0 ] && echo ok || echo no)"
 check "conflict ⓐ: 이슈 hold:conflict 해제"      "$(lacksl hold:conflict)"
@@ -2526,8 +2526,10 @@ check "conflict ⓕ: escalated 아님"             "$(no_ev escalated)"
 check "conflict ⓕ: PR 칸 미러 flow:agent-ready 되붙임(#420 공유)" "$(haspl flow:agent-ready)"
 check "conflict ⓕ: PR hold:conflict 해제"       "$(lackspl hold:conflict)"
 
-# ⓖ 뮤테이션 방증 — conflict 갈래의 full-cycle 제외 한 줄을 지운 사본은 ⓓ 픽스처에서 재개해 버린다
-# (전체 스위트를 그 사본에 돌린 로그는 PR 본문에 — 여기서는 그 한 칸만 스위트 안에서 실증한다).
+# ⓖ 뮤테이션 방증 — conflict 갈래의 full-cycle 제외 블록을 지운 사본은 ⓓ 픽스처에서 **사람 인수
+# 문구를 잃는다**. 재개까지 가지는 않는다 — 과도기 축(deploy_wait_labels 의 full-cycle)이 뒤에서
+# note 로 받기 때문이다. 그래서 이 방증이 무는 것은 "그 축이 걷혀도 제외가 남는가" 의 앵커인
+# **이 블록의 존재**이고, 단언은 문구다(전체 스위트를 그 사본에 돌린 로그는 PR 본문에).
 mut="$sut_dir/resume-sweep.mut-fullcycle.sh"
 sed '/# conflict-full-cycle-guard/,/^  fi$/d' "$sut_dir/resume-sweep.sh" > "$mut"
 check "conflict ⓖ: 뮤테이션 사본이 원본과 다르다" "$(cmp -s "$mut" "$sut_dir/resume-sweep.sh" && echo no || echo ok)"
