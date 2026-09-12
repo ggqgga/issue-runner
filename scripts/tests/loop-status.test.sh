@@ -728,6 +728,41 @@ FX
 echo '[]' > "$tmp/fx/ggqgga_EpicCap.pr_open.json"
 echo '[]' > "$tmp/fx/ggqgga_EpicCap.pr_closed.json"
 
+# ── 픽스처: ggqgga/EpicAnchor (epicanchor) — 전용 줄 끝 앵커 격자 (#327) ────
+# leaf 는 `Epic #N` **전용 줄**이다. 줄 시작은 전용 줄 모양이어도 뒤에 산문이 이어지면
+# leaf 가 아니다 — 끝 앵커가 없던 옛 정규식은 이것들을 leaf 로 셌고, 그런 언급만 달린 옛
+# 에픽(#800)이 leaf ≥1·전부 종료로 읽혀 `에픽 leaf 전부 종료` warn(=스윕이 닫을 대상)을
+# 받았다. 걸러야 할 것과 걸러선 안 될 것을 **한 레포에 나란히** 둔다.
+#   에픽  구성                                           want
+#   ────  ─────────────────────────────────────────────  ────────────────────────
+#   #800  닫힌 이슈 3건이 전부 **문장형** `Epic #800 …`   leaf 0 → `leaf 없음(Epic 줄 미부착)`
+#                                                        warn 없음(앵커 없으면 `3/3` + 전부 종료 warn)
+#   #810  열린 이슈 3건이 전부 **전용 줄** 3형태          `0/3 · 대기 3`
+#   #1    한 자리 에픽 — `Epic #1` 은 leaf, `Epic #1 #2`  `0/1 · 대기 1`
+#         (뒤에 다른 번호)·`Epic #10`(접두)은 leaf 아님
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicAnchor.issues.json" <<'FX'
+[
+ {"number":800,"title":"에픽 — 문장형 언급만","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":810,"title":"에픽 — 전용 줄 3형태","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":1,"title":"에픽 — 한 자리 번호","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":811,"title":"전용 줄","createdAt":"@NOW@","body":"Epic #810","labels":[{"name":"agent-ready"}]},
+ {"number":812,"title":"앞뒤 공백 + 소문자","createdAt":"@NOW@","body":"  epic #810  ","labels":[{"name":"agent-ready"}]},
+ {"number":813,"title":"대문자","createdAt":"@NOW@","body":"EPIC #810","labels":[{"name":"agent-ready"}]},
+ {"number":814,"title":"한 자리 에픽의 전용 줄","createdAt":"@NOW@","body":"Epic #1","labels":[{"name":"agent-ready"}]},
+ {"number":815,"title":"뒤에 다른 번호 — leaf 아님","createdAt":"@NOW@","body":"Epic #1 #2","labels":[{"name":"agent-ready"}]},
+ {"number":816,"title":"접두 오매치 — leaf 아님","createdAt":"@NOW@","body":"Epic #10","labels":[{"name":"agent-ready"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicAnchor.issues_closed.json" <<'FX'
+[
+ {"number":801,"body":"Epic #800 설명","closedAt":"@NOW@","labels":[]},
+ {"number":802,"body":"Epic #800 (부모)","closedAt":"@NOW@","labels":[]},
+ {"number":803,"body":"Epic #800:","closedAt":"@NOW@","labels":[]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_EpicAnchor.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicAnchor.pr_closed.json"
+
 # ── 픽스처: ggqgga/issue-runner (runner) — 깨끗함 + release 있음 ─────────────
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_issue-runner.issues.json" <<'FX'
 [
@@ -1436,6 +1471,23 @@ STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" EPIC_CLOSED_LIMIT=천 \
   "$SUT" --repo ggqgga/EpicCap --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
 ck "EPIC_CLOSED_LIMIT 형식 오류: exit 1" "$RC" 1
 has_sub "EPIC_CLOSED_LIMIT 형식 오류: stdout 에도 사유" "$tmp/out" "EPIC_CLOSED_LIMIT 형식 오류: 천"
+
+# ── (#327) 전용 줄 끝 앵커 — 문장형 `Epic #N …` 은 leaf 가 아니다 ──────────
+run --repo ggqgga/EpicAnchor --since 24h
+ck "epicanchor: exit 0" "$RC" 0
+has_line "에픽 3건(#810 · #800 · #1)" "$tmp/out" "  에픽      3"
+# 걸러야 할 것 — 닫힌 이슈 3건이 전부 문장형이라 leaf 0. 앵커가 없으면 `#800 3/3` 이 되고
+# `에픽 leaf 전부 종료 #800` warn(스윕이 닫을 대상)이 붙는다 = 이 이슈가 지목한 오종료.
+has_sub "① #800 문장형 언급만 → leaf 0" "$tmp/out" "    - #800 leaf 없음(Epic 줄 미부착)"
+no_sub "①-a 『Epic #800 설명』·『(부모)』·『:』 이 leaf 로 새면 3/3 이 된다(반증)" "$tmp/out" "#800 3/3"
+no_sub "①-b 문장형만 달린 에픽에 '전부 종료' warn 이 붙으면 안 된다(반증)" "$tmp/out" \
+  "에픽 leaf 전부 종료 #800"
+# 걸러선 안 될 것 — 전용 줄 3형태(그대로·앞뒤 공백+소문자·대문자)는 전부 leaf
+has_sub "② #810 전용 줄 3형태는 전부 leaf" "$tmp/out" "    - #810 0/3 · 대기 3"
+# 숫자 경계 — 한 자리 에픽은 세고, 뒤에 다른 번호가 붙은 줄과 접두 오매치는 안 센다
+has_sub "③ #1 한 자리 에픽 — leaf 1" "$tmp/out" "    - #1 0/1 · 대기 1"
+no_sub "③-a 『Epic #1 #2』 가 leaf 로 새면 #1 이 0/2 가 된다(반증)" "$tmp/out" "#1 0/2"
+no_sub "③-b 『Epic #10』 이 #1 의 leaf 로 새면 0/3 이 된다(반증)" "$tmp/out" "#1 0/3"
 
 # ── 무회귀 — bodat(`Epic #N` 이 하나도 없는 픽스처)은 에픽 절(0줄) 추가 외엔 그대로 ──
 run --repo ggqgga/BodaT --since 24h

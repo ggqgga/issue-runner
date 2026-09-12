@@ -165,20 +165,22 @@ has_label() {  # has_label <콤마목록> <라벨>
   return 1
 }
 
-# leaf 판정 — `loop-status.sh` 의 `epic_of`(#260)와 **같은 술어**다. 본문 **줄 시작**의
-# `epic\s+#N`(대소문자 무시)의 **첫 매치**만 취한다: 한 이슈 = 최대 한 에픽.
+# leaf 판정 — `loop-status.sh` 의 `epic_of`(#260)와 **같은 술어**다. 본문의 **전용 줄**
+# (줄 시작의 `epic\s+#N` 뒤가 줄 끝까지 공백뿐, 대소문자 무시)의 **첫 매치**만 취한다:
+# 한 이슈 = 최대 한 에픽.
 # 검색(`in:body`)은 산문 매치도 돌려주므로 이 재확인이 없으면 `… epic #100 …` 을 지나가며
 # 언급한 이슈가 leaf 로 잡혀 **남의 진척으로 에픽이 닫힌다**. 번호는 문자열 비교가 아니라
 # **추출 후 수 비교**라 `Epic #1000` 이 `Epic #100` 의 leaf 로 새지 않는다.
+# 끝 앵커(`[[:space:]]*$`)는 #327 에서 `loop-status.sh` 와 **같은 커밋에서** 넣었다 —
+# 줄 시작은 전용 줄 모양이나 뒤에 산문이 이어지는 `Epic #100 의 후속 논의` 류가 앵커 없이는
+# leaf 로 새고, 그런 언급만 달린 옛 에픽은 leaf ≥1·전부 CLOSED 로 읽혀 **잘못 닫힌다**
+# (전용 줄 규약 #259 는 `Epic #N` 단독 줄을 요구한다). 허용하는 잉여는 줄 끝 공백뿐이고
+# CRLF 본문의 `\r` 도 `[[:space:]]` 라 그대로 통과한다.
 # 이 capture 문자열이 loop-status.sh 와 갈라지면 두 계산기가 다른 leaf 를 센다 —
-# scripts/tests/epic-sweep.test.sh ⑪ 이 두 파일에서 뽑아 대조한다.
-# 끝 앵커(`$`)는 **일부러 없다**: 이슈 #258 은 `…#N$` 계열이라 적었지만 `loop-status.sh` 가
-# 이미 앵커 없이 세고 있어(`Epic #100 (부모)` 같은 줄도 leaf 로 본다), 여기만 좁히면 같은
-# 에픽에 대해 `에픽 leaf 전부 종료` warn 과 실제 종료가 **다른 leaf 집합**으로 갈린다.
-# 좁힐 거면 두 파일을 같은 커밋에서 함께 좁혀야 한다(그건 이 이슈의 범위가 아니다).
+# scripts/tests/epic-sweep.test.sh ⑪ 이 두 파일에서 뽑아 대조한다(끝 앵커 유무도 ⑪-b 가 문다).
 JQ_EPIC_OF='def epic_of($body):
   ([($body // "") | split("\n")[]
-      | capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)"; "i") | .n]
+      | capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)[[:space:]]*$"; "i") | .n]
    | if length > 0 then (.[0] | tonumber) else null end);'
 
 rc=0
