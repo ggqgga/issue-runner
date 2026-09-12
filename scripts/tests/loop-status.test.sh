@@ -268,7 +268,9 @@ sed "s/@NOW@/$NOW/g; s/@OLD@/$OLD/g" > "$tmp/fx/ggqgga_BodaT.issues.json" <<'FX'
  {"number":4848,"title":"배포 검증: 화력 작전 — 제목 폴백 2형식","createdAt":"@NOW@","labels":[{"name":"needs-human"}]},
  {"number":4900,"title":"루프 밖 이슈","createdAt":"@NOW@","labels":[{"name":"enhancement"}]},
  {"number":4963,"title":"사람 세션이 직접 붙인 이슈","createdAt":"@NOW@","labels":[]},
- {"number":4964,"title":"무소속 회귀 대조 — agent 헤드는 종전대로 warn","createdAt":"@NOW@","labels":[]}
+ {"number":4964,"title":"무소속 회귀 대조 — agent 헤드는 종전대로 warn","createdAt":"@NOW@","labels":[]},
+ {"number":4965,"title":"사람 세션 사이클 구현 이슈(full-cycle 부착)","createdAt":"@NOW@","labels":[{"name":"full-cycle"}]},
+ {"number":4966,"title":"사람 세션 사이클 구현 이슈(이슈엔 라벨 없음)","createdAt":"@NOW@","labels":[]}
 ]
 FX
 
@@ -301,7 +303,11 @@ sed "s/@NOW@/$NOW/g; s/@AGO200@/$AGO200/g" > "$tmp/fx/ggqgga_BodaT.pr_open.json"
  {"number":4991,"headRefName":"agent/issue-4964","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
   "closingIssuesReferences":[{"number":4964}],"labels":[]},
  {"number":4992,"headRefName":"feat/사람이-연-이슈없는-브랜치","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
-  "closingIssuesReferences":[],"labels":[]}
+  "closingIssuesReferences":[],"labels":[]},
+ {"number":4993,"headRefName":"agent/issue-4965","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":4965}],"labels":[{"name":"full-cycle"}]},
+ {"number":4994,"headRefName":"feat/full-cycle-4966","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":4966}],"labels":[{"name":"full-cycle"}]}
 ]
 FX
 
@@ -905,8 +911,8 @@ no_sub "구현중 버킷 밖 PR 은 '인계 전' 으로도 안 그려진다" "$t
 # 강등한다(존재 자체는 남긴다). 실측 원천(bodat PR #4987/#4963)과 같은 모양으로 픽스처.
 # 케이스1: head feat/* + 연결 이슈 있음 + 단계 라벨 0 → 무소속 warn 은 0, note 로 강등.
 no_sub "(#188) 케이스1: 사람 세션 PR #4987 는 무소속 warn 아님" "$tmp/out" "무소속 PR #4987"
-has_line "(#188) note 2건 — 사람 세션 PR + (#244) 사람이 직접 세운 정지" \
-  "$tmp/out" "  note      2"
+has_line "(#188) note 4건 — 사람 세션 PR + (#244) 사람이 직접 세운 정지 + (#246) full-cycle PR 2" \
+  "$tmp/out" "  note      4"
 has_line "(#188) 케이스1: 사람 세션 PR #4987 는 note 로 강등된다" "$tmp/out" \
   "    - 사람 세션 PR #4987(bodat) — head feat/adspower-swr-4963 (agent/issue-* 아님) · 연결 이슈 #4963 · 루프가 못 집어 warn 아님"
 # 케이스2(회귀 방지): head agent/issue-* + 단계 라벨 0 + 연결 이슈 needs-human 아님
@@ -918,6 +924,19 @@ no_sub "(#188) 케이스2: agent 헤드는 note 로 강등되지 않는다" "$tm
 # 무소속 warn 에도 note 에도 나타나지 않는다(존재를 지키는 대상 자체가 아니라서).
 no_sub "(#188) 케이스3: 연결 이슈 없는 사람 브랜치는 무소속 warn 에 없다" "$tmp/out" "PR #4992"
 no_sub "(#188) 케이스3: 연결 이슈 없는 사람 브랜치는 note 에도 없다" "$tmp/out" "사람 세션 PR #4992"
+
+# ── (#246) 레인 판별 두 번째 축 — `full-cycle` 라벨. head 이름은 관례라 그것만으로는
+# 부족하다: 사람 세션이 `agent/issue-*` 접두를 쓴 PR #4993 은 head 만 보면 #4991 과 똑같이
+# 무소속 warn 으로 떨어져 루프가 집을 수 없는 후보가 warn 을 오염시킨다(#188 이 막은 그
+# 잡음). 라벨이 붙었으면 head 와 무관하게 note(사람 세션 PR)다 — #188 의 경계·문구는 그대로,
+# 괄호 안 사유만 축에 맞춘다. 격자: 라벨 있음 → note · 라벨 없음+agent 헤드 → warn(#4991 —
+# 위 케이스2가 그 회귀 칸) · 둘 다 아님 → note(#4987 — 위 케이스1이 그 회귀 칸).
+no_sub "(#246) agent 헤드 + full-cycle PR #4993 은 무소속 warn 아님" "$tmp/out" "무소속 PR #4993"
+has_line "(#246) agent 헤드 + full-cycle PR #4993 은 note 로 — 사유는 라벨" "$tmp/out" \
+  "    - 사람 세션 PR #4993(bodat) — head agent/issue-4965 (full-cycle 라벨) · 연결 이슈 #4965 · 루프가 못 집어 warn 아님"
+no_sub "(#246) 사람 헤드 + full-cycle PR #4994 는 무소속 warn 아님" "$tmp/out" "무소속 PR #4994"
+has_line "(#246) 사람 헤드 + full-cycle PR #4994 는 note 로 — 두 축 사유를 모두 적는다" "$tmp/out" \
+  "    - 사람 세션 PR #4994(bodat) — head feat/full-cycle-4966 (full-cycle 라벨 · agent/issue-* 아님) · 연결 이슈 #4966 · 루프가 못 집어 warn 아님"
 
 # (#244) 사유 라벨 없는 needs-human 은 **정상 상태**(사람이 직접 세운 정지)라 warn 이
 # 아니라 note 다 — 기계 정지가 hold:* 하나만 붙게 된 뒤로 교정할 불변식 위반이 없다.
