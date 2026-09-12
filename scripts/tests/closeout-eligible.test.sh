@@ -82,11 +82,12 @@ stub_rollup='{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}
 # 그럼에도 meta 에 `commits` 를 **일부러 남긴다** — 실 gh 가 그 필드를 요청받으면 주는
 # 값(상한 100 에 갇힌 목록)을 그대로 흉내내야, head 시각을 meta.commits 에서 줍던 옛
 # 경로로 되돌리는 뮤테이션이 여기서 빨개진다(아래 13 참조).
+# 라벨은 기본 빈 배열 — 소유 라벨 제외 케이스(16)만 STUB_LABELS 로 심는다.
 build_meta() {
-  jq -n --arg capped_at "$1" '{
+  jq -n --arg capped_at "$1" --argjson labels "${STUB_LABELS:-[]}" '{
     headRefName: "agent/issue-166",
     mergeable: "MERGEABLE",
-    labels: [],
+    labels: $labels,
     closingIssuesReferences: [{number: 166}],
     commits: (if $capped_at == "" then [] else [{committedDate: $capped_at}] end)
   }'
@@ -266,6 +267,16 @@ else
   sed 's/^/      /' "$STUB_CAPTURE"
 fi
 STUB_CAPTURE=""
+
+# 16) `verifying`(#275 — verify-runner 점유) 라벨 PR → 후보 아님. `flow:verify` 제외와
+#     대칭: verify-runner 가 지금 검증 중인 PR 을 closeout 이 함께 물면 두 루프가 같은
+#     PR 을 잡는다. ✅·head 시각은 1) 과 같은 정상 형상이라 라벨이 없었다면 후보였을 입력이다.
+STUB_LABELS='[{"name":"verifying"}]'
+run_case "verifying 라벨→후보아님(verify-runner 소유)" no '[
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:10:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"}
+]' "2026-07-05T03:55:00Z"
+unset STUB_LABELS
 
 # 12) 코멘트 조회 자체가 실패(gh 비정상 종료) → 후보 아님.
 #     반송되지 않았음을 **증명하지 못한** 상태를 통과로 처리하지 않는다(fail-closed).

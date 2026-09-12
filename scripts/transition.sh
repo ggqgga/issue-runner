@@ -12,19 +12,31 @@
 #   전이                  | PR add      | PR remove                          | 이슈 add    | 이슈 remove
 #   ----------------------|-------------|------------------------------------|-------------|------------------------------------------------
 #   handoff-verify        | flow:verify | flow:ci flow:codex                 | flow:verify | agent:claimed
-#   verify-pass           | flow:ready  | flow:verify                        | flow:ready  | flow:verify
-#   verify-redispatch     | —           | flow:verify ⊘hold                  | agent-ready | flow:verify agent:claimed ⊘hold
-#   verify-held †         | hold:R      | flow:verify ⊘R                     | hold:R      | flow:verify agent:claimed ⊘R
-#   closeout-pick         | harvesting  | flow:ready flow:codex flow:ci flow:verify | harvesting | flow:ready flow:verify
-#   closeout-blocked †    | hold:R      | harvesting ⊘R                      | hold:R      | harvesting flow:ready flow:verify ⊘R
-#   closeout-redispatch   | —           | harvesting flow:ready flow:verify ⊘hold | agent-ready | harvesting flow:ready flow:verify agent:claimed ⊘hold
+#   verify-pick(#275)     | verifying   | flow:verify                        | verifying   | flow:verify
+#   verify-unpick(#275)   | flow:verify | verifying                          | flow:verify | verifying
+#   verify-pass           | flow:ready  | flow:verify verifying              | flow:ready  | flow:verify verifying
+#   verify-redispatch     | —           | flow:verify verifying ⊘hold        | agent-ready | flow:verify verifying agent:claimed ⊘hold
+#   verify-held †         | hold:R      | flow:verify verifying ⊘R           | hold:R      | flow:verify verifying agent:claimed ⊘R
+#   closeout-pick         | harvesting  | flow:ready flow:codex flow:ci flow:verify verifying | harvesting | flow:ready flow:verify verifying
+#   closeout-blocked †    | hold:R      | harvesting verifying ⊘R            | hold:R      | harvesting flow:ready flow:verify verifying ⊘R
+#   closeout-redispatch   | —           | harvesting flow:ready flow:verify verifying ⊘hold | agent-ready | harvesting flow:ready flow:verify verifying agent:claimed ⊘hold
 #   runner-held(#151)     | hold:<r>    | (다른 hold)                        | hold:<r>    | agent:claimed (다른 hold)
 #   policy-kept(#244)     | needs-human | —                                  | needs-human | —
-#   closeout-dup ‡        | dup         | harvesting flow:ci flow:codex flow:verify flow:ready | (라벨 편집 없음 — ④ release-labels.sh) |
+#   closeout-dup ‡        | dup         | harvesting flow:ci flow:codex flow:verify flow:ready verifying | (라벨 편집 없음 — ④ release-labels.sh) |
 #
 #   기호: `hold:R` = `hold:<--reason>` · `⊘R` = 나머지 두 `hold:*`(사유 교체가 멱등이 되게)
 #         `⊘hold` = `needs-human hold:conflict hold:policy hold:ladder`(반송 = 사람 대기 해제)
 #         † `--reason <conflict|policy|ladder>` 필수 · ‡ `--note "<근거>"` 필수
+#
+#   · `verifying`(#275) 은 verify-runner 의 **점유** 라벨 — closeout 의 `harvesting` 과 같은
+#     자리다(PR + 연결 이슈 양쪽). `verify-pick` 이 집는 순간 `flow:verify`(검증대기) 를 이것으로
+#     바꾸고, 집은 뒤의 **모든 출구**(verify-pass·verify-redispatch·verify-held·closeout-pick·
+#     closeout-blocked·closeout-redispatch·closeout-dup)가 뗀다 — 하나라도 빠지면 단계 라벨이
+#     겹쳐 남아 다음 틱이 고아로 재집는다. `verify-unpick` 은 pick 의 정확한 역: flake_retry
+#     (E2E 인프라 흔들림 — 판정 아님)로 끝나면 점유를 풀고 검증대기로 되돌린다. 그래서
+#     "`verifying` = 지금 이 순간 검증이 돌고 있다" 가 항상 참이고, 틱 시작에 남아 있는
+#     `verifying` 은 이전 틱이 죽은 것이다(verify-eligible.sh 가 그걸 먼저 낸다, `orphan:true`).
+#     이슈 사다리: `agent:claimed` → `flow:verify` → `verifying` → `flow:ready` → `harvesting`.
 #
 #   · `agent-ready` 는 사다리 전체에서 유지되는 **자격** 라벨 — 위에서 명시적으로 add 하는
 #     칸 외엔 건드리지 않는다(어느 remove 칸에도 없다). 근거는 release-labels.sh 의 #117:
@@ -48,7 +60,7 @@
 #
 # ★closeout-dup 순서★ — 이슈가 요구한 수정이 **이미 main 에 있을 때** 루프가 직접 닫는다
 #   (`needs-human` 금지 — 루프가 결정할 수 있는 건 루프가 끝낸다).
-#     ① PR 라벨 `dup` 부착 + `harvesting`·`flow:*` 제거   ② PR 코멘트(근거)
+#     ① PR 라벨 `dup` 부착 + `harvesting`·`verifying`·`flow:*` 제거   ② PR 코멘트(근거)
 #     ③ 이슈 코멘트 + `gh issue close`                    ④ `release-labels.sh`(닫힌 이슈
 #        라 agent-ready 까지 회수)                        ⑤ **마지막에** `gh pr close`
 #     이슈가 `-` 면 ①②⑤ 만.
@@ -78,7 +90,7 @@ set -uo pipefail
 
 usage() {
   echo "usage: transition.sh <전이> <owner/repo> <issue#|-> [pr#|-] [--reason R] [--note \"…\"]" >&2
-  echo "  전이: handoff-verify verify-pass verify-redispatch verify-held \\" >&2
+  echo "  전이: handoff-verify verify-pick verify-unpick verify-pass verify-redispatch verify-held \\" >&2
   echo "        closeout-pick closeout-blocked closeout-redispatch closeout-dup runner-held \\" >&2
   echo "        policy-kept" >&2
   echo "  --reason <conflict|policy|ladder>: verify-held·closeout-blocked·runner-held 에 **필수**(다른 전이엔 금지)" >&2
@@ -148,24 +160,32 @@ case "$name" in
   handoff-verify)
     pr_add="flow:verify"; pr_rm="flow:ci flow:codex"
     iss_add="flow:verify"; iss_rm="agent:claimed" ;;
+  verify-pick)
+    # verify-runner 가 집는 순간(#275) — closeout-pick 이 flow:ready→harvesting 하는 것과 같은 꼴.
+    pr_add="verifying"; pr_rm="flow:verify"
+    iss_add="verifying"; iss_rm="flow:verify" ;;
+  verify-unpick)
+    # verify-pick 의 정확한 역 — flake_retry(판정 아님) 로 끝날 때 점유를 풀고 검증대기로.
+    pr_add="flow:verify"; pr_rm="verifying"
+    iss_add="flow:verify"; iss_rm="verifying" ;;
   verify-pass)
-    pr_add="flow:ready"; pr_rm="flow:verify"
-    iss_add="flow:ready"; iss_rm="flow:verify" ;;
+    pr_add="flow:ready"; pr_rm="flow:verify verifying"
+    iss_add="flow:ready"; iss_rm="flow:verify verifying" ;;
   verify-redispatch)
-    pr_add=""; pr_rm="flow:verify needs-human $HOLD_ALL"
-    iss_add="agent-ready"; iss_rm="flow:verify agent:claimed needs-human $HOLD_ALL" ;;
+    pr_add=""; pr_rm="flow:verify verifying needs-human $HOLD_ALL"
+    iss_add="agent-ready"; iss_rm="flow:verify verifying agent:claimed needs-human $HOLD_ALL" ;;
   verify-held)
-    pr_add="hold:$reason"; pr_rm="flow:verify $(hold_others "$reason")"
-    iss_add="hold:$reason"; iss_rm="flow:verify agent:claimed $(hold_others "$reason")" ;;
+    pr_add="hold:$reason"; pr_rm="flow:verify verifying $(hold_others "$reason")"
+    iss_add="hold:$reason"; iss_rm="flow:verify verifying agent:claimed $(hold_others "$reason")" ;;
   closeout-pick)
-    pr_add="harvesting"; pr_rm="flow:ready flow:codex flow:ci flow:verify"
-    iss_add="harvesting"; iss_rm="flow:ready flow:verify" ;;
+    pr_add="harvesting"; pr_rm="flow:ready flow:codex flow:ci flow:verify verifying"
+    iss_add="harvesting"; iss_rm="flow:ready flow:verify verifying" ;;
   closeout-blocked)
-    pr_add="hold:$reason"; pr_rm="harvesting $(hold_others "$reason")"
-    iss_add="hold:$reason"; iss_rm="harvesting flow:ready flow:verify $(hold_others "$reason")" ;;
+    pr_add="hold:$reason"; pr_rm="harvesting verifying $(hold_others "$reason")"
+    iss_add="hold:$reason"; iss_rm="harvesting flow:ready flow:verify verifying $(hold_others "$reason")" ;;
   closeout-redispatch)
-    pr_add=""; pr_rm="harvesting flow:ready flow:verify needs-human $HOLD_ALL"
-    iss_add="agent-ready"; iss_rm="harvesting flow:ready flow:verify agent:claimed needs-human $HOLD_ALL" ;;
+    pr_add=""; pr_rm="harvesting flow:ready flow:verify verifying needs-human $HOLD_ALL"
+    iss_add="agent-ready"; iss_rm="harvesting flow:ready flow:verify verifying agent:claimed needs-human $HOLD_ALL" ;;
   runner-held)
     # 디스패처(issue-runner) 자체의 사람 대기 — 죽은 워커 BLOCKED · 보수 상한(#151).
     # PR 이 없을 수 있어 `-` 허용. 사다리 라벨(flow:*·harvesting)은 건드리지 않는다 — 디스패처가
@@ -181,7 +201,7 @@ case "$name" in
     iss_add="needs-human"; iss_rm="" ;;
   closeout-dup)
     # 라벨 이동은 ① 단계뿐 — PR 만. 이슈 라벨은 ④ release-labels.sh 가 정리한다.
-    pr_add="dup"; pr_rm="harvesting flow:ci flow:codex flow:verify flow:ready"
+    pr_add="dup"; pr_rm="harvesting flow:ci flow:codex flow:verify flow:ready verifying"
     iss_add=""; iss_rm="" ;;
   *) usage ;;
 esac
@@ -270,7 +290,7 @@ gh_state() {
 
 # ── closeout-dup — 라벨 이동이 아니라 "닫기" 라 흐름이 다르다(위 순서 주석 참조) ──────
 if [ "$name" = "closeout-dup" ]; then
-  # ① PR 라벨: dup 부착 + harvesting·flow:* 제거
+  # ① PR 라벨: dup 부착 + harvesting·verifying·flow:* 제거
   run_edit pr "$pr" "$pr_add" "$pr_rm" || exit 2
 
   # ② PR 에 근거를 남긴다 — **무조건**. close 조건에 묶으면 재실행 때 근거가 안 남는다.
