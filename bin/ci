@@ -3506,7 +3506,10 @@ echo "[#292] loop-status 에픽 닫힌 leaf 조회 — 검색 쿼리 형태·단
 #    한 번만 뽑아 둘 다 이 변수로 본다 — 파일이 없으면 빈 문자열이라 아래 첫 검사가
 #    바로 빨개진다(fail-closed).
 ls_code=$(grep -vE '^[[:space:]]*#' scripts/loop-status.sh || true)
-printf '%s\n' "$ls_code" | grep -qF -- "--state closed --search '\"Epic #\" in:body'" \
+# `printf … | grep -q` 는 `set -o pipefail` 아래서 **경합**한다 — grep 이 첫 매치에서 먼저 닫으면
+# printf 가 SIGPIPE(141)로 죽어 파이프라인이 비0 → 거짓 빨강(#334 attempt 4 CI 실측 9/200).
+# 파이프 대신 here-string 으로 읽는다(파이프라인이 아니라 pipefail 과 무관).
+grep -qF -- "--state closed --search '\"Epic #\" in:body'" <<<"$ls_code" \
   || { echo "  ✗ scripts/loop-status.sh 의 에픽 닫힌 leaf 조회(코드)가 예상 형태가 아니다(--state closed 플래그 + \"Epic #\" in:body)"; exit 1; }
 if printf '%s\n' "$ls_code" | grep -nF -- 'is:closed'; then
   echo "  ✗ scripts/loop-status.sh 검색 쿼리(코드)에 is:closed 가 들어갔다 — gh 가 오파싱한다(#236). --state closed 플래그로"
@@ -3514,7 +3517,7 @@ if printf '%s\n' "$ls_code" | grep -nF -- 'is:closed'; then
 fi
 #    `--limit` 이 `EPIC_CLOSED_LIMIT` 로 전달되는지도 코드 줄에서 센다 — 리터럴 상한으로
 #    되돌리면 창이 PR 이전으로 돌아가는데 상한 판정은 env 를 읽어 `capped` 도 안 뜬다.
-printf '%s\n' "$ls_code" | grep -qF -- '--limit "$EPIC_CLOSED_LIMIT"' \
+grep -qF -- '--limit "$EPIC_CLOSED_LIMIT"' <<<"$ls_code" \
   || { echo "  ✗ scripts/loop-status.sh 의 에픽 닫힌 leaf 조회가 --limit \"\$EPIC_CLOSED_LIMIT\" 로 안 간다(#292)"; exit 1; }
 # ⑵ `epic_of` 정규식은 이 파일에 **한 벌**뿐이어야 한다(이슈 #292 개발 계획 3항).
 #    복제본이 생기면 두 계산기가 서로 다른 leaf 를 세고, 그 차이는 출력에 안 보인다.
