@@ -1483,37 +1483,62 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   fi
 done
 
-echo "[closeout] ①-c 인덱스는 배열을 넘지 않는다 — 이슈측 단독 경계는 해소 후보 없음 (반증형, #334 attempt 2 P1)"
-# attempt 2 P1: "이슈 쪽에만 경계가 있으면 그 경계로 아래 판정을 이어간다" 직후의 해소 판정 ⑴ 이
-# **PR 배열**의 완결 판정 인덱스를 `max(보류 경계, 재디스패치 마커)` 와 비교하는데, 그 경계가
-# 이슈 배열에서 온 경우 서로 다른 배열의 인덱스 비교가 된다 — 낡은 PR ✅(인덱스 5)가 이슈 보류
-# (인덱스 2)보다 "뒤" 로 읽혀 보류 이전 코드가 ② Pick 된다. 처방(택일 ⓐ, 보수적): ⑴ 의 두 항은
-# PR 배열의 것만 쓰고, PR 배열에 경계도 마커도 없으면 **해소 후보를 내지 않는다**. 멱등 분기의
-# `r > h` 도 같은 배열 안에서만 — 이슈측 단독 경계 형상에서는 인덱스 대신 `createdAt` 엄격 비교로
-# 가르고 동초·이전은 새 보류(2))로 읽는다. 넷을 문다: (a) ⑴ 문단이 '배열 안에서만' 을 못박음
-# (b) ⑴ 문단이 '해소 후보를 내지 않는다' 출구를 가짐 (c) 멱등 분기가 이슈측 단독 경계에서
-# createdAt **엄격** 비교를 씀 (d) 격자에 축⑧ 행(교차 인덱스 오독 칸)이 있음.
+echo "[closeout] ①-c 이슈측 단독 경계는 r 유무 무관 해소 후보 없음 — 비교 없음·양측 경계 복구 (반증형, #334 attempt 4 · 사람 결정 ⓐ)"
+# 같은 축(①-c 인덱스/경계 비교)에서 codex BLOCKER 3회 연속 — attempt 1 은 배열 교차 비교,
+# attempt 2 는 `r` 없음 갈래만 닫음, attempt 3 은 `r` 있음 갈래에서 `f > r` 이 이슈측 후발 보류를
+# 무시. 상한에 닿아 **사람이 모델을 단순화**했다(이슈 #334 재심): 이슈측 단독 경계 형상(PR 배열
+# 경계 0 · 이슈 배열 있음)은 `r` 유무 무관 **해소 후보 없음** — 인덱스로도 `createdAt` 으로도
+# 방향을 추정하지 않고, `closeout-blocked` 재호출로 **양측 경계를 복구**한 뒤 정상 경로로
+# 돌아온다. 넷을 문다: (a) ⑴ 문단이 비교를 'PR 배열 안에서만' 으로 못박음 (b) ⑴ 문단이
+# '해소 후보를 내지 않는다' 출구를 '이슈측 단독 경계' 에 대해 **`r` 유무 무관** 으로 가짐
+# (c) 1) 절 어디에도 이슈측 경계의 `createdAt` 비교가 **없다**(attempt 2 의 멱등 분기 엄격 비교와
+# 착수 판정의 이슈측 폴백 — 둘 다 옛 동작) (d) 격자에 축⑨ 행(단순화로 뒤집힌 칸)이 있고,
+# 그 행들의 `want` 는 `scripts/tests/closeout-hold-resolve.test.sh` 가 모델과 교차 확인한다.
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   sec=$(ic_sec "$f"); step1=$(ic_step "$f" 1 2 <<<"$sec")
   [ -n "$step1" ] || { echo "  ✗ $f 의 ①-c 1) 절을 못 찾음"; exit 1; }
   case "$f" in
     *.en.md) p1s='**Resolution test ⑴'; p1e='**Resolution test ⑵'; within='within the PR array only'; norc='no resolution candidate'
-             solew='issue-only boundary'; strictw='strictly later'; idemw='**If it was already bounced, do not bounce it again' ;;
+             solew='issue-only boundary'; anyr='regardless of whether `r`'; restorew='restore both boundaries'
+             oldidem='strictly later'; oldstart='`createdAt` of the issue-side boundary'; axisw='axis⑨' ;;
     *)       p1s='**해소 판정 ⑴'; p1e='**해소 판정 ⑵'; within='PR 배열 안에서만'; norc='해소 후보를 내지 않는다'
-             solew='이슈측 단독 경계'; strictw='엄격히 늦을 때만'; idemw='**이미 반송됐으면 다시 반송하지 않는다' ;;
+             solew='이슈측 단독 경계'; anyr='`r` 유무 무관'; restorew='양측 경계 복구'
+             oldidem='엄격히 늦을 때만'; oldstart='이슈측 경계 코멘트의 `createdAt`'; axisw='축⑨' ;;
   esac
   para=$(awk -v a="$p1s" -v b="$p1e" 'index($0,a)==1{on=1} on && index($0,b)==1{exit} on' <<<"$step1")
   [ -n "$para" ] || { echo "  ✗ $f ①-c 해소 판정 ⑴ 문단을 못 찾음"; exit 1; }
   grep -qF "$within" <<<"$para" \
     || { echo "  ✗ $f ①-c 해소 판정 ⑴ 이 비교를 '$within' 으로 못박지 않음 — 이슈 배열 인덱스와 교차 비교가 열려 있다(#334 attempt 2 P1)"; exit 1; }
-  grep -qF "$norc" <<<"$para" \
-    || { echo "  ✗ $f ①-c 해소 판정 ⑴ 에 '$norc' 출구 없음 — PR 배열에 기준이 없을 때 낡은 ✅ 가 해소로 읽힌다(#334 attempt 2 P1)"; exit 1; }
-  grep -qF "$solew" <<<"$para" \
-    || { echo "  ✗ $f ①-c 해소 판정 ⑴ 이 '$solew' 형상을 지명하지 않음(#334 attempt 2 P1)"; exit 1; }
-  idem=$(awk -v a="$idemw" 'index($0,a)==1{on=1} on' <<<"$step1" | awk 'NR>1 && /^\*\*2\)/{exit} {print}')
-  [ -n "$idem" ] || { echo "  ✗ $f ①-c 멱등 분기 문단을 못 찾음"; exit 1; }
-  grep -qF 'createdAt' <<<"$idem" && grep -qF "$strictw" <<<"$idem" \
-    || { echo "  ✗ $f ①-c 멱등 분기가 이슈측 단독 경계에서 createdAt '$strictw' 규칙을 안 씀 — PR 배열에 h 가 없을 때 r > h 가 미정의다(#334 attempt 2 P1)"; exit 1; }
+  grep -qF "$norc" <<<"$para" && grep -qF "$solew" <<<"$para" \
+    || { echo "  ✗ $f ①-c 해소 판정 ⑴ 에 '$solew' → '$norc' 출구 없음(#334 attempt 2 P1)"; exit 1; }
+  grep -qF "$anyr" <<<"$para" \
+    || { echo "  ✗ $f ①-c 해소 판정 ⑴ 이 이슈측 단독 경계를 '$anyr' 해소 후보 없음으로 못박지 않음 — r 있음 갈래가 f > r 로 새어 이슈측 후발 보류를 무시한다(#334 attempt 3 P1 · 사람 결정 ⓐ)"; exit 1; }
+  grep -qF "$restorew" <<<"$para" \
+    || { echo "  ✗ $f ①-c 해소 판정 ⑴ 에 '$restorew' 절차 없음 — 이슈측 단독 경계의 해제 경로가 안 적혔다(#334 attempt 4)"; exit 1; }
+  grep -qF "$oldidem" <<<"$step1" \
+    && { echo "  ✗ $f ①-c 1) 절에 '$oldidem'(createdAt 비교) 가 살아 있음 — 사람 결정은 createdAt 비교로 가지 않는다(#334 attempt 4)"; exit 1; }
+  grep -qF "$oldstart" <<<"$step1" \
+    && { echo "  ✗ $f ①-c 1) 절 착수 판정에 이슈측 경계 createdAt 폴백('$oldstart')이 살아 있음 — 이슈측 단독 경계는 착수 판정에 도달하지 않는다(#334 attempt 4)"; exit 1; }
+  n=$(grep -cF "$axisw" <<<"$sec")
+  [ "$n" -ge 4 ] \
+    || { echo "  ✗ $f ①-c 격자에 '$axisw' 행이 4 미만($n) — 단순화로 뒤집힌 칸(이슈측 단독 r 있음 · P2 결정문+라벨 · 복구 뒤 결정 앞/뒤)이 격자에 없다(#334 attempt 4)"; exit 1; }
+done
+
+echo "[closeout] ①-b held 행 — 라벨이 남아 있으면 경계를 다시 쓰지 않는다 (반증형, #334 attempt 3 P2)"
+# attempt 3 P2: `D=true, H=true`(결정문은 달렸는데 라벨은 아직) 에서 held 행이 `closeout-blocked`
+# 를 다시 부르면 새 `<!-- hold-note: -->` 가 보류 경계를 사람 결정 **뒤로** 밀어, 라벨을 떼는
+# 순간 그 결정문이 경계 앞이 되어 모호로 떨어진다(결정 폐기 → 사람이 같은 답을 두 번 쓴다).
+# 정지는 이미 서 있으므로(라벨이 그 증거) 라벨이 있는 동안은 **무접촉**이어야 한다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  row=$(fc_row "$f" '| `held`') || row=''
+  [ -n "$row" ] || { echo "  ✗ $f 에 finish-classify 표의 held 행 없음"; exit 1; }
+  line=$(sed -n "${row}p" "$f")
+  case "$f" in
+    *.en.md) standw='the stop already stands'; ;;
+    *)       standw='정지는 이미 서 있다'; ;;
+  esac
+  grep -qF "$standw" <<<"$line" \
+    || { echo "  ✗ $f held 행이 라벨 잔존 시 '$standw' 무접촉 갈래를 갖지 않음 — closeout-blocked 재호출이 경계를 결정문 뒤로 민다(#334 attempt 3 P2)"; exit 1; }
 done
 
 echo "[closeout] ①-c 전이 실패도 마커 실패와 같은 BLOCKED 재시도 칸 (반증형, #198 10:11-P1 축②)"
@@ -1610,6 +1635,21 @@ for mut in loose tight and flip; do
   out=$(LANE_MUT="$mut" bash scripts/tests/closeout-lane-predicate.test.sh 2>&1) || true
   tail -1 <<<"$out" | grep -qE 'closeout-lane-predicate\.test.*fail=[1-9][0-9]*$' \
     || { echo "  ✗ LANE_MUT=$mut 로 술어를 망가뜨렸는데 테스트가 fail>0 으로 끝나지 않았다 — 그 테스트는 이 축을 안 문다(#334): $(tail -1 <<<"$out")"; exit 1; }
+done
+
+echo "[closeout] ①-c 경계 형상 격자 — 이슈측 단독 경계·복구 뒤 결정문 (#334 attempt 4 · 사람 결정 ⓐ)"
+# 판정 모델을 픽스처 격자 위에서 평가하고, SKILL 격자 행의 `want` 칸과 교차 확인한다 — 문서만
+# 고치고 모델을 안 고쳤거나 그 반대면 빨강.
+bash scripts/tests/closeout-hold-resolve.test.sh
+
+echo "[closeout] ①-c 경계 형상 뮤테이션 방증 — 옛 세 회차의 동작으로 되돌리면 빨강 (#334 attempt 4)"
+# cross = attempt 1(배열 교차 비교) · index = attempt 3(r 있으면 f > r) · repost = attempt 3 P2
+# (라벨 잔존 중 closeout-blocked 재호출). 판정은 결과 줄의 `fail=N>0` 이다(모르는 뮤테이션의
+# exit 2 가 빨강으로 위장하지 않게).
+for mut in cross index repost; do
+  out=$(HOLD_MUT="$mut" bash scripts/tests/closeout-hold-resolve.test.sh 2>&1) || true
+  tail -1 <<<"$out" | grep -qE 'closeout-hold-resolve\.test.*fail=[1-9][0-9]*$' \
+    || { echo "  ✗ HOLD_MUT=$mut 로 모델을 옛 회차로 되돌렸는데 테스트가 fail>0 으로 끝나지 않았다 — 그 격자는 이 축을 안 문다(#334): $(tail -1 <<<"$out")"; exit 1; }
 done
 
 echo "[closeout] ①-c 착수 판정 — pr-head-at.sh 가 값을 못 주면 실측 갈래에 도달하지 않는다 (반증형, #334 BLOCKER①-b)"
