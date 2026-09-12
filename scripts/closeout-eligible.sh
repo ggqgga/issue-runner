@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 마감 후보 PR을 JSON lines 로 출력. 진입 조건 모두 충족 + harvesting 미부착
 # (+ verify-runner 소유 라벨 flow:verify·verifying 미부착 — #275).
+# 레인 판별은 head 이름(`agent/issue-*`) **과** `full-cycle` 라벨 미부착 두 축이다(#246).
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 me=$(gh api user -q .login 2>/dev/null); [ -n "$me" ] || exit 0
@@ -47,6 +48,18 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
 
   head=$(printf '%s' "$meta" | jq -r '.headRefName')
   case "$head" in agent/issue-*) : ;; *) continue ;; esac
+  # 레인 두 번째 축 — `full-cycle` 라벨은 **명시적 제외**다(#246, 플랜 5단계). 위 head 필터와
+  # AND 이지 OR 가 아니다: head 가 `agent/issue-*` 여도 라벨이 붙어 있으면 "루프 소유 아님".
+  # 왜 브랜치 이름만으로는 부족한가 — `agent/issue-*` 는 make-worktree 의 **관례**지 라벨처럼
+  # 강제되는 축이 아니다. 사람 세션(full-cycle 스킬)이 같은 접두의 브랜치를 쓰거나 루프가
+  # 접두를 바꾸는 날 head 만 보는 판별은 조용히 깨진다 — 마감이 사람 세션 PR 을 squash
+  # 머지해 버리는 방향이라 특히 나쁘다. `full-cycle` 은 사람 세션 사이클이 자기 산출물
+  # (구현 이슈·PR·배포 대기)에 붙이는 **레인 소유 표시**라 그 자체가 판정 근거다.
+  # head 필터를 지우지 않는 이유는 라벨 도입 전에 열린 PR 들이 라벨 없이 남아 있어서다 —
+  # 라벨은 보강이지 대체가 아니다. 판별은 배열 원소의 완전 일치(index)라 `full-cycle-*` 류는
+  # 걸리지 않는다(과잉 제외는 머지 가능한 PR 을 조용히 지우는 방향이라 원래 결함보다 나쁘다).
+  # verify-eligible.sh 의 같은 자리와 **같은 정의**다(격자 단언: tests/lane-gate.test.sh).
+  printf '%s' "$meta" | jq -e '[.labels[].name]|index("full-cycle")' >/dev/null && continue
   printf '%s' "$meta" | jq -e '[.labels[].name]|index("harvesting")' >/dev/null && continue
   # flow:verify = verify-runner 소유(harvesting 동형). 정상 인계에선 verify-runner 가
   # flow:verify 를 떼고 나서 ✅ 를 남기지만, ✅ 코멘트가 라벨 제거보다 먼저 달리면 두

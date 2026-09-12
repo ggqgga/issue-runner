@@ -108,12 +108,14 @@
 #   아니다. 조치 불가능한 warn 은 신호를 죽인다(#188). 왜 그런지는 아래 `orphan_base` 옆
 #   근거 주석에 한 벌만 둔다(여기는 정의, 거기는 근거).
 #   · 무소속 PR      — 열린 PR + head 가 `agent/issue-*`(연결 이슈는 있어도 없어도 된다) +
+#                      PR 라벨에 `full-cycle` 없음(사람 세션 레인 소유 표시 — #246, 두 번째 축) +
 #                      PR 라벨에 flow:ci·flow:codex·flow:verify·flow:ready·harvesting 이
 #                      하나도 없고 PR 도 연결 이슈도 **정지 라벨**(`needs-human` ∪ `hold:*`)을
 #                      안 달았음 → 어느 루프도 안 문다. `hold:*` 를 함께 보는 이유는 #244 —
 #                      기계 정지가 `needs-human` 을 떼고 사유 라벨만 남기게 됐으므로,
 #                      `needs-human` 만 보면 홀드된 PR 이 통째로 이 warn 으로 쏟아진다.
-#                      head 가 `agent/issue-*` 가 **아닌** 후보(사람 세션이 판 `feat/*` 등)는
+#                      head 가 `agent/issue-*` 가 **아니거나** `full-cycle` 라벨이 **붙은** 후보
+#                      (사람 세션이 판 `feat/*`, 사람 세션이 라벨로 소유를 밝힌 PR)는
 #                      warn 이 아니라 아래 **note `사람 세션 PR`** 줄로 강등한다 — 관측에서
 #                      사라진 게 아니라 warn 이 아닌 자리로 간 것이다. 왜 그렇게 가르는지는
 #                      `orphan_base`/`$ohuman` 정의 옆 주석에 한 벌만 둔다(여기는 정의,
@@ -216,9 +218,11 @@
 #                      사유 라벨만 붙이게 된 뒤로 맨 `needs-human` 은 "사람이 직접 세웠다"
 #                      하나만 뜻하는 **정상 상태**라 warn 이 아니다. 버킷 기준인 이유:
 #                      `deploy-wait` 가 이겨 배포대기로 가는 needs-human 이슈는 이 축 밖이다.
-#   · 사람 세션 PR   — 무소속 PR 의 나머지 조건은 다 맞는데 head 가 `agent/issue-*` 가 아닌
-#                      열린 PR(사람 세션이 판 `feat/*` 등). warn 에서 빼되 존재는 남긴다 —
-#                      `note N` 줄 아래 한 줄씩(#188).
+#   · 사람 세션 PR   — 무소속 PR 의 나머지 조건은 다 맞는데 head 가 `agent/issue-*` 가 아니거나
+#                      PR 라벨에 `full-cycle` 이 붙은 열린 PR(사람 세션이 판 `feat/*` 등, 또는
+#                      사람 세션이 라벨로 소유를 밝힌 PR — #246). warn 에서 빼되 존재는 남긴다 —
+#                      `note N` 줄 아래 한 줄씩(#188). 괄호 안 사유는 걸린 축을 적는다
+#                      (`full-cycle 라벨` · `agent/issue-* 아님` · 둘 다면 ` · ` 로 병기).
 #
 # ★에픽 절★ (#260) 열린 `epic` 라벨 이슈마다 leaf(하위) 진척을 한 줄로 찍는다. `승격 대기`
 #   줄 바로 위, `파생` 줄 아래.
@@ -833,13 +837,23 @@ def prio_of($l):
 # 무소속 PR **후보** — 여기서 한 번만 정하고 아래에서 둘로 쪼갠다(인계 전 / warn).
 # 표시와 warn 을 각각 별도 조건으로 쓰면 언젠가 둘 다에 나오거나 둘 다에서 사라진다.
 # 여기는 파일 상단 ★warn 정의★ 의 **근거**다(정의 문장은 거기 한 벌만 둔다 — head 가
-# `agent/issue-*` 인 것만 warn, 나머지는 note). 왜 그렇게 좁히는가: head 가 `agent/issue-*`
-# 가 아닌 PR(사람 세션이 연 브랜치)은 closeout 스윕 대상도 아니고 루프가 애초에
-# 집을 방법이 없다. 조치 불가능한 후보를 warn 에 얹으면 그 줄이 상시 잡음이 되어
-# 진짜 무소속 agent PR 의 신호를 죽인다(사람 브랜치는 결국 사람이 머지·종료한다).
-# 그래서 공통 판정은 `orphan_base` 하나로 적고, head 로만 갈라 $ocand(agent 후보)와
-# $ohuman(사람 세션 후보)을 나눈다 — 판정을 두 번 따로 적으면 언젠가 드리프트한다.
-# 제외된 $ohuman 은 조용히 버리지 않는다 — warn 대신 note 로 강등해 존재를 남긴다.
+# `agent/issue-*` 이고 `full-cycle` 라벨이 없는 것만 warn, 나머지는 note). 왜 그렇게
+# 좁히는가: head 가 `agent/issue-*` 가 아닌 PR(사람 세션이 연 브랜치)은 closeout 스윕
+# 대상도 아니고 루프가 애초에 집을 방법이 없다. 조치 불가능한 후보를 warn 에 얹으면 그
+# 줄이 상시 잡음이 되어 진짜 무소속 agent PR 의 신호를 죽인다(사람 브랜치는 결국 사람이
+# 머지·종료한다).
+# 왜 head 이름만으로는 부족한가(#246, 플랜 5단계): `agent/issue-*` 는 make-worktree 의
+# **관례**지 라벨처럼 강제되는 축이 아니다. 사람 세션(full-cycle 스킬)이 같은 접두의
+# 브랜치를 쓰거나 루프가 접두를 바꾸는 날 head 만 보는 판별은 조용히 깨진다 — 사람
+# 세션 PR 이 "루프가 교정 가능한 위반" 으로 둔갑해 #188 이 걷어낸 잡음이 되돌아온다.
+# `full-cycle` 은 사람 세션 사이클이 자기 산출물에 붙이는 **레인 소유 표시**라 그 자체가
+# 판정 근거이고, verify-eligible·closeout-eligible 이 같은 라벨을 명시적 제외 축으로 쓴다
+# (거기서 못 집는 PR 은 여기서도 warn 이 아니어야 두 판정이 같은 축을 쓴다). head 필터를
+# 지우지 않는 이유는 라벨 도입 전 PR 들이 라벨 없이 남아 있어서다 — 보강이지 대체가 아니다.
+# 그래서 공통 판정은 `orphan_base` 하나로 적고, `loop_lane`(head **이고** 라벨 없음) 하나로만
+# 갈라 $ocand(agent 후보)와 $ohuman(사람 세션 후보)을 나눈다 — 판정을 두 번 따로 적으면
+# 언젠가 드리프트한다. 제외된 $ohuman 은 조용히 버리지 않는다 — warn 대신 note 로 강등해
+# 존재를 남긴다.
 # `hold:*` 도 정지 신호로 센다 (#244) — 기계 정지가 `needs-human` 을 떼고 사유 라벨만
 # 붙이게 된 뒤, `needs-human` 만 보면 홀드된 PR(단계 라벨은 홀드 전이가 떼 갔다)이 통째로
 # 무소속 warn 으로 쏟아진다. 판정 대상은 "아무도 안 들고 있는 PR" 이지 "멈춰 있는 PR" 이
@@ -850,9 +864,10 @@ def orphan_base:
     and (stopped(.ln) | not)
     and ((.issue as $n | $iss | map(select(.number == $n and stopped(.ln))) | length) == 0)
     and ((.headRefName | test("^agent/issue-")) or (.issue != null)));
+def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle") | not);
   ($po | map(orphan_base)) as $ocand_all
-| ($ocand_all | map(select(.headRefName | test("^agent/issue-")))) as $ocand
-| ($ocand_all | map(select((.headRefName | test("^agent/issue-")) | not))) as $ohuman
+| ($ocand_all | map(select(loop_lane))) as $ocand
+| ($ocand_all | map(select(loop_lane | not))) as $ohuman
 | ($ocand | map(. as $p | select(
       $p.issue != null
       and in_claimed_bucket($p.issue)
@@ -1125,9 +1140,11 @@ def orphan_base:
                        + ($subs | map("#\(.)") | join(" ")) + " 정체")})
          | sort_by(-.blocker))
     ),
-    # 사람 세션 PR — $ohuman(무소속 후보 중 head 가 `agent/issue-*` 아닌 것). warn 이 아니라
-    # note 로 강등한다: 루프가 못 집는 후보를 warn 에 얹으면 조치 불가능한 잡음이 상시화되고
-    # (이 이슈의 실측 원인), 그렇다고 그냥 빼면 그 PR 의 존재 자체가 관측에서 사라진다.
+    # 사람 세션 PR — $ohuman(무소속 후보 중 `loop_lane` 이 아닌 것: head 가 `agent/issue-*`
+    # 아니거나 `full-cycle` 라벨 부착). warn 이 아니라 note 로 강등한다: 루프가 못 집는 후보를
+    # warn 에 얹으면 조치 불가능한 잡음이 상시화되고(이 이슈의 실측 원인), 그렇다고 그냥
+    # 빼면 그 PR 의 존재 자체가 관측에서 사라진다. 괄호 안 사유는 걸린 축을 그대로 적는다
+    # (#246) — #188 의 문구 `(agent/issue-* 아님)` 은 그 축에 걸렸을 때 그대로 나온다.
     notes: (
       # 사유(hold:*) 없는 needs-human — **정상 상태**다(#244). 기계 정지가 `hold:*` 하나만
       # 붙게 된 뒤로 맨 `needs-human` 은 "사람이 직접 세웠다" 하나만 뜻하고, 루프가 교정할
@@ -1138,7 +1155,9 @@ def orphan_base:
                text: "사람이 직접 세운 정지 #\(.number)(\($rs)) — hold:* 라벨 없음(정상)"}))
       + ($ohuman | map({kind: "human_session_pr", repo_short: $rs, pr: .number, issue: .issue,
         text: ("사람 세션 PR #\(.number)(\($rs)) — head " + .headRefName
-               + " (agent/issue-* 아님) · "
+               + " (" + ((if has(.ln; "full-cycle") then ["full-cycle 라벨"] else [] end)
+                         + (if (.headRefName | test("^agent/issue-")) then [] else ["agent/issue-* 아님"] end)
+                         | join(" · ")) + ") · "
                + (if .issue == null then "연결 이슈 없음" else "연결 이슈 #\(.issue)" end)
                + " · 루프가 못 집어 warn 아님")}))
     )
