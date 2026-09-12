@@ -8,7 +8,8 @@
 #      `<상태>` 는 블로커의 라벨로 정한다(needs-human→사람대기 · hold:conflict→사람대기
 #      (#244 — `loop-status.sh` 의 사람대기 버킷 정의와 같은 집합) · 그 밖 hold:*→보류(#244) ·
 #      agent:claimed→구현중 ·
-#      flow:verify→검증대기 · flow:ready→마감대기 · harvesting→마감중 · 그 밖→대기).
+#      flow:verify→검증대기 · verifying→검증중(#275) · flow:ready→마감대기 · harvesting→마감중 ·
+#      그 밖→대기).
 #   ③ 블로커가 CLOSED·MERGED(PR)·미존재면 통과하고 `blocked:` 줄이 없다.
 #   ④ 블로커 조회 일시 오류는 `(조회오류)` — 빈 결과와 실패를 구분한다(PR#139).
 #   ⑤ 본문 `Blocked by #N` 과 라벨 `blocked-by:N` 이 같은 번호를 가리키면 **한 번만** 조회한다
@@ -233,6 +234,7 @@ add_issue "$fx" 17 '["agent-ready"]' 'CLOSED 블로커' 'Blocked by #906' '2026-
 add_issue "$fx" 18 '["agent-ready"]' 'MERGED PR 블로커' 'Blocked by #907' '2026-01-01T00:00:18Z'
 add_issue "$fx" 19 '["agent-ready"]' '조회 실패 블로커' 'Blocked by #908'
 add_issue "$fx" 20 '["agent-ready"]' '미존재 블로커' 'Blocked by #909' '2026-01-01T00:00:20Z'
+add_issue "$fx" 23 '["agent-ready"]' '검증중 블로커' 'Blocked by #913'
 add_blocker "$fx" 900 OPEN   '["needs-human","hold:policy"]'
 add_blocker "$fx" 901 OPEN   '["agent-ready","agent:claimed"]'
 add_blocker "$fx" 902 OPEN   '["agent-ready","flow:verify"]'
@@ -243,6 +245,8 @@ add_blocker "$fx" 906 CLOSED '["agent-ready"]'
 add_blocker "$fx" 907 MERGED '[]'
 add_blocker_fail "$fx" 908 'gh: HTTP 502 Bad Gateway'
 add_blocker_fail "$fx" 909 'GraphQL: Could not resolve to an Issue with the number of 909.'
+# verify-runner 가 집은 순간의 점유 라벨(#275) — `대기`(= 곧 집힐 것)로 읽히면 안 된다.
+add_blocker "$fx" 913 OPEN   '["agent-ready","verifying"]'
 run_sut "$fx"
 ck "② exit 0" "$RC" "0"
 has_line "② 사람대기"   "$ERR" "blocked: owner/repo#11 ← #900(사람대기)"
@@ -250,6 +254,7 @@ has_line "② 구현중"     "$ERR" "blocked: owner/repo#12 ← #901(구현중)"
 has_line "② 검증대기"   "$ERR" "blocked: owner/repo#13 ← #902(검증대기)"
 has_line "② 마감대기"   "$ERR" "blocked: owner/repo#14 ← #903(마감대기)"
 has_line "② 마감중"     "$ERR" "blocked: owner/repo#15 ← #904(마감중)"
+has_line "② 검증중(verifying, #275)" "$ERR" "blocked: owner/repo#23 ← #913(검증중)"
 has_line "② 그 밖은 대기" "$ERR" "blocked: owner/repo#16 ← #905(대기)"
 ck "③ CLOSED 는 blocked 줄 없음" "$(count_of "$ERR" 'blocked: owner/repo#17')" "0"
 ck "③ MERGED PR 은 blocked 줄 없음" "$(count_of "$ERR" 'blocked: owner/repo#18')" "0"
@@ -265,9 +270,9 @@ has_line "③ 미존재는 이유를 warn 으로 남긴다" "$ERR" \
 ck "②③ stdout 통과분(오래된 순)" \
   "$(jq -c '[.[].number]' "$OUT")" '[17,18,20]'
 no_line "② 진단이 stdout 으로 새지 않는다" "$OUT" "blocked"
-has_line "⑦ 요약 — 막힘 7건 · 사람대기 1건" "$ERR" "blocked-summary: 막힘 7건 (사람대기 블로커 1건)"
+has_line "⑦ 요약 — 막힘 8건 · 사람대기 1건" "$ERR" "blocked-summary: 막힘 8건 (사람대기 블로커 1건)"
 ck "⑦ 요약은 한 줄뿐" "$(count_of "$ERR" 'blocked-summary:')" "1"
-ck "⑤ 블로커 조회는 후보당 한 번(10건)" "$(count_of "$LOG" 'blocker ')" "10"
+ck "⑤ 블로커 조회는 후보당 한 번(11건)" "$(count_of "$LOG" 'blocker ')" "11"
 
 # ── ②-b (#244) 기계 정지(hold:*)인 블로커는 `대기` 가 아니라 `보류` ────────────
 # 기계 정지가 `needs-human` 을 떼고 사유 라벨만 남기게 된 뒤, 이 줄이 없으면 홀드된

@@ -59,6 +59,7 @@ check "OPEN: agent:claimed 정리"      "$(has  "$out" 'agent:claimed')"
 check "OPEN: flow:verify 정리"        "$(has  "$out" 'flow:verify')"
 check "OPEN: flow:ready 정리"         "$(has  "$out" 'flow:ready')"
 check "OPEN: harvesting 정리"         "$(has  "$out" 'harvesting')"
+check "OPEN: verifying 정리(#275)"    "$(has  "$out" 'verifying')"
 
 # ── ② CLOSED 이슈 — 종전대로 전부 정리(무회귀) ─────────────────────────────
 out=$(run CLOSED)

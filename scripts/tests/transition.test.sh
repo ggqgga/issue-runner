@@ -217,7 +217,10 @@ sorted() { printf '%s\n' $1 | sort | tr '\n' ' ' | sed 's/ *$//'; }
 # 기대값을 여기 손으로 적어 표를 두 번 쓰게 만든다(SUT 의 case 를 그대로 베끼면 공허해진다).
 # hold:* 세 개도 픽스처에 넣는다 — 그래야 "사람 대기 두 전이 외엔 hold 를 안 건드린다"
 # 와 "반송 두 전이는 hold 를 뗀다" 가 둘 다 실증된다(#147).
-ALL="agent-ready agent:claimed flow:ci flow:codex flow:verify flow:ready harvesting needs-human hold:conflict hold:policy hold:ladder"
+# `verifying`(#275) 도 픽스처에 넣는다 — verify-runner 가 집은 뒤의 **모든 출구**(verify-pass·
+# verify-redispatch·verify-held·closeout-pick·closeout-blocked·closeout-redispatch·closeout-dup)가
+# 이 점유 라벨을 떼야 한다. 하나라도 빠지면 "단계 라벨 중복" 이 남아 다음 틱이 고아로 재집는다.
+ALL="agent-ready agent:claimed flow:ci flow:codex flow:verify flow:ready harvesting needs-human hold:conflict hold:policy hold:ladder verifying"
 
 # expect <전이> <PR 기대 잔존> <이슈 기대 잔존> [옵션...]
 expect() {
@@ -241,9 +244,11 @@ expect() {
 }
 
 #        전이                  PR 잔존                                                          이슈 잔존
+# handoff-verify 는 워커 소유 전이라 `verifying` 을 모른다(그 시점엔 verify-redispatch 가 이미
+# 뗐다) — 픽스처에 든 verifying 이 **그대로 남는** 것이 기대값이다.
 expect handoff-verify \
-  "agent-ready agent:claimed flow:verify flow:ready harvesting needs-human hold:conflict hold:policy hold:ladder" \
-  "agent-ready flow:ci flow:codex flow:verify flow:ready harvesting needs-human hold:conflict hold:policy hold:ladder"
+  "agent-ready agent:claimed flow:verify flow:ready harvesting needs-human hold:conflict hold:policy hold:ladder verifying" \
+  "agent-ready flow:ci flow:codex flow:verify flow:ready harvesting needs-human hold:conflict hold:policy hold:ladder verifying"
 expect verify-pass \
   "agent-ready agent:claimed flow:ci flow:codex flow:ready harvesting needs-human hold:conflict hold:policy hold:ladder" \
   "agent-ready agent:claimed flow:ci flow:codex flow:ready harvesting needs-human hold:conflict hold:policy hold:ladder"
@@ -267,6 +272,15 @@ expect closeout-blocked \
 expect closeout-redispatch \
   "agent-ready agent:claimed flow:ci flow:codex" \
   "agent-ready flow:ci flow:codex"
+# ↓ verify-pick(#275) — closeout-pick 과 같은 꼴: 검증대기(flow:verify)를 떼고 점유(verifying)를
+#   붙인다. 그 외 라벨(사람 대기·harvesting·자격)은 손대지 않는다.
+expect verify-pick \
+  "agent-ready agent:claimed flow:ci flow:codex flow:ready harvesting needs-human hold:conflict hold:policy hold:ladder verifying" \
+  "agent-ready agent:claimed flow:ci flow:codex flow:ready harvesting needs-human hold:conflict hold:policy hold:ladder verifying"
+# ↓ verify-unpick(#275) — verify-pick 의 정확한 역(flake_retry: 판정 없이 검증대기로 되돌린다).
+expect verify-unpick \
+  "agent-ready agent:claimed flow:ci flow:codex flow:verify flow:ready harvesting needs-human hold:conflict hold:policy hold:ladder" \
+  "agent-ready agent:claimed flow:ci flow:codex flow:verify flow:ready harvesting needs-human hold:conflict hold:policy hold:ladder"
 # 옵션이 맨 앞에 와도 같은 결과 — 파싱이 위치에 안 묶였는지(#147)
 reset
 # shellcheck disable=SC2086
@@ -414,6 +428,38 @@ ck "멱등 2회차: exit 0" "$RC" 0
 ck "멱등 2회차: PR 라벨 동일" "$(labels_of 7)" "$first_pr"
 ck "멱등 2회차: 이슈 라벨 동일" "$(labels_of 9)" "$first_iss"
 
+# ── ⑥-b verify-pick ↔ verify-unpick 왕복(#275) — 원상 복귀 + 각각 두 번 걸어도 멱등 ────
+# 기대값은 손으로 적는다: 검증대기 형상(PR flow:verify · 이슈 flow:verify+agent-ready)에서
+# pick 하면 flow:verify 자리에 verifying 만 들어오고, unpick 하면 정확히 원래 집합이다.
+reset; seed 7 flow:verify; seed 9 flow:verify agent-ready
+run ok verify-pick 9 7
+ck "verify-pick: exit 0" "$RC" 0
+ck "verify-pick: PR = verifying" "$(labels_of 7)" "verifying"
+ck "verify-pick: 이슈 = agent-ready verifying" "$(labels_of 9)" "agent-ready verifying"
+run ok verify-pick 9 7
+ck "verify-pick 2회차: exit 0(멱등)" "$RC" 0
+ck "verify-pick 2회차: PR 동일" "$(labels_of 7)" "verifying"
+ck "verify-pick 2회차: 이슈 동일" "$(labels_of 9)" "agent-ready verifying"
+run ok verify-unpick 9 7
+ck "verify-unpick: exit 0" "$RC" 0
+ck "verify-unpick: PR 원상(flow:verify)" "$(labels_of 7)" "flow:verify"
+ck "verify-unpick: 이슈 원상(agent-ready flow:verify)" "$(labels_of 9)" "agent-ready flow:verify"
+run ok verify-unpick 9 7
+ck "verify-unpick 2회차: exit 0(멱등)" "$RC" 0
+ck "verify-unpick 2회차: PR 동일" "$(labels_of 7)" "flow:verify"
+ck "verify-unpick 2회차: 이슈 동일" "$(labels_of 9)" "agent-ready flow:verify"
+# 연결 이슈 없는 PR(issue=-)도 정식 호출 — 점유가 PR 에만 남는다.
+reset; seed 7 flow:verify
+run ok verify-pick - 7
+ck "verify-pick issue=-: exit 0" "$RC" 0
+ck "verify-pick issue=-: PR = verifying" "$(labels_of 7)" "verifying"
+check "verify-pick issue=-: 이슈 edit 없음" \
+  "$(grep -q '^edit 9 ' "$tmp/edit.log" && echo no || echo ok)"
+# usage 에 두 전이가 나열돼야 호출부가 이름을 찾는다.
+reset; run ok bogus-transition 9 7
+check "usage 에 verify-pick·verify-unpick" \
+  "$(grep -q 'verify-pick' "$tmp/err" && grep -q 'verify-unpick' "$tmp/err" && echo ok || echo no)"
+
 # ── ⑦ --reason 게이트 (#147) — 사유 없는 needs-human 을 만들 수 없다 ──────────
 # 거부는 gh 를 **한 번도 부르기 전에** 나야 한다: 라벨이 반만 움직인 뒤 64 로 끝나면
 # PR 과 이슈가 갈린다.
@@ -442,7 +488,7 @@ reset; run ok verify-held 9 7 --reason
 ck "--reason 값 누락: exit 64" "$RC" 64
 
 # 사유를 받을 수 없는 전이에 주면 무시가 아니라 거부 — 호출부가 "붙었겠지" 하면 안 된다
-for t in handoff-verify verify-pass verify-redispatch closeout-pick closeout-redispatch; do
+for t in handoff-verify verify-pass verify-redispatch closeout-pick closeout-redispatch verify-pick verify-unpick; do
   reset; seed 7 flow:verify; seed 9 flow:verify
   run ok "$t" 9 7 --reason ladder
   ck "$t 에 --reason: exit 64" "$RC" 64
@@ -669,7 +715,8 @@ ck "closeout-redispatch: 이슈 = agent-ready" "$(labels_of 9)" "agent-ready"
 NOTE="이미 main 에 반영 — abc1234"
 dup_seed() {
   reset
-  seed 7 harvesting flow:ci flow:codex flow:verify flow:ready
+  # verifying(#275) 도 심는다 — ① 라벨 제거 목록에 들어야 "PR 라벨 = dup" 단언이 성립한다.
+  seed 7 harvesting flow:ci flow:codex flow:verify flow:ready verifying
   seed 9 agent-ready agent:claimed harvesting
 }
 

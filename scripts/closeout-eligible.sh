@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 마감 후보 PR을 JSON lines 로 출력. 진입 조건 모두 충족 + harvesting 미부착.
+# 마감 후보 PR을 JSON lines 로 출력. 진입 조건 모두 충족 + harvesting 미부착
+# (+ verify-runner 소유 라벨 flow:verify·verifying 미부착 — #275).
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 me=$(gh api user -q .login 2>/dev/null); [ -n "$me" ] || exit 0
@@ -52,6 +53,10 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 루프(별도 프로세스)가 같은 PR 을 문다 — 라벨이 붙어 있는 한 closeout 은 손대지
   # 않는다(verify-eligible.sh 의 harvesting 제외와 대칭).
   printf '%s' "$meta" | jq -e '[.labels[].name]|index("flow:verify")' >/dev/null && continue
+  # verifying = verify-runner 가 **지금 검증 중**(#275 — flow:verify 를 떼고 붙이는 점유 라벨,
+  # harvesting 동형). 위 flow:verify 와 같은 이유로 closeout 은 손대지 않는다 — 검증이 도는
+  # 동안 ✅ 가 남아 있을 수 있는 PR(재검증 중)을 두 루프가 함께 물지 않게.
+  printf '%s' "$meta" | jq -e '[.labels[].name]|index("verifying")' >/dev/null && continue
   # needs-human = 사람이 직접 세운 정지(#244 — 기계 정지는 아래 hold:* 가 문다). 마감이 집으면
   # 방금 건 사람 대기를 자동으로 되돌린다(#151). 사람이 라벨을 뗄 때까지 후보가 아니다.
   printf '%s' "$meta" | jq -e '[.labels[].name]|index("needs-human")' >/dev/null && continue

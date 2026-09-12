@@ -116,8 +116,8 @@ done
 rm -rf "$tmp"
 [ "$fail" = 0 ] || exit 1
 
-echo "[closeout] setup-labels.sh 에 harvesting·epic 라벨 정의 존재 검사"
-for lbl in harvesting epic; do
+echo "[closeout] setup-labels.sh 에 harvesting·epic·verifying 라벨 정의 존재 검사"
+for lbl in harvesting epic verifying; do
   grep -qF "gh label create $lbl " scripts/setup-labels.sh || {
     echo "  ✗ setup-labels.sh 에 $lbl 라벨 정의 누락"; exit 1; }
 done
@@ -1740,6 +1740,9 @@ bash scripts/tests/finish-classify.test.sh
 echo "[test] closeout-eligible.sh 후보 필터 — ✅ 를 head SHA 와 대조 (#171)"
 bash scripts/tests/closeout-eligible.test.sh
 
+echo "[test] verify-eligible.sh 큐 순서 — verifying(고아, orphan:true) 먼저 · flow:verify FIFO · harvesting 제외 (#275)"
+bash scripts/tests/verify-eligible.test.sh
+
 echo "[test] 네 게이트의 needs-human·hold:* 배제 — 격자 한 벌을 네 SUT 에 전수 적용 (#242)"
 bash scripts/tests/hold-gate.test.sh
 
@@ -2481,6 +2484,19 @@ awk 'BEGIN{RS="";ok=0} /\*\*대상\*\*:/ && /`hold:` 접두 미부착/ {ok=1} EN
   || { echo "  ✗ skills/closeout/SKILL.md: ①-b 대상 문단에 \`hold:\` 접두 미부착 필터 없음 (#244)"; exit 1; }
 awk 'BEGIN{RS="";ok=0} /\*\*Targets\*\*:/ && /no `hold:`-prefixed label/ {ok=1} END{exit ok?0:1}' skills/closeout/SKILL.en.md \
   || { echo "  ✗ skills/closeout/SKILL.en.md: ①-b Targets 문단에 no \`hold:\`-prefixed label 필터 없음 (#244)"; exit 1; }
+# (#275) 같은 대상 문단이 verify-runner **점유** 라벨 `verifying` 도 제외해야 한다 — `flow:verify`
+# 는 검증대기이고 `verifying` 은 verify-runner 가 집는 순간 flow:verify 를 떼고 붙이는 점유
+# 라벨(harvesting 동형)이라, 이 문단이 `flow:verify` 만 보면 검증이 **지금 도는** PR 이
+# 스윕의 입양·재디스패치 대상이 된다(closeout-eligible.sh 는 둘 다 제외한다 — 스윕 문단만
+# 빠지면 두 필터가 갈린다). 문단 스코프로 잰다 — 파일 아무 데나 `verifying` 이 있다고 통과하지 않는다.
+awk 'BEGIN{RS="";ok=0} /\*\*대상\*\*:/ && /`verifying` 미부착/ {ok=1} END{exit ok?0:1}' skills/closeout/SKILL.md \
+  || { echo "  ✗ skills/closeout/SKILL.md: ①-b 대상 문단에 \`verifying\` 미부착 필터 없음 (#275)"; exit 1; }
+awk 'BEGIN{RS="";ok=0} /\*\*Targets\*\*:/ && /not labeled `verifying`/ {ok=1} END{exit ok?0:1}' skills/closeout/SKILL.en.md \
+  || { echo "  ✗ skills/closeout/SKILL.en.md: ①-b Targets 문단에 not labeled \`verifying\` 필터 없음 (#275)"; exit 1; }
+# issue-runner ② Maintain 규칙0(단계 라벨 보정)·소유 규칙도 `verifying` PR 을 건드리지 않아야 한다 —
+# 보정이 `🔄` 만 보고 `flow:verify` 를 되붙이면 검증 중인 PR 에 단계 라벨이 둘이 된다.
+awk 'BEGIN{RS="";ok=0} /\*\*0\. 단계 라벨 보정/ && /`verifying`/ {ok=1} END{exit ok?0:1}' SKILL.md \
+  || { echo "  ✗ SKILL.md: ② Maintain 규칙0 문단이 \`verifying\` PR 을 건너뛰지 않는다 (#275)"; exit 1; }
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md skills/verify-runner/SKILL.md; do
   if grep -nE '`needs-human` *\+ *`hold:' "$f" | grep -q .; then
     echo "  ✗ $f: 기계 정지를 \`needs-human\` + \`hold:*\` 쌍으로 서술 — #244 이후 전이는 사유 라벨 하나만 붙인다"; exit 1; fi

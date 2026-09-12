@@ -262,7 +262,10 @@ missing from `head_at` and an unverified head would surface as a candidate.
 
 **Targets**: `me=$(gh api user -q .login)`, then `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc` (FIFO). For each PR whose head is
-`agent/issue-*` and that is **not labeled `harvesting`**, **not labeled `flow:verify`**, **not
+`agent/issue-*` and that is **not labeled `harvesting`**, **not labeled `flow:verify`**,
+**not labeled `verifying`** (verify-runner's occupation label — set by `verify-pick` the moment it picks the PR,
+replacing `flow:verify`; the `harvesting` twin, #275 — E2E/codex is running *right now*, so adopting or
+re-dispatching it would void that verification; `closeout-eligible.sh` excludes the same label), **not
 labeled `needs-human`**, and carries **no `hold:`-prefixed label**, judge it. The two are
 **different stops** (#244): `needs-human` means a human set the stop by hand, while
 `hold:<reason>` *is* the machine stop (verify-held · closeout-blocked · the dispatcher's
@@ -412,7 +415,7 @@ not been pushed yet).
 leave-it creates a new stranded class: ⑴ a PR is bounced → ⑵ a replacement worker attaches, fixes
 it and pushes → ⑶ that worker dies just before ✅, so `handoff-verify` never runs (no stage
 labels) → ⑷ main moves meanwhile and the PR turns CONFLICTING. Such a PR falls out of **all three
-lanes** — closeout ①-b (bounce marker is latest), verify-runner (no `flow:verify`), issue-runner ②
+lanes** — closeout ①-b (bounce marker is latest), verify-runner (no `flow:verify`/`verifying`), issue-runner ②
 (CI green, no unresolved comments) — and stays stranded until a human spots it. Stranding beats
 damage (which is why the "adopt only on `ok`" predicate stays exactly as it is), but a safety net
 that is not **detectable** turns into a silent omission. So `bounced` is not discarded: it is run
@@ -523,7 +526,7 @@ PR is closed out to completion does ⑤ Drain pick the next candidate). Once
 picked, immediately declare occupation with
 `$SCRIPTS/transition.sh closeout-pick <repo> - <pr>` (the issue number is only parsed in
 ③-1, so pass `-` here). The transition attaches `harvesting` and strips the worker /
-verify-runner stage labels (`flow:ready`·`flow:codex`·`flow:ci`·`flow:verify`) — `harvesting`
+verify-runner stage labels (`flow:ready`·`flow:codex`·`flow:ci`·`flow:verify`·`verifying`) — `harvesting`
 is what keeps issue-runner ② Maintain and verify-runner off this PR (verify-eligible also
 excludes harvesting), and leaving only `harvesting` makes "closing out" unambiguous in the
 PR list. If there are 0 candidates, skip the ③ pipeline and report a clean no-op in ④ Report.

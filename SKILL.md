@@ -302,8 +302,10 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
 **0. 단계 라벨 보정 (best-effort, 스캔할 때 붙인다).** 이 PR 의 마지막 판정 코멘트를
 읽어(`gh pr view <pr> --repo <repo> --json comments`) 단계 라벨 `flow:*` 를 실제 상태에
 맞춘다 — 워커·verify-runner 가 각 단계에서 직접 붙이지만 크래시·놓침이 있을 수 있어
-스캔이 안전망이다. **단, `flow:verify` 또는 `harvesting` 라벨이 붙은 PR 은 이 보정을
-건너뛴다**(각각 verify-runner·closeout 소유 — 아래 소유 규칙과 동일). 그 외 PR 만 보정:
+스캔이 안전망이다. **단, `flow:verify`·`verifying` 또는 `harvesting` 라벨이 붙은 PR 은 이 보정을
+건너뛴다**(각각 verify-runner·closeout 소유 — 아래 소유 규칙과 동일. `verifying` 은 verify-runner 가
+집는 순간 `flow:verify` 를 떼고 붙이는 점유 라벨이라(#275) 마지막 코멘트가 `🔄` 인 채로 검증이 도는
+중이다 — 여기서 `flow:verify` 를 되붙이면 단계 라벨이 둘이 된다). 그 외 PR 만 보정:
 마지막 코멘트가 `머지 판정: ✅` → `flow:ready`(closeout 이 집는다), `머지 판정: 🔄`(✅ 전)
 → `flow:verify`(verify-runner 에 넘김 — 워커가 라벨을 못 붙이고 죽은 경우 안전망),
 `머지 판정: ⚠ 보류` → flow:* 제거(needs-human 경로). 목표 라벨과 현재가 다를 때만
@@ -347,8 +349,10 @@ N 도 디스패치당 1만 올린다.
 
 `harvesting` 이벤트 = closeout 마감 진행 중 → **건드리지 않는다**(보수·rebase·리뷰 코멘트 해결 제외). closeout 가 머지/정리한다.
 
-`flow:verify` PR = verify-runner 검증 진행 중(워커가 구현+결정적CI+PR 까지 마치고 넘김)
-→ **건드리지 않는다**(위 1~4 보수·규칙0 보정 모두 제외 — harvesting 과 동형). verify-runner
+`flow:verify` PR = verify-runner 검증 대기(워커가 구현+결정적CI+PR 까지 마치고 넘김),
+`verifying` PR = verify-runner 가 집어 **검증 진행 중**(#275 — 집는 순간 `verify-pick` 이 `flow:verify`
+를 이것으로 바꾼다. 원 이슈에도 미러돼 `eligible-issues.sh`·`claim-issue.sh` 가 그 이슈를 제외한다)
+→ 둘 다 **건드리지 않는다**(위 1~4 보수·규칙0 보정 모두 제외 — harvesting 과 동형). verify-runner
 가 E2E·codex 검증 후 통과면 `머지 판정: ✅`+`flow:ready` 로 closeout 에 넘기고, 실패면
 연결 이슈에 `agent-ready` 를 재부착해 반송한다(그때 이 루프의 Dispatch 가 같은 브랜치서
 워커를 다시 붙인다 — 정상 재디스패치). 결정적 CI 실패조차 verify-runner 가 반송으로
@@ -361,7 +365,7 @@ N 도 디스패치당 1만 올린다.
    closeout 이관분이나 미완이라 배압으로 함께 계수)의 수.
    **CI green + 코멘트 없음 PR(② 4, 사람 리뷰 대기)은 슬롯을 점유하지 않는다** —
    에이전트가 손댈 일이 없는 휴면 상태이므로 새 일을 막지 않는다.
-   **`flow:verify` PR 도 슬롯을 점유하지 않는다** — verify-runner 소유(이 루프 워커의
+   **`flow:verify`·`verifying` PR 도 슬롯을 점유하지 않는다** — verify-runner 소유(이 루프 워커의
    일이 아님)이므로 in-flight 에서 제외한다. 이것이 검증을 별도 레인으로 뺀 throughput
    이득의 실체다: 워커가 PR 을 열고 `flow:verify` 로 넘기는 즉시 슬롯이 반납돼, 느린
    E2E·codex 대기가 더 이상 이 루프의 5슬롯을 붙잡지 않는다.
