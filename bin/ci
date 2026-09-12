@@ -979,6 +979,21 @@ echo "[test] epic-sweep.sh — leaf 전부 종료 에픽 자동 종료·전용 �
 [ -x scripts/epic-sweep.sh ] || { echo "  ✗ epic-sweep.sh 실행 비트 없음"; exit 1; }
 bash scripts/tests/epic-sweep.test.sh
 
+echo "[test] progress-evidence.sh 진행 증거 3축 격자 — 커밋/큐/claim·3값 어휘·경계 (#428)"
+bash scripts/tests/progress-evidence.test.sh
+
+echo "[test] claim-at.sh 부착 시각 격자 — 마지막 매칭 인덱스·100건 상한·부재/실패 분리 (#428)"
+bash scripts/tests/claim-at.test.sh
+
+echo "[test] pr-head-at.sh head 시각 격자 — 상한 없는 조회 경로·SHA 형태 검사·fail-closed (#428)"
+bash scripts/tests/pr-head-at.test.sh
+
+echo "[test] closeout-ci-pass.sh CI 통과 판정 격자 — 로컬 캐시 0/1/2·폴백 SUCCESS-only allowlist (#428)"
+bash scripts/tests/closeout-ci-pass.test.sh
+
+echo "[test] closeout-reconcile.sh harvesting 점검 격자 — 상태별 이벤트·needs-human fail-closed·범위 필터 (#428)"
+bash scripts/tests/closeout-reconcile.test.sh
+
 echo "[#206] 진행 증거 술어는 progress-evidence.sh 한 자리 (#200 → #206)"
 # 커밋 신선도(STALL_MIN)와 CI 큐 티켓 판정을 다른 스크립트가 자기 벌로 들고 있으면 언젠가
 # 한쪽만 고쳐져 두 소비자(timebox-check · finish-classify)가 다른 수를 센다 — 반송 마커
