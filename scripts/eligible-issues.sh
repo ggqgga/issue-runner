@@ -8,8 +8,9 @@
 # `Epic #N` 줄: 이슈 본문 **줄 시작**(앞 공백 허용)의 `epic\s+#N`(대소문자 무시)의 첫 매치 하나
 #       (이슈당 에픽 하나). 산문 속 `… epic #N …` 은 줄 시작이 아니라 안 잡힌다.
 #       이 줄은 **loop-issues 생성 모드·closeout 파생 발행이 쓴다**(그쪽이 붙이고 여기가 읽는다).
-#       같은 판정을 `scripts/loop-status.sh` 의 `epic_of`(#260)가 jq `capture` 로 갖고 있다 —
-#       한쪽만 고치면 디스패치 순서와 대시보드 에픽 절이 조용히 갈린다(둘 다 고쳐라).
+#       같은 판정을 `scripts/loop-status.sh` 의 `epic_of`(#260)와 `scripts/epic-sweep.sh`(#313)가
+#       jq `capture` 로 갖고 있다 — **계산기가 셋**이다. 하나만 고치면 디스패치 순서·대시보드
+#       에픽 절·에픽 종결 스윕이 조용히 갈린다(셋 다 고쳐라. 갈리면 테스트 Ⓔ⑧ 가 전수로 빨개진다).
 # 주의: search API는 인덱스 지연이 있다 — 최종 재확인은 claim-issue.sh가 직접 API로 한다.
 #
 # 출력 갈래 (#247) — 두 스트림이 섞이지 않는다:
@@ -178,7 +179,8 @@ blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
 # finish-first 정렬의 입력. "이미 시작한 에픽"의 leaf 를 같은 P 안에서 먼저 집어
 # 주제가 끝나게 한다 — 새 이슈가 진행 중인 주제의 꼬리를 계속 밀어내지 않도록.
 #
-# ★파싱 규칙은 `scripts/loop-status.sh` 의 `epic_of`(#260)와 **같은 판정**이어야 한다:
+# ★파싱 규칙은 `scripts/loop-status.sh` 의 `epic_of`(#260)·`scripts/epic-sweep.sh`(#313)와
+#   **같은 판정**이어야 한다(셋 다):
 #   줄 시작(앞 공백 허용)의 `epic\s+#N`, 대소문자 무시, 이슈당 **첫 매치 하나만**.
 #   저쪽은 jq `capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)"; "i")` 를 줄 단위로 걸고,
 #   여기는 같은 문자열을 `grep -oiE` 로 건다(문자 클래스·앵커·대소문자 무시가 동일).
