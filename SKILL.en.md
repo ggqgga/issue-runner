@@ -362,15 +362,23 @@ so it is a brake a human put there by hand. Per event:
   shape)=do not post the marker (the next sweep re-emits the re-review). **Only an issue whose
   marker remains** is **never asked twice** (until a human removes the label). Report it in ④ as
   `re-reviewed N (resumed n · kept m)`.
-  **A PR-only hold follows the same procedure** (#395). The event's `pr` field splits the axes: a
-  filled `pr` with `number` = `null` is the `hold:policy` of a **PR with no linked issue**
-  (`verify-held`/`closeout-blocked` called with `-` in the `<issue>` slot). The question
-  (`<!-- hold-note: policy -->`) lives on that PR, so read it there and leave the re-review comment
-  on **that PR** via `gh pr comment <pr>`. The issue argument of the transition is `-`: resume with
-  `$SCRIPTS/transition.sh verify-redispatch <repo> - <pr>`, keep it human with
-  `$SCRIPTS/transition.sh policy-kept <repo> - <pr>` (order, marker and non-zero disposition are
-  letter-for-letter the same as above). A PR that *does* have a linked issue never produces this
-  event — the issue axis already emitted it (no duplicates).
+  **A PR-only hold always ends as "kept human"** (#395 → #421). The event's `pr` field splits the
+  axes: a filled `pr` with `number` = `null` is the `hold:policy` of a **PR with no open linked
+  issue** (`verify-held`/`closeout-blocked` called with `-` in the `<issue>` slot, or every
+  referenced issue already closed). The question (`<!-- hold-note: policy -->`) lives on that PR, so
+  read it there — but **do not resume, even when the plan answers it**: verify-runner ④ nails
+  "no linked issue" down as a **human** case (which issue to attach is a human decision), and on
+  this axis a resume has **no consumer**: calling `verify-redispatch` with `-` in the `<issue>`
+  slot leaves only `flow:agent-ready` on the PR, while `eligible-issues.sh` dispatches **issues**
+  only and `verify-eligible.sh` requires `flow:verify`/`verifying` — no lane ever picks it up and
+  the PR is orphaned for good. So this axis has exactly one disposition: run
+  `$SCRIPTS/transition.sh policy-kept <repo> - <pr>` (the issue argument of the transition is `-`)
+  and **only after it ends with exit 0 `ok`** leave `재심: 사람 몫 유지 — 연결 이슈 없음 — 사람이
+  이슈를 연결하거나 PR 을 닫는다 <!-- policy-review: kept --><!-- bodat:worker -->` on **that PR**
+  via `gh pr comment <pr>` (order, marker and non-zero disposition are letter-for-letter the same
+  as above — on non-zero post no marker and leave `BLOCKED: 전이 실패 policy-kept #<PR>(exit N)`).
+  Count it in ④ Report's `kept m`. A PR that *does* have an **open** linked issue never produces
+  this event — the issue axis already emitted it (no duplicates).
 - `waiting` — still inside the window. Pass over it quietly (no reporting needed).
 - exit 2 — a listing failed for some repos (the rest were processed normally), or the
   account-wide search failed. Leave one warn line `resume-sweep 부분 실패(레포 조회)` in

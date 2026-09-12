@@ -40,7 +40,7 @@
 | # | 상태 | 소유 | 진입 | 풀리는 길 | 회수 |
 |---|---|---|---|---|---|
 | H:ladder | `hold:ladder` (PR·이슈 양쪽) | 기계 정지 — resume-sweep | `verify-held --reason ladder` · `closeout-blocked --reason ladder` | 창(`RESUME_AFTER_MIN`) 뒤 `resume-sweep.sh` 가 자동 재개(`LADDER_RESUME_LIMIT` 회) | resume-sweep |
-| H:policy | `hold:policy` + `<!-- hold-note: policy -->` 질문 코멘트 | 기계 정지 — 재심 1회는 issue-runner ①(#155) | `*-held/blocked --reason policy` · `runner-held` | 재심이 풀면 반송(S0) · "사람 몫 유지" 면 `policy-kept` → H:human | resume-sweep 이 `policy_review_due` 를 **두 축**으로 낸다(#395): 이슈 축(`pr:null`) · 연결 이슈 없는 PR 은 PR 축(`number:null`, 전이 인자는 `<repo> - <pr>`) |
+| H:policy | `hold:policy` + `<!-- hold-note: policy -->` 질문 코멘트 | 기계 정지 — 재심 1회는 issue-runner ①(#155) | `*-held/blocked --reason policy` · `runner-held` | 재심이 풀면 반송(S0) · "사람 몫 유지" 면 `policy-kept` → H:human | resume-sweep 이 `policy_review_due` 를 **두 축**으로 낸다(#395): 이슈 축(`pr:null`) · 열린 연결 이슈가 없는 PR 은 PR 축(`number:null`, 전이 인자는 `<repo> - <pr>`). **PR 축은 재개가 없다** — 반송해도 그 상태를 집는 레인이 없어 언제나 `policy-kept` → H:human 으로만 끝난다(#421) |
 | H:conflict | `hold:conflict` | 사람 | `*-held/blocked --reason conflict` | 사람이 라벨을 뗀다(메모리 `hold-conflict-default-answer`: 소규모면 ⓐ 라벨 둘 떼서 재디스패치, 2차 충돌·보안이면 ⓑ full-cycle 인수) | — |
 | H:human | `needs-human` | 사람 | `policy-kept` 만 루프가 붙인다 — 그 외는 사람이 직접 | 사람이 뗀다 | — (세 게이트 전부 제외) |
 | B | 반송 마커(`재검증 실패:` · `재디스패치:`)가 마지막 판정보다 뒤 · PR `flow:agent-ready` / 이슈 `agent-ready` | 워커 레인 (S0 과 같다) | `verify-redispatch` · `closeout-redispatch` — 둘 다 `needs-human`·`hold:*` 를 뗀다(반송 = 사람 대기 해제) | 새 워커가 같은 브랜치에서 고쳐 `handoff-verify` → 새 `✅` | `bounce-state.sh`(마커 인덱스가 판정 뒤면 `bounced` — closeout-eligible 이 옛 ✅ 로 집지 않는다) |
@@ -65,7 +65,7 @@
 | 형상 | 회수 주체 | 배선 |
 |---|---|---|
 | `verify-redispatch` exit 1·2 — PR 은 `flow:verify`/`verifying` 상실, 이슈는 `agent:claimed` 유지 | **issue-runner ① Reconcile**(#394) | `reconcile.sh` 가 세 술어(단계 라벨 0 · 마지막 판정성 코멘트가 `재검증 실패` · 진행 증거 없음)로 판별해 `half_moved_redispatch` 를 내고, SKILL ① 이 같은 전이를 **멱등 재실행**한다(증명 실패는 종전 `pr_open`) |
-| 연결 이슈 없는 PR 의 `hold:policy` | **issue-runner ① 재심**(#395) | `resume-sweep.sh` ③-b 가 열린 PR 축에서 같은 판정(창·hold-note 마커·needs-human)을 돌려 `policy_review_due`(`pr` 필드)를 낸다. 연결 이슈가 있는 PR 은 이슈 축만(중복 금지) |
+| 열린 연결 이슈가 없는 PR 의 `hold:policy` | **issue-runner ① 재심 → 사람**(#395·#421) | `resume-sweep.sh` ③-b 가 열린 PR 축에서 같은 판정(창·hold-note 마커·needs-human)을 돌려 `policy_review_due`(`pr` 필드)를 낸다. 처분은 `policy-kept` 하나 — 재개(`verify-redispatch <repo> - <pr>`)는 소비자가 없다(이슈 디스패치는 `eligible-issues.sh`, 검증은 `flow:verify`·`verifying`). 연결 이슈가 **열려 있는** PR 은 이슈 축만(중복 금지) · 참조가 전부 닫힌 PR 은 이슈 축이 못 보므로 PR 축이 본다 |
 | `머지 판정` 코멘트가 0건인 초록 PR(handoff 전 사망) | **closeout ①-b 스윕**(#396) | `finish-classify.sh` 의 계급 `no_verdict` → 위 계급 표의 재디스패치 행. 코멘트 조회 실패는 이 계급이 아니다(`active`) |
 | resume-sweep 미러 정리 "양성 증거 못 얻음" warn | **resume-sweep 재시도 + 사람**(#397) | 증거 부재 세 갈래가 `<!-- mirror-retry: <사유> pr=<n> -->` 마커로 회차를 센다(그 PR 의 것만 · 마지막 `policy-review`·`hold-note` 경계 이후만 · `MIRROR_RETRY_LIMIT` 기본 3) — warn 에 `N/3` 을 싣는다. 상한에 닿으면 `mirror_retry_exhausted` → SKILL 이 `runner-held --reason policy` 로 사람 몫(H:policy) |
 

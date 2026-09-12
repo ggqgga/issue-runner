@@ -710,6 +710,11 @@ sweep_pr_policy() {  # sweep_pr_policy <repo> <열린 PR row-json>
     return 0
   fi
   has_label "$pcur" "hold:policy" || return 0   # 사람이 방금 풀었다 — 재심 대상이 아니다
+  # PR 단독은 사람 몫으로 귀결(#395) — 디스패처 ① 은 이 축에서 재개(`verify-redispatch <repo> - <pr>`)를
+  # 부르지 않는다. 그 전이는 PR 에 `flow:agent-ready` 만 남기는데 `eligible-issues.sh` 는 이슈만,
+  # `verify-eligible.sh` 는 `flow:verify`·`verifying` 만 집어 **소비자가 없다**(#421). verify-runner ④ 도
+  # "연결 이슈 부재" 를 사람 칸으로 못박았다 — 그래서 이 이벤트의 처분은 `policy-kept` 뿐이다.
+  # (스크립트는 여전히 판정하지 않는다 — 이벤트만 낸다. 처분 전문은 SKILL ① 의 `policy_review_due`.)
   printf '{"event":"policy_review_due","repo":"%s","number":null,"pr":%s,"minutes":%s}\n' \
     "$repo" "$(_emit_num "$prnum")" "$pmin"
 }
