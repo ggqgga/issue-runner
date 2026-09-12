@@ -52,7 +52,7 @@ NEW=900
 # ── SUT 사본 + 형제 헬퍼 ───────────────────────────────────────────────────
 sut="$tmp/scripts"
 mkdir -p "$sut" "$tmp/bin"
-for f in reissue-pr.sh pr-comments.sh jq-unquote.sh block-issue.sh; do
+for f in reissue-pr.sh pr-comments.sh jq-unquote.sh block-issue.sh spinoff-inherit.sh; do
   cp "$DIR/$f" "$sut/$f"
 done
 mkdir -p "$sut/../skills/verify-runner/references"
@@ -301,6 +301,24 @@ touch "$tmp/state/fail-issue-edit"
 run "$REPO" "$PR" "$OLD"
 check "③-b exit 비0" "$([ "$(rc)" != 0 ] && echo ok || echo no)"
 want_not_in "③-b 원 이슈를 닫지 않았다" "$STUB_LOG" "issue close"
+
+echo "── ①-d 상속은 spinoff-inherit.sh(#261) 한 자리 — P 없는 부모는 P2, 소문자 epic 줄도 Epic #N ──"
+# 이슈 본문의 상속 규칙("`spinoff-inherit.sh` #261 이 있으면 그것으로") — 손으로 옮긴 규칙은
+# 그 헬퍼와 두 자리에서 갈린다: P 라벨이 없는 부모(헬퍼는 P2 기본값, 손 규칙은 무라벨) ·
+# `epic #N` 소문자·들여쓴 줄(헬퍼의 EPIC_RE 는 대소문자 무시, 손 규칙 `^Epic #` 은 못 본다).
+setup 2
+jq -n --argjson n "$OLD" --arg b "  epic #77
+
+## 수용 기준
+
+- [ ] 가드 A" \
+  '{number:$n, title:"P 없는 부모", body:$b, state:"OPEN",
+    labels:[{name:"difficulty:easy"},{name:"agent:claimed"}]}' > "$tmp/state/issue-$OLD.json"
+run "$REPO" "$PR" "$OLD"
+check "①-d exit 0" "$([ "$(rc)" = 0 ] && echo ok || echo no)"
+want_in "①-d P 없는 부모 → P2 기본값(헬퍼 규칙)" "$tmp/state/created-labels.txt" "P2"
+want_in "①-d 소문자 epic 줄도 Epic #N 으로 정규화" "$tmp/state/created-body.md" "Epic #77"
+want_in "①-d spinoff-inherit 를 실제로 불렀다"    "$STUB_LOG" "issue view $OLD --repo $REPO --json body,labels"
 
 echo "── ④ 회차 허용 1회 → 마커 갱신 ────────────────────────────────────"
 setup 2

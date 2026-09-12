@@ -272,7 +272,20 @@ last_bounce=$(printf '%s' "$pr_comments" | jq -r '
   [ .[]? | .body // "" | select(startswith("재검증 실패:")) | split("\n")[0] ] | last // ""')
 [ -n "$last_bounce" ] || last_bounce="(반송 코멘트 없음)"
 
-epic_line=$(printf '%s\n' "$issue_body" | grep -m1 -E '^Epic #[0-9]+' || true)
+# 상속(`Epic` 줄·P)은 `spinoff-inherit.sh`(#261) 한 자리다 — 이슈 본문의 규칙("있으면 그것으로").
+# 손으로 옮긴 규칙은 헬퍼와 갈린다(P 없는 부모의 P2 기본값 · 소문자/들여쓴 `epic #N` 줄 ·
+# 부모가 에픽 본체면 그 번호). 헬퍼는 실패 시 무출력·exit 1 이라 여기서도 fail-closed —
+# 상속 없이 발행하지 않는다(아무것도 쓰지 않았다). 출력 형태도 문다: `eval` 에 넣는 값이라
+# 두 줄 `epic=<N|->`·`priority=P[0-2]` 밖의 것은 받지 않는다.
+inherit=$("$SCRIPT_DIR/spinoff-inherit.sh" "$repo" "$issue" 2>"$tmp/inherit.err") \
+  || die 2 "spinoff-inherit.sh 실패($(tail -1 "$tmp/inherit.err" 2>/dev/null)) — 상속 없이 발행하지 않는다(아무것도 쓰지 않았다)"
+# (BSD sed 는 `\|` 대안을 모른다 — grep -E 로 형태를 물고 값만 자른다.)
+epic=$(printf '%s\n' "$inherit" | grep -m1 -E '^epic=(-|[0-9]+)$' | cut -d= -f2)
+priority=$(printf '%s\n' "$inherit" | grep -m1 -E '^priority=P[0-2]$' | cut -d= -f2)
+[ -n "$epic" ] && [ -n "$priority" ] \
+  || die 2 "spinoff-inherit.sh 출력 형태가 어긋난다('$(printf '%s' "$inherit" | tr '\n' ' ')') — 아무것도 쓰지 않았다"
+epic_line=""
+[ "$epic" = "-" ] || epic_line="Epic #$epic"
 
 # 이미 재발행한 이슈인가 — 마커가 있으면 새 이슈를 또 만들지 않고 닫기부터 이어간다.
 new=$(printf '%s' "$issue_comments" | jq -r "$JQ_UNQUOTE"'
@@ -303,10 +316,11 @@ if [ -z "$new" ]; then
     case "$l" in
       agent-ready|agent:claimed|needs-human|harvesting|deploy-wait|spinoff|dup|loop-dashboard|epic|full-cycle) continue ;;
       flow:*|hold:*) continue ;;
+      P0|P1|P2) continue ;;   # P 는 아래 spinoff-inherit 값 하나로(부모에 없으면 P2)
     esac
     label_args+=(--label "$l")
   done < "$tmp/labels.txt"
-  label_args+=(--label agent-ready)
+  label_args+=(--label "$priority" --label agent-ready)
 
   title="$issue_title (재발행 ← #$issue)"
   url=$(gh issue create --repo "$repo" --title "$title" --body-file "$tmp/newbody.md" \

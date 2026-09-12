@@ -2912,7 +2912,16 @@ for f in scripts/reissue-pr.sh scripts/jq-unquote.sh; do
 done
 bash scripts/tests/reissue-pr.test.sh
 
-echo "[#301] 인용 제거 정의(def unquoted)는 scripts/ 안에 한 벌뿐 — jq-unquote.sh"
+# 상속은 `spinoff-inherit.sh`(#261) 한 자리 — 손으로 옮긴 Epic/P 규칙이 되살아나면 헬퍼와
+# 두 자리에서 갈린다(P 없는 부모의 P2 기본값 · 소문자 `epic #N` 줄). 픽스처 ①-d 가 먼저 물고,
+# 여기서는 호출 자체와 손 규칙의 부재를 문다.
+grep -qF -- '"$SCRIPT_DIR/spinoff-inherit.sh" "$repo" "$issue"' scripts/reissue-pr.sh \
+  || { echo "  ✗ reissue-pr.sh 가 spinoff-inherit.sh 로 상속하지 않는다 (#301 ← #261)"; exit 1; }
+if grep -nE "grep -m1 -E '\^Epic #" scripts/reissue-pr.sh | grep -q .; then
+  echo "  ✗ reissue-pr.sh 에 손으로 옮긴 Epic 줄 규칙이 되살아났다 — 상속은 spinoff-inherit.sh 한 자리 (#301)"; exit 1; fi
+grep -qF -- '$SCRIPTS/spinoff-inherit.sh' skills/verify-runner/SKILL.md \
+  || { echo "  ✗ skills/verify-runner/SKILL.md reissued 갈래가 spinoff-inherit.sh 상속을 말하지 않는다 (#301)"; exit 1; }
+
 # 인용 안의 문형을 신호로 세지 않는 계산기가 두 벌이 되면 한쪽만 고쳐질 때 두 판정
 # (ladder-resume · 회차 허용)이 조용히 갈린다. 정의의 자리는 jq-unquote.sh 하나다.
 unq_files=$(grep -l 'def unquoted:' scripts/*.sh 2>/dev/null | tr '\n' ' ')
