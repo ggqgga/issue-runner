@@ -245,7 +245,7 @@ while IFS= read -r i_row; do
 done < <(printf '%s' "$cands" | jq -c '
   .[]
   | select([.labels[].name]
-      | any(. == "agent:claimed" or . == "flow:verify" or . == "flow:ready" or . == "harvesting"))')
+      | any(. == "agent:claimed" or . == "flow:verify" or . == "verifying" or . == "flow:ready" or . == "harvesting"))')
 
 # body 는 (a) 에서만 쓴다 — 후보 루프가 도는 `cands` 는 종전 형상으로 되돌린다(행마다
 # 본문을 재파싱하면 창 상한(#277 이후 실질 250)에서 스캔이 눈에 띄게 느려진다).
