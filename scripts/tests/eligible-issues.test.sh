@@ -258,6 +258,7 @@ set_closed_total() {  # set_closed_total <fx> <total_count(JSON — 숫자 또�
 }
 set_closed_fail() {  # set_closed_fail <fx> <에러문>
   printf '%s\n' "$2" > "$1/closed.fail"
+}
 add_body_fail() {  # add_body_fail <fx> <num> <에러문(여러 줄 가능)>
   printf '%s\n' "$3" > "$1/body.$2.fail"
 }
