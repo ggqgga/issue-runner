@@ -564,8 +564,8 @@ were actually climbed and the failure output cited.
 
 **The stderr `warn:` line from `$SCRIPTS/closeout-eligible.sh` is moved into ④ Report**
 (same shape as issue-runner's `eligible-issues.sh` warn hand-off rule, #379). The
-`N unresolved comments after ✅` warn means "a human left a review after the ✅, so it was not
-picked up, fail-closed" — the loop does not resolve this on its own (a machine judging a
+`✅ 이후 미해결 코멘트 N건` warn (literally "N unresolved comments after ✅") means "a human left
+a review after the ✅, so it was not picked up, fail-closed" — the loop does not resolve this on its own (a machine judging a
 human comment "resolved" would be fail-open). It clears on the next tick once a human replies
 to that comment, or verify-runner re-verifies and stamps a new ✅. Until then, the same warn
 repeating every tick is expected (never drop it silently).
@@ -1349,10 +1349,11 @@ tick where every count is 0** — the snapshot is the only window onto what is i
 - On exit 64 (no scope — an account-wide session with no `.loop/repos`), call it once more
   naming the repos touched this tick with `--repo <owner/repo>`; if there are none, leave one
   warn line `loop-status: 스코프 없음(.loop/repos 부재)`.
-- The stderr `warn: PR #<pr>(<repo>) — <n> unresolved comments after ✅ (no marker = awaiting
-  human review)` line from `$SCRIPTS/closeout-eligible.sh` (see ② Pick) is also pasted into
-  warn verbatim, one line — it is normal for it to repeat every tick until a human replies or
-  verify-runner stamps a new ✅.
+- The stderr `warn: PR #<pr>(<repo>) — ✅ 이후 미해결 코멘트 <n>건(마커 없음 = 사람 리뷰
+  대기)` line from `$SCRIPTS/closeout-eligible.sh` (see ② Pick; literally "N unresolved
+  comments after ✅, no marker = awaiting human review") is also pasted into warn verbatim,
+  one line — it is normal for it to repeat every tick until a human replies or verify-runner
+  stamps a new ✅.
 
 State the 7 exit states — for **each** PR processed (per-PR when the drain handled several):
 - **success** — ran steps 1–6, merged the PR, and issued follow-ups (including adopt/rebase recoveries).
