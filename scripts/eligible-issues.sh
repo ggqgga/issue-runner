@@ -19,7 +19,8 @@
 #   · stderr = 진단. 게이트에 탈락한 이슈마다 `blocked: <owner/repo>#<num> ← #<b>(<상태>)`,
 #     스캔 끝에 `blocked-summary: 막힘 N건 (사람대기 블로커 M건)`, 검색 창 경고는 `warn: `.
 #     본문 조회가 실패한 후보는 `막힘`(= OPEN 블로커 탈락) 이 아니라 `warn: ` 한 줄로
-#     말하고 그 후보만 이번 틱에서 빠진다 — 한 건의 조회 실패가 목록 전체를 버리지 않는다.
+#     말하고 그 후보만 이번 틱에서 빠진다(스캔 끝에 `warn: 본문 조회 실패 N건`) —
+#     한 건의 조회 실패가 목록 전체를 버리지 않는다.
 #     ④ Report 가 이 셋을 그대로 옮긴다(SKILL.md ③-2 · ④) — 게이트 탈락이 조용히
 #     `continue` 로 빠지면 "15개 놀고 있는데 루프가 멍때린다" 로만 보인다.
 set -euo pipefail
@@ -321,6 +322,19 @@ $1#$2
 
 blocked_n=0
 blocked_human=0
+body_fail_n=0
+
+# 본문 조회의 stderr 는 **따로 받는다**. 아래 블로커 조회는 `2>&1` 로 합치지만 그쪽은
+# 성공 출력에 TAB 구분자가 있어 오염을 검사해 걸러낸다(`:284` 부근) — 자유 문자열인
+# 본문엔 그런 이음매가 없어서, 합치면 gh 가 성공 경로에서 stderr 로 쓴 한 줄이 본문에
+# 섞인 채 아래 `Blocked by #N` 파싱을 타고 **유령 블로커**가 될 수 있다(사전 리뷰 실측:
+# 정상 후보가 소리 없이 큐에서 빠졌다 — 이 PR 이 막으려는 결함과 같은 모양). #316(#257)
+# 이 합류하면 같은 문자열을 `Epic #N` 파싱이 한 번 더 훑어 표면이 는다.
+# mktemp 실패는 틱을 죽이지 않는다 — 싱크만 /dev/null 로 내려가고(오류문 없는 warn)
+# 판정 동작은 같다. trap 은 mktemp **앞에** 건다(#232 h2 관행).
+gh_err=/dev/null
+trap '[ "$gh_err" = /dev/null ] || rm -f "$gh_err"' EXIT
+gh_err=$(mktemp "${TMPDIR:-/tmp}/eligible-issues-gh-err.XXXXXX") || gh_err=/dev/null
 
 out="[]"
 count=$(printf '%s' "$cands" | jq 'length')
@@ -392,17 +406,23 @@ while [ "$i" -lt "$count" ]; do
   #   표시가 조용히 갈린다(한쪽은 집어가는데 다른 쪽은 막혔다고 그린다).
   # 라벨 방식은 이슈 목록에서 블로킹이 한눈에 보이는 게 요점(#85). 새 search 쿼리를
   # 추가하지 않고 이미 받은 labels 배열에서만 파싱한다(gh search 부정라벨 오파싱 #21).
-  # 조회 실패는 **그 후보만** 접는다 — 바로 아래 블로커 조회와 같은 자세다
-  # (`if out=$(… 2>&1); then … else warn fi`). 가드 없이 두면 `set -euo pipefail`(:15)
+  # 조회 실패는 **그 후보만** 접는다 — 아래 블로커 조회와 같은 가드 자세다
+  # (`if out=$(…); then … else warn fi`). 가드 없이 두면 `set -euo pipefail`(:15)
   # 아래서 단 한 건의 502/403(2차 레이트리밋)이 스크립트를 비0 종료시켜 **앞서 정상
   # 판정한 후보까지 stdout 째로** 버려지고, 디스패처는 그 틱을 "후보 0" 으로 읽는다
   # (창이 250 으로 커진 뒤 호출 수가 5배라 같은 단건 실패 확률에서 틱 사망 확률도 5배).
   # 빈 본문으로 이어 가지 않는다(PR#139: 빈 결과 ≠ 실패) — 본문을 못 읽으면
   # "Blocked by #N" 유무가 **미상**이라, 통과시키면 블로커 0건으로 읽혀 게이트가 증명
   # 없이 열린다. 이번 틱만 후보에서 빼고 다음 틱에 재시도한다(새 종결 상태를 만들지 않는다).
+  # 다른 갈래는 두지 않는다 — 블로커 조회의 "미존재 → 게이트 무시(통과)" 는 **블로커**가
+  # 사라진 경우라 통과가 안전하지만, 여기서 못 읽은 것은 **후보 자신의 본문**이라 통과는
+  # 곧 "블로커 0건" 주장이 된다(증명 없이 게이트를 여는 쪽).
   # 오류문은 여러 줄로 오므로 한 줄로 접는다 — ④ Report 가 옮기는 warn 은 한 줄이다.
-  if ! body=$(gh issue view "$num" --repo "$repo" --json body -q '.body // ""' 2>&1); then
-    echo "warn: $repo#$num 본문 조회 실패 — 블로커 미상이라 이번 틱 후보에서 제외(다음 틱 재시도): $(printf '%s' "$body" | tr '\n' ' ')" >&2
+  if ! body=$(gh issue view "$num" --repo "$repo" --json body -q '.body // ""' 2>"$gh_err"); then
+    # 후행 개행은 `$( )` 가 잘라내고, 남은 줄바꿈은 공백으로 접는다(기존 total_count warn 과 같은 관행).
+    gh_msg=$(cat "$gh_err")
+    echo "warn: $repo#$num 본문 조회 실패 — 블로커 미상이라 이번 틱 후보에서 제외(다음 틱 재시도): $(printf '%s' "$gh_msg" | tr '\n' ' ')" >&2
+    body_fail_n=$((body_fail_n + 1))
     continue
   fi
   # -o 로 "blocked by #N" 매치 구간 자체만 뽑는다(매칭 라인 전체가 아니라) — 매칭
@@ -484,6 +504,13 @@ while [ "$i" -lt "$count" ]; do
     '. + [{repo:$repo, number:$num, title:$title, priority:$prio, createdAt:$created,
            epic:$epic, epic_started:$epic_started}]')
 done
+
+# 본문 조회 실패는 `막힘`(= OPEN 블로커 탈락) 이 아니라 warn 이다 — 후보별 한 줄만 두면
+# 2차 레이트리밋에서 100줄로 풀려 ④ Report 한 줄 요약에 **숫자로는** 안 남는다. 몇 건이
+# 이번 틱 후보에서 빠졌는지 집계 한 줄을 함께 낸다(0 건이면 침묵 — warn 은 이상 신호다).
+if [ "$body_fail_n" -gt 0 ]; then
+  echo "warn: 본문 조회 실패 ${body_fail_n}건 — 그만큼 이번 틱 후보에서 빠졌다(다음 틱 재시도)" >&2
+fi
 
 # 요약은 stderr 로 (stdout 은 후보 JSON 전용). 0 건도 말한다 — 침묵과 "막힌 게 없다"는
 # 다른 주장이고, ④ Report 의 `막힘 N` 은 매 틱 숫자가 있어야 읽힌다.
