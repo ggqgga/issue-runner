@@ -181,6 +181,12 @@ grid=(
   # transition.sh 뿐이고 전부 소문자라 실물이 없지만, 손으로 `Hold:ladder` 를 붙여도
   # 게이트가 안 선다는 사실 자체를 여기 못박아 조용한 드리프트를 막는다.
   'Hold:ladder(대문자) → 통과(대소문자 구분 · 실물 라벨 아님)|["Hold:ladder"]|pass'
+  # 라벨 이름에 **쉼표**가 들어갈 수 있다(GitHub 이 허용한다). 라벨 경계는 배열이지 쉼표가
+  # 아니므로, 라벨 목록을 쉼표로 이어 붙인 뒤 `,hold:`·`,needs-human,` 를 찾는 구현은
+  # 이 두 칸을 **잘못 제외**한다 — 정상 후보 소실 방향이라 원래 결함보다 나쁘다(#266).
+  # 네 게이트가 같은 표현(라벨 배열 + index/startswith)을 쓰는지 여기서 갈린다.
+  'x,hold:y(쉼표 품은 한 라벨) → 통과|["x,hold:y"]|pass'
+  'a,needs-human(쉼표 품은 한 라벨) → 통과|["a,needs-human"]|pass'
 )
 
 for sut in eligible claim closeout verify; do
