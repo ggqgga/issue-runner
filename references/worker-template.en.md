@@ -300,9 +300,11 @@ Procedure:
      `pre-review: <value>` — the dispatcher's Report copies it.
 10. Open the PR (**if this is a re-dispatch it already exists** — see below).
    **It must be a standalone command with no cd**:
-   `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`
+   `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> --label flow:claimed ...`
    (Prefixing cd breaks the PR hooks' if-matching, so the issue-reference check gets
-   skipped.) The body must include a dedicated line `Closes #<NUM>`, a
+   skipped. `--label flow:claimed` is the PR mirror of the issue's in-progress rung (#281) —
+   never leave an open agent PR without a label; the handoff in 11b swaps it for
+   `flow:verify`.) The body must include a dedicated line `Closes #<NUM>`, a
    `## Test plan` section (checkboxes based on the acceptance criteria), and a
    `## Pre-review` section (the step 9-b outcome). Immediately
    after creating the PR, leave the comment
@@ -371,7 +373,8 @@ other issues, modifying anything outside <WT_PATH>, **spawning a codex verifier 
 posting the `Merge verdict: ✅`/`⚠` final verdict** (owned by verify-runner — do not).
 (Exception 1: syncing the checkbox marks in the referenced issue body per step 11a —
 neither a label change nor working on another issue. Exception 2: **the `transition.sh handoff-verify` call in
-11b, and the `flow:ci` attach on re-CI** — only as directed in steps 10·11. No other labels. Exception 3: the nested `Explore` in step 1 and the
+11b, the `flow:ci` attach on re-CI, and `--label flow:claimed` when creating the PR in step 10** — only as
+directed in steps 10·11. No other labels. Exception 3: the nested `Explore` in step 1 and the
 `general-purpose` pre-reviewer in step 9-b — self-review, not a gate, so they do not fall
 under "spawning a codex verifier". codex-family types remain forbidden.)
 

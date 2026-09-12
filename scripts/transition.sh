@@ -12,22 +12,33 @@
 #
 #   전이                  | PR add      | PR remove                          | 이슈 add    | 이슈 remove
 #   ----------------------|-------------|------------------------------------|-------------|------------------------------------------------
-#   handoff-verify        | flow:verify | flow:ci flow:codex                 | flow:verify | agent:claimed
-#   verify-pick(#275)     | verifying   | flow:verify                        | verifying   | flow:verify
+#   handoff-verify        | flow:verify | flow:ci flow:codex ⊘wk             | flow:verify | agent:claimed
+#   verify-pick(#275)     | verifying   | flow:verify ⊘wk                    | verifying   | flow:verify
 #   verify-unpick(#275)   | flow:verify | verifying                          | flow:verify | verifying
 #   verify-pass           | flow:ready  | flow:verify verifying              | flow:ready  | flow:verify verifying
-#   verify-redispatch     | —           | flow:verify verifying ⊘hold        | agent-ready | flow:verify verifying agent:claimed ⊘hold
+#   verify-redispatch     | flow:agent-ready | flow:verify verifying ⊘hold   | agent-ready | flow:verify verifying agent:claimed ⊘hold
 #   verify-held †         | hold:R      | flow:verify verifying ⊘R           | hold:R      | flow:verify verifying agent:claimed ⊘R
-#   closeout-pick         | harvesting  | flow:ready flow:codex flow:ci flow:verify verifying | harvesting | flow:ready flow:verify verifying
+#   closeout-pick         | harvesting  | flow:ready flow:codex flow:ci flow:verify verifying ⊘wk | harvesting | flow:ready flow:verify verifying
 #   closeout-blocked †    | hold:R      | harvesting verifying ⊘R            | hold:R      | harvesting flow:ready flow:verify verifying ⊘R
-#   closeout-redispatch   | —           | harvesting flow:ready flow:verify verifying ⊘hold | agent-ready | harvesting flow:ready flow:verify verifying agent:claimed ⊘hold
+#   closeout-redispatch   | flow:agent-ready | harvesting flow:ready flow:verify verifying ⊘hold | agent-ready | harvesting flow:ready flow:verify verifying agent:claimed ⊘hold
 #   runner-held(#151)     | hold:<r>    | (다른 hold)                        | hold:<r>    | agent:claimed (다른 hold)
 #   policy-kept(#244)     | needs-human | —                                  | needs-human | —
-#   closeout-dup ‡        | dup         | harvesting flow:ci flow:codex flow:verify flow:ready verifying | (라벨 편집 없음 — ④ release-labels.sh) |
+#   closeout-dup ‡        | dup         | harvesting flow:ci flow:codex flow:verify flow:ready verifying ⊘wk | (라벨 편집 없음 — ④ release-labels.sh) |
 #
 #   기호: `hold:R` = `hold:<--reason>` · `⊘R` = 나머지 두 `hold:*`(사유 교체가 멱등이 되게)
 #         `⊘hold` = `needs-human hold:conflict hold:policy hold:ladder`(반송 = 사람 대기 해제)
+#         `⊘wk` = `flow:claimed flow:agent-ready`(PR 의 워커 칸 미러 둘 — 사다리를 오르는 전이가 뗀다, #281)
 #         † `--reason <conflict|policy|ladder>` 필수 · ‡ `--note "<근거>"` 필수
+#
+#   · PR 은 이슈 사다리를 **전 칸** 미러한다(#281) — 이슈 `agent-ready`(대기) ↔ PR `flow:agent-ready`,
+#     이슈 `agent:claimed`(구현중) ↔ PR `flow:claimed`, 그 뒤 칸은 같은 이름. 이름을 달리 한 이유:
+#     이슈의 `agent-ready` 는 사다리 내내 남는 **자격** 라벨이라 같은 이름을 PR 의 **단계** 로 쓰면
+#     뜻이 갈린다. 반송 두 전이가 PR 에 `flow:agent-ready` 를 붙이고(대기 칸), claim(claim-issue.sh)이
+#     그것을 `flow:claimed` 로 바꾸며(구현중), 워커가 처음 여는 PR 도 `--label flow:claimed` 로 태어난다.
+#     그래서 열린 agent PR 은 항상 어느 칸의 라벨을 하나 달고 있다(라벨 없는 열린 agent PR = 사고).
+#     `⊘wk` 를 handoff-verify 에도 두는 건 사람이 claim 을 안 거치고 직접 인계하는 경우의 방어이고,
+#     verify-pick·closeout-pick·closeout-dup 의 것은 방어적 제거다(정상 흐름에선 이미 없다).
+#     `flow:ci`(로컬 CI 재실행 중)는 `flow:claimed` 안의 워커 내부 하위 상태라 둘이 같이 붙는다(정상).
 #
 #   · `verifying`(#275) 은 verify-runner 의 **점유** 라벨 — closeout 의 `harvesting` 과 같은
 #     자리다(PR + 연결 이슈 양쪽). `verify-pick` 이 집는 순간 `flow:verify`(검증대기) 를 이것으로
@@ -39,10 +50,12 @@
 #     `verifying` 은 이전 틱이 죽은 것이다(verify-eligible.sh 가 그걸 먼저 낸다, `orphan:true`).
 #     이슈 사다리: `agent:claimed` → `flow:verify` → `verifying` → `flow:ready` → `harvesting`.
 #
-#   · `agent-ready` 는 사다리 전체에서 유지되는 **자격** 라벨 — 위에서 명시적으로 add 하는
-#     칸 외엔 건드리지 않는다(어느 remove 칸에도 없다). 근거는 release-labels.sh 의 #117:
+#   · **이슈 칸** 얘기다: `agent-ready` 는 사다리 전체에서 유지되는 **자격** 라벨 — 위에서 명시적으로
+#     add 하는 칸 외엔 건드리지 않는다(어느 이슈 remove 칸에도 없다). 근거는 release-labels.sh 의 #117:
 #     OPEN 이슈의 agent-ready 를 떼면 디스패치 자격만 사라져 조용히 좌초한다.
 #     (예외는 closeout-dup 뿐 — 이슈를 **닫으므로** release-labels.sh 가 회수한다.)
+#     PR 의 `flow:agent-ready` 는 이것과 다르다 — 자격이 아니라 **단계**(대기 칸) 라벨이라 claim 이
+#     떼고 `flow:claimed` 로 바꾼다(#281). 이름에 `agent-ready` 가 들어 있어도 이 불변식의 대상이 아니다.
 #   · `needs-human` 은 **사람이 직접 세운 정지** 하나만 뜻한다(#244, 플랜 3단계). 기계 정지
 #     세 전이(verify-held·closeout-blocked·runner-held)는 `hold:<사유>` 만 붙인다 — 겹쳐
 #     붙이던 옛 표에서는 `needs-human` 이 "사람 호출" 이 아니라 "루프 손대지 마" 로 읽혀,
@@ -61,7 +74,7 @@
 #
 # ★closeout-dup 순서★ — 이슈가 요구한 수정이 **이미 main 에 있을 때** 루프가 직접 닫는다
 #   (`needs-human` 금지 — 루프가 결정할 수 있는 건 루프가 끝낸다).
-#     ① PR 라벨 `dup` 부착 + `harvesting`·`verifying`·`flow:*` 제거   ② PR 코멘트(근거)
+#     ① PR 라벨 `dup` 부착 + `harvesting`·`verifying`·`flow:*`(워커 칸 미러 포함) 제거   ② PR 코멘트(근거)
 #     ③ 이슈 코멘트 + `gh issue close`                    ④ `release-labels.sh`(닫힌 이슈
 #        라 agent-ready 까지 회수)                        ⑤ **마지막에** `gh pr close`
 #     이슈가 `-` 면 ①②⑤ 만.
@@ -149,6 +162,8 @@ esac
 
 # 사유 교체가 멱등이 되게 — 붙이는 사유 외 나머지 두 hold:* 는 remove 집합에 넣는다.
 HOLD_ALL="hold:conflict hold:policy hold:ladder"
+# PR 의 워커 칸 미러 둘(#281, 표의 ⊘wk) — 사다리를 오르는 전이가 뗀다.
+WORKER_MIRROR="flow:claimed flow:agent-ready"
 hold_others() {
   case "$1" in
     conflict) echo "hold:policy hold:ladder" ;;
@@ -159,11 +174,12 @@ hold_others() {
 
 case "$name" in
   handoff-verify)
-    pr_add="flow:verify"; pr_rm="flow:ci flow:codex"
+    # PR 의 워커 칸 미러(⊘wk)도 뗀다 — 사람이 claim 을 안 거치고 직접 인계해도 단계 라벨이 안 겹친다(#281).
+    pr_add="flow:verify"; pr_rm="flow:ci flow:codex $WORKER_MIRROR"
     iss_add="flow:verify"; iss_rm="agent:claimed" ;;
   verify-pick)
     # verify-runner 가 집는 순간(#275) — closeout-pick 이 flow:ready→harvesting 하는 것과 같은 꼴.
-    pr_add="verifying"; pr_rm="flow:verify"
+    pr_add="verifying"; pr_rm="flow:verify $WORKER_MIRROR"
     iss_add="verifying"; iss_rm="flow:verify" ;;
   verify-unpick)
     # verify-pick 의 정확한 역 — flake_retry(판정 아님) 로 끝날 때 점유를 풀고 검증대기로.
@@ -173,19 +189,20 @@ case "$name" in
     pr_add="flow:ready"; pr_rm="flow:verify verifying"
     iss_add="flow:ready"; iss_rm="flow:verify verifying" ;;
   verify-redispatch)
-    pr_add=""; pr_rm="flow:verify verifying needs-human $HOLD_ALL"
+    # 반송 = PR 도 대기 칸으로(#281) — 라벨 없는 열린 agent PR 을 남기지 않는다.
+    pr_add="flow:agent-ready"; pr_rm="flow:verify verifying needs-human $HOLD_ALL"
     iss_add="agent-ready"; iss_rm="flow:verify verifying agent:claimed needs-human $HOLD_ALL" ;;
   verify-held)
     pr_add="hold:$reason"; pr_rm="flow:verify verifying $(hold_others "$reason")"
     iss_add="hold:$reason"; iss_rm="flow:verify verifying agent:claimed $(hold_others "$reason")" ;;
   closeout-pick)
-    pr_add="harvesting"; pr_rm="flow:ready flow:codex flow:ci flow:verify verifying"
+    pr_add="harvesting"; pr_rm="flow:ready flow:codex flow:ci flow:verify verifying $WORKER_MIRROR"
     iss_add="harvesting"; iss_rm="flow:ready flow:verify verifying" ;;
   closeout-blocked)
     pr_add="hold:$reason"; pr_rm="harvesting verifying $(hold_others "$reason")"
     iss_add="hold:$reason"; iss_rm="harvesting flow:ready flow:verify verifying $(hold_others "$reason")" ;;
   closeout-redispatch)
-    pr_add=""; pr_rm="harvesting flow:ready flow:verify verifying needs-human $HOLD_ALL"
+    pr_add="flow:agent-ready"; pr_rm="harvesting flow:ready flow:verify verifying needs-human $HOLD_ALL"
     iss_add="agent-ready"; iss_rm="harvesting flow:ready flow:verify verifying agent:claimed needs-human $HOLD_ALL" ;;
   runner-held)
     # 디스패처(issue-runner) 자체의 사람 대기 — 죽은 워커 BLOCKED · 보수 상한(#151).
@@ -202,7 +219,7 @@ case "$name" in
     iss_add="needs-human"; iss_rm="" ;;
   closeout-dup)
     # 라벨 이동은 ① 단계뿐 — PR 만. 이슈 라벨은 ④ release-labels.sh 가 정리한다.
-    pr_add="dup"; pr_rm="harvesting flow:ci flow:codex flow:verify flow:ready verifying"
+    pr_add="dup"; pr_rm="harvesting flow:ci flow:codex flow:verify flow:ready verifying $WORKER_MIRROR"
     iss_add=""; iss_rm="" ;;
   *) usage ;;
 esac

@@ -116,8 +116,10 @@ done
 rm -rf "$tmp"
 [ "$fail" = 0 ] || exit 1
 
-echo "[closeout] setup-labels.sh 에 harvesting·epic·verifying 라벨 정의 존재 검사"
-for lbl in harvesting epic verifying; do
+echo "[closeout] setup-labels.sh 에 harvesting·epic·verifying·flow:agent-ready·flow:claimed 라벨 정의 존재 검사"
+# flow:agent-ready·flow:claimed(#281) — PR 미러 앞 두 칸. 정의가 없으면 transition.sh 의 반송 add 와
+# claim-issue.sh 의 미러 edit 이 레포에서 `not found` 로 실패한다.
+for lbl in harvesting epic verifying flow:agent-ready flow:claimed; do
   grep -qF "gh label create $lbl " scripts/setup-labels.sh || {
     echo "  ✗ setup-labels.sh 에 $lbl 라벨 정의 누락"; exit 1; }
 done
@@ -1765,8 +1767,11 @@ bash scripts/tests/codex-review-gate.test.sh
 echo "[test] reconcile.sh 재claim 필터 fail-closed·스윕 차단·gh-login 순차 폴백 (#131)"
 bash scripts/tests/reconcile.test.sh
 
-echo "[test] transition.sh 전이 집합·readback 검증·라벨 보강 (#144 · #147 --reason·closeout-dup)"
+echo "[test] transition.sh 전이 집합·readback 검증·라벨 보강 (#144 · #147 --reason·closeout-dup · #281 PR 미러)"
 bash scripts/tests/transition.test.sh
+
+echo "[test] claim-issue.sh PR 미러 — 열린 agent/issue-N PR 에 flow:claimed 부착·flow:agent-ready 제거, best-effort (#281)"
+bash scripts/tests/claim-issue.test.sh
 
 echo "[test] resume-sweep.sh 재개 스윕 — 창·상한·경합 가드·마커 코멘트·PR 미러 (#147)"
 bash scripts/tests/resume-sweep.test.sh

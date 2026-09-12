@@ -8,7 +8,8 @@ repo="${1:?usage: setup-labels.sh <owner/repo>}"
 # 원칙: 사람이 **지금 봐야 하는 것**은 난색 고채도 · 루프가 도는 중이라 **안 봐도 되는 것**은
 # 한색 · 분류/메타는 저채도 회색조. 티어별 소속:
 #   A 사람 차례 = needs-human · hold:conflict · hold:policy
-#   B 루프 진행 = agent-ready · agent:claimed · flow:ci · flow:verify · verifying(#275) · flow:ready
+#   B 루프 진행 = agent-ready · agent:claimed · flow:agent-ready · flow:claimed(#281) · flow:ci
+#                · flow:verify · verifying(#275) · flow:ready
 #                · harvesting · hold:ladder · deploy-wait(#243 — "사람 정지 아님" 으로
 #                재정의된 뒤 A 에서 이리로 옮겼다. 사람이 볼 일이 없다는 점에서 hold:ladder
 #                와 같은 처지: 루프(deploy-cycle)가 스스로 집어가는 레인이라 목록을 훑는
@@ -50,6 +51,15 @@ gh label create epic --repo "$repo" --color 8C959F \
 # PR 생애주기 표시 라벨(flow:*) — PR 리스트만으로 "기계가 물고 있음 vs 사람이 봐야 함"이
 # 갈리게 한다. 워커가 각 단계에서 직접 부착(worker-template 의 flow:* 예외) + 틱 루프가
 # PR 스캔 시 마지막 판정 코멘트로 best-effort 보정. 이후 harvesting→needs-human 으로 이어짐.
+# PR 미러 앞 두 칸(#281) — 이슈의 `agent-ready`(대기)·`agent:claimed`(구현중)에 대응한다. 이름을
+# 달리 한 이유: 이슈의 `agent-ready` 는 사다리 내내 남는 **자격** 라벨이라 같은 이름을 PR 의 단계로
+# 쓰면 뜻이 갈린다. 반송 전이가 `flow:agent-ready` 를 붙이고 claim(claim-issue.sh)이 `flow:claimed`
+# 로 바꾸며, 워커의 첫 `gh pr create --label flow:claimed` 도 이 칸에서 태어난다. 둘 다 B 티어(한색).
+# bin/ci 존재 검사가 `gh label create <이름> ` 리터럴로 찾으므로 이름은 따옴표 없이 쓴다.
+gh label create flow:agent-ready --repo "$repo" --color C6E6FF \
+  --description "반송됨 — 연결 이슈 agent-ready, 워커 재디스패치 대기" --force
+gh label create flow:claimed --repo "$repo" --color 9CC9FF \
+  --description "워커가 이 PR 위에서 구현·수정 중" --force
 gh label create "flow:ci" --repo "$repo" --color ADD8FF \
   --description "워커가 이 PR 의 로컬 CI 를 (재)실행 중" --force
 gh label create "flow:verify" --repo "$repo" --color 79C0FF \
