@@ -645,7 +645,7 @@ ck "교체 재실행: 이슈 동일" "$(labels_of 9)" "$(sorted "hold:ladder")"
 
 # ── ⑧-b (#244) 기계 정지 세 전이는 `hold:<사유>` **하나만** 붙인다 ──────────────
 # 플랜 label-taxonomy-cleanup 3단계: `needs-human` 은 "사람이 직접 세웠다" 하나만 뜻한다.
-# 기계 정지(verify-held·closeout-blocked·runner-held)가 겹쳐 붙이면 사람대기 칸이
+# 기계 정지(verify-held·closeout-blocked·runner-held)가 겹쳐 붙이면 needs-human 칸이
 # "손댈 게 없는 것"(창 지나면 루프가 스스로 재개하는 hold:ladder)으로 찬다.
 # ★픽스처에 needs-human 을 **안** 넣는 것이 이 단언의 전부다★ — ① 의 ALL 픽스처는
 # needs-human 을 이미 품고 있어(그리고 이 세 전이는 어느 remove 칸에도 안 넣는다)
@@ -710,14 +710,14 @@ reset; seed 7 flow:verify needs-human hold:ladder
 seed 9 flow:verify agent:claimed needs-human hold:ladder
 run ok verify-redispatch 9 7
 ck "verify-redispatch: exit 0" "$RC" 0
-ck "verify-redispatch: PR 사람대기 해제 + 대기 칸 미러" "$(labels_of 7)" "flow:agent-ready"
+ck "verify-redispatch: PR needs-human 해제 + 대기 칸 미러" "$(labels_of 7)" "flow:agent-ready"
 ck "verify-redispatch: 이슈 = agent-ready" "$(labels_of 9)" "agent-ready"
 
 reset; seed 7 harvesting needs-human hold:policy
 seed 9 harvesting flow:ready agent:claimed needs-human hold:policy
 run ok closeout-redispatch 9 7
 ck "closeout-redispatch: exit 0" "$RC" 0
-ck "closeout-redispatch: PR 사람대기 해제 + 대기 칸 미러" "$(labels_of 7)" "flow:agent-ready"
+ck "closeout-redispatch: PR needs-human 해제 + 대기 칸 미러" "$(labels_of 7)" "flow:agent-ready"
 ck "closeout-redispatch: 이슈 = agent-ready" "$(labels_of 9)" "agent-ready"
 
 # ── ⑩ closeout-dup — 중복은 루프가 닫는다(needs-human 을 거치지 않는다) ───────

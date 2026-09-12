@@ -961,7 +961,7 @@ and that fact must be visible to a human.
   ```
 
   `deploy-wait` is the bucket label `loop-status.sh` uses to separate deploy-waiting from
-  human-waiting, and it is **the lane mark the deploy-cycle loop picks this ticket up by** —
+  needs-human, and it is **the lane mark the deploy-cycle loop picks this ticket up by** —
   that one label is required.
   **`needs-human` is deliberately not attached (#243, plan step 2) — do not revert it.**
   All three consumers of a deploy-pending issue ignore that label: ⑴ the dispatch gate

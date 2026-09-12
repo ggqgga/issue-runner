@@ -39,7 +39,7 @@
 # 하므로, 맨 `needs-human` 은 물론이고 `hold:ladder` 옆에 함께 붙은 것도 무편집이다.
 #
 # PR 미러: `transition.sh verify-held`·`closeout-blocked` 는 사유 라벨을 이슈와 **PR 양쪽**에
-# 붙인다. 이슈만 되돌리면 PR 은 영구 사람대기로 남고, 뒤 전이(handoff-verify·verify-pass·
+# 붙인다. 이슈만 되돌리면 PR 은 영구 needs-human 으로 남고, 뒤 전이(handoff-verify·verify-pass·
 # closeout-pick)는 그 라벨을 떼지 않아 사람이 손으로 지워야 흐른다. 그래서 재개·승격은
 # 연결된 열린 PR 의 같은 라벨까지 **같은 단계에서** 함께 되돌린다.
 #
@@ -430,7 +430,7 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate>
       has_label "$prlabels" "hold:ladder" || continue
       if ! gh pr edit "$prnum" --repo "$repo" \
            --remove-label "hold:ladder" >/dev/null 2>&1; then
-        emit_warn_after_edit "$repo" "$num" "PR #$prnum 미러 라벨 해제 실패 — PR 이 사람대기로 남는다"
+        emit_warn_after_edit "$repo" "$num" "PR #$prnum 미러 라벨 해제 실패 — PR 이 needs-human 으로 남는다"
         continue
       fi
       if ! back=$(read_pr_labels "$repo" "$prnum"); then
@@ -463,7 +463,7 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate>
 # — `hold:ladder` 자동 재개 경로 하나뿐이다. `hold:policy`·`hold:conflict` 는 정의상 사람이
 # 푸는데, 그 경로에는 PR 사본을 되돌리는 자리가 어디에도 없었다. 남은 사본은 네 게이트
 # (verify-eligible·closeout-eligible·claim-issue·eligible-issues)가 `hold:` 접두를 직접
-# 보므로(#242·#262) 그 PR 을 확정적으로 제외하고, 이슈는 이미 깨끗해 사람대기 칸에도 안 뜬다.
+# 보므로(#242·#262) 그 PR 을 확정적으로 제외하고, 이슈는 이미 깨끗해 needs-human 칸에도 안 뜬다.
 #
 # 전파 자리를 **여기 하나**로 정한 이유(이슈 #265 의 두 후보 중 (a)):
 #   · 사람이 README 대로 이슈에서만 뗐을 때 **아무도 명령을 치지 않아도** 풀려야 한다.

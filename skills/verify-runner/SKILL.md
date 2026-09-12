@@ -124,9 +124,9 @@ verify-eligible 출력의 **첫 후보 1개만** 집는다(고아 우선·그 �
 점유를 선언한다(closeout ② 의 `closeout-pick` 과 같은 꼴):
 `$SCRIPTS/transition.sh verify-pick <repo> <issue|-> <pr>` — PR 과 연결 이슈 양쪽에서
 `flow:verify` 를 떼고 `verifying` 을 붙인다(멱등 — 고아 재집은 이미 `verifying` 이라
-no-op 로 통과한다). 이 라벨이 루프 현황(`loop-status.sh`)에서 "검증대기" 와 "검증 중
-(수십 분)" 을 가르는 근거가 된다(대시보드 렌더는 후속 이슈 — 현행 대시보드는 아직 이
-라벨을 모른다). 단일 루프·동시성 1 이라 레이스는 없다 — 점유 라벨은 경합 방지가 아니라
+no-op 로 통과한다). 이 라벨이 루프 현황(`loop-status.sh`)에서 `검증대기`(`flow:verify`)
+줄과 `verify-runner`(`verifying` — 지금 들고 있음, 수십 분) 줄을 가르는 근거다(#276).
+단일 루프·동시성 1 이라 레이스는 없다 — 점유 라벨은 경합 방지가 아니라
 **가시성과 사망 증거**(① 의 고아 판정) 용이다.
 - **exit 1(readback 불일치)·2(gh 실패)면 이 PR 을 집지 마라** — ④ Report 에
   `BLOCKED: 전이 실패 verify-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올리고

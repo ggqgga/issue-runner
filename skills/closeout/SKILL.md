@@ -835,7 +835,7 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
     --body-file <본문파일> --label deploy-wait [--label P1]
   ```
 
-  `deploy-wait` 는 `loop-status.sh` 가 배포대기와 사람대기를 갈라 세는 버킷 라벨이자
+  `deploy-wait` 는 `loop-status.sh` 가 배포대기와 needs-human 을 갈라 세는 버킷 라벨이자
   **deploy-cycle 루프가 이 티켓을 집는 레인 표식**이다 — 이 라벨 하나가 필수다.
   **`needs-human` 은 일부러 붙이지 않는다 (#243, 플랜 2단계) — 되돌리지 마라.** 배포 대기
   이슈의 소비자 셋이 전부 그 라벨을 안 본다: ⑴ 디스패치 게이트는 `label:agent-ready` 를
