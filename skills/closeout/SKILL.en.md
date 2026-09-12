@@ -485,7 +485,7 @@ gate of their own:
 | `done_verdict` | latest `머지 판정: ✅` **and it is proven to postdate the current head commit** (#171) | eligible.sh's normal path handles it — sweep skips. But that normal path must **pass ①-c's direction judgment first** before ② Pick takes it (#198 — a hold a human released with "fix it" is not a merge candidate however fresh the ✅ looks). And **when ①-c's hold boundary is unresolved, do not skip — route it to ①-c** — because if a human writes the decision on the PR without the marker, eligible's `unresolved` gate (#72) drops that PR from the candidate list and ①-c never runs at all (a silent stall). **The boundary is defined in ①-c, in one place** — do not repeat a literal here (a hold that leaves only `<!-- hold-note: `, e.g. `closeout-blocked --reason conflict`, would fall outside a narrower literal and the promised re-entry would never happen) |
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). Except: a `stale_inline` coming out of the `bounced` branch in 1) is **re-dispatched, never adopted** (that CLEAN may predate the bounce). |
 | `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer + **no progress evidence** (#206) (died before verifying, implementation may be incomplete, #971-type). A CONFLICTING PR whose bounce marker is latest landing here *is* the "died just before ✅ after a bounce" class from 1) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
-| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold — one of ①-c's three **hold boundary** forms) | **If the release already happened** (①-c 2)'s conjunction is true — a decision comment after the window ∧ `needs-human`·`hold:*` currently absent) **send it to ①-c** (correction→`closeout-redispatch` bounce, ambiguous→`closeout-blocked`, rejection→② Pick) — calling `closeout-blocked` again before that **revives, every tick, a hold the human just released** (the spot #225 nailed down — measure only the entry and skip the release path, and the loop fights the human). **If it is not yet released, stop (`hold:policy`)** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the stop signal survives even with no linked issue. **`needs-human` is not attached** (#244): a machine stop carries only its reason label, and the human call is attached by `transition.sh policy-kept` only when the resume sweep's ③ re-review ends as "kept"), closeout leaves it (no auto-progress). |
+| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold — one of ①-c's three **hold boundary** forms) | **If the release already happened** (①-c 2)'s conjunction is true — a decision comment after the window ∧ `needs-human`·`hold:*` currently absent) **send it to ①-c** (correction→`closeout-redispatch` bounce, ambiguous→`closeout-blocked`, rejection→② Pick) — calling `closeout-blocked` again before that **revives, every tick, a hold the human just released** (the spot #225 nailed down — measure only the entry and skip the release path, and the loop fights the human). **If it is not yet released, split on `H` (#334 attempt 3 P2)**: if `hold:*`·`needs-human` **remain** on the issue or the PR → **leave it** — the stop already stands (the labels are the evidence). Re-calling `closeout-blocked` here posts a fresh `<!-- hold-note: -->` that pushes the hold boundary **past a decision comment already posted**, so the moment the human removes the labels that decision sits before the boundary and falls into ambiguous (decision discarded — the same rule as ①-c 2)ⓑ, grid row 31). If the labels are **absent** and there is no decision either (the worker's ⚠ alone, no stop label yet), stop (`hold:policy`) — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the stop signal survives even with no linked issue. **`needs-human` is not attached** (#244): a machine stop carries only its reason label, and the human call is attached by `transition.sh policy-kept` only when the resume sweep's ③ re-review ends as "kept"), closeout leaves it (no auto-progress). |
 | `active` | in progress · buffer not reached · not our shape, **or the ✅'s freshness could not be proven** (✅ predates the head commit, or either timestamp could not be obtained, #171), **or there is progress evidence** (commit within `STALL_MIN` · the head SHA's CI ticket alive in the queue · **the current round's `agent:claimed` was attached within the timebox** — or that judgment itself is unavailable: queue.log unreadable · head lookup failed · claim lookup failed (`unknown` ≠ `none`), #206 · `progress-evidence.sh`). A MERGEABLE bounce round is already filtered to leave-it by the 1) gate and never reaches here (#218) — the only bounce rounds that arrive here came through 1)'s **CONFLICTING exception branch** (#206), and an undecidable bounce state was filtered there as well (#196). **Do not end here for a PR whose ①-c hold boundary is unresolved** (#198 — the boundary is defined in ①-c, in one place; do not repeat a literal here): ①-c reads the release direction, and if it is *correction* the answer is not `active` (leave it) but a **bounce** (`closeout-redispatch`), and if the direction is *ambiguous* it is `closeout-blocked` (human). Left untouched it simply becomes a candidate again next tick | **If ①-c's hold boundary is unresolved, go to ①-c** (correction→`closeout-redispatch` bounce, ambiguous→`closeout-blocked`, rejection→② Pick) — **otherwise leave it** (next tick). |
 
 **`flow:*` supplementary signal**: finish-classify judges by comments, but a stale PR with
@@ -597,13 +597,15 @@ down — an existence test in front makes later branches unreachable).
   side only**, the boundary survives on the issue alone. In that shape, once a human removes the
   labels, this exit ② Picks **without ever reading the direction** — and "the boundary is computed
   per source" just above **already computes** the issue-side boundary, so the cost is one
-  condition. If only the issue side has a boundary, carry on with the judgment below using it
+  condition. If only the issue side has a boundary, do not take this exit
   (read it as `h` present) — below, that shape is called the **issue-only boundary**.
   **But an index never crosses arrays (#334 attempt 2 P1)**: reading the issue-side boundary as
-  "`h` present" goes only as far as the *entry* decision (there was a hold); do not feed the issue
-  array's index into the **two PR-array index comparisons** further down — resolution test ⑴'s
-  `f > max(h, r)` and the idempotency branch's `r > h`. Each of those two spots carries its own
-  issue-only-boundary rule (⑴: no resolution candidate · idempotency: strict `createdAt`).
+  "`h` present" goes only as far as the *entry* decision (there was a hold). In that shape do not
+  feed the issue array's index into the PR-array comparison spots (resolution test ⑴'s
+  `f > max(h, r)` · the idempotency branch's `r > h`), and do not substitute `createdAt` for it
+  either — the issue-only boundary **ends at resolution test ⑴ as "no resolution candidate" and
+  never reaches what lies below it (start · idempotency · 2) · 3))** (#334 human decision ⓐ — the
+  rule is written in ⑴, in one place).
   **If `H` is present,
   leave it (the hold stands)** — a human attached labels without a comment, and this is the
   **only exit in this section that reaches ② Pick without ever reading a label**, so the axis
@@ -627,18 +629,48 @@ through the side door.
 **issue-only boundary** shape (zero boundary in the PR array, one in the issue array), putting the
 issue array's boundary index here compares unrelated numbers: a stale `머지 판정: ✅` on code
 **before** the hold at PR index 5 versus an issue boundary at index 2 reads as "the ✅ landed after
-the hold", and that code reaches ② Pick — exactly the mis-merge this section exists to stop. So in
-the issue-only boundary shape, when the PR array has **no redispatch marker either**, there is no
-same-array baseline to compare against → **no resolution candidate** (conservative — the opening
-branch never opens without proof). That shape passes the start and idempotency branches and goes
-down to 2)·3), judging direction only, from the **issue-side** decision comment (2)'s decision
-lookup is per-source anyway and never crosses arrays). **Release path**: on correction, 3) posts
-the redispatch marker on the PR, so from the next tick the PR array has a baseline `r`, and once a
-new completion verdict lands after it this ⑴ releases (`f > r`, same array); on rejection, 3)'s
-rejection row leaves `✅ 기각 승계` and goes to ② Pick (a path that does not pass through ⑴ — the
-human explicitly said merge as-is); on ambiguity, `closeout-blocked` re-posts `<!-- hold-note: ` on
-**both** the PR and the issue, restoring the normal shape (a boundary on both sides). When the PR
-array **does** have a marker `r`, that `r` is the same-array baseline and `f > r` is judged normally.
+the hold", and that code reaches ② Pick — exactly the mis-merge this section exists to stop.
+
+**The issue-only boundary yields no resolution candidate regardless of whether `r` exists — nothing
+is compared (#334 human decision ⓐ, re-review 2026-09-12).** In that shape any inference from the PR
+array's `r`·`f` is a misread: with no `r` there is no same-array baseline, and even **with** `r`,
+`f > r` only says "a completion landed after the marker" — it says nothing about whether a newer
+hold landed **on the issue alone** after that (attempt 3 P1 — when the PR-side `closeout-blocked`
+comment failed and a later hold survived on the issue only, `f > r` ignored that hold entirely).
+Nor is `createdAt` substituted (after three rounds on the same axis the human removed cross-array
+comparison altogether — same-second ties aside, a shape with a boundary on one side only is
+**something to repair, not something to compare**). So this shape **ends at ⑴** — none of the start
+test, the idempotency branch, 2) or 3) runs (the direction is not read from the issue-side decision
+either — that decision must be rewritten after the restored boundary to count). The outcome splits
+on `H` alone:
+
+- **`H` present** → **leave it · the hold stands** (same axis as resolution test ⑵ and 2)ⓑ — a
+  human is holding it). **Release path**: the human removes the labels → next tick, the branch below.
+- **`H` absent** → **re-call `closeout-blocked` to restore both boundaries** —
+  `$SCRIPTS/transition.sh closeout-blocked <repo> <issue> <pr> --reason policy --note "issue-only boundary (no hold-note on the PR side) — both boundaries restored. Please answer rejection (merge as-is) / correction (fix the code) after this comment"`.
+  That transition posts `<!-- hold-note: policy -->` issue → PR and then attaches the labels
+  (`transition.sh`, "order of the three human-wait transitions"), so on success the shape is the
+  **normal one with a boundary on both sides**. If the issue already carried a decision comment
+  (`D` present), put that sentence in the `--note`'s quotation slot so the human sees they must
+  **answer again** (the quotation duty) — that decision lies **before** the restored boundary and
+  next tick's 2) does not count it. That is the cost of this simplification, and it is intended:
+  **a re-call restores both boundaries, so only the human decision written after it (the later one)
+  wins.** Failure (exit≠0) lands in the same cell as every other transition failure — ④ Report gets
+  `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`, state unchanged,
+  retried next tick. **Release path**: after the restore, the human writes the decision and removes
+  the labels; the next tick walks the normal shape (boundary on both sides · PR-array index
+  comparison) through 2)·3).
+
+**A variant of this shape — the PR array has an old boundary but the issue's newest hold is missing
+from the PR** (PR `[h₁, r, f]` · issue `[h₁, h₂]`, only `h₂`'s PR-side comment failed) is **not** an
+issue-only boundary by the definition above; within the PR array `f > max(h₁, r)` makes it a
+resolution candidate. Why that is not a mis-merge: `closeout-blocked` writes its comments **before**
+the label edits and exits 2 on the PR comment failure, so that `h₂` attached no label at all — there
+was no hold for a human to release, so "a merge that skipped the human's decision" cannot occur;
+resolution → ② Pick **re-runs** ③-1 (or ③-2 merge, for `✅ 기각 승계`), which reproduces the same
+stop, and that tick's `closeout-blocked` retry leaves the boundary on both sides (the transition's
+own retry design). A `<!-- hold-note: ` written by hand on the issue alone takes the same road — to
+use that shape as a human gate, attach the labels (`H` blocks it in ⑵).
 
 **Resolution test ⑵ — resolution also requires label absence (conjunction, BLOCKER ②).** Even
 when the index condition above holds, **if `needs-human`·`hold:*` is still present on either the
@@ -684,8 +716,8 @@ destination**:
 
 If the time obtained is **later** than the `createdAt` of the comment at `max(hold boundary,
 redispatch marker)`, that is evidence somebody **started**, not that they **finished** (this
-comparison is time against time to begin with, so it never crosses arrays — in the issue-only
-boundary shape with no `r`, use the `createdAt` of the issue-side boundary comment). But the
+comparison is time against time, and the base comment is the **PR array's** — the issue-only
+boundary shape ends at ⑴ and never gets here). But the
 destination depends on **who** started — with a redispatch marker present it is the worker this
 section sent back; with none, it is a commit that never went through a bounce (a human fixed or
 rebased it) and this section knows nothing about its provenance. This is **the same predicate** the
@@ -747,15 +779,10 @@ in ④ Report every tick where a human sees it — it is not a silent stall.
 #198 bounce3/P1 + 10:11/P1 axis② · #334 BLOCKER).** If the **re-dispatch marker index > hold
 boundary** (a bounce for this hold already went out), do not leave it alone on the strength of the
 marker — **read the linked issue's current labels** once.
-Both are **PR-array** indices. In the **issue-only boundary** shape (zero boundary in the PR array)
-there is no same-array `h`, so split on **`createdAt`** instead of index (#334 attempt 2 P1): it is
-`r > h` only when the marker's `createdAt` is **strictly later** than the issue-side boundary's
-`createdAt`. **Same second or earlier reads as `r ≤ h`** and goes to 2) (treated as a new hold this
-section has not judged yet — fail-closed). This is the only place a timestamp is used across arrays,
-and the justification is asymmetry: it is not the opening branch (⑴) but a split between two
-fail-closed branches, so the cost of a same-second misread is one extra 2) → correction → marker
-re-post, while the cost of the opposite misread (reading a new hold as older than the stale marker)
-is the *transition re-call* below stripping that hold's `hold:*`.
+Both are **PR-array** indices. The **issue-only boundary** shape (zero boundary in the PR array)
+ends at ⑴ and never reaches this branch — the attempt 2 rule that estimated `r > h` by `createdAt`
+where there was no same-array `h` has been **retired** (#334 human decision ⓐ: no comparison across
+arrays, by index or by time). In every shape where this branch runs, `h` and `r` are in the same array.
 
 **★ Why this branch does not ask "did the transition land?" — that question cannot be answered by
 labels (#334 BLOCKER).** In the shape where this section calls `closeout-redispatch`, that
@@ -891,9 +918,15 @@ direction judgment. **If either is false, the hold stands** (fail-closed — do 
 proven):
 
 - ⓑ false (**labels are still there**) → the human still has it → **leave it**. Do not re-call the
-  transition (it is already held; the call changes nothing). The same applies even if a decision
-  comment is already posted — while the labels remain, the human has not let go.
-  **Release path**: the human removes the labels.
+  transition — `closeout-redispatch` is already held and changes nothing, and **`closeout-blocked`
+  must not be called again because it does change something** (#334 attempt 3 P2): the fresh
+  `<!-- hold-note: -->` it posts pushes the hold boundary **past the decision comment already
+  there**, so the moment the human removes the labels that decision sits **before** the boundary
+  (ⓐ false) and falls into ambiguous — the human writes the same answer twice (decision discarded).
+  The same applies even if a decision comment is already posted — while the labels remain, the
+  human has not let go, and the stop already stands, so there is no reason to re-post the boundary.
+  ①-b's `held` row follows the same rule.
+  **Release path**: the human removes the labels → next tick both ⓐ and ⓑ are true → 3).
 - ⓐ false (**labels removed with no decision comment**) → go to **ambiguous** in 3) below. The
   `closeout-blocked` called there re-attaching the labels *is* the **hold standing**. Stalling this
   way is the intended outcome, and surfacing the stall is not this section's job but that of
@@ -987,10 +1020,11 @@ review and regression:
 | **Rejection release** | same shape but the decision reads `재심: 판정 기각 — 원안 그대로 머지, 코드 변경 없음` | **② Pick** · **no ③-1 re-run** (③ starts at step 2) · `마감 검증: ✅ 기각 승계` marker |
 | **Ambiguous** | the decision reads `이거 왜 이렇게 짰나요?` (a question only), or there is no decision comment at all | `closeout-blocked --reason policy` · **no ② Pick** |
 | **Release + no decision** | the human removed the labels and left no comment (`D` false · `H` false) | 2)ⓐ false → **ambiguous** → `closeout-blocked` (= **hold stands**) · the stall is surfaced by the #265 warn |
-| **Decision + labels still on** | the decision is there but `hold:policy` remains on the issue (`D` true · `H` true) | 2)ⓑ false → **hold stands · untouched** · do not call the transition again |
+| **Decision + labels still on** | the decision is there but `hold:policy` remains on the issue (`D` true · `H` true) | 2)ⓑ false → **hold stands · untouched** · do not call the transition again — **not `closeout-blocked` either** (its fresh hold-note pushes the boundary past the decision and discards it, attempt 3 P2) — grid row 31 |
+| **Decision after a restore** | after a `closeout-blocked` re-call restored both boundaries, the human writes the decision **after** it and removes the labels | the decision after the restored boundary wins → 2) conjunction true → **3) direction judgment** — grid row 32. A decision **before** the restored boundary is not counted (→ ambiguous, row 33) |
 | **New commit after release** | the head commit postdates the boundary (`c` true), no `r`, `A` false | **not `active` but the 3) ambiguous path** (`closeout-blocked --reason policy`) — grid row 10. This round **updated** #174's absorbed fixture "`active` (#171 wins)" (see the footnote below) |
 | **Lookup failure** | `pr-comments.sh` exits non-zero | **`BLOCKED: 코멘트 조회 실패` · state unchanged · untouched** — grid row 22. This round **updated** the absorbed item's "hold stands" into a form that *touches no label* (see the footnote below) |
-| **Issue-only boundary + stale ✅** | zero boundary/marker in the PR array, `<!-- hold-note: ` in the issue array (index 2), a `머지 판정: ✅` on the PR from **before** the hold (index 5), no `H` | ⑴ **no resolution candidate** (no cross-array index comparison) → 2)·3) judge direction from the issue-side decision — grid row 28 |
+| **Issue-only boundary** | zero boundary in the PR array (a marker `r` or a stale `머지 판정: ✅` may or may not be there), `<!-- hold-note: ` in the issue array | ⑴ **no resolution candidate — regardless of whether `r` exists; nothing is compared**. `H` present → untouched · `H` absent → re-call `closeout-blocked` to **restore both boundaries** (an issue-side decision, if any, must be rewritten after the restore to count) — grid rows 28·29·30 |
 
 **Footnote — this round updated two fixture lines of #174's absorbed item (issue #334's body was
 edited to match).** ⑴ *"new commit after release → `active` (#171 wins)"* → **the 3) ambiguous
@@ -1019,10 +1053,17 @@ inversion** of counting removal-target cells · a comment lookup failure pinning
 zero-boundary decision taken from the PR array alone), **axis⑧** = the 2026-09-12 attempt-2
 verifier P1 (in the issue-only boundary shape, the PR array's completion-verdict index was compared
 **across arrays** against the issue array's boundary index — a stale ✅ reads as "later" and
-mis-merges). **For axis⑦ rows that column is this PR's previous commit (`d82c6e7`)**, **for axis⑧
-rows it is the attempt-1 commit (`fbdcfba`)**; for axis①~⑥ rows it is closed PR #203 (head
-`683cdde2`) **at the 10:11 bounce**. Three baselines are mixed, so each row names its own in
-parentheses. Only the `want` column is the current contract.
+mis-merges), **axis⑨** = the 2026-09-12 attempt-3 verifier P1·P2 + the **human decision ⓐ** (three
+rounds on the same axis — the issue-only boundary yields **no resolution candidate** regardless of
+`r`, nothing is compared, and a `closeout-blocked` re-call restores both boundaries · with `D` true ∧
+`H` true a `closeout-blocked` re-call pushed the boundary past the decision and discarded it).
+**For axis⑦ rows that column is this PR's previous commit (`d82c6e7`)**, **for axis⑧
+rows it is the attempt-1 commit (`fbdcfba`)**, **for axis⑨ rows it is the attempt-3 commit
+(`411f51a2`)**; for axis①~⑥ rows it is closed PR #203 (head
+`683cdde2`) **at the 10:11 bounce**. Four baselines are mixed, so each row names its own in
+parentheses. Only the `want` column is the current contract. The `want` of the axis⑨ rows is
+**cross-checked** by `scripts/tests/closeout-hold-resolve.test.sh`, which evaluates the same shapes
+against the model (document and model diverging is red).
 
 `h`=hold boundary · `r`=redispatch marker · `f`=completion-verdict comment (`머지 판정: ✅` ·
 `마감 검증: ✅`) · `c`=head commit is later · **`A`**=the issue currently carries a **downstream
@@ -1066,8 +1107,12 @@ non-destructive side wins and the cell is untouched.
 | 25 | **zero boundary in the PR array but `<!-- hold-note: ` in the issue array** (only `closeout-blocked`'s PR comment failed), no `H` | ② Pick | **`d82c6e7`: the zero-boundary test read the PR array only → ② Pick without ever reading the direction** | **read `h` as present from the issue-side boundary** and carry on (no ② Pick) | ✅ axis⑦ |
 | 26 | `h`, `r > h`, no `c`, no `f`, **`A` false ∧ `R` true** (the issue's only label is `agent-ready` = the transition's target state) | ② Pick | `active`, untouched (**because it read "the transition landed"**) | `active`, untouched (**because the eligibility predicate is true, so the next dispatch tick picks it up** — whether the transition landed is not asked) | — (same decision, **different ground**) |
 | 27 | `h`, `r > h`, no `c`, no `f`, **a human removed `agent-ready` from the OPEN issue by hand** (`A` false ∧ `R` false) | ② Pick | re-call the transition (the old predicate was false in this one cell too) | same — **re-call only the transition** | — |
-| 28 | **issue-only boundary** (zero boundary/marker in the PR array, `<!-- hold-note: ` at issue index 2) ∧ an `f` on the PR from **before** the hold (`머지 판정: ✅`, index 5) ∧ no `H` ∧ `D` present | ② Pick | **`fbdcfba`: ⑴ read PR index 5 > issue index 2 as a resolution → ② Pick** (pre-hold code mis-merged) | **⑴ no resolution candidate** (no same-array baseline) → 2)·3) judge direction from the issue-side decision | ✅ axis⑧ |
-| 29 | **issue-only boundary** ∧ an `r` on the PR (last tick's correction bounce) ∧ the issue-side boundary's `createdAt` is **later than or equal to** `r`'s (a new hold) ∧ `H` present | ② Pick | **`fbdcfba`: no `h` in the PR array, so `r > h` is undefined** — entering the idempotency branch on the marker's existence gives `A` false ∧ `R` false → the transition re-call strips the new hold's `hold:*` | **read as `r ≤ h` → 2)** → ⓑ false (labels present) → **hold stands · untouched** | ✅ axis⑧ |
+| 28 | **issue-only boundary** (zero boundary/marker in the PR array, `<!-- hold-note: ` at issue index 2) ∧ an `f` on the PR from **before** the hold (`머지 판정: ✅`, index 5) ∧ no `H` ∧ `D` present | ② Pick | **`fbdcfba`: ⑴ read PR index 5 > issue index 2 as a resolution → ② Pick** (pre-hold code mis-merged) · **`411f51a2`: no resolution candidate → 2)·3) judged direction from the issue-side decision** (no comparison, but the shape was put on the normal path) | **⑴ no resolution candidate → re-call `closeout-blocked` to restore both boundaries** (`D` lies before the restored boundary and is not counted — quote it so the human answers again) | ✅ axis⑧ ✅ axis⑨ |
+| 29 | **issue-only boundary** ∧ an `r` on the PR (last tick's correction bounce) ∧ a new hold on the issue ∧ `H` present | ② Pick | **`fbdcfba`: no `h` in the PR array, so `r > h` is undefined** — entering the idempotency branch on the marker's existence gives `A` false ∧ `R` false → the transition re-call strips the new hold's `hold:*` · **`411f51a2`: strict `createdAt` comparison → `r ≤ h` → 2)** | **⑴ no resolution candidate → `H` present → hold stands · untouched** (nothing compared — not `createdAt` either) | ✅ axis⑧ ✅ axis⑨ |
+| 30 | **issue-only boundary** ∧ PR array `[r, f]` (`f > r` — after the correction bounce the worker fixed it and the verifier posted ✅) ∧ **after that** a new hold on the issue only (the PR-side `closeout-blocked` comment failed) ∧ no `H` | ② Pick | **`411f51a2`: "when the PR array has a marker `r`, `f > r` is judged normally" → resolution → ② Pick** (the later issue-side hold ignored entirely — attempt 3 P1) | **⑴ no resolution candidate (regardless of `r`) → re-call `closeout-blocked` to restore both boundaries** | ✅ axis⑨ |
+| 31 | `h` (both sides), `D` present, **`H` present** — the decision is there but the labels are not yet removed (the same input as row 18, arriving via ①-b's `held` row) | ② Pick | **`411f51a2`: ①-b's `held` row read it as "not yet released" and re-called `closeout-blocked` → the fresh hold-note pushed the boundary past `D`, so the moment the labels come off `D` is before the boundary → ambiguous → `closeout-blocked` again** (decision discarded — attempt 3 P2) | **hold stands · untouched — the boundary is not re-posted** (the stop already stands) | ✅ axis⑨ |
+| 32 | after a `closeout-blocked` re-call restored both boundaries, the human writes the decision and removes the labels (`D` after the restored boundary · no `H`) | ② Pick | 3) direction judgment | 3) direction judgment — **the decision after the restore (the later one) wins** | — (same outcome · the row that pins axis⑨'s release path) |
+| 33 | the only decision lies **before** the restored boundary (written on the issue before the restore) and the human merely removes the labels (no `H`) | ② Pick | ambiguous → `closeout-blocked` | same — a decision before the restored boundary does not count as `D` → 2)ⓐ false → **ambiguous** → `closeout-blocked` (put that old decision in the quotation slot so "please answer again" is visible) | — (boundary row · axis⑨) |
 
 ## ② Pick — 1 PR at a time (MAX_CLOSEOUT=1, concurrency 1)
 

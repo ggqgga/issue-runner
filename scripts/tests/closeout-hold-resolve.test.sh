@@ -111,7 +111,7 @@ decide() {
 # 동치류마다 1개 + 경계 1개:
 #   양측 경계 정상       : both_decided(대표) · both_resolved(경계: F 가 H 바로 뒤) ·
 #                          both_stale_f(경계: F 가 H 바로 앞 → 해소 아님)
-#   이슈측 단독(r 없음)   : issue_only(대표 — 낡은 F 가 이슈 경계보다 큰 인덱스) · issue_only_H(경계: 라벨 있음)
+#   이슈측 단독(r 없음)   : issue_only(대표 — 낡은 F 가 PR 인덱스 5, 이슈 경계는 인덱스 2: 격자 28행 그대로) · issue_only_H(경계: 라벨 있음)
 #   이슈측 단독(r 있음)   : issue_only_r_f(대표 — attempt 3 P1 형상, f > r 인데 이슈 보류가 후발) ·
 #                          issue_only_r_only(경계: r 만, f 없음)
 #   재호출 뒤 사람 결정   : restored_then_d(대표 — 복구된 경계 뒤 결정문이 이긴다) ·
@@ -121,7 +121,7 @@ GRID='
 both_decided|H|H,D|0|direction|17
 both_resolved|H,F|H|0|pick|3
 both_stale_f|F,H|H,D|0|direction|-
-issue_only|F|H,D|0|restore|28
+issue_only|X,X,X,X,X,F|X,X,H,D|0|restore|28
 issue_only_H|F|H,D|1|keep|29
 issue_only_r_f|R,F|H,H|0|restore|30
 issue_only_r_only|R|H,D|0|restore|-
