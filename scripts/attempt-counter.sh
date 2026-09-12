@@ -23,10 +23,15 @@
 # 둘 다 생기지 않는다.
 #
 # ── 본문 무손상 ──────────────────────────────────────────────────────────
-# bump 는 마커 substring 한 조각만 갈아끼우고 나머지 줄을 그대로 다시 낸다. 마커가 없으면
-# 본문 끝에 빈 줄 + 마커를 덧붙인다(본문이 비어 있으면 마커만).
-# 한 가지 정규화는 피할 수 없다: `gh pr view --json body -q .body` → 파일 경로는 본문 끝의
-# 개행 개수를 1개로 맞춘다. 마커 이외의 **글자**는 바뀌지 않는다.
+# bump 는 마커 substring 한 조각만 갈아끼우고 **마커 밖 바이트는 하나도 안 바꾼다**. 마커가
+# 없으면 본문 끝에 빈 줄 + 마커를 덧붙인다(본문이 비어 있으면 마커만).
+#
+# 끝 개행까지 바이트로 보존한다 — `jq -j`(레코드 종결자 없음) + 끝 개행 유무를 따로 재서
+# awk 가 그대로 재현한다. `jq -r` 는 본문 끝에 개행을 **하나 더** 붙이는데, 그러면 개행으로
+# 끝나는 본문은 bump 할 때마다 끝에 빈 줄이 하나씩 쌓인다(#465 codex 2회차 [P2-1]).
+# 카운터는 같은 PR 에서 여러 번 도는 물건이라 그 누적이 실제로 보인다. 테스트 스텁이
+# `$(cat …)` 로 끝 개행을 지워 이 결함을 가리고 있었으므로, 스텁도 `jq -Rs` 로 바꿔
+# 본문을 바이트 그대로 왕복시킨다 — 그래야 이 축을 실제로 잰다.
 #
 # ── 알려진 한계(종전 산문과 동일) ────────────────────────────────────────
 # 읽기 → 계산 → `gh pr edit --body-file` 은 원자적이지 않다. 그 사이에 다른 주체가 본문을
@@ -69,7 +74,12 @@ trap 'rm -rf "$tmp"' EXIT
 # (본문이 정말 빈 PR 은 `{"body":""}` 로 오므로 빈 JSON 과 구분된다.)
 gh pr view "$pr" --repo "$repo" --json body > "$tmp/raw.json" 2>/dev/null || exit 2
 [ -s "$tmp/raw.json" ] || exit 2
-jq -r '.body // ""' < "$tmp/raw.json" > "$tmp/body" 2>/dev/null || exit 2
+# `-j` = 레코드 종결자 없음. 본문 바이트 그대로다(위 "끝 개행까지 바이트로 보존").
+jq -j '.body // ""' < "$tmp/raw.json" > "$tmp/body" 2>/dev/null || exit 2
+# 끝 개행 유무 — awk 는 줄 단위라 이 정보를 잃는다. 마지막 바이트가 개행이면
+# `$(tail -c1)` 이 빈 문자열이 된다(명령치환이 끝 개행을 지우므로).
+trail=0
+if [ -s "$tmp/body" ] && [ -z "$(tail -c1 "$tmp/body")" ]; then trail=1; fi
 
 re="<!--[ \\t]*${key}[ \\t]*:[ \\t]*[0-9]+[ \\t]*-->"
 
@@ -89,20 +99,30 @@ if [ "$bump" = 0 ]; then
 fi
 
 new=$((cur + 1))
-awk -v re="$re" -v marker="<!-- ${key}: ${new} -->" '
+# 줄을 다시 이어 붙일 때 **끝 개행은 `trail` 이 정한다**(awk 의 `print` 에 맡기면 없던
+# 개행이 생긴다). `printf "%s"` 로 내보내 ORS 도 안 붙인다.
+awk -v re="$re" -v marker="<!-- ${key}: ${new} -->" -v trail="$trail" '
   { lines[NR] = $0; if (match($0, re)) last = NR }
   END {
-    # 본문이 비었으면(0줄 또는 빈 줄 하나) 마커만 남긴다 — 앞에 빈 줄을 붙이지 않는다.
-    if (last == 0 && (NR == 0 || (NR == 1 && lines[1] == ""))) { print marker; exit }
+    out = ""
     for (i = 1; i <= NR; i++) {
       line = lines[i]
       if (i == last) {
         match(line, re)
         line = substr(line, 1, RSTART - 1) marker substr(line, RSTART + RLENGTH)
       }
-      print line
+      out = out line
+      if (i < NR || trail == 1) out = out "\n"
     }
-    if (last == 0) { print ""; print marker }
+    if (last == 0) {
+      # 마커 부재 → 본문 끝에 빈 줄 하나 띄우고 마커. 본문이 비었으면 마커만.
+      if (out != "") {
+        if (substr(out, length(out)) != "\n") out = out "\n"
+        out = out "\n"
+      }
+      out = out marker "\n"
+    }
+    printf "%s", out
   }
 ' "$tmp/body" > "$tmp/new" 2>/dev/null || exit 2
 

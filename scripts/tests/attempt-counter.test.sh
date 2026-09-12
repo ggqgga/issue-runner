@@ -28,7 +28,9 @@ cat > "$tmp/bin/gh" <<'STUB'
 case "$*" in
   *"pr view"*"--json body"*)
     [ "${STUB_VIEW_RC:-0}" = 0 ] || exit "$STUB_VIEW_RC"
-    jq -n --arg b "$(cat "$STUB_BODY_FILE")" '{body: $b}'
+    # `-Rs` = 파일 전체를 **끝 개행까지** 한 문자열로. 종전 `--arg b "$(cat …)"` 는
+    # 명령치환이 끝 개행을 지워 본문 끝 공백 축을 통째로 못 재게 만들었다(#465 [P2-1]).
+    jq -Rs '{body: .}' < "$STUB_BODY_FILE"
     ;;
   *"pr edit"*"--body-file"*)
     [ "${STUB_EDIT_RC:-0}" = 0 ] || exit "$STUB_EDIT_RC"
@@ -163,6 +165,34 @@ for bad_args in "owner/repo" "owner/repo 7" "owner/repo x repair-count" \
   if run "$tmp/body_n2" 64 "" -- $bad_args; then ok; else
     bad "usage 오류 '$bad_args' → exit 64 무출력 (rc=$rc out=[$out])"; fi
 done
+
+# ── 11-b) 끝 개행 보존 — bump 를 반복해도 마커 밖 바이트가 안 변한다 (#465 [P2-1]) ──
+# `jq -r` 로 본문을 뽑으면 종결자가 하나 더 붙어, 개행으로 끝나는 본문은 bump 마다 끝에
+# 빈 줄이 하나씩 쌓인다. 카운터는 같은 PR 에서 여러 번 도는 물건이라 그 누적이 실제로 보인다.
+printf '앞머리\n\n가운데\n\n' > "$tmp/body_nl2"   # `\n\n` 으로 끝난다
+if run "$tmp/body_nl2" 0 "1" -- owner/repo 7 repair-count --bump; then ok; else
+  bad "끝 개행 픽스처 첫 bump (rc=$rc out=[$out])"; fi
+cp "$tmp/captured" "$tmp/nl_b1"
+# 원본이 접두로 **바이트 그대로** 남아 있어야 한다(끝 개행 개수 포함).
+if head -c "$(wc -c < "$tmp/body_nl2")" "$tmp/nl_b1" | cmp -s - "$tmp/body_nl2"; then ok; else
+  bad "첫 bump 가 본문 끝 바이트를 바꿨다: $(od -c "$tmp/nl_b1" | tail -3)"; fi
+# 두 번째·세 번째 bump — 마커 한 조각 말고는 바이트가 움직이면 안 된다.
+if run "$tmp/nl_b1" 0 "2" -- owner/repo 7 repair-count --bump; then ok; else
+  bad "끝 개행 픽스처 둘째 bump (rc=$rc out=[$out])"; fi
+cp "$tmp/captured" "$tmp/nl_b2"
+if run "$tmp/nl_b2" 0 "3" -- owner/repo 7 repair-count --bump; then ok; else
+  bad "끝 개행 픽스처 셋째 bump (rc=$rc out=[$out])"; fi
+cp "$tmp/captured" "$tmp/nl_b3"
+sed 's/<!-- repair-count: 2 -->/<!-- repair-count: 1 -->/' "$tmp/nl_b2" > "$tmp/nl_r2"
+sed 's/<!-- repair-count: 3 -->/<!-- repair-count: 1 -->/' "$tmp/nl_b3" > "$tmp/nl_r3"
+if cmp -s "$tmp/nl_r2" "$tmp/nl_b1" && cmp -s "$tmp/nl_r3" "$tmp/nl_b1"; then ok; else
+  bad "반복 bump 가 마커 밖 바이트를 바꿨다(빈 줄 누적):"
+  diff <(od -c "$tmp/nl_b1") <(od -c "$tmp/nl_r3") | sed 's/^/      /'; fi
+# 끝 개행이 **없는** 본문도 그대로 — 없던 개행을 만들지 않는다.
+printf '개행 없이 끝' > "$tmp/body_nonl"
+if run "$tmp/body_nonl" 0 "1" -- owner/repo 7 repair-count --bump \
+   && head -c "$(wc -c < "$tmp/body_nonl")" "$tmp/captured" | cmp -s - "$tmp/body_nonl"; then ok; else
+  bad "끝 개행 없는 본문의 접두 바이트가 바뀌었다"; fi
 
 # ── 12) 실행 비트 — 두 SKILL 이 `$SCRIPTS/attempt-counter.sh` 로 직접 exec 한다 ──
 # 비트가 빠지면 조용히 exit 126 → 회차가 항상 빈 값으로 degrade 한다
