@@ -38,9 +38,10 @@
 #      사유를 모르는 `hold:<새 사유>` 는 `H:policy` 로 접는다 — 표에 행이 없는 정지를 자동
 #      재개 칸(H:ladder)에 넣는 것보다 사람 재심이 있는 칸에 넣는 쪽이 안전하다(정지 자체는
 #      어느 쪽이든 세 게이트가 `hold:` 접두로 제외한다 — 여기서 고르는 건 **이름**뿐이다).
-#   4. PR 의 **소유 라벨**로 사다리 칸: harvesting=S5 · verifying=S3 · flow:ready=S4 ·
-#      flow:verify=S2 · flow:claimed=S1. 둘 이상이면 하류(뒷칸)가 이긴다 — 뒷칸 루프가
+#   4. PR 의 **소유 라벨**로 사다리 칸. 둘 이상이면 **하류(뒷칸)가 이긴다** — 뒷칸 루프가
 #      이미 집었다는 뜻이고, 앞칸 라벨이 안 떨어진 것은 반쯤 이동이라 `mismatch` 로 나온다.
+#      그래서 검사는 뒷칸부터다: harvesting=S5 → flow:ready=S4 → verifying=S3 →
+#      flow:verify=S2 → flow:claimed=S1. 이슈 축(`issue_rung`)도 **같은 순서**를 쓴다.
 #   5. 소유 라벨이 없으면: `bounce-state.sh` 가 `bounced` 면 `B`, 아니면 `S0`.
 #      (표의 B 행은 PR `flow:agent-ready` — 대기 칸이라 소유 라벨이 아니다, loop.jq
 #      `is_owner_label`. 그래서 4 와 5 는 겹치지 않는다.)
@@ -143,20 +144,24 @@ out=$(jq -L "$SCRIPT_DIR/lib" -n -c \
   --arg bounce "$bounce" --arg issue "$issue" '
   include "loop";
 
-  # PR 소유 라벨 → 사다리 칸. 하류(뒷칸)가 이긴다.
+  # PR 소유 라벨 → 사다리 칸. **하류(뒷칸)가 이긴다** — 검사 순서가 곧 그 규칙이라
+  # S5 → S4 → S3 → S2 → S1 순으로 내려간다. `verifying`(S3) 을 `flow:ready`(S4) 보다
+  # 먼저 보면 반쯤 이동한 `verify-pass`(verifying+flow:ready)가 S3/verify-runner 로 나와
+  # 산문이 광고한 규칙과 어긋난다(#465 codex 2회차 [P2-2]).
   def pr_rung:
     if   index("harvesting")   then "S5"
-    elif index("verifying")    then "S3"
     elif index("flow:ready")   then "S4"
+    elif index("verifying")    then "S3"
     elif index("flow:verify")  then "S2"
     elif index("flow:claimed") then "S1"
     else null end;
-  # 이슈 칸 라벨 → 같은 사다리. `agent-ready` 는 사다리 전체에서 유지되는 **자격** 라벨이라
-  # 맨 뒤에 둔다 — 앞의 어느 칸도 아닐 때만 S0 이다.
+  # 이슈 칸 라벨 → 같은 사다리, **같은 하류 우선 순서**(두 축이 다른 순서를 쓰면 정상
+  # 미러가 `rung` 불일치로 나온다). `agent-ready` 는 사다리 전체에서 유지되는 **자격**
+  # 라벨이라 맨 뒤다 — 앞의 어느 칸도 아닐 때만 S0 이다.
   def issue_rung:
     if   index("harvesting")     then "S5"
-    elif index("verifying")      then "S3"
     elif index("flow:ready")     then "S4"
+    elif index("verifying")      then "S3"
     elif index("flow:verify")    then "S2"
     elif index("agent:claimed")  then "S1"
     elif index("agent-ready")    then "S0"

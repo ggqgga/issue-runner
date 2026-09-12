@@ -144,6 +144,20 @@ expect "S4 마감 대기" S4 closeout "$NOMM" \
 expect "S5 마감 진행(점유)" S5 closeout "$NOMM" \
   '["harvesting"]' '["harvesting","agent-ready"]' OPEN "$C_OK"
 
+# 칸 라벨이 겹치면(반쯤 이동한 전이) **하류가 이긴다** — 검사 순서 S5→S4→S3→S2→S1 (#465 [P2-2]).
+# 반쯤 끝난 `verify-pass`(verifying→flow:ready)를 S3 로 읽으면 소유가 verify-runner 로 나오는데,
+# 그 칸을 실제로 들고 있는 것은 closeout 이다.
+expect "겹침: verifying+flow:ready → S4(하류가 이긴다)" S4 closeout \
+  '.mismatch | any(startswith("stage: "))' \
+  '["verifying","flow:ready"]' '["flow:ready","agent-ready"]' OPEN "$C_OK"
+expect "겹침: harvesting+flow:ready → S5" S5 closeout \
+  '.mismatch | any(startswith("stage: "))' \
+  '["harvesting","flow:ready"]' '["harvesting","agent-ready"]' OPEN "$C_OK"
+# 이슈 축도 같은 순서여야 한다 — 두 축이 다른 순서를 쓰면 정상 미러가 rung 불일치로 샌다.
+expect "겹침: 이슈 축도 하류 우선(양쪽 verifying+flow:ready → rung 일치)" S4 closeout \
+  '.mismatch | any(startswith("rung: ")) | not' \
+  '["verifying","flow:ready"]' '["verifying","flow:ready","agent-ready"]' OPEN "$C_OK"
+
 # ── 정지 네 종 ──────────────────────────────────────────────────────────
 expect "H:ladder" "H:ladder" resume-sweep "$NOMM" \
   '["hold:ladder","flow:verify"]' '["hold:ladder","flow:verify","agent-ready"]' OPEN "$C_PENDING"
