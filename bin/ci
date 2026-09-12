@@ -2973,5 +2973,43 @@ for f in README.ko.md README.md; do
   grep -qE '^\|[[:space:]]*.full-cycle.[[:space:]]*\|' "$f" \
     || { echo "  ✗ $f 라벨 표에 full-cycle 행 없음 (#245)"; exit 1; }
 done
+# ⑻ (#364) hold:conflict·hold:ladder — #245 가 세 라벨만 고쳐 남은 "사람 대기 사유 —" 접두.
+#    둘 다 기계 정지(#244)인데 그 접두는 사람 몫으로 읽힌다. 특히 `hold:ladder` 는 재개 스윕이
+#    창(RESUME_AFTER_MIN) 뒤 **자동 재개**하는 정지라 사람이 손으로 풀면 스윕과 싸운다(#151 부류).
+#    부정: `--description "사람 대기 사유` 줄이 하나라도 남으면 빨강(주석은 옛 문구를 인용해도 된다).
+if grep -nE -- '--description "사람 대기 사유' scripts/setup-labels.sh; then
+  echo "  ✗ scripts/setup-labels.sh: 라벨 설명에 옛 접두 '사람 대기 사유 —' 가 되살아남(위 줄) — 정지는 기계 정지다 (#364)"; exit 1
+fi
+#    긍정: conflict = 기계 정지, 사람이 푼다(자동 재개 없음) · ladder = 기계 정지, 창 뒤 자동 재개.
+#    창 상수명은 resume-sweep.sh 의 실제 정의(`RESUME_AFTER_MIN=`)와 같은 철자여야 한다.
+for tok in '기계 정지' '자동 재개 없음'; do
+  grep -A1 -F 'gh label create "hold:conflict"' scripts/setup-labels.sh | grep -qF -- "$tok" \
+    || { echo "  ✗ scripts/setup-labels.sh: hold:conflict 설명에 '$tok' 없음 — 기계 정지·사람이 푼다(자동 재개 없음)를 적어라 (#364)"; exit 1; }
+done
+grep -qE '^RESUME_AFTER_MIN=' scripts/resume-sweep.sh \
+  || { echo "  ✗ scripts/resume-sweep.sh: 창 상수 RESUME_AFTER_MIN 정의가 없다 — hold:ladder 설명이 가리키는 상수명 (#364)"; exit 1; }
+for tok in '기계 정지' 'RESUME_AFTER_MIN' '자동 재개'; do
+  grep -A1 -F 'gh label create "hold:ladder"' scripts/setup-labels.sh | grep -qF -- "$tok" \
+    || { echo "  ✗ scripts/setup-labels.sh: hold:ladder 설명에 '$tok' 없음 — 창(RESUME_AFTER_MIN) 뒤 재개 스윕이 자동 재개함을 적어라 (#364)"; exit 1; }
+done
+#    '자동 재개' 는 '자동 재개 없음' 의 부분문자열 — ladder 를 conflict 꼴("자동 재개 없음")로 잘못 고쳐도
+#    위 긍정만으론 초록이라(사전 리뷰 WARN), ladder 줄에서 그 부정어를 따로 막는다.
+if grep -A1 -F 'gh label create "hold:ladder"' scripts/setup-labels.sh | grep -qF -- '자동 재개 없음'; then
+  echo "  ✗ scripts/setup-labels.sh: hold:ladder 설명이 '자동 재개 없음' — ladder 는 재개 스윕이 자동 재개하는 정지다 (#364)"; exit 1
+fi
+#    README 한/영 라벨 표의 hold:* 행(세 라벨 한 행)도 같은 축 — ladder 의 창 상수명과
+#    conflict 의 "자동 재개 없음" 이 설명(setup-labels.sh)과 어긋나면 표만 읽는 사람이 옛 계약을 믿는다.
+for f in README.ko.md README.md; do
+  hold_row=$(grep -E '^\|[[:space:]]*`hold:conflict`' "$f" || true)  # set -e 아래서도 아래 사유 메시지까지 간다
+  [ -n "$hold_row" ] || { echo "  ✗ $f 라벨 표에 hold:conflict 행 없음 (#364)"; exit 1; }
+  case "$f" in README.ko.md) toks='RESUME_AFTER_MIN|자동 재개 없음' ;; *) toks='RESUME_AFTER_MIN|no auto-resume' ;; esac
+  printf '%s\n' "$toks" | tr '|' '\n' | while IFS= read -r tok; do
+    printf '%s\n' "$hold_row" | grep -qF -- "$tok" \
+      || { echo "  ✗ $f 라벨 표 hold:* 행에 '$tok' 없음 — setup-labels.sh 설명과 동기 (#364)"; exit 1; }
+  done || exit 1
+  if printf '%s\n' "$hold_row" | grep -qE '사람 대기 사유|human-waiting reason'; then
+    echo "  ✗ $f 라벨 표 hold:* 행이 옛 접두(사람 대기 사유)로 되돌아감 (#364)"; exit 1
+  fi
+done
 
 echo "CI pass"
