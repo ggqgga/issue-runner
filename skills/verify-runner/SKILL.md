@@ -25,8 +25,10 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
   틱을 기다리지 말고** ①② 로 되돌아 다음 후보를 이어간다(아래 ⑤ Drain). 이 노브가
   E2E 크롬 부하 상한이다 — 절대 올리지 마라(동시 실행 = 크롬 자기포화 = 타임아웃).
 - `VERIFY_ATTEMPTS_LIMIT = 3` — 같은 PR 검증이 N회 실패(재디스패치)하면 그 다음엔
-  재디스패치 대신 `needs-human` 으로 승격한다(무한 반송 서킷 브레이커). 카운트는 PR
-  본문 `<!-- verify-attempt: N -->` 주석에 누적(issue-runner repair-count 동형).
+  재디스패치 대신 `hold:policy` 로 정지한다(무한 반송 서킷 브레이커 — 아래 ④ **held**,
+  `verify-held --reason policy`). 사람 호출(`needs-human`)은 그 정지의 재심이 "사람 몫
+  유지" 로 끝났을 때만 붙는다(#244 — issue-runner ① 의 `policy-kept` 가 유일한 생산자다).
+  카운트는 PR 본문 `<!-- verify-attempt: N -->` 주석에 누적(issue-runner repair-count 동형).
 - `STALE_FINISH_MIN = 30` — `finish-classify.sh` 시간버퍼(분). 재사용.
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
 - `VERIFIER = codex:codex-rescue` — diff correctness 검증자 서브에이전트 타입.
