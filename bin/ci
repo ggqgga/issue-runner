@@ -1594,15 +1594,15 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f ①-c 1) 멱등 분기에 하류 활성 레인 술어 'A' 의 정의식이 없음(#334 BLOCKER)"; exit 1; }
   [ -n "$defR" ] \
     || { echo "  ✗ $f ①-c 1) 멱등 분기에 재디스패치 목표 상태 'R' 의 정의식이 없음(#334 BLOCKER)"; exit 1; }
-  # A = 사다리 뒤 단계 넷. agent-ready 가 들어오면 상수 참이 되어 술어가 죽는다.
-  for lbl in 'agent:claimed' 'flow:verify' 'flow:ready' 'harvesting'; do
+  # A = 사다리 뒤 단계 다섯(#275 verifying 포함). agent-ready 가 들어오면 상수 참이 되어 술어가 죽는다.
+  for lbl in 'agent:claimed' 'flow:verify' 'verifying' 'flow:ready' 'harvesting'; do
     grep -qF -- "$lbl" <<<"$defA" \
       || { echo "  ✗ $f ①-c 1) 술어 A 정의식에 '$lbl' 없음 — 살아있는 하류 레인을 걷어낸다(#334 BLOCKER①-a): [$defA]"; exit 1; }
   done
   grep -qF -- 'agent-ready' <<<"$defA" \
     && { echo "  ✗ $f ①-c 1) 술어 A 정의식에 'agent-ready' 가 있다 — 어느 remove 칸에도 없어 상수 참이고, ∨ 항 하나가 상수면 술어 전체가 상수다(#334 BLOCKER): [$defA]"; exit 1; }
   # R = add 칸 있음 ∧ remove 칸 전부 없음.
-  for lbl in 'agent-ready' 'agent:claimed' 'flow:verify' 'flow:ready' 'harvesting' 'needs-human' 'hold:*'; do
+  for lbl in 'agent-ready' 'agent:claimed' 'flow:verify' 'verifying' 'flow:ready' 'harvesting' 'needs-human' 'hold:*'; do
     grep -qF -- "$lbl" <<<"$defR" \
       || { echo "  ✗ $f ①-c 1) 술어 R 정의식에 '$lbl' 없음 — 전이 표 closeout-redispatch 행의 add∧remove 전부여야 한다(#334 BLOCKER): [$defR]"; exit 1; }
   done

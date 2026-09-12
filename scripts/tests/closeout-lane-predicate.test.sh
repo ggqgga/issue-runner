@@ -11,7 +11,7 @@
 #
 # 재는 축 넷:
 #   ⑴ `A` 에 `agent-ready` 가 들어 있지 않다 (∨ 항에 상수 참이 있으면 술어 전체가 상수).
-#   ⑵ `A`·`R` 의 라벨 집합이 전이 표(`transition.sh:20` closeout-redispatch 행)와 일치한다.
+#   ⑵ `A`·`R` 의 라벨 집합이 전이 표(`transition.sh:22` closeout-redispatch 행)와 일치한다.
 #   ⑶ **값이 갈린다** — "전이 섰음" 픽스처와 "전이 실패(이슈측 편집 미적용)" 픽스처에서
 #      분기 결정이 **다르다**. 구 술어(`agent-ready` 포함)에서는 둘이 **같았다**(=고친 게
 #      아니라는 반증의 기준선). 구 술어 결정도 같은 격자에서 함께 계산해 나란히 찍는다.
@@ -148,17 +148,17 @@ check_eq "A 의 연산자는 ∨ 하나(하류 레인 라벨 **하나라도** �
 check_eq "A 의 연산자 — en 동문" "$A_OP" "$A_OP_EN"
 check_eq "R 의 극성: agent-ready 만 '있음'" "have|agent-ready" \
   "$(grep '^have|' <<<"$R_GROUPS" | sort -u | tr '\n' ' ' | sed 's/ $//')"
-check_eq "R 의 극성: 나머지 여섯은 전부 '없음'" \
-  "none|agent:claimed none|flow:ready none|flow:verify none|harvesting none|hold:* none|needs-human" \
+check_eq "R 의 극성: 나머지 일곱은 전부 '없음'(#275 verifying 포함)" \
+  "none|agent:claimed none|flow:ready none|flow:verify none|harvesting none|hold:* none|needs-human none|verifying" \
   "$(grep '^none|' <<<"$R_GROUPS" | sort -u | tr '\n' ' ' | sed 's/ $//')"
 check_eq "R 의 극성 묶음 — en 동문" "$(sort -u <<<"$R_GROUPS")" "$(sort -u <<<"$R_GROUPS_EN")"
 
 # ── ⑴⑵ 집합 자체 ──────────────────────────────────────────────────────────
 # 전이 표 `closeout-redispatch` 행(이슈): add=agent-ready · remove=harvesting flow:ready
-# flow:verify agent:claimed needs-human hold:*  — A 는 그중 **사다리 뒤 단계 넷**,
+# flow:verify verifying agent:claimed needs-human hold:*  — A 는 그중 **사다리 뒤 단계 다섯**(#275 verifying 포함),
 # R 은 add 있음 ∧ remove 전부 없음.
-check_eq "A 집합 = 사다리 뒤 단계 넷(agent-ready 없음)" \
-  "agent:claimed flow:ready flow:verify harvesting " "$A_SET"
+check_eq "A 집합 = 사다리 뒤 단계 다섯(agent-ready 없음 · #275 verifying 포함)" \
+  "agent:claimed flow:ready flow:verify harvesting verifying " "$A_SET"
 check_eq "A 집합 — en 동문" "$A_SET" "$A_SET_EN"
 case " $A_SET " in
   *" agent-ready "*) fail=$((fail + 1)); echo "  ✗ A 에 agent-ready 가 있다 — 사다리 내내 유지되는 자격 라벨이라 상수 참이고, ∨ 항에 상수가 하나만 있어도 술어 전체가 상수가 된다(#334 BLOCKER)" ;;
@@ -166,7 +166,7 @@ case " $A_SET " in
 esac
 check_eq "R.있음 = agent-ready" "agent-ready " "$R_HAVE"
 check_eq "R.없음 = remove 칸 전부" \
-  "agent:claimed flow:ready flow:verify harvesting hold:* needs-human " "$R_NONE"
+  "agent:claimed flow:ready flow:verify harvesting hold:* needs-human verifying " "$R_NONE"
 check_eq "R.있음 — en 동문" "$R_HAVE" "$R_HAVE_EN"
 check_eq "R.없음 — en 동문" "$R_NONE" "$R_NONE_EN"
 
@@ -219,6 +219,7 @@ landed|agent-ready|untouched|26
 failed_hold|agent-ready,needs-human,hold:policy|recall|13
 failed_hold_only|agent-ready,hold:policy|recall|13
 verify_window|agent-ready,flow:verify|untouched|14
+verifying_window|agent-ready,verifying|untouched|14
 new_claim|agent-ready,agent:claimed|untouched|12
 harvest|agent-ready,harvesting|untouched|12
 ready|agent-ready,flow:ready|untouched|12

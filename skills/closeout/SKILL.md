@@ -691,10 +691,10 @@ attempt 2 규칙은 **폐기**했다(#334 사람 결정 ⓐ: 배열을 넘는 �
 
 **★ 이 분기가 "전이가 섰는가" 를 묻지 않는 이유 — 그 질문은 라벨로 답할 수 없다 (#334
 BLOCKER).** 이 절이 `closeout-redispatch` 를 부르는 형상에서 그 전이의 **이슈 라벨 편집은
-대개 no-op** 이다. 호출 직전 상태를 전이 표(`scripts/transition.sh:20`)의 이슈 칸과 나란히
-놓으면 그대로 겹친다: `closeout-blocked` 가 `harvesting`·`flow:ready`·`flow:verify` 를 이미
-뗐고(`:19`), `agent:claimed` 는 `handoff-verify` 가 이미 뗐고(`:14`), `needs-human`·`hold:*` 는
-아래 2) ⓑ 가 **부재를 이미 요구**했고, `agent-ready` 는 **어느 remove 칸에도 없어**(`:28-30`)
+대개 no-op** 이다. 호출 직전 상태를 전이 표(`scripts/transition.sh:22`)의 이슈 칸과 나란히
+놓으면 그대로 겹친다: `closeout-blocked` 가 `harvesting`·`flow:ready`·`flow:verify`·`verifying` 를 이미
+뗐고(`:21`), `agent:claimed` 는 `handoff-verify` 가 이미 뗐고(`:14`), `needs-human`·`hold:*` 는
+아래 2) ⓑ 가 **부재를 이미 요구**했고, `agent-ready` 는 **어느 remove 칸에도 없어**(`:41-43`)
 사다리 내내 남는다. **상태가 안 변하는 편집은 성공해도 실패해도 같은 라벨 모양을 남긴다** —
 그러므로 그 형상에서 "전이가 섰다/안 섰다" 를 가르는 라벨 술어는 **존재할 수 없다.**
 옛 술어가 상수 참이었던 건 `agent-ready` 를 `∨` 항에 넣어서만이 아니라 **질문 자체가 라벨로
@@ -704,12 +704,13 @@ BLOCKER).** 이 절이 `closeout-redispatch` 를 부르는 형상에서 그 전�
 것은 **"지금 워커가 오는가(`R`), 아니면 누가 이미 들고 있는가(`A`)"** 다. 둘 다 라벨로
 결정되고, 둘 다 상수가 아니다.
 
-**하류 활성 레인 라벨 `A` = `agent:claimed` ∨ `flow:verify` ∨ `flow:ready` ∨ `harvesting`**
-— 전이 표(`scripts/transition.sh:20`) `closeout-redispatch` 행의 이슈 **remove 칸 중 사다리
-뒤 단계** 넷이다(디스패처 claim→`agent:claimed`, `handoff-verify`→`flow:verify`,
-`verify-pass`→`flow:ready`, `closeout-pick`→`harvesting`). 이 넷은 전이의 목표 상태에는 **없는**
+**하류 활성 레인 라벨 `A` = `agent:claimed` ∨ `flow:verify` ∨ `verifying` ∨ `flow:ready` ∨ `harvesting`**
+— 전이 표(`scripts/transition.sh:22`) `closeout-redispatch` 행의 이슈 **remove 칸 중 사다리
+뒤 단계** 다섯이다(디스패처 claim→`agent:claimed`, `handoff-verify`→`flow:verify`,
+`verify-pick`→`verifying`(#275 — verify-runner 가 집는 순간 `flow:verify` 를 이것으로 바꾼다),
+`verify-pass`→`flow:ready`, `closeout-pick`→`harvesting`). 이 다섯은 전이의 목표 상태에는 **없는**
 칸이라, 전이 뒤에 이슈에 붙어 있다는 것은 **사다리가 그 뒤로 다시 움직였다**는 뜻이다.
-**`agent-ready` 는 이 목록에 넣지 마라(#334 BLOCKER)** — 어느 remove 칸에도 없어(`:28-30`)
+**`agent-ready` 는 이 목록에 넣지 마라(#334 BLOCKER)** — 어느 remove 칸에도 없어(`:41-43`)
 열린 사다리 이슈에서 **상수 참**이고, `∨` 항에 하나라도 상수 참이 있으면 술어 전체가 상수가
 되어 어떤 입력도 가르지 못한다. **워커 레인 두 라벨(`agent-ready`·`agent:claimed`)만 보는
 것도 틀렸다(BLOCKER ①-a)**: `handoff-verify` 는 이슈에서 `agent:claimed` 를 **떼고**
@@ -720,24 +721,24 @@ BLOCKER).** 이 절이 `closeout-redispatch` 를 부르는 형상에서 그 전�
 verify-runner 소유라는 이 절 자신의 계약의 귀결이다). **전이 표가 SSOT 다** — 새 전이가
 이슈에 칸을 남기게 되면 이 목록에 그 칸을 더해라.
 
-**재디스패치 목표 상태 `R` = `agent-ready` 있음 ∧ `agent:claimed`·`flow:verify`·`flow:ready`·
+**재디스패치 목표 상태 `R` = `agent-ready` 있음 ∧ `agent:claimed`·`flow:verify`·`verifying`·`flow:ready`·
 `harvesting`·`needs-human`·`hold:*` 전부 없음** — 같은 전이 행의 이슈 **add 칸이 있고 remove
 칸이 전부 없다**, 즉 `closeout-redispatch` 가 도달시키려는 바로 그 상태다. 이 집합은
 `scripts/eligible-issues.sh` 의 디스패치 자격 술어(`label:agent-ready` 서버 쿼리 +
-`agent:claimed`·`needs-human`·`hold:` 접두·`flow:verify`·`flow:ready`·`harvesting` 클라이언트
+`agent:claimed`·`needs-human`·`hold:` 접두·`flow:verify`·`verifying`·`flow:ready`·`harvesting` 클라이언트
 배제)와 **같은 집합**이다 — 그래서 `R` 이 참이면 "다음 디스패치 틱이 이 이슈를 집는다"가
 참이고, 그것이 이 분기가 전이로 얻으려던 전부다. (자격 술어의 SSOT 는 그 스크립트다 —
 여기는 그 집합을 **재사용**하는 자리이지 두 번째 정의가 아니다.)
 
 **신호 방향 — 같은 라벨이 두 술어에서 반대 극성을 갖는 것은 의도다.** 옛 술어는
 `harvesting`·`flow:ready`·`flow:verify` 의 **존재**를 "전이가 섰다" 로 셌다. 그건 전이가
-**제거하는** 칸을 성공의 증거로 읽는 **반전**이다. 새 술어에서 이 셋(과 `agent:claimed`)의
-존재는 `R` 을 **거짓**으로 만든다 — 목표 상태 미달, 정방향이다. 같은 넷이 `A` 에서는 무접촉
+**제거하는** 칸을 성공의 증거로 읽는 **반전**이다. 새 술어에서 이 셋(과 `verifying`·`agent:claimed`)의
+존재는 `R` 을 **거짓**으로 만든다 — 목표 상태 미달, 정방향이다. 같은 다섯이 `A` 에서는 무접촉
 쪽으로 세지만 그건 *"전이가 섰다"* 는 주장이 **아니라** *"재호출이 살아있는 레인의 칸을
 뗀다"* 는 **별개의 주장**이다. 두 주장이 갈리는 입력(`A` 참 ∧ `R` 거짓)에서는 **파괴적이지
 않은 쪽이 이긴다**(fail-closed) — 그래서 아래 분기는 `A` 를 먼저 본다.
 
-- **`A` 참(넷 중 하나라도 있다)** → 하류 레인이 이 건을 들고 있다 → **이번 틱은 손대지 마라**
+- **`A` 참(다섯 중 하나라도 있다)** → 하류 레인이 이 건을 들고 있다 → **이번 틱은 손대지 마라**
   (`active` 무접촉). 마커도 다시 쓰지 말고 `closeout-redispatch` 도 다시 부르지 마라.
   ①-b 의 멱등 마커 절은 "마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 **코멘트를**
   재발행하지 않는다" 는 것이지 **전이 재호출까지 막지 않는다** — 이 구멍 때문에 코드가
@@ -748,7 +749,7 @@ verify-runner 소유라는 이 절 자신의 계약의 귀결이다). **전이 �
   레인이 죽으면 `timebox-check.sh`(claim 회수)와 #265 정지 미러 warn 이 보인다.
   **이 갈래의 대가**를 함께 적는다 — `A` 가 참인 만큼 *전이만 재호출* 갈래는 좁아진다. 그
   방향은 fail-closed(살아있는 레인을 안 건드린다)이고, 좁아진 만큼의 정체는 위 두 해제 경로가
-  본다. **`agent:claimed` 는 이 넷 중 유일하게 뜻이 갈리는 칸**이다 — 전이 뒤 새로 디스패치된
+  본다. **`agent:claimed` 는 이 다섯 중 유일하게 뜻이 갈리는 칸**이다 — 전이 뒤 새로 디스패치된
   워커의 claim 일 수도 있고, 전이의 이슈측 편집이 실패해 남은 **옛 claim** 일 수도 있다. 라벨
   모양은 같으므로 여기서도 **비파괴 쪽**을 택한다(옛 claim 을 떼는 것이 PR#239 가 막은 바로 그
   사고다). **옛 claim 의 해제 경로**: `timebox-check.sh` 가 회수하면 그 칸이 비고 다음 틱엔
@@ -931,9 +932,9 @@ verify-runner 소유라는 이 절 자신의 계약의 귀결이다). **전이 �
 
 `h`=보류 경계 · `r`=재디스패치 마커 · `f`=완결 판정 코멘트(`머지 판정: ✅`·`마감 검증: ✅`) ·
 `c`=head 커밋이 더 늦음 · **`A`**=이슈에 **하류 활성 레인 라벨**(`agent:claimed`∪`flow:verify`∪
-`flow:ready`∪`harvesting`) 현재 존재 — **`agent-ready` 는 이 집합에 없다**(어느 remove 칸에도
+`verifying`∪`flow:ready`∪`harvesting`) 현재 존재 — **`agent-ready` 는 이 집합에 없다**(어느 remove 칸에도
 없어 상수 참이라 뺐다, #334 BLOCKER) · **`R`**=이슈가 **재디스패치 목표 상태**
-(`agent-ready` 있음 ∧ `A` 의 넷 없음 ∧ `needs-human`·`hold:*` 없음 = `eligible-issues.sh` 의
+(`agent-ready` 있음 ∧ `A` 의 다섯 없음 ∧ `needs-human`·`hold:*` 없음 = `eligible-issues.sh` 의
 디스패치 자격) · `H`=이슈·PR 에 `needs-human`·`hold:*` 현재 존재 · `D`=창 뒤 결정 코멘트 존재.
 
 `A` 와 `R` 은 배타가 아니다 — **둘 다 거짓인 칸만 진짜 정체**이고 거기서만 전이를 재호출한다.

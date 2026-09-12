@@ -790,10 +790,10 @@ arrays, by index or by time). In every shape where this branch runs, `h` and `r`
 **★ Why this branch does not ask "did the transition land?" — that question cannot be answered by
 labels (#334 BLOCKER).** In the shape where this section calls `closeout-redispatch`, that
 transition's **issue-label edit is usually a no-op**. Lay the state just before the call next to
-the issue cells of the transition table (`scripts/transition.sh:20`) and they coincide:
-`closeout-blocked` already removed `harvesting`·`flow:ready`·`flow:verify` (`:19`),
+the issue cells of the transition table (`scripts/transition.sh:22`) and they coincide:
+`closeout-blocked` already removed `harvesting`·`flow:ready`·`flow:verify`·`verifying` (`:21`),
 `handoff-verify` already removed `agent:claimed` (`:14`), 2) ⓑ below **already requires**
-`needs-human`·`hold:*` to be absent, and `agent-ready` **appears in no remove cell** (`:28-30`) so
+`needs-human`·`hold:*` to be absent, and `agent-ready` **appears in no remove cell** (`:41-43`) so
 it survives the whole ladder. **An edit that changes no state leaves the same label shape whether
 it succeeded or failed** — so in that shape a label predicate that splits "landed / did not land"
 **cannot exist**. The old predicate was constant-true not merely because `agent-ready` sat in a
@@ -804,13 +804,14 @@ comes. So the question changes: the **only purpose** of the transition this bran
 **"is a worker coming (`R`), or is someone already holding it (`A`)"**. Both are decided by
 labels, and neither is constant.
 
-**Downstream active lane labels `A` = `agent:claimed` ∨ `flow:verify` ∨ `flow:ready` ∨ `harvesting`**
-— the four cells of the `closeout-redispatch` row's issue **remove** column that belong to the
-**later rungs** of the ladder (`scripts/transition.sh:20`; dispatcher claim→`agent:claimed`,
-`handoff-verify`→`flow:verify`, `verify-pass`→`flow:ready`, `closeout-pick`→`harvesting`). These
-four are **absent** from the transition's target state, so finding one on the issue after the
+**Downstream active lane labels `A` = `agent:claimed` ∨ `flow:verify` ∨ `verifying` ∨ `flow:ready` ∨ `harvesting`**
+— the five cells of the `closeout-redispatch` row's issue **remove** column that belong to the
+**later rungs** of the ladder (`scripts/transition.sh:22`; dispatcher claim→`agent:claimed`,
+`handoff-verify`→`flow:verify`, `verify-pick`→`verifying` (#275 — the moment verify-runner picks it
+up, `flow:verify` is swapped for this), `verify-pass`→`flow:ready`, `closeout-pick`→`harvesting`). These
+five are **absent** from the transition's target state, so finding one on the issue after the
 transition means **the ladder moved on past it**. **Do not put `agent-ready` in this list
-(#334 BLOCKER)** — it appears in no remove cell (`:28-30`), so on an open ladder issue it is
+(#334 BLOCKER)** — it appears in no remove cell (`:41-43`), so on an open ladder issue it is
 **constant-true**, and a single constant term in a `∨` makes the whole predicate constant, unable
 to split any input. **Looking at the two worker-lane labels (`agent-ready`·`agent:claimed`) only
 is wrong too (BLOCKER ①-a)**: `handoff-verify` **removes**
@@ -823,12 +824,12 @@ that window (a consequence of this section's own contract that ✅ is owned by v
 **The transition table is the SSOT** — when a new transition starts leaving a cell on the issue,
 add that cell to this list.
 
-**Redispatch target state `R` = `agent-ready` present ∧ `agent:claimed`·`flow:verify`·`flow:ready`·
+**Redispatch target state `R` = `agent-ready` present ∧ `agent:claimed`·`flow:verify`·`verifying`·`flow:ready`·
 `harvesting`·`needs-human`·`hold:*` all absent** — the same transition row's issue **add cell is
 present and every remove cell is absent**, i.e. exactly the state `closeout-redispatch` aims at.
 That set is the **same set** as the dispatch-eligibility predicate in
 `scripts/eligible-issues.sh` (server query `label:agent-ready` plus the client-side exclusions
-`agent:claimed`·`needs-human`·`hold:` prefix·`flow:verify`·`flow:ready`·`harvesting`) — so when `R`
+`agent:claimed`·`needs-human`·`hold:` prefix·`flow:verify`·`verifying`·`flow:ready`·`harvesting`) — so when `R`
 is true, "the next dispatch tick will pick this issue up" is true, and that is all this branch
 wanted from the transition. (The SSOT of the eligibility predicate is that script — this is a
 **reuse** site, not a second definition.)
@@ -836,14 +837,14 @@ wanted from the transition. (The SSOT of the eligibility predicate is that scrip
 **Signal direction — the same label carrying opposite polarity in the two predicates is
 deliberate.** The old predicate counted the **presence** of `harvesting`·`flow:ready`·`flow:verify`
 as "the transition landed". That reads a cell the transition **removes** as evidence of success —
-an **inversion**. In the new predicates the presence of those three (and `agent:claimed`) makes
-`R` **false** — target state not reached, the right way round. The same four count toward
+an **inversion**. In the new predicates the presence of those three (and `verifying`·`agent:claimed`) makes
+`R` **false** — target state not reached, the right way round. The same five count toward
 *untouched* in `A`, but that is **not** the claim *"the transition landed"*; it is the separate
 claim *"re-calling would strip a live lane's cell"*. Where the two claims disagree
 (`A` true ∧ `R` false), the **non-destructive** side wins (fail-closed) — which is why the branch
 below reads `A` first.
 
-- **`A` true (any one of the four present)** → a downstream lane owns this →
+- **`A` true (any one of the five present)** → a downstream lane owns this →
   **leave this tick alone** (`active`, untouched). Do not rewrite the marker and do not call
   `closeout-redispatch` again. ①-b's idempotency-marker paragraph says "if the marker already
   exists and there has been no new commit / verifier comment since, do not re-issue **the
@@ -857,7 +858,7 @@ below reads `A` first.
   **The cost of this arm** is stated with it — the more often `A` is true, the narrower the
   *re-call only the transition* arm gets. That direction is fail-closed (a live lane is never
   touched), and the stall that narrowing costs is covered by the two release paths just named.
-  **`agent:claimed` is the one cell of the four whose meaning is genuinely ambiguous** — it may be
+  **`agent:claimed` is the one cell of the five whose meaning is genuinely ambiguous** — it may be
   a worker newly dispatched after the transition, or the **old claim** left behind because the
   transition's issue-side edit failed. The label shape is identical, so here too the
   **non-destructive** side is taken (stripping the old claim is precisely the accident PR#239
@@ -1070,9 +1071,9 @@ against the model (document and model diverging is red).
 
 `h`=hold boundary · `r`=redispatch marker · `f`=completion-verdict comment (`머지 판정: ✅` ·
 `마감 검증: ✅`) · `c`=head commit is later · **`A`**=the issue currently carries a **downstream
-active lane label** (`agent:claimed`∪`flow:verify`∪`flow:ready`∪`harvesting`) — **`agent-ready` is
+active lane label** (`agent:claimed`∪`flow:verify`∪`verifying`∪`flow:ready`∪`harvesting`) — **`agent-ready` is
 not in this set** (it appears in no remove cell, so it is constant-true; dropped, #334 BLOCKER) ·
-**`R`**=the issue is in the **redispatch target state** (`agent-ready` present ∧ none of `A`'s four
+**`R`**=the issue is in the **redispatch target state** (`agent-ready` present ∧ none of `A`'s five
 ∧ no `needs-human`·`hold:*` = `eligible-issues.sh` dispatch eligibility) ·
 `H`=`needs-human`·`hold:*` currently present on the issue or PR · `D`=a decision comment after the
 window exists.
