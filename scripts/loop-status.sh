@@ -697,10 +697,16 @@ def epic_of($body):
   ([($body // "") | split("\n")[]
       | capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)[[:space:]]*$"; "i") | .n]
    | if length > 0 then (.[0] | tonumber) else null end);
-# 라벨 목록 → P0/P1/P2 중 첫 매치(eligible-issues.sh 의 우선순위 판정과 같은 순서).
+# 라벨 목록 → P0 / P1 (eligible-issues.sh 의 우선순위 판정과 **같은 축**, #401 — 축은 둘뿐).
+# 재라벨 전 과도기에 남아 있는 `P2` 는 `P1` 로 접는다: 디스패치가 그 둘을 이미 한 칸으로
+# 보므로, 여기서만 3번째 등급으로 그리면 대시보드가 디스패치와 다른 얘기를 하고
+# (`P 분포` 에 없는 칸이 뜬다) 에픽 P 혼재 경보가 없는 혼재를 지어낸다.
+# `null`(P 라벨 없음)은 그대로 둔다 — "안 붙었다" 는 "P1 이다" 와 다른 사실이고,
+# `priority_counts` 가 null 을 세지 않는 것이 이 절의 기존 계약이다.
 def prio_of($l):
-  if has($l; "P0") then "P0" elif has($l; "P1") then "P1"
-  elif has($l; "P2") then "P2" else null end;
+  if has($l; "P0") then "P0"
+  elif has($l; "P1") or has($l; "P2") then "P1"
+  else null end;
 
 # 이슈 목록만 파일로 받는다(`--slurpfile` → 값 하나가 든 배열) — `body` 를 실으면서
 # 페이로드가 7배(실측 bodat 24KB → 176KB)가 됐고, 200건 상한까지 차면 `--argjson` 의
@@ -789,7 +795,7 @@ def prio_of($l):
      | map(select(($bc[.] // 0) > 0) | "\(epic_bucket_ko(.)) \($bc[.])")
      | join(" · "));
   def epic_prio_segment($pc):
-    (["P0","P1","P2"] | map(select(($pc[.] // 0) > 0) | "\(.) \($pc[.])") | join(" "));
+    (["P0","P1"] | map(select(($pc[.] // 0) > 0) | "\(.) \($pc[.])") | join(" "));
   # 닫힌 leaf 조회가 **실패**했으면 비율을 찍지 않는다 (#292) — `0/3` 도 `leaf 없음(Epic
   # 줄 미부착)` 도 둘 다 "그렇다고 확인했다" 는 주장인데, 실패한 조회는 그 주장을 못 한다.
   # 버킷·P 분포는 그대로 찍는다(그건 **열린** 이슈 목록에서 오므로 이 실패와 무관하다).
@@ -1093,7 +1099,7 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
         | map(. as $e
             | {kind: "epic_priority_mixed", repo_short: $rs, issue: $e.number,
                text: ("에픽 내 P 혼재 #\($e.number)(\($rs)) — "
-                      + (["P0","P1","P2"]
+                      + (["P0","P1"]
                          | map(select(($e.priorities[.] // 0) > 0) | "\(.) \($e.priorities[.])")
                          | join(" · ")))}))
       # 목록 상한 도달 — 창 안의 실패·파생이 잘렸을 수 있다.
