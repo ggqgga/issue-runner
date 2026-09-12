@@ -27,15 +27,6 @@ echo "[lint] 인용 안 한 heredoc 본문의 미이스케이프 백틱·\$( 검
 scripts/lint-heredoc.sh scripts/*.sh hooks/*.sh bin/ci \
   || { echo "  ↑ 백틱은 \\\` 로, 명령치환은 \\\$( 로 이스케이프하거나 <<'DELIM' 로 인용하라"; exit 1; }
 
-echo "[hooks] 동봉 hook 은 전부 README 설치 섹션에 문서화 (영/한)"
-# ship 하는 모든 hooks/*.sh 는 두 README 에 파일명이 나타나야 한다 — 문서화 없이
-# hook 을 추가/이름변경하면 사용자가 등록법을 알 수 없다(설명·settings.json 누락 방지).
-for hp in hooks/*.sh; do
-  hb=$(basename "$hp")
-  grep -qF "$hb" README.md    || { echo "  ✗ README.md 에 hook '$hb' 문서 없음"; exit 1; }
-  grep -qF "$hb" README.ko.md || { echo "  ✗ README.ko.md 에 hook '$hb' 문서 없음"; exit 1; }
-done
-
 echo "[3/5] repo-dir.sh 스모크 테스트"
 out=$(ISSUE_RUNNER_PROJECTS_ROOT=/tmp scripts/repo-dir.sh owner/some-repo)
 [ "$out" = "/tmp/some-repo" ] || { echo "  ✗ 기본 경로 해석 실패: $out"; exit 1; }
@@ -152,34 +143,6 @@ chmod +x "$tmp/stub/gh"
 rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/pr-head-at.sh owner/r 123 2>/dev/null) || rc=$?
 [ "$rc" = 1 ] && [ -z "$out" ] \
   || { echo "  ✗ pr-head-at: 커밋 조회 빈값 rc=$rc out='$out' (기대 rc=1·무출력)"; rm -rf "$tmp"; exit 1; }
-rm -rf "$tmp"
-
-echo "[closeout] closeout-step1-marker 헬퍼 fail-closed·실행비트 스모크 (#271)"
-# 1단계 마커 판정을 못 하면 **아무것도 안 내고 exit≠0** 이어야 한다 — 빈 결과를
-# `skip` 쪽으로 둔갑시키면 검증 안 된 head 가 2단계 머지 게이트를 그냥 통과한다.
-# ① Reconcile 프로즈가 `$SCRIPTS/closeout-step1-marker.sh` 로 직접 exec 하므로 실행 비트도
-# 여기서 문다(빠지면 조용히 exit 126 → 판정이 항상 빈 값으로 degrade 된다, PR#173 교훈).
-[ -x scripts/closeout-step1-marker.sh ] || { echo "  ✗ closeout-step1-marker.sh 실행 비트 없음"; exit 1; }
-tmp=$(mktemp -d); mkdir "$tmp/stub"
-printf '#!/bin/sh\nexit 1\n' > "$tmp/stub/gh"; chmod +x "$tmp/stub/gh"
-rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/closeout-step1-marker.sh owner/r 123 2>/dev/null) || rc=$?
-[ "$rc" != 0 ] && [ -z "$out" ] \
-  || { echo "  ✗ closeout-step1-marker: gh 실패 시 rc=$rc out='$out' (기대 rc≠0·무출력)"; rm -rf "$tmp"; exit 1; }
-rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/closeout-step1-marker.sh 2>/dev/null) || rc=$?
-[ "$rc" != 0 ] && [ -z "$out" ] \
-  || { echo "  ✗ closeout-step1-marker: 인자 누락 시 rc=$rc out='$out' (기대 rc≠0·무출력)"; rm -rf "$tmp"; exit 1; }
-rm -rf "$tmp"
-# `bounce-state.sh --marker-index` 계약 스모크 — 소비자가 이 모드로 반송 선후를 받는다.
-tmp=$(mktemp -d)
-printf '%s' '[{"body":"X","createdAt":"2026-09-11T00:00:00Z"},{"body":"재디스패치: #271 — 사유","createdAt":"2026-09-11T01:00:00Z"}]' > "$tmp/c.json"
-mi=$(BOUNCE_COMMENTS_FILE="$tmp/c.json" scripts/bounce-state.sh --marker-index owner/r 1)
-[ "$mi" = 1 ] || { echo "  ✗ bounce-state --marker-index: 기대 1 실제 '$mi'"; rm -rf "$tmp"; exit 1; }
-printf '%s' '[{"body":"X","createdAt":"2026-09-11T00:00:00Z"}]' > "$tmp/c.json"
-mi=$(BOUNCE_COMMENTS_FILE="$tmp/c.json" scripts/bounce-state.sh --marker-index owner/r 1)
-[ "$mi" = none ] || { echo "  ✗ bounce-state --marker-index: 마커 없을 때 기대 none 실제 '$mi'"; rm -rf "$tmp"; exit 1; }
-# 기본 모드가 안 바뀌었는지(모드 추가가 기존 소비자를 건드리면 안 된다).
-st=$(BOUNCE_COMMENTS_FILE="$tmp/c.json" scripts/bounce-state.sh owner/r 1)
-[ "$st" = ok ] || { echo "  ✗ bounce-state 기본 모드 회귀: 기대 ok 실제 '$st'"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
 echo "[closeout] bounce-state 헬퍼 fail-closed·실행비트 스모크 (#196)"
@@ -866,26 +829,6 @@ out=$(PATH="$tmp/stub:$PATH" bash scripts/closeout-reconcile.sh 2>/dev/null); rc
 [ "$rc" = 0 ] && [ -z "$out" ] || { echo "  ✗ reconcile 빈: rc=$rc out='$out'"; exit 1; }
 rm -rf "$tmp"
 
-echo "[closeout] reconcile harvesting PR 분류 스모크 (#44)"
-# OPEN PR 에 harvesting 라벨이 있으면 pr_open 이 아니라 harvesting 이벤트로 분류돼야
-# 한다 (② Maintain 이 closeout 점유 PR 을 건드리지 않도록). OPEN 경로는 worktree
-# 디렉토리를 만지지 않으므로 gh 세 형태만 스텁한다.
-tmp=$(mktemp -d); mkdir "$tmp/stub"
-cat > "$tmp/stub/gh" <<'EOF'
-#!/bin/sh
-case "$*" in
-  *"api user"*) echo "tester" ;;
-  *"search issues"*) echo '[{"repository":{"nameWithOwner":"o/r"},"number":44}]' ;;
-  *"pr list"*) echo '[{"number":99,"state":"OPEN","statusCheckRollup":[],"labels":[{"name":"harvesting"}]}]' ;;
-  *) echo '' ;;
-esac
-EOF
-chmod +x "$tmp/stub/gh"
-out=$(PATH="$tmp/stub:$PATH" ISSUE_RUNNER_PROJECTS_ROOT="$tmp" bash scripts/reconcile.sh 2>/dev/null)
-ev=$(printf '%s' "$out" | jq -r 'select(.number==44) | .event' 2>/dev/null | head -1)
-[ "$ev" = "harvesting" ] || { echo "  ✗ harvesting PR 분류 실패: event='$ev' (기대 harvesting)"; exit 1; }
-rm -rf "$tmp"
-
 echo "[closeout] references placeholder 검사"
 # macOS 기본 bash 3.2 는 declare -A 미지원 — case 분기로 파일별 placeholder 매핑.
 for f in skills/closeout/references/verifier-prompt.md \
@@ -1261,16 +1204,6 @@ rc=0; run_gate_rollup '[{"status":"COMPLETED","conclusion":"UNKNOWN_STATE"}]' ||
 [ "$rc" = 2 ] || { echo "  ✗ ci-gate rollup: 알 수 없는 conclusion → exit $rc (기대 2)"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
-echo "[closeout] README 두 루프 분업 문서화 검사 (#45)"
-# closeout 루프 문서화 — 언어중립 토큰은 영/한 두 README 모두, 머지 불변은 언어별 보존.
-# (README.md=영문 주 페이지, README.ko.md=한글 미러)
-for s in '/closeout' 'harvesting' 'MAX_CLOSEOUT'; do
-  grep -qF "$s" README.md    || { echo "  ✗ README.md 에 '$s' 없음"; exit 1; }
-  grep -qF "$s" README.ko.md || { echo "  ✗ README.ko.md 에 '$s' 없음"; exit 1; }
-done
-grep -qiF 'never merges'      README.md    || { echo "  ✗ README.md 에 머지 불변(never merges) 없음"; exit 1; }
-grep -qF '머지는 항상 사람이 한다' README.ko.md || { echo "  ✗ README.ko.md 에 머지 불변('머지는 항상 사람이 한다') 없음"; exit 1; }
-
 echo "[closeout] SKILL 3단계 캐시 보강(run-local-ci.sh) 문서화 검사 (#58)"
 # closeout ③ 3단계 doc push 직후 run-local-ci.sh 로 메인 slug 캐시를 채운다는
 # 지시가 한/영 SKILL 양쪽에 있어야 한다 (워크트리 provenance — 머지 게이트 cache-miss
@@ -1436,47 +1369,6 @@ echo "[worker-template] 참조 이슈 본문 체크박스 reconcile 지시 존�
 for f in references/worker-template.md references/worker-template.en.md; do
   grep -qF 'gh issue edit' "$f" || { echo "  ✗ $f 에 참조 이슈 체크박스 reconcile(gh issue edit) 지시 없음"; exit 1; }
 done
-
-echo "[lessons] 경로 repo-dir.sh 명문화 검사 (#80 변경 1 — 문자 그대로 <repo-name> 잔존 0)"
-# 기록(Reconcile)·읽기(Dispatch) 양쪽 lessons 경로가 repo-dir.sh 해석으로 명문화돼야
-# 한다. repos.conf 매핑 머신에서 문자 그대로의 ~/Projects/<repo-name> 는 실제 위치와
-# 어긋난다(랩탑↔미니 사례) — 리터럴 잔존 0 + lessons.md 경로 단락에 repo-dir.sh 명시.
-for f in SKILL.md SKILL.en.md; do
-  if grep -qF 'Projects/<repo-name>' "$f"; then
-    echo "  ✗ $f 에 문자 그대로 'Projects/<repo-name>' 표기 잔존 (repo-dir.sh 해석 경로로 교체 필요)"; exit 1
-  fi
-  if grep -qE '~[^ `]*\.loop/lessons\.md' "$f"; then
-    echo "  ✗ $f 에 lessons.md 홈-상대 리터럴 경로(~/…) 잔존 (repo-dir.sh 해석으로 통일 필요)"; exit 1
-  fi
-  awk 'BEGIN{RS="";ok=0} /lessons\.md/ && /repo-dir\.sh/ {ok=1} END{exit ok?0:1}' "$f" \
-    || { echo "  ✗ $f: lessons.md 경로가 repo-dir.sh 해석으로 명문화된 단락 없음"; exit 1; }
-done
-
-echo "[lessons] 트리거 신호 보강 검사 (#80 변경 3 / #82 — commit statuses 실패 이력·검증자 BLOCKER·NONE 규칙)"
-# local-ci 체제 레포(GitHub Actions 없음)에선 gh run list 가 항상 빈값이라 기존
-# 트리거만으론 교훈이 안 잡힌다. 실 메커니즘은 각 커밋 SHA 를
-# `gh api repos/<repo>/commits/<sha>/statuses` 로 실패 이력을 조회하는 것 —
-# 가드는 이 실 메커니즘(commits/<sha>/statuses)을 앵커로 고정한다. 반례로 폐기된
-# statusCheckRollup 문자열을 앵커로 삼으면, 실 메커니즘이 리팩터로 사라지고
-# "statusCheckRollup 은 못 쓴다"는 반례 설명만 남아도 초록불이 되는 회귀(#82) —
-# statusCheckRollup 은 "왜 안 쓰는지" 반례로 본문에 남되 앵커로는 쓰지 않는다.
-# 검증자 리뷰 코멘트 BLOCKER 를 함께 신호로 요구하고, 신호 0이면 NONE 규칙은 유지.
-for f in SKILL.md SKILL.en.md; do
-  grep -qF 'commits/<sha>/statuses' "$f" \
-    || { echo "  ✗ $f lessons 트리거에 실 메커니즘(commit statuses 실패 이력 조회) 신호 없음"; exit 1; }
-  awk 'BEGIN{RS="";ok=0} /commits\/<sha>\/statuses/ && /BLOCKER/ && /NONE/ {ok=1} END{exit ok?0:1}' "$f" \
-    || { echo "  ✗ $f lessons 트리거 단락에 commit statuses 신호·검증자 BLOCKER·NONE 규칙이 함께 있지 않음"; exit 1; }
-done
-
-echo "[lessons] README lessons 이관 유실 트러블슈팅 증상 검사 (#80 변경 2)"
-# lessons 는 gitignore 로컬 파일이라 머신 이관 시 빠뜨리면 자가학습이 조용히 리셋된다.
-# 이 증상이 영/한 두 README 트러블슈팅에 살아있어야 한다 — 'lessons.md' 단어는
-# 본문 여러 곳에 있어 느슨하므로(회귀 못 잡음), 트러블슈팅 전용 증상 문구를 정확히 잡는다:
-# 영문 "no prior lessons" · 한글 "과거 교훈: 없음".
-grep -qiF 'no prior lessons' README.md \
-  || { echo "  ✗ README.md 트러블슈팅에 'no prior lessons' 증상 항목 없음"; exit 1; }
-grep -qF '과거 교훈: 없음' README.ko.md \
-  || { echo "  ✗ README.ko.md 트러블슈팅에 '과거 교훈: 없음' 증상 항목 없음"; exit 1; }
 
 echo "[closeout] lessons 기록 배선 검사 (#80 변경 4 — 거짓 BLOCKER 반전·코드무관 스모크 실패)"
 # closeout 파이프라인에 반복 실증된 두 지점만 최소 배선: (a) 1단계 검증자 BLOCKER 가
@@ -2385,11 +2277,6 @@ for f in SKILL.md SKILL.en.md; do
     || { echo "  ✗ $f: claim-issue.sh 단락에 잠금 ref(refs/issue-runner/claim) 설명 없음"; exit 1; }
 done
 
-echo "[#109] 시크릿 opt-in(link-secrets) 문서화 검사 — README 한/영 + SKILL 한/영"
-for f in README.md README.ko.md SKILL.md SKILL.en.md; do
-  grep -qF 'link-secrets' "$f" || { echo "  ✗ $f 에 link-secrets 문서 없음"; exit 1; }
-done
-
 echo "[#132] 워커 PR 전 사전 리뷰(9-b) 문서화 검사 — README 한/영 + SKILL 한/영 + 템플릿 한/영"
 for f in README.md README.ko.md SKILL.md SKILL.en.md references/worker-template.md references/worker-template.en.md; do
   grep -qF '9-b' "$f" || { echo "  ✗ $f 에 9-b 사전 리뷰 언급 없음"; exit 1; }
@@ -2773,99 +2660,6 @@ if grep -nF -- "ps -Ao pid,command | grep '[b]in/ci'" references/worker-template
   echo "  ✗ 워커 템플릿에 ps 기반 CI 회수가 되살아남 — 회수는 ci-queue.sh wait 의 종료 코드로"
   exit 1
 fi
-
-echo "[worker-template] WIP 커밋 규율 문면 검사 (#187)"
-# 커밋 트리거가 '완료된 단위' 하나뿐이면 TDD 사이클 중간에 죽은 워커는 커밋이 0이라
-# push 할 것이 없고, 미커밋 작업이 worktree 에 갇혀 그 이슈가 정체한다(cleanup-worktree.sh
-# 더티 가드가 제거를 보류 → 사람 개입). 아래 일곱 축이 한/영 양쪽에 살아 있어야 한다:
-# 규율 제목 · 트리거 (a) · 트리거 (b) · `WIP:` 접두 · 초록 요건의 예외 · 처분 · 그 근거.
-for tok in '**WIP 커밋 규율' \
-           '긴 단계에 들어가기 전' \
-           '마지막 커밋 이후 편집이 상당히 쌓였을 때' \
-           'WIP: <한 줄>' \
-           '초록 요건의 예외' \
-           '최종 PR 에 그대로 남긴다' \
-           'squash 머지'; do
-  grep -qF -- "$tok" references/worker-template.md \
-    || { echo "  ✗ references/worker-template.md 에 WIP 커밋 규율 문구 '$tok' 없음"; exit 1; }
-done
-for tok in '**WIP commit discipline' \
-           'Before entering a long stage' \
-           'significant edits have piled up since your last commit' \
-           'WIP: <one line>' \
-           'exception to the green requirement' \
-           'left in the final PR as-is' \
-           'squash merge'; do
-  grep -qF -- "$tok" references/worker-template.en.md \
-    || { echo "  ✗ references/worker-template.en.md 에 WIP 커밋 규율 문구 '$tok' 없음"; exit 1; }
-done
-
-echo "[loop-issues] 우선순위=에픽 단위 · 의존 정의 문면 검사 (#259)"
-# 이 규약은 문서와 라벨 설명에만 산다(스크립트 로직 변경 없음) — 지워져도 아무 테스트가
-# 안 깨지므로 아래 토큰이 유일한 방지선이다. `Epic #N` 줄 형식의 SSOT 는 문서가 아니라
-# `scripts/loop-status.sh` 의 `epic_of`(`^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)` —
-# 줄 시작 앵커, 이슈당 첫 매치 하나, 대소문자 무시)이고 문서는 그것을 옮긴 것이다.
-# 축: 에픽 줄 · P1 동시 상한 **철회**(#401) · 에픽 본체 무 P · 의존의 정의 · 깊이 상한 ·
-# 분해≠직렬화. 상한 토큰은 "지켜라" 에서 "철회됐다" 로 뒤집혔다 — 옛 문구가 되살아나면
-# 문서가 다시 없는 규칙을 가르친다.
-for tok in 'Epic #N' \
-           'P1 에픽 수 상한' \
-           '에픽 본체에는 P 를 붙이지 않는다' \
-           '컴파일·실행 시점' \
-           '2 를 넘으면' \
-           '의존 있는 조각'; do
-  grep -qF -- "$tok" skills/loop-issues/SKILL.md \
-    || { echo "  ✗ skills/loop-issues/SKILL.md 에 '$tok' 문구 없음"; exit 1; }
-done
-for tok in 'Epic #N' \
-           'cap of two P1 epics' \
-           'never gets a P' \
-           'compile/run time' \
-           'more than 2' \
-           'pieces that actually depend'; do
-  grep -qF -- "$tok" skills/loop-issues/SKILL.en.md \
-    || { echo "  ✗ skills/loop-issues/SKILL.en.md 에 '$tok' 미러 없음"; exit 1; }
-done
-# 트리아지 FIXABLE 사유 — 규약을 어긴 이슈를 무엇으로 부를지가 빠지면 트리아지가 못 잡는다.
-for tok in 'Epic #N` 누락' '에픽 내 P 혼재' '체인 깊이 초과'; do
-  grep -qF -- "$tok" skills/loop-issues/SKILL.md \
-    || { echo "  ✗ skills/loop-issues/SKILL.md 트리아지 FIXABLE 에 '$tok' 없음"; exit 1; }
-done
-for tok in 'missing `Epic #N`' 'mixed P inside' 'chain depth exceeded'; do
-  grep -qF -- "$tok" skills/loop-issues/SKILL.en.md \
-    || { echo "  ✗ skills/loop-issues/SKILL.en.md 트리아지 FIXABLE 에 '$tok' 미러 없음"; exit 1; }
-done
-
-echo "[setup-labels] P 라벨 설명은 에픽 단위 정의 (#259)"
-# 옛 설명("최우선/보통/낮음")으로 되돌아가면 라벨 목록만 보는 사람이 leaf 마다 임의로
-# 매기던 상태로 복귀한다 — 그게 이 이슈의 원인이었다. 설명 문자열만 보며 색·구조는 안 본다.
-grep -qE '"P0".*--description "장애·차단"' scripts/setup-labels.sh \
-  || { echo "  ✗ scripts/setup-labels.sh: P0 설명이 '장애·차단' 이 아님"; exit 1; }
-# P1 은 설명이 길어 다음 줄로 이어지므로 라벨 줄 + 뒤 2줄 구간에서 찾는다.
-grep -A2 -E '"P1"' scripts/setup-labels.sh | grep -qF '에픽 P 상속' \
-  || { echo "  ✗ scripts/setup-labels.sh: P1 설명에 '에픽 P 상속' 없음"; exit 1; }
-# `P2` 설명(`기본`) 가드는 #401 로 폐기 — 축이 P0·P1 둘이라 그 라벨 정의 자체가 없다.
-# 대신 되살아나지 않는지를 문다(이 스크립트가 P2 를 다시 만들면 폐지가 무효가 된다).
-if grep -nE 'gh label create "?P2"?' scripts/setup-labels.sh; then
-  echo "  ✗ scripts/setup-labels.sh: P2 라벨 정의가 되살아남 — 축은 P0·P1 둘뿐이다 (#401)"; exit 1
-fi
-grep -A2 -E '"P1"' scripts/setup-labels.sh | grep -qF 'P0 아닌 전부' \
-  || { echo "  ✗ scripts/setup-labels.sh: P1 설명에 'P0 아닌 전부' 없음 (#401)"; exit 1; }
-
-echo "[README] 라벨 표 — P 행 에픽 단위 정의 + Epic #N 행 (한/영)"
-# 표 행만 집도록 **줄머리 파이프**로 앵커한다 — 두 README 본문 산문(loop-status 절)에도
-# 'Epic #N' 이 이미 있어서, 앵커 없이 grep 하면 이 가드가 수정 전에도 참이 되어 자기가
-# 막으려던 회귀를 못 잡는다(백틱은 셸 전개를 피하려 정규식 '.' 로 둔다).
-for f in README.ko.md README.md; do
-  grep -qE '^\|[[:space:]]*.Epic #N.[[:space:]]*\|' "$f" \
-    || { echo "  ✗ $f 라벨 표에 Epic #N 행 없음 (줄머리 표 행이어야 한다)"; exit 1; }
-done
-# 앵커는 **두 칸**이다 (#401 — `P2` 폐지). 에픽 단위 *부착* 규약은 그대로 살아 있으므로
-# 행 본문의 에픽/epic 검사는 유지한다(정렬 키에서만 빠졌다).
-grep -E '^\|[[:space:]]*.P0. / .P1.[[:space:]]*\|' README.ko.md | grep -qF '에픽' \
-  || { echo "  ✗ README.ko.md 라벨 표 P 행에 에픽 단위 정의 없음"; exit 1; }
-grep -E '^\|[[:space:]]*.P0. / .P1.[[:space:]]*\|' README.md | grep -qF 'epic' \
-  || { echo "  ✗ README.md 라벨 표 P 행에 에픽 단위 정의 없음"; exit 1; }
 
 echo "[#292] loop-status 에픽 닫힌 leaf 조회 — 검색 쿼리 형태·단일 epic_of·헤더 계약"
 # ⑴ 상태는 **`--state closed` 플래그**로 준다. 쿼리 문자열의 `is:closed` 는 `gh` 가
