@@ -2439,6 +2439,60 @@ for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKIL
     echo "  ✗ $f: 산문 --add-label needs-human — runner-held/verify-held/closeout-blocked --reason 을 쓰라"; exit 1; fi
 done
 for f in SKILL.md SKILL.en.md; do grep -qF "resume-sweep.sh" "$f" || { echo "  ✗ $f: 재개 스윕 배선 없음"; exit 1; }; done
+# (#244) 재심 "사람 몫 유지" 판정의 needs-human 부착 배선 — 이게 빠지면 `hold:policy` 재심이
+# 끝나도 사람 호출 신호가 아무 데도 안 남는다(기계 정지에서 needs-human 을 뗀 뒤 남는 유일한
+# 생산자다). 산문 `--add-label needs-human` 은 위 가드가 막으므로 전이로만 배선된다.
+for f in SKILL.md SKILL.en.md; do
+  grep -qF 'transition.sh policy-kept' "$f" \
+    || { echo "  ✗ $f: 재심 '사람 몫 유지' 의 policy-kept 배선 없음 (#244)"; exit 1; }
+done
+grep -qE '^  policy-kept\)' scripts/transition.sh \
+  || { echo "  ✗ scripts/transition.sh: policy-kept 전이 없음 (#244)"; exit 1; }
+# (#244) 순서 계약 — **전이 먼저, 마커 나중**. `<!-- policy-review: kept -->` 는 resume-sweep 이
+# "재심 끝"(reviewed)으로 읽는 유일한 신호라, 마커를 전이보다 먼저 올리면 `policy-kept` 가
+# exit 1/2/64 로 죽어도 다음 틱부터 그 건이 접혀 `needs-human` 이 영영 안 붙고 `policy_review_due`
+# 가 다시는 안 난다(사람 결정이 사람대기 칸에서 봉인). 문단 스코프로 좁힌다(#223) — 파일 다른
+# 곳의 같은 문자열이 순서를 대신 만족시키면 가드가 무의미해진다.
+for f in SKILL.md SKILL.en.md; do
+  pr_s=$(grep -n '^- `policy_review_due`' "$f" | head -1 | cut -d: -f1)
+  pr_e=$(grep -n '^- `waiting`' "$f" | head -1 | cut -d: -f1)
+  { [ -n "$pr_s" ] && [ -n "$pr_e" ]; } \
+    || { echo "  ✗ $f: policy_review_due 불릿 경계(다음 불릿 \`waiting\`)를 못 찾았다 (#244)"; exit 1; }
+  pr_body=$(sed -n "${pr_s},${pr_e}p" "$f")
+  t_line=$(printf '%s\n' "$pr_body" | grep -nF 'transition.sh policy-kept' | head -1 | cut -d: -f1)
+  m_line=$(printf '%s\n' "$pr_body" | grep -nF '<!-- policy-review: kept -->' | head -1 | cut -d: -f1)
+  { [ -n "$t_line" ] && [ -n "$m_line" ]; } \
+    || { echo "  ✗ $f: policy_review_due 불릿에 policy-kept 전이 또는 kept 마커가 없다 (#244)"; exit 1; }
+  [ "$t_line" -lt "$m_line" ] \
+    || { echo "  ✗ $f: kept 마커가 policy-kept 전이보다 앞이다 — 전이가 죽으면 재심이 봉인된다 (#244)"; exit 1; }
+  printf '%s\n' "$pr_body" | grep -qF 'BLOCKED: 전이 실패 policy-kept' \
+    || { echo "  ✗ $f: 전이 비0 시의 목적지(\`BLOCKED: 전이 실패 policy-kept\` · 마커 미부착)가 없다 (#244)"; exit 1; }
+done
+# (#244) closeout ①-b 스윕 **대상 필터** — 기계 정지의 마지막 소비자. 이 필터는 `needs-human`
+# 미부착만 보던 자리인데, #244 가 기계 정지에서 그 라벨을 떼므로 홀드된 PR(harvesting·
+# flow:verify·needs-human 이 전부 없고 `hold:*` 만 남은 PR)이 매 틱 다시 대상이 된다 —
+# hold-note 를 다시 달고, `stale_reverify` 갈래에선 `closeout-redispatch` 가 verify-runner 가
+# 방금 세운 홀드를 통째로 벗긴다(#151 재현). 그래서 ⑴ **대상 문단 안에** `hold:` 접두
+# 미부착이 함께 적혀 있어야 하고(문단 스코프 — 파일 아무 데나 `hold:` 가 있다고 통과하지
+# 않는다), ⑵ 같은 두 파일이 기계 정지를 `needs-human`+`hold:*` **쌍**으로 계속 광고하면
+# 안 된다(전이는 이제 사유 라벨 하나만 붙인다 — 읽는 사람과 다음 구현자가 서로 다른
+# 계약을 믿게 된다, #191).
+awk 'BEGIN{RS="";ok=0} /\*\*대상\*\*:/ && /`hold:` 접두 미부착/ {ok=1} END{exit ok?0:1}' skills/closeout/SKILL.md \
+  || { echo "  ✗ skills/closeout/SKILL.md: ①-b 대상 문단에 \`hold:\` 접두 미부착 필터 없음 (#244)"; exit 1; }
+awk 'BEGIN{RS="";ok=0} /\*\*Targets\*\*:/ && /no `hold:`-prefixed label/ {ok=1} END{exit ok?0:1}' skills/closeout/SKILL.en.md \
+  || { echo "  ✗ skills/closeout/SKILL.en.md: ①-b Targets 문단에 no \`hold:\`-prefixed label 필터 없음 (#244)"; exit 1; }
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md skills/verify-runner/SKILL.md; do
+  if grep -nE '`needs-human` *\+ *`hold:' "$f" | grep -q .; then
+    echo "  ✗ $f: 기계 정지를 \`needs-human\` + \`hold:*\` 쌍으로 서술 — #244 이후 전이는 사유 라벨 하나만 붙인다"; exit 1; fi
+done
+# (#244 WARN) 같은 파일 안에서 계약이 **두 값**으로 갈리지 않게 — `verify-runner` 의
+# `VERIFY_ATTEMPTS_LIMIT` 노브 설명과 ④ held 절차문은 같은 값이어야 한다. 옛 문구(재디스패치
+# 상한 초과를 `needs-human` 으로 승격)는 `transition.sh verify-held` 가 붙일 수 없는 라벨을
+# 광고해, 읽는 사람과 다음 구현자가 서로 다른 계약을 믿는다(#191 과 같은 자리).
+if grep -nE '`needs-human` *으로 승격' skills/verify-runner/SKILL.md | grep -q .; then
+  echo "  ✗ skills/verify-runner/SKILL.md: 재디스패치 상한 초과를 needs-human 승격으로 서술 — 정지는 \`hold:policy\` 다 (#244)"; exit 1; fi
+grep -qF '`hold:policy` 로 정지' skills/verify-runner/SKILL.md \
+  || { echo "  ✗ skills/verify-runner/SKILL.md: 상한 초과 시 \`hold:policy\` 로 정지한다는 서술 없음 (#244)"; exit 1; }
 # 루프 현황 대시보드(#163) — 세 루프 ④ Report 가 --post 로 게시해야 깃헙만 보고 현황을 안다.
 for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qE 'loop-status\.sh --post (issue-runner|verify-runner|closeout)' "$f" || { echo "  ✗ $f: loop-status.sh --post 배선 없음"; exit 1; }
