@@ -280,6 +280,7 @@ add_issue "$fx" 18 '["agent-ready"]' 'MERGED PR 블로커' 'Blocked by #907' '20
 add_issue "$fx" 19 '["agent-ready"]' '조회 실패 블로커' 'Blocked by #908'
 add_issue "$fx" 20 '["agent-ready"]' '미존재 블로커' 'Blocked by #909' '2026-01-01T00:00:20Z'
 add_issue "$fx" 23 '["agent-ready"]' 'verify-runner 블로커' 'Blocked by #913'
+add_issue "$fx" 24 '["agent-ready"]' '단계 라벨 2개 블로커' 'Blocked by #914'
 add_blocker "$fx" 900 OPEN   '["needs-human","hold:policy"]'
 add_blocker "$fx" 901 OPEN   '["agent-ready","agent:claimed"]'
 add_blocker "$fx" 902 OPEN   '["agent-ready","flow:verify"]'
@@ -292,6 +293,9 @@ add_blocker_fail "$fx" 908 'gh: HTTP 502 Bad Gateway'
 add_blocker_fail "$fx" 909 'GraphQL: Could not resolve to an Issue with the number of 909.'
 # verify-runner 가 집은 순간의 점유 라벨(#275) — `대기`(= 곧 집힐 것)로 읽히면 안 된다.
 add_blocker "$fx" 913 OPEN   '["agent-ready","verifying"]'
+# 단계 라벨이 둘이면 **뒤 단계**가 이긴다(#276 — loop-status 의 "사다리 가장 뒤 단계" 와 같은 규칙.
+# 앞 단계가 이기던 옛 순서로 되돌리면 `issue-runner` 가 나와 대시보드 줄 이름과 어긋난다).
+add_blocker "$fx" 914 OPEN   '["agent-ready","agent:claimed","flow:ready"]'
 run_sut "$fx"
 ck "② exit 0" "$RC" "0"
 has_line "② needs-human"   "$ERR" "blocked: owner/repo#11 ← #900(needs-human)"
@@ -300,6 +304,7 @@ has_line "② 검증대기"   "$ERR" "blocked: owner/repo#13 ← #902(검증대�
 has_line "② 마감대기"   "$ERR" "blocked: owner/repo#14 ← #903(마감대기)"
 has_line "② closeout"     "$ERR" "blocked: owner/repo#15 ← #904(closeout)"
 has_line "② verify-runner(verifying, #275)" "$ERR" "blocked: owner/repo#23 ← #913(verify-runner)"
+has_line "② 단계 라벨 2개는 뒤 단계(flow:ready → 마감대기)" "$ERR" "blocked: owner/repo#24 ← #914(마감대기)"
 has_line "② 그 밖은 대기" "$ERR" "blocked: owner/repo#16 ← #905(대기)"
 ck "③ CLOSED 는 blocked 줄 없음" "$(count_of "$ERR" 'blocked: owner/repo#17')" "0"
 ck "③ MERGED PR 은 blocked 줄 없음" "$(count_of "$ERR" 'blocked: owner/repo#18')" "0"
@@ -315,9 +320,9 @@ has_line "③ 미존재는 이유를 warn 으로 남긴다" "$ERR" \
 ck "②③ stdout 통과분(오래된 순)" \
   "$(jq -c '[.[].number]' "$OUT")" '[17,18,20]'
 no_line "② 진단이 stdout 으로 새지 않는다" "$OUT" "blocked"
-has_line "⑦ 요약 — 막힘 8건 · needs-human 1건" "$ERR" "blocked-summary: 막힘 8건 (needs-human 블로커 1건)"
+has_line "⑦ 요약 — 막힘 9건 · needs-human 1건" "$ERR" "blocked-summary: 막힘 9건 (needs-human 블로커 1건)"
 ck "⑦ 요약은 한 줄뿐" "$(count_of "$ERR" 'blocked-summary:')" "1"
-ck "⑤ 블로커 조회는 후보당 한 번(11건)" "$(count_of "$LOG" 'blocker ')" "11"
+ck "⑤ 블로커 조회는 후보당 한 번(12건)" "$(count_of "$LOG" 'blocker ')" "12"
 
 # ── ②-b (#244) 기계 정지(hold:*)인 블로커는 `대기` 가 아니라 `보류` ────────────
 # 기계 정지가 `needs-human` 을 떼고 사유 라벨만 남기게 된 뒤, 이 줄이 없으면 홀드된

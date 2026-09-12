@@ -959,7 +959,7 @@ bash scripts/tests/loop-status.test.sh
 # 산문이 옛 이름으로 대시보드 줄을 가리키면 사람이 없는 줄을 찾는다. 새 이름은 라벨/루프
 # 이름 그 자체(issue-runner·verify-runner·closeout·needs-human)라 이 grep 이 오탐할 자리가 없다.
 echo "[#276] 루프 현황 9줄 — 옛 버킷 문구(구현중·마감중·사람대기) 잔존 0건"
-old_bucket_hits=$(grep -rn '구현중\|마감중\|사람대기' scripts README.ko.md README.md skills 2>/dev/null | grep -v '^bin/ci:' || true)
+old_bucket_hits=$(grep -rn '구현중\|마감중\|사람대기' scripts README.ko.md README.md skills 2>/dev/null || true)
 if [ -n "$old_bucket_hits" ]; then
   echo "  ✗ 옛 버킷 문구가 남아 있다 — issue-runner·closeout·needs-human 으로 (#276):"
   printf '%s\n' "$old_bucket_hits" | head -20 | sed 's/^/      /'

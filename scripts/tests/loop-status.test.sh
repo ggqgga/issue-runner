@@ -889,8 +889,8 @@ has_line "대기 3(창 밖 파생건도 대기에는 남는다)" "$tmp/out" \
 # (#248) 블로커가 없는 픽스처에서는 `막힘 0` 한 줄이 느는 것 말고 출력이 바뀌지 않는다 —
 # 위아래의 기존 기대값이 그대로 통과하는 것이 그 증거다.
 has_line "(#248) 비-막힘 픽스처는 막힘 0" "$tmp/out" "  막힘           0"
-# (#244) 이 픽스처의 정지는 전부 needs-human 을 달고 있어 needs-human가 이긴다 → 보류 0.
-has_line "(#244) needs-human가 이긴 픽스처는 보류 0" "$tmp/out" "  보류           0"
+# (#244) 이 픽스처의 정지는 전부 needs-human 을 달고 있어 needs-human 이 이긴다 → 보류 0.
+has_line "(#244) needs-human 이 이긴 픽스처는 보류 0" "$tmp/out" "  보류           0"
 # 인계 전 창(기본 90분) — #4854 는 60분 전이라 무소속 warn 이 아니라 issue-runner 줄에 붙는다.
 # #4701 의 PR #4855 는 200분 전이라 붙지 않는다(아래 warn 에서 잡힌다).
 has_line "issue-runner 2(좌초건 포함) — 창 안 PR 만 '인계 전' 으로 병기" "$tmp/out" \
@@ -906,7 +906,7 @@ has_line "needs-human 5 — 사다리 위치 + hold:* 사유 + 질문 유무 + �
   "  needs-human    5  #4826(대기, 사유 없음) #4825(대기, ladder, PR #4835) #4780(대기, policy) #4771(대기, conflict) #4770(issue-runner, conflict, 질문 없음)"
 has_line "배포대기 4 — 라벨 + 제목 폴백 2형식 + agent:claimed 이 붙어도 배포대기가 이긴다" "$tmp/out" \
   "  배포대기       4  #4848 #4838 #4796 #4790"
-# 배포대기가 needs-human보다 앞선다 — needs-human 을 단 `배포 검증:` 이슈가 needs-human로 새면 안 된다
+# 배포대기가 needs-human 보다 앞선다 — needs-human 을 단 `배포 검증:` 이슈가 needs-human 으로 새면 안 된다
 no_sub "제목 폴백건은 needs-human에 안 샌다" "$tmp/out" "#4848("
 # ② 창 필터: 머지된 PR·창 밖 PR·사람 브랜치는 실패 아님
 has_line "실패 1 — 창 안 미머지 agent PR 만(dup 라벨 건은 뺀다)" "$tmp/out" \
