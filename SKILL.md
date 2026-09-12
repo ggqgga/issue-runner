@@ -306,6 +306,14 @@ PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·
   `0`=붙었다→마커 남긴다 · `1`(readback 불일치)·`2`(gh 실패)·`64`(호출 형태 오류)=마커
   남기지 않는다(다음 스윕이 재심을 다시 낸다). **마커가 남은 건만**
   **두 번 묻지 않는다**(사람이 라벨을 뗄 때까지). ④ Report 에 `재심 N(재개 n·유지 m)`.
+  **PR 단독 홀드도 같은 절차다**(#395). 이벤트의 `pr` 필드가 축을 가른다 — `pr` 이 채워져
+  있고 `number` 가 `null` 이면 **연결 이슈가 없는 PR** 의 `hold:policy` 다(`verify-held`·
+  `closeout-blocked` 를 `<issue>` 자리 `-` 로 부른 경우). 질문(`<!-- hold-note: policy -->`)은
+  그 PR 에 있으니 거기서 읽고, 재심 코멘트도 `gh pr comment <pr>` 로 **그 PR 에** 남긴다.
+  전이의 이슈 인자는 `-` 다 — 재개는 `$SCRIPTS/transition.sh verify-redispatch <repo> - <pr>`,
+  사람 몫 유지는 `$SCRIPTS/transition.sh policy-kept <repo> - <pr>`(순서·마커·비0 처분은 위와
+  글자 그대로 같다). 연결 이슈가 있는 PR 은 이 이벤트가 **안 난다** — 그 건은 이슈 축이 이미
+  냈다(중복 금지).
 - `waiting` — 아직 창 안이다. 조용히 넘긴다(보고 불필요).
 - exit 2 — 일부 레포의 목록 조회 실패(나머지 레포는 정상 처리됐다) 또는 계정 전체 탐색 실패.
   ④ Report warn 에 `resume-sweep 부분 실패(레포 조회)` 한 줄을 남긴다.

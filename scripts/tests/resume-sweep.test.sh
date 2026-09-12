@@ -213,6 +213,12 @@ case "${1:-} ${2:-}" in
     edit_labels "$STUB_PR_LABELS" "$@"
     exit 0 ;;
   "pr view")
+    # (#395) ③-b PR 단독 재심이 읽는 **PR 코멘트**. 라벨 조회(readback)와 인자로 갈린다.
+    case "$*" in
+      *comments*)
+        [ -z "${STUB_PR_COMMENTS_FAIL:-}" ] || exit 1
+        jq -n --slurpfile c "$STUB_PR_COMMENTS" '{comments: $c[0]}'; exit 0 ;;
+    esac
     if [ -f "${STUB_MIRROR_PRS:-/dev/null}" ] \
        && jq -e --arg n "${3:-}" 'any(.number == ($n|tonumber))' "$STUB_MIRROR_PRS" >/dev/null 2>&1; then
       v="${STUB_MIRROR_READBACK:-}"
@@ -308,6 +314,8 @@ setup() {
   echo '[]' > "$tmp/mirror.prs.json"   # (#265) 기본: 정지 미러 정리 대상 없음
   : > "$tmp/mirror.issues"
   : > "$tmp/mirror.events"            # (#265 ⑷) 기본: 이력 픽스처 없음(스텁이 정상 해제로 답한다)
+  echo '[]' > "$tmp/pr.comments.json"  # (#395) 기본: PR 코멘트 0건
+  STUB_PR_COMMENTS_FAIL=""
   : > "$tmp/gh.log"
   # unset 하면 export 속성이 날아가 이후 대입이 스텁에 안 전달된다 — 빈 값으로 되돌린다.
   STUB_LADDER_FAIL=""; STUB_HUMAN_FAIL=""; STUB_LABEL_EDIT_FAIL=""; STUB_COMMENT_FAIL=""
@@ -349,6 +357,7 @@ export STUB_MIRROR_ONE="$tmp/mirror.one"
 export STUB_MIRROR_LIST_FAIL="" STUB_MIRROR_EDIT_FAIL="" STUB_MIRROR_READBACK=""
 export STUB_MIRROR_RACE="" STUB_MIRROR_EDITED="$tmp/mirror.edited"
 export STUB_MIRROR_EVENTS="$tmp/mirror.events" STUB_MIRROR_EVENTS_FAIL=""
+export STUB_PR_COMMENTS="$tmp/pr.comments.json" STUB_PR_COMMENTS_FAIL=""
 WORKDIR="$tmp/work"
 RC=0
 out=""
@@ -2076,6 +2085,85 @@ LL=3; awk 'BEGIN{for(i=1;i<=3;i++) print "owner/r" i}' > "$tmp/search"; : > "$tm
 run
 check "이슈 축 상한: 문구가 라벨과 축을 밝힌다" "$(saysl '탐색 상한 도달(3, label:needs-human, 이슈)')"
 check "이슈 축 상한: PR 축 문구는 안 난다" "$(printf '%s' "$out" | grep -q '탐색 상한 도달(3, label:[^,]*, PR)' && echo no || echo ok)"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ⑩ (#395) PR 단독 `hold:policy` 재심 — ③ 이 이슈만 스캔해 영영 안 오르던 칸
+#
+# `verify-held`·`closeout-blocked` 는 `<issue>=-` 로도 PR 에 `hold:policy` 를 붙인다. 그 홀드는
+# 이슈 목록에 없어 재심(#155)에 안 올랐다. 축 하나(연결 이슈 유무)를 움직여 중복 금지와
+# 발행을 함께 문다 — 판정(창·마커·needs-human)은 이슈 축과 **같은 함수**를 쓴다.
+# ══════════════════════════════════════════════════════════════════════════════
+pr_comments() { printf '%s' "$1" > "$tmp/pr.comments.json"; }
+pr_policy_rows() {  # pr_policy_rows <closes JSON> <분전> [라벨csv]
+  jq -n --argjson c "$1" --arg u "$(ts "$2")" --arg l "${3:-hold:policy}" \
+    '[{number:701, headRefName:"fix/사람이-연-브랜치",
+       labels: ($l|split(",")|map({name:.})), closingIssuesReferences:$c, updatedAt:$u}]' \
+    > "$tmp/mirror.prs.json"
+}
+# 이번 홀드의 질문(hold-note)만 있고 재심 마커는 없다 = due.
+pp_note='[{"body":"사람 확인(policy): 이 정책은 사람이 답해야 하나\n<!-- hold-note: policy --><!-- bodat:worker -->"}]'
+
+setup "" 200 0
+pr_policy_rows '[]' 200
+pr_comments "$pp_note"
+run
+check "⑩ PR 단독 hold:policy(창 초과): policy_review_due 발행" "$(has_ev policy_review_due)"
+check "⑩ PR 단독: pr 필드로 축이 갈린다(number 는 null)" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .pr == 701 and .number == null' >/dev/null 2>&1 && echo ok || echo no)"
+check "⑩ PR 단독: minutes 가 실린다" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .minutes >= 199' >/dev/null 2>&1 && echo ok || echo no)"
+check "⑩ PR 단독: 무편집(라벨·코멘트 안 건드린다)" \
+  "$([ "$(counts 'pr edit')" = 0 ] && [ "$(counts 'pr comment')" = 0 ] && echo ok || echo no)"
+
+# 연결 이슈가 있으면 **이슈 축만** — PR 축 이벤트는 0(중복 금지, AC 3번).
+setup "" 200 0
+pr_policy_rows '[{"number":333}]' 200
+pr_comments "$pp_note"
+run
+check "⑩ 연결 이슈 있는 PR: PR 축 이벤트 0" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .pr != null' >/dev/null 2>&1 && echo no || echo ok)"
+
+# 창 안이면 조용히 넘긴다(코멘트 조회조차 안 한다 — 이슈 축과 같은 규율).
+setup "" 10 0
+pr_policy_rows '[]' 10
+pr_comments "$pp_note"
+run
+check "⑩ 창 안: 이벤트 없음"        "$(no_ev policy_review_due)"
+check "⑩ 창 안: PR 코멘트 조회 안 함" "$([ "$(counts 'pr view 701 .*comments')" = 0 ] && echo ok || echo no)"
+
+# 이번 홀드가 이미 재심됐으면 다시 묻지 않는다(에피소드 판정이 PR 축에도 선다).
+setup "" 200 0
+pr_policy_rows '[]' 200
+pr_comments '[{"body":"사람 확인(policy): 질문\n<!-- hold-note: policy -->"},
+              {"body":"재심: 사람 몫 유지 — 근거\n<!-- policy-review: kept -->"}]'
+run
+check "⑩ 이미 재심(reviewed): 다시 안 낸다" "$(no_ev policy_review_due)"
+
+# 질문(hold-note)이 없으면 재심 불가 — warn 만(이슈 축과 같은 처분).
+setup "" 200 0
+pr_policy_rows '[]' 200
+pr_comments '[{"body":"그냥 코멘트"}]'
+run
+check "⑩ 질문 없음: due 안 냄"  "$(no_ev policy_review_due)"
+check "⑩ 질문 없음: warn 한 줄" "$(saysl '질문(hold-note) 코멘트가 없다')"
+
+# 사람이 세운 needs-human 동존이면 재심 안 한다(#244) — note, warn 아님.
+setup "" 200 0
+pr_policy_rows '[]' 200 "hold:policy,needs-human"
+pr_comments "$pp_note"
+run
+check "⑩ needs-human 동존: due 안 냄" "$(no_ev policy_review_due)"
+check "⑩ needs-human 동존: note(정상 상태)" "$(has_ev note)"
+check "⑩ needs-human 동존: warn 아님"       "$(no_ev warn)"
+
+# 마커 조회 실패는 "재심 안 함" 으로 조용히 접지 않는다.
+setup "" 200 0
+pr_policy_rows '[]' 200
+pr_comments "$pp_note"
+STUB_PR_COMMENTS_FAIL=1 run
+STUB_PR_COMMENTS_FAIL=""
+check "⑩ 코멘트 조회 실패: due 안 냄" "$(no_ev policy_review_due)"
+check "⑩ 코멘트 조회 실패: warn"      "$(has_ev warn)"
 
 # ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
 # 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는

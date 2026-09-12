@@ -344,6 +344,15 @@ so it is a brake a human put there by hand. Per event:
   shape)=do not post the marker (the next sweep re-emits the re-review). **Only an issue whose
   marker remains** is **never asked twice** (until a human removes the label). Report it in ④ as
   `re-reviewed N (resumed n · kept m)`.
+  **A PR-only hold follows the same procedure** (#395). The event's `pr` field splits the axes: a
+  filled `pr` with `number` = `null` is the `hold:policy` of a **PR with no linked issue**
+  (`verify-held`/`closeout-blocked` called with `-` in the `<issue>` slot). The question
+  (`<!-- hold-note: policy -->`) lives on that PR, so read it there and leave the re-review comment
+  on **that PR** via `gh pr comment <pr>`. The issue argument of the transition is `-`: resume with
+  `$SCRIPTS/transition.sh verify-redispatch <repo> - <pr>`, keep it human with
+  `$SCRIPTS/transition.sh policy-kept <repo> - <pr>` (order, marker and non-zero disposition are
+  letter-for-letter the same as above). A PR that *does* have a linked issue never produces this
+  event — the issue axis already emitted it (no duplicates).
 - `waiting` — still inside the window. Pass over it quietly (no reporting needed).
 - exit 2 — a listing failed for some repos (the rest were processed normally), or the
   account-wide search failed. Leave one warn line `resume-sweep 부분 실패(레포 조회)` in

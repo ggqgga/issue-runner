@@ -16,6 +16,10 @@
 #   resumed   — 라벨을 되돌려 재디스패치 가능 상태로. attempt = 이번이 몇 번째 재개인가.
 #   escalated — 재개 상한 초과 → hold:policy 로 승격. 사람 호출(needs-human)이 되는 것은
 #               그 뒤 재심(③)이 "사람 몫 유지" 로 끝났을 때뿐이다(#244 — 디스패처가 판정).
+#   policy_review_due — `hold:policy` 재심 1회 대상(#155). **두 축**이 낸다(#395):
+#               연결 이슈가 있으면 종전대로 **이슈 축**(`number`=이슈 · `pr`=null),
+#               `closingIssuesReferences` 가 빈 **PR 단독** 홀드면 PR 축(`number`=null ·
+#               `pr`=그 PR). 같은 건을 두 번 내지 않는다 — 연결 이슈가 있는 PR 은 이슈 축만.
 #   waiting   — 아직 창(RESUME_AFTER_MIN) 안. minutes = 마지막 갱신 후 경과 분.
 #   warn      — **아무것도 안 건드린** 채 넘긴 사유(사유 라벨 부재 · 경합 · 첫 쓰기 실패).
 #   warn_after_edit — 쓰기가 **이미 반영된 뒤** 후속 단계가 실패했다(라벨·PR 미러·readback).
@@ -358,6 +362,33 @@ count_markers() {  # count_markers <repo> <num>
     | jq "$JQ_UNQUOTE"'[.comments[]? | select(.body | unquoted | test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
 }
 
+# ── ③ 재심의 두 판정 — **이슈 축과 PR 축이 같은 자리를 쓴다** (#395) ──────────────
+# PR 단독 홀드(`verify-held`·`closeout-blocked` 를 `<issue>=-` 로 부른 경우)도 재심 대상이라
+# 축이 둘이 됐다. 창 판정과 마커 판정을 두 벌로 적으면 한쪽만 고쳐질 때 같은 형상이 축에
+# 따라 다르게 판정된다 — 이 파일이 `read_state`·`deploy_wait_row` 로 이미 세운 규율 그대로
+# 함수 한 자리에 둔다.
+policy_window_min() {  # policy_window_min <updatedAt> → 경과 분 / 해석 불가면 return 1
+  local ep
+  ep=$(jq -n --arg u "$1" '($u | try fromdateiso8601 catch -1)' 2>/dev/null || echo -1)
+  [ "${ep:--1}" -ge 0 ] 2>/dev/null || return 1
+  echo $(( ( $(date -u +%s) - ep ) / 60 ))
+}
+
+# 에피소드 단위 재심 판정. 마지막 `hold-note: policy` 코멘트(=이번 홀드의 질문) **이후**에
+# 재심 마커가 있어야 "이번 홀드는 재심됨" 이다. 옛 홀드의 마커가 새 홀드의 재심을 막지 않게.
+# 질문(hold-note) 자체가 없으면 재심할 대상이 없다(`no-note`).
+# 입력은 `gh issue view --json comments` / `gh pr view --json comments` 응답 **그대로**다 —
+# 두 응답의 모양이 같아서 한 판정이 두 축에 그대로 선다(`transition.sh` 는 질문 코멘트를
+# 이슈와 PR **양쪽**에 남긴다 — 그래서 PR 단독 홀드에도 마커가 PR 에 있다).
+policy_review_state() {  # policy_review_state <comments 응답 JSON> → reviewed|due|no-note|parse-fail
+  printf '%s' "$1" | jq -r "$JQ_UNQUOTE"'
+    [.comments[]? | .body | unquoted] as $b
+    | ([range(0; $b|length)] | map(select($b[.] | test("<!--\\s*hold-note:\\s*policy"))) | last) as $q
+    | if $q == null then "no-note"
+      else ([range($q+1; $b|length)] | map(select($b[.] | test("<!--\\s*policy-review:"))) | length) as $r
+           | if $r > 0 then "reviewed" else "due" end end' 2>/dev/null || echo "parse-fail"
+}
+
 # 연결된 **열린** PR 들 — "<번호><TAB><라벨 콤마목록>" 줄. 없으면 빈 출력(정상).
 list_mirror_prs() {  # list_mirror_prs <repo> <num>
   local out
@@ -526,6 +557,70 @@ mirror_row() {  # mirror_row <PR row-json> — "<PR><TAB><짝 이슈|빈값><TAB
     | [(.number|tostring), $issue, ($closes | map(tostring) | join(" ")),
        ($ln | map(select(. == "needs-human" or startswith("hold:"))) | sort | join(" "))]
     | @tsv' 2>/dev/null
+}
+
+# ── ③-b PR 단독 `hold:policy` 재심 (#395) ──────────────────────────────────────
+# `verify-held`·`closeout-blocked` 는 `<issue>` 자리에 `-` 를 받아 **연결 이슈가 없어도** PR 에
+# `hold:policy` 를 붙인다. 그런데 ③ 은 **이슈 목록**에서 출발하므로 그 홀드는 재심(#155)에
+# 영영 안 오르고 사람이 눈으로 찾을 때까지 남는다(`references/state-machine.md` 회수 열).
+# 그래서 ④ 와 같은 **열린 PR 축**에서 한 번 더 본다 — 목록은 `fetch_open_prs` 한 조회를 공유한다.
+#
+# 판정은 이슈 축과 **같은 자리**를 쓴다(`policy_window_min`·`policy_review_state`) — 축마다
+# 다른 판정을 두면 같은 형상이 어느 축에 걸리느냐로 갈린다. 다른 것은 두 가지뿐이다:
+#   ⑴ **연결 이슈가 있으면 내지 않는다** — 그 건은 이슈 축이 이미 낸다(중복 이벤트 금지).
+#   ⑵ 마커·라벨을 PR 에서 읽는다(`transition.sh` 가 질문 코멘트를 PR 에도 남기므로 가능하다).
+# 배포 대기(deploy-wait) 갈래는 여기 없다 — 그 라벨은 이슈 축의 것이고, PR 단독 홀드에는
+# 붙는 자리가 없다(붙으면 그때 이슈 축이 본다).
+# 무편집 갈래다 — 이벤트만 낸다(재심 코멘트·해제는 디스패처 ①).
+sweep_pr_policy() {  # sweep_pr_policy <repo> <열린 PR row-json>
+  local repo="$1" row="$2" tsv prnum pupd labels closes pmin pout pstate pcur
+  tsv=$(printf '%s' "$row" | jq -r '
+    [(.number|tostring), (.updatedAt // ""),
+     ([.labels[]?.name] | join(",")),
+     ([((.closingIssuesReferences // [])[].number)] | length | tostring)] | @tsv' 2>/dev/null) || tsv=""
+  if [ -z "$tsv" ]; then
+    emit_warn "$repo" 0 "열린 PR 행 파싱 실패 — PR 단독 재심 판정 못 해 건드리지 않는다"
+    return 0
+  fi
+  prnum=$(printf '%s' "$tsv" | cut -f1)
+  pupd=$(printf '%s' "$tsv" | cut -f2)
+  labels=$(printf '%s' "$tsv" | cut -f3)
+  closes=$(printf '%s' "$tsv" | cut -f4)
+
+  has_label "$labels" "hold:policy" || return 0   # 대다수 PR — 조회도 하지 않는다
+  [ "$closes" = 0 ] || return 0                   # ⑴ 연결 이슈가 있으면 이슈 축만
+  # `needs-human` 동존은 **사람이 직접 세운 정지**다(#244) — 이슈 축과 같은 낱말, 같은 처분.
+  if has_label "$labels" "needs-human"; then
+    emit_note "$repo" 0 "PR #$prnum 사람이 세운 needs-human 동존 — 재심 안 함, 정상 상태라 warn 아님"
+    return 0
+  fi
+  pmin=$(policy_window_min "$pupd") \
+    || { emit_warn "$repo" 0 "PR #$prnum updatedAt 해석 불가($pupd) — 재심 창 판정 못 함"; return 0; }
+  [ "$pmin" -ge "$RESUME_AFTER_MIN" ] || return 0
+  pout=$(gh pr view "$prnum" --repo "$repo" --json comments 2>/dev/null) \
+    || { emit_warn "$repo" 0 "PR #$prnum 재심 마커 조회 실패 — 이번 틱은 건너뛴다"; return 0; }
+  pstate=$(policy_review_state "$pout")
+  case "$pstate" in
+    reviewed) return 0 ;;
+    no-note)
+      emit_warn "$repo" 0 "PR #$prnum hold:policy 인데 질문(hold-note) 코멘트가 없다 — 재심 불가, --note 로 다시 걸거나 사람이 처리"
+      return 0 ;;
+    due) ;;
+    *) emit_warn "$repo" 0 "PR #$prnum 재심 마커 해석 실패 — 이번 틱은 건너뛴다"; return 0 ;;
+  esac
+  # due 직전 **재조회**로 최종 판정(#351 과 같은 규율) — 목록 스냅샷은 그 뒤에 사람이 붙인
+  # 정지도, 사람이 방금 푼 홀드도 모른다. 재조회 실패는 "없음" 으로 폴백하지 않는다.
+  if ! pcur=$(read_pr_labels "$repo" "$prnum"); then
+    emit_warn "$repo" 0 "PR #$prnum 재조회 실패(라벨) — needs-human 동존 여부를 확정 못 해 재심을 내지 않는다"
+    return 0
+  fi
+  if has_label "$pcur" "needs-human"; then
+    emit_note "$repo" 0 "PR #$prnum 사람이 세운 needs-human 동존 — 재심 안 함, 정상 상태라 warn 아님"
+    return 0
+  fi
+  has_label "$pcur" "hold:policy" || return 0   # 사람이 방금 풀었다 — 재심 대상이 아니다
+  printf '{"event":"policy_review_due","repo":"%s","number":null,"pr":%s,"minutes":%s}\n' \
+    "$repo" "$(_emit_num "$prnum")" "$pmin"
 }
 
 sweep_hold_mirror() {  # sweep_hold_mirror <repo> <PR row-json>
@@ -1008,8 +1103,10 @@ fetch_issues() {
 # "정리 대상 없음" 으로 위장되지 않게 — fetch_issues 와 같은 규율).
 fetch_open_prs() {
   local repo="$1" out="$2" body count
+  # `updatedAt` 은 ③-b(PR 단독 `hold:policy` 재심, #395)의 창 판정 입력이다 — 이슈 축이
+  # `gh issue list --json … updatedAt` 으로 재는 그 값과 같은 축이다. 한 조회로 두 갈래가 쓴다.
   body=$(gh pr list --repo "$repo" --state open \
-    --json number,labels,headRefName,closingIssuesReferences --limit "$LIST_LIMIT" 2>/dev/null)
+    --json number,labels,headRefName,closingIssuesReferences,updatedAt --limit "$LIST_LIMIT" 2>/dev/null)
   printf '%s' "$body" | jq -e 'type=="array"' >/dev/null 2>&1 || return 1
   count=$(printf '%s' "$body" | jq 'length')
   if [ "${count:-0}" -ge "$LIST_LIMIT" ]; then
@@ -1080,9 +1177,8 @@ while IFS= read -r repo; do
       [ -n "$row" ] || continue
       pnum=$(printf '%s' "$row" | jq -r '.number')
       pupd=$(printf '%s' "$row" | jq -r '.updatedAt // ""')
-      pep=$(jq -n --arg u "$pupd" '($u | try fromdateiso8601 catch -1)' 2>/dev/null || echo -1)
-      [ "${pep:--1}" -ge 0 ] || { emit_warn "$repo" "$pnum" "updatedAt 해석 불가($pupd) — 재심 창 판정 못 함"; continue; }
-      pmin=$(( ( $(date -u +%s) - pep ) / 60 ))
+      pmin=$(policy_window_min "$pupd") \
+        || { emit_warn "$repo" "$pnum" "updatedAt 해석 불가($pupd) — 재심 창 판정 못 함"; continue; }
       [ "$pmin" -ge "$RESUME_AFTER_MIN" ] || continue
       # `needs-human` 은 **사람이 직접 세운 정지**다(#244). ③ 은 `--label hold:policy`
       # 단독 쿼리라 사람이 손으로 그 라벨을 더한 건도 집어 온다 — 그대로 `policy_review_due`
@@ -1112,12 +1208,8 @@ while IFS= read -r repo; do
       # 에피소드 단위: 마지막 `hold-note: policy` 코멘트(=이번 홀드의 질문) **이후**에 재심 마커가
       # 있어야 "이번 홀드는 재심됨" 이다. 옛 홀드의 마커가 새 홀드의 재심을 막지 않게.
       # 질문(hold-note) 자체가 없으면 재심할 대상이 없다 — warn 으로만(레거시·손으로 붙인 홀드).
-      pstate=$(printf '%s' "$pout" | jq -r "$JQ_UNQUOTE"'
-        [.comments[]? | .body | unquoted] as $b
-        | ([range(0; $b|length)] | map(select($b[.] | test("<!--\\s*hold-note:\\s*policy"))) | last) as $q
-        | if $q == null then "no-note"
-          else ([range($q+1; $b|length)] | map(select($b[.] | test("<!--\\s*policy-review:"))) | length) as $r
-               | if $r > 0 then "reviewed" else "due" end end' 2>/dev/null || echo "parse-fail")
+      # 에피소드 판정은 두 축 공용(#395) — 규칙 전문은 policy_review_state 주석.
+      pstate=$(policy_review_state "$pout")
       case "$pstate" in
         reviewed) continue ;;   # 이번 홀드는 이미 1회 재심됨 — 사람이 라벨을 뗄 때까지 다시 안 묻는다
         no-note)
@@ -1154,7 +1246,8 @@ while IFS= read -r repo; do
         emit_note "$repo" "$pnum" "사람이 세운 needs-human 동존 — 재심 안 함, 정상 상태라 warn 아님"
         continue
       fi
-      printf '{"event":"policy_review_due","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$(_emit_num "$pnum")" "$pmin"
+      # `pr` 필드가 두 축을 가른다(#395) — 이슈 축은 PR 번호를 모른다(전이는 `<pr|->` 를 받는다).
+      printf '{"event":"policy_review_due","repo":"%s","number":%s,"pr":null,"minutes":%s}\n' "$repo" "$(_emit_num "$pnum")" "$pmin"
     done 3< "$tmp/issues.policy"
   else
     echo "resume-sweep: $repo hold:policy 목록 조회 실패 — 재심 점검을 건너뛴다" >&2
@@ -1165,13 +1258,17 @@ while IFS= read -r repo; do
   #    ①~③ 과 축이 다르다: 저쪽은 **이슈** 목록에서 출발하는데, 이 갈래가 찾는 상태는
   #    이슈에 라벨이 하나도 없는 것이라 이슈 쪽 쿼리로는 애초에 안 잡힌다. 그래서 **열린
   #    PR** 에서 출발한다.
+  #    같은 목록을 **③-b(PR 단독 hold:policy 재심, #395)** 도 쓴다 — 축이 같아서(열린 PR)
+  #    한 조회를 나눠 쓰고, 두 갈래는 서로 배타적이다(③-b 는 연결 이슈가 **없는** PR 만,
+  #    ④ 는 짝이 **증명된** PR 만 건드린다).
   if fetch_open_prs "$repo" "$tmp/prs.open"; then
     while IFS= read -r prow <&3; do
       [ -n "$prow" ] || continue
+      sweep_pr_policy "$repo" "$prow"
       sweep_hold_mirror "$repo" "$prow"
     done 3< "$tmp/prs.open"
   else
-    echo "resume-sweep: $repo 열린 PR 목록 조회 실패 — 정지 미러 정리를 건너뛴다" >&2
+    echo "resume-sweep: $repo 열린 PR 목록 조회 실패 — 정지 미러 정리·PR 단독 재심을 건너뛴다" >&2
     rc=2
   fi
 done < "$repos_file"
