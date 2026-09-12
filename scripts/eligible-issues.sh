@@ -166,6 +166,7 @@ blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
     *",hold:conflict,"*) printf '사람대기' ;;
     *",hold:"*)          printf '보류' ;;
     *",agent:claimed,"*) printf '구현중' ;;
+    *",verifying,"*)     printf '검증중' ;;
     *",flow:verify,"*)   printf '검증대기' ;;
     *",flow:ready,"*)    printf '마감대기' ;;
     *",harvesting,"*)    printf '마감중' ;;
@@ -224,12 +225,20 @@ while [ "$i" -lt "$count" ]; do
   # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
   printf '%s' "$row" | jq -e '[.labels[].name]|any(startswith("hold:"))' >/dev/null && continue
 
-  # 검증/마감 레인 이슈 제외 (진행 라벨 미러) — 원 이슈에 flow:verify/flow:ready/harvesting
-  # 가 미러링돼 있으면 구현이 끝나 다운스트림(verify-runner·closeout) 소유다. agent:claimed
-  # 가 스윕에 스트립돼도 이 플로우 라벨이 재디스패치를 막는다(중복 워커 방지 + 이슈 리스트
-  # 진행 가시화). 반송은 verify-runner 가 flow:verify 를 떼고 agent-ready 만 남기므로 이
-  # 필터에 안 걸려 정상 재디스패치된다.
-  case ",$labels," in *",flow:verify,"*|*",flow:ready,"*|*",harvesting,"*) continue ;; esac
+  # 검증/마감 레인 이슈 제외 (진행 라벨 미러) — 원 이슈에 flow:verify/verifying/flow:ready/
+  # harvesting 이 미러링돼 있으면 구현이 끝나 다운스트림(verify-runner·closeout) 소유다.
+  # agent:claimed 가 스윕에 스트립돼도 이 플로우 라벨이 재디스패치를 막는다(중복 워커 방지 +
+  # 이슈 리스트 진행 가시화). 반송은 verify-runner 가 flow:verify·verifying 을 떼고
+  # agent-ready 만 남기므로 이 필터에 안 걸려 정상 재디스패치된다.
+  # `verifying`(#275) = verify-runner 가 **지금 검증 중**(집는 순간 flow:verify 를 이것으로
+  # 바꾼다 — harvesting 동형, 이슈에도 미러). 빠지면 검증이 도는 이슈가 여기서 후보로 나가
+  # 워커가 다시 붙는다(verify-runner 와 같은 브랜치를 물어뜯음). 이 네 라벨의 집합은
+  # `claim-issue.sh` 의 직전 재확인·`release-labels.sh` 의 머지 후 해제와 같아야 한다.
+  # 판별은 쉼표 join 이 아니라 라벨 배열이다 — 쉼표를 품은 한 라벨(`x,verifying`)을 두 라벨로
+  # 쪼개 과잉 제외하지 않는다(#266, 위 hold:* 게이트와 같은 표현).
+  printf '%s' "$row" | jq -e '[.labels[].name]
+    | any(. == "flow:verify" or . == "verifying" or . == "flow:ready" or . == "harvesting")' \
+    >/dev/null && continue
 
   # 블로커 = 본문 "Blocked by #N" 라인의 N ∪ blocked-by:<N> 라벨의 N (OR·dedupe).
   # ★이 파싱 규칙의 SSOT 는 여기다 — `scripts/loop-status.sh` 의 `막힘` 버킷(#248)이

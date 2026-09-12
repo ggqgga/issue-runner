@@ -215,5 +215,47 @@ for sut in eligible claim closeout verify; do
   done
 done
 
+# ── 격자 둘 — verify-runner 점유 라벨 `verifying` (#275) ─────────────────────
+# `verifying` 은 harvesting 동형의 점유 라벨이다(verify-runner 가 집는 순간 PR·이슈 양쪽에
+# 붙인다). 그래서 소유 경계가 **비대칭**이다: issue-runner 두 게이트(eligible·claim)와
+# closeout 게이트는 `verifying` 을 **제외**해야 하고(검증 중 이슈가 재디스패치되거나 검증
+# 중 PR 이 입양·재디스패치되면 verify-runner 와 같은 PR 을 물어뜯는다), verify-eligible 만
+# 그것을 **후보(고아 재집)** 로 낸다. 위 격자와 달리 기대가 SUT 마다 다르므로 열을 넷 둔다.
+#
+# 이슈 두 자리는 원 이슈에 미러링된 라벨을 본다 — `agent:claimed` 가 스윕에 스트립돼도
+# 이 라벨이 재디스패치를 막는 마지막 게이트다(eligible-issues.sh 의 검증/마감 레인 제외
+# 주석). claim 은 eligible 이후 인덱스 지연으로 후보에 남은 이슈를 직전에 다시 본다.
+# 과잉 제외 방향(`verified`·`verifying-x`·쉼표 품은 `x,verifying`)은 통과로 못박는다.
+#
+# `이름|추가라벨(JSON)|eligible|claim|closeout|verify`
+grid2=(
+  'verifying → 이슈 두 게이트·closeout 제외 · verify 는 고아 재집|["verifying"]|block|block|block|pass'
+  'flow:verify → 검증대기(verify-runner 소유) — 같은 경계(회귀)|["flow:verify"]|block|block|block|pass'
+  'flow:ready → 마감대기 — closeout 후보(회귀)|["flow:ready"]|block|block|pass|pass'
+  'harvesting → closeout 점유 — 넷 다 제외(회귀)|["harvesting"]|block|block|block|block'
+  'verified → 통과(과잉 제외 금지 · 정확 일치)|["verified"]|pass|pass|pass|pass'
+  'verifying-x → 통과(과잉 제외 금지 · 접두 아님)|["verifying-x"]|pass|pass|pass|pass'
+  'x,verifying(쉼표 품은 한 라벨) → 통과(라벨 경계는 배열)|["x,verifying"]|pass|pass|pass|pass'
+)
+for row in "${grid2[@]}"; do
+  IFS='|' read -r name extra w_eligible w_claim w_closeout w_verify <<< "$row"
+  for sut in eligible claim closeout verify; do
+    case "$sut" in
+      eligible) base='["agent-ready"]'; want=$w_eligible ;;
+      claim)    base='["agent-ready"]'; want=$w_claim ;;
+      closeout) base='[]';              want=$w_closeout ;;
+      verify)   base='["flow:verify"]'; want=$w_verify ;;
+    esac
+    labels=$(merge_labels "$base" "$extra")
+    got=$("run_$sut" "$labels")
+    if [ "$got" = "$want" ]; then
+      pass=$((pass + 1))
+    else
+      fail=$((fail + 1))
+      echo "  ✗ [$sut] $name — 기대=$want 실제=$got labels=$labels"
+    fi
+  done
+done
+
 echo "hold-gate.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]

@@ -78,6 +78,15 @@ fi
 if printf '%s' "$pre" | jq -e '.labels | map(.name) | any(startswith("hold:"))' >/dev/null; then
   echo "skip: $repo#$num hold:*" >&2; exit 1
 fi
+# 검증/마감 레인 재확인 (#275) — eligible-issues.sh 가 같은 네 라벨(flow:verify·verifying·
+# flow:ready·harvesting)을 제외하지만, 인덱스 지연으로 후보에 남았거나 그 사이 verify-runner
+# 가 집어(`verify-pick` 이 이슈에 `verifying` 을 미러) 소유가 넘어간 이슈를 직전에 다시 본다.
+# 특히 `verifying` 은 **검증이 지금 도는 중**이라 여기서 claim 하면 워커와 verify-runner 가
+# 같은 브랜치를 동시에 만진다. 판별은 정확 일치(`verified`·`verifying-x` 는 안 걸린다).
+if printf '%s' "$pre" | jq -e '.labels | map(.name)
+    | any(. == "flow:verify" or . == "verifying" or . == "flow:ready" or . == "harvesting")' >/dev/null; then
+  echo "skip: $repo#$num 검증/마감 레인 소유(flow:verify·verifying·flow:ready·harvesting)" >&2; exit 1
+fi
 
 # ── 원자적 잠금 (#108) ──
 # 앵커 결정: 원격 브랜치가 있으면 그 head sha(재투입), 없으면 기본 브랜치 head 를
