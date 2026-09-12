@@ -335,6 +335,14 @@ so it is a brake a human put there by hand. Per event:
   recorded vs. the cap — read as `2/2` / `1/1`). The script already applied the label, so with
   **no further action** list it under `escalated` in ④ Report with the reason
   (`escalated #N(conflict, hold:policy)`) for a human to see.
+  **PR axis** (`number` is `null` and `pr` is set, #345 bounce): a `hold:conflict` on a PR
+  with no open linked issue (`closeout-blocked - <pr>`, or the references closed after the
+  hold) — there is no issue to dispatch a resume worker on (the same fact as #421), so the
+  sweep escalated it to `hold:policy` right after the window and `attempt`/`limit` read
+  `0/0` (zero resumes, cap zero). Also **no further action** — once the next window passes
+  the same sweep's PR-only re-review emits `policy_review_due` (`pr` axis), whose only
+  disposition is `policy-kept` per the bullet below. In ④ Report write
+  `escalated PR #N(conflict, hold:policy)`.
 - `warn` — another stop the sweep may not clear (`needs-human`, or another `hold:*` —
   policy still owes its one re-review) coexisting with the hold, so it is not an
   auto-resume target (a `needs-human` next to `hold:conflict` is a `note` instead); a race against human edits; a failure **before** any write; or a

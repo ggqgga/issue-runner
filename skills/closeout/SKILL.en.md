@@ -875,6 +875,12 @@ dirty guard stays — if dirty, warn and hold; best-effort).
     If the agent's exit report has no conflicting-file list (judgment input missing — the
     note cannot be filled), this is not "everything else" but **fail-closed to `policy`**
     (note: `판정 입력 부재 — 에이전트가 충돌 파일 목록을 보고하지 않음, 워커 재개인가 사람인가?`).
+    **A PR with no open linked issue (`<issue>` slot `-`) is also `policy`, not `conflict`**
+    (#345) — a resume worker is dispatched on an issue, so with no issue to dispatch on the
+    "one resume" does not exist. Filing it as `conflict` does not lose it (the resume sweep's
+    PR axis escalates it to `policy` after the window and hands it to the PR-only re-review)
+    — filing `policy` from the start saves that window and puts the note in question form
+    (what a human must answer: take over, or open an issue and reissue) right away.
   Either branch is a blocked exit (this path alone uses `conflict`). For both transitions
   (redispatch·blocked): **on exit 1 (readback mismatch) or
   2 (gh failure), do NOT change that PR's terminal state** — report

@@ -5,7 +5,7 @@
 #   ① 블로커 없는 후보는 stdout 에 남는다 — 그리고 **stdout 바이트가 그대로다**
 #      (디스패처 파이프라인의 SSOT. 진단이 한 글자라도 새면 여기서 빨개진다).
 #   ② OPEN 블로커로 탈락한 이슈마다 stderr `blocked: <repo>#<num> ← #<b>(<상태>)`.
-#      `<상태>` 는 블로커의 라벨로 정한다(needs-human→needs-human · hold:conflict→needs-human
+#      `<상태>` 는 블로커의 라벨로 정한다(needs-human→needs-human · hold:conflict∧full-cycle→needs-human
 #      (#244 — `loop-status.sh` 의 needs-human 버킷 정의와 같은 집합) · 그 밖 hold:*→보류(#244) ·
 #      agent:claimed→issue-runner ·
 #      flow:verify→검증대기 · verifying→verify-runner(#275) · flow:ready→마감대기 · harvesting→closeout ·
@@ -343,24 +343,27 @@ has_line "②-b needs-human 이 있으면 종전대로 needs-human" "$ERR" "bloc
 has_line "②-b 요약 — 보류는 needs-human 카운트에 안 든다" "$ERR" \
   "blocked-summary: 막힘 3건 (needs-human 블로커 1건)"
 
-# ── ②-c (#244 반송②) `hold:conflict` 는 `보류` 가 아니라 `needs-human` ───────────
-# `loop-status.sh` 는 needs-human 버킷을 `needs-human` ∪ `hold:conflict` 로 정의한다
-# (:592). 충돌은 루프가 재시도로 못 푸는 사람 몫이라 그렇다. 여기서만 일반 `hold:*`
-# 갈래로 보내면 같은 라벨을 두 스크립트가 다르게 읽고, 막힌 하위 이슈가 `needs-human
-# 블로커` 카운트에서 빠져 경보에 안 잡힌다. 갈래 **순서**가 판정의 전부다 —
-# `*",hold:conflict,"*` 가 일반 `*",hold:"*` 뒤로 가면 이 칸이 다시 빨개진다.
+# ── ②-c (#345) `hold:conflict` 단독은 `보류`, `full-cycle` 이 붙은 충돌만 `needs-human` ─────
+# `loop-status.sh` 의 needs-human 버킷은 `needs-human` ∪ (`hold:conflict` ∧ `full-cycle`) 이다 —
+# 단독 `hold:conflict` 는 창 뒤 재개 스윕이 1회 되돌리는 **기계 정지**라 `보류`(#345). 사람이
+# `full-cycle` 로 인수한 충돌만 사람 몫이다. 여기서 다르게 읽으면 같은 라벨을 두 스크립트가
+# 다르게 읽고, `needs-human 블로커` 카운트가 어긋난다. 갈래 **순서**가 판정의 전부다.
 fx=$(mkfx bc 34)
 add_issue "$fx" 41 '["agent-ready"]' 'hold:conflict 블로커' 'Blocked by #920'
 add_issue "$fx" 42 '["agent-ready"]' 'hold:ladder 블로커' 'Blocked by #921'
+add_issue "$fx" 43 '["agent-ready"]' 'hold:conflict+full-cycle 블로커' 'Blocked by #922'
 add_blocker "$fx" 920 OPEN '["agent-ready","hold:conflict"]'
 add_blocker "$fx" 921 OPEN '["agent-ready","hold:ladder"]'
+add_blocker "$fx" 922 OPEN '["agent-ready","hold:conflict","full-cycle"]'
 run_sut "$fx"
 ck "②-c exit 0" "$RC" "0"
-has_line "②-c hold:conflict 단독 → needs-human(loop-status 와 일치)" "$ERR" \
-  "blocked: owner/repo#41 ← #920(needs-human)"
+has_line "②-c hold:conflict 단독 → 보류(loop-status 와 일치, #345)" "$ERR" \
+  "blocked: owner/repo#41 ← #920(보류)"
 has_line "②-c hold:ladder 는 종전대로 보류" "$ERR" "blocked: owner/repo#42 ← #921(보류)"
-has_line "②-c 요약 — conflict 는 needs-human 카운트에 든다" "$ERR" \
-  "blocked-summary: 막힘 2건 (needs-human 블로커 1건)"
+has_line "②-c hold:conflict + full-cycle → needs-human(사람이 인수한 충돌)" "$ERR" \
+  "blocked: owner/repo#43 ← #922(needs-human)"
+has_line "②-c 요약 — 단독 conflict 는 needs-human 카운트에 안 든다" "$ERR" \
+  "blocked-summary: 막힘 3건 (needs-human 블로커 1건)"
 
 # ── ⑤ 본문 ∪ 라벨 dedupe — 같은 번호는 한 번만 조회한다 ────────────────────
 fx=$(mkfx c 34)

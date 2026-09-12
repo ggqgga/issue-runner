@@ -299,6 +299,12 @@ PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·
   (`attempt`/`limit` 은 마커 코멘트가 기록한 소진 횟수 대 상한 — `2/2`·`1/1` 로 읽는다). 라벨은
   스크립트가 이미 붙였으니 **추가 조치 없이** ④ Report 의 `승격` 에 사유를 병기해
   (`승격 #N(conflict, hold:policy)`) 사람이 보게 하라.
+  **PR 축**(`number` 가 `null` 이고 `pr` 이 채워진 건, #345 반송): 연결된 열린 이슈가 없는 PR 의
+  `hold:conflict`(`closeout-blocked - <pr>` · 홀드 뒤 참조 이슈 닫힘)다 — 재개할 워커를 태울
+  이슈가 없어(#421 과 같은 사실) 스윕이 창 뒤 곧장 `hold:policy` 로 승격했고 `attempt`/`limit`
+  는 `0/0` 이다(재개 0회·상한 0). 이것도 **추가 조치 없다** — 다음 창이 지나면 같은 스윕의
+  PR 단독 재심이 `policy_review_due`(`pr` 축)로 내고 그 처분은 아래 불릿대로 `policy-kept`
+  하나다. ④ Report 에는 `승격 PR #N(conflict, hold:policy)` 로 적는다.
 - `warn` — 다른 `hold:*`·`needs-human` 동존(자동 재개 대상이 아니다 — conflict 갈래의
   `needs-human` 동존은 `note`) · 사람 조작과의
   경합 · 첫 쓰기 **전** 실패 ·

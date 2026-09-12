@@ -29,9 +29,11 @@
 #     verify-runner  `verifying` (#275)                 verifying
 #     마감대기       `flow:ready`                       ready
 #     closeout       `harvesting`                       harvesting
-#     보류           `hold:*` 있고 `needs-human` 없음    held      (#244 — 루프가 스스로 재개)
-#     needs-human    `needs-human` ∪ `hold:conflict`    human_wait (사람이 직접 세운 정지 ·
-#                    (+`hold:*` 사유 병기)                          `hold:conflict` · 재심 끝난 `hold:policy`)
+#     보류           `hold:*` 있고 `needs-human` 없음    held      (#244 — 루프가 스스로 재개;
+#                                                                  단독 `hold:conflict` 도 여기, #345)
+#     needs-human    `needs-human` ∪                    human_wait (사람이 직접 세운 정지 ·
+#                    (`hold:conflict` ∧ `full-cycle`)               사람이 인수한 충돌 ·
+#                    (+`hold:*` 사유 병기)                          재심 끝난 `hold:policy`)
 #     배포대기       `deploy-wait`(또는 제목 폴백)       deploy_wait
 #
 #   `agent-ready` 는 사다리 전체에서 유지되는 **자격** 라벨이고, 사다리(단계) 라벨은
@@ -52,9 +54,13 @@
 #   는 재claim 대기 모양(★warn 정의★ 미러 불일치 참조)이라 대기 줄에 붙는다.
 #
 #   이슈는 OPEN 기준. **한 이슈는 한 버킷** — 위에서 아래로 첫 매칭:
-#     1. needs-human — `needs-human` ∪ `hold:conflict` (#244 — 사람이 직접 세운 정지, 재심이
-#                  "사람 몫 유지" 로 끝나 `needs-human` 이 붙은 `hold:policy`, 그리고 충돌:
-#                  충돌은 그 자체가 사람 몫이라 `needs-human` 을 겹치지 않는다).
+#     1. needs-human — `needs-human` ∪ (`hold:conflict` ∧ `full-cycle`) (#244 — 사람이 직접 세운
+#                  정지, 재심이 "사람 몫 유지" 로 끝나 `needs-human` 이 붙은 `hold:policy`, 그리고
+#                  **사람이 `full-cycle` 로 인수한 충돌**(#345 ⓑ). 단독 `hold:conflict` 는 여기가
+#                  아니다 — 창(`RESUME_AFTER_MIN`) 뒤 재개 스윕이 1회 되돌리는 기계 정지라
+#                  `hold:ladder` 와 같은 `보류` 다(#345; 옛 정의 "충돌은 그 자체가 사람 몫" 은
+#                  #344/#345 로 사유가 갈리기 전의 것). `eligible-issues.sh` 의
+#                  `blocker_state_of` 가 같은 집합을 읽는다 — 갈라지면 블로커 카운트가 어긋난다.
 #                  (괄호는 `<사다리 위치>, <사유>[, 질문 없음][, PR #n]` —
 #                  사유는 `hold:*` 라벨의 접미(`conflict`·`policy`·`ladder`; 플랜 §2). 여러
 #                  개면 정렬해 `, ` 로 잇는다. `hold:*` 가 하나도 없으면 `사유 없음` 을 적고
@@ -84,7 +90,8 @@
 #                  사다리 게이트가 필요한 이유: 제목만 보면 아직 구현·검증이 도는
 #                  이슈(`flow:verify` 등)가 배포대기로 새어 "배포만 기다린다"로 읽힌다.
 #     3. 보류     — `hold:*` 가 하나 이상인데 `needs-human` 이 없다(#244 — 사다리 재개
-#                  대기 `hold:ladder` · 재심 전 `hold:policy`). **단계 라벨보다 앞이다**:
+#                  대기 `hold:ladder` · 재심 전 `hold:policy` · 충돌 재개 대기 `hold:conflict`,
+#                  #345). **단계 라벨보다 앞이다**:
 #                  기계가 멈춘 건은 그 단계를 들고 있는 루프가 없다. 이 칸이 없으면 그
 #                  이슈들이 전부 `대기`(= 집을 수 있는 이슈) 로 떨어져, needs-human 칸이
 #                  "손댈 게 없는 것" 으로 찼던 오류의 **반대 방향**이 된다.
@@ -492,7 +499,7 @@ post_dashboard() {  # post_dashboard <owner/repo> <short> <블록 텍스트>
     printf '# 루프 현황 — %s\n\n' "$short"
     printf '세 루프가 매 틱 이 본문을 덮어쓴다(직접 편집하지 마라). 읽는 법: 이슈 라벨 `agent-ready` 는 자격(사다리 내내 유지),\n'
     printf '단계 라벨(`agent:claimed`→`flow:verify`→`verifying`→`flow:ready`→`harvesting`)이 "지금 누가 들고 있나", `needs-human`+`hold:*` 는 사람(사유·질문은 코멘트).\n'
-    printf '줄 이름은 누가 들고 있나다 — 대기(`agent-ready` 만) · issue-runner(`agent:claimed`) · 검증대기(`flow:verify`) · verify-runner(`verifying`) · 마감대기(`flow:ready`) · closeout(`harvesting`) · 보류(`hold:*`, 루프가 재개) · needs-human(`needs-human`/`hold:conflict`) · 테스트(`테스트`, 배포 뒤 검증 — e2e-test 가 비운다) · 배포대기(`deploy-wait`).\n\n'
+    printf '줄 이름은 누가 들고 있나다 — 대기(`agent-ready` 만) · issue-runner(`agent:claimed`) · 검증대기(`flow:verify`) · verify-runner(`verifying`) · 마감대기(`flow:ready`) · closeout(`harvesting`) · 보류(`hold:*`, 루프가 재개) · needs-human(`needs-human`/사람이 인수한 `hold:conflict`+`full-cycle`) · 테스트(`테스트`, 배포 뒤 검증 — e2e-test 가 비운다) · 배포대기(`deploy-wait`).\n\n'
     printf '**각 루프의 마지막 틱·델타는 아래 코멘트**(루프당 1개, 자기 것만 편집)에 있다.\n\n'
     printf '## 스냅샷 (%s 가 %s 에 게시)\n\n```\n%s\n```\n' "$post_loop" "$now" "$block"
   } > "$tmpb"
@@ -893,7 +900,7 @@ def prio_of($l):
   | map(. + {ladder: ladder_of(.ln), holds: holds_of(.ln)})
   | map(. + {stage: (if (.ladder | length) == 0 then "none" else key_of(.ladder[-1]) end)})
   | map(. + {bucket:
-      (if has(.ln; "needs-human") or has(.ln; "hold:conflict") then "human_wait"
+      (if has(.ln; "needs-human") or (has(.ln; "hold:conflict") and has(.ln; "full-cycle")) then "human_wait"
        elif has(.ln; "테스트") then "test_wait"
        elif has(.ln; "deploy-wait")
           or ((.ladder | length) == 0 and (.title | test("^배포 (대기|검증)"))) then "deploy_wait"
