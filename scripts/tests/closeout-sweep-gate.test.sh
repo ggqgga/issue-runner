@@ -62,9 +62,16 @@ sweep_decide() {
     echo "adopt_conflict"
     return
   fi
-  FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
+  # (#396) `no_verdict` 의 조치는 `stale_reverify` 와 **같은 재디스패치**다(①-b 표의 새 행).
+  # 이 함수는 표의 *조치*를 거울로 재현하므로 예외 갈래와 같은 낱말(`redispatch`)로 옮긴다 —
+  # 나머지 출력이 계급 이름 그대로인 것은 그 이름이 곧 표의 행 이름이기 때문이다.
+  fc=$(FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
     FC_CLAIMED_AT=none \
-    bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null
+    bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null)
+  case "$fc" in
+    no_verdict) echo "redispatch" ;;
+    *)          echo "$fc" ;;
+  esac
 }
 
 # ── 이전 규칙(#218 attempt 2~4, 이번 회차 이전 — PR #225 as of attempt 4) ────
@@ -166,6 +173,13 @@ held_ok_comments='[
 ]'
 printf '%s' "$held_ok_comments" > "$tmp/held_ok.json"
 
+# (k)(l) 공용 (#396): `머지 판정:` 코멘트가 **0건**인 형상 — 워커가 판정을 찍기 전에 죽었다.
+# 반송 마커도 없으므로 bounce-state 는 `ok`, 갈래는 2) finish-classify 로 간다.
+no_verdict_comments='[
+  {"body":"진행 보고: 구현 시작\n<!-- bodat:worker -->","createdAt":"2026-09-11T01:00:00Z"}
+]'
+printf '%s' "$no_verdict_comments" > "$tmp/no_verdict.json"
+
 # ── #218 Test plan 픽스처 4종 (신규 규칙 sweep_decide 로 판정) ─────────────
 
 # (a) stale_reverify 형상 + bounced → 무접촉(active). #218 이 고치는 바로 그 사고.
@@ -196,6 +210,18 @@ run "(e) MERGEABLE·held 형상+ok→held(무회귀)" sweep_decide \
 #     못 봄) needs-human 으로 잘못 승격한다 — 아래 뮤테이션 대조에서 실증.
 run "(f) MERGEABLE·held 형상+bounced→무접촉" sweep_decide \
   MERGEABLE "$tmp/held_bounced.json" "$held_bounced_comments" "$now_epoch" "$head_at" active
+
+# ── #396 판정 0건 — ①-b 표의 새 행(`no_verdict` → 재디스패치)을 거울로 문다 ────
+
+# (k) 판정 코멘트 0건 + ok(반송된 적 없음) + 버퍼 초과 → 재디스패치.
+#     head 커밋이 2시간 전이라 기준 시각도 버퍼 밖이다(claim 은 none — run 이 주입한다).
+run "(k) MERGEABLE·판정 0건+ok→재디스패치(#396)" sweep_decide \
+  MERGEABLE "$tmp/ok.json" "$no_verdict_comments" "$now_epoch" "$head_at" redispatch
+
+# (l) 같은 형상이지만 **반송 마커가 최신**(bounced) → 1) 게이트가 먼저 먹어 무접촉.
+#     `bounced` 예외 갈래는 CONFLICTING 한 칸뿐이고 이 행은 MERGEABLE 이다(#218 무회귀).
+run "(l) MERGEABLE·판정 0건+bounced→무접촉(#218 무회귀)" sweep_decide \
+  MERGEABLE "$tmp/bounced.json" "$no_verdict_comments" "$now_epoch" "$head_at" active
 
 # ── #218 attempt 2 픽스처, 두 번째 회차에서 기대값이 뒤집힌다(사람 결정 (c)) ──
 # (g): **반송 마커 → 그 뒤 ⚠ 보류**(순서가 (f) 의 역방향). attempt 2 는 이 코멘트
