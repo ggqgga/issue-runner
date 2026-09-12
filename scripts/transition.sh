@@ -31,10 +31,10 @@
 #         † `--reason <conflict|policy|ladder>` 필수 · ‡ `--note "<근거>"` 필수
 #
 #   · PR 은 이슈 사다리를 **전 칸** 미러한다(#281) — 이슈 `agent-ready`(대기) ↔ PR `flow:agent-ready`,
-#     이슈 `agent:claimed`(구현중) ↔ PR `flow:claimed`, 그 뒤 칸은 같은 이름. 이름을 달리 한 이유:
+#     이슈 `agent:claimed`(issue-runner) ↔ PR `flow:claimed`, 그 뒤 칸은 같은 이름. 이름을 달리 한 이유:
 #     이슈의 `agent-ready` 는 사다리 내내 남는 **자격** 라벨이라 같은 이름을 PR 의 **단계** 로 쓰면
 #     뜻이 갈린다. 반송 두 전이가 PR 에 `flow:agent-ready` 를 붙이고(대기 칸), claim(claim-issue.sh)이
-#     그것을 `flow:claimed` 로 바꾸며(구현중), 워커가 처음 여는 PR 도 `--label flow:claimed` 로 태어난다.
+#     그것을 `flow:claimed` 로 바꾸며(issue-runner), 워커가 처음 여는 PR 도 `--label flow:claimed` 로 태어난다.
 #     그래서 열린 agent PR 은 항상 어느 칸의 라벨을 하나 달고 있다(라벨 없는 열린 agent PR = 사고).
 #     `⊘wk` 를 handoff-verify 에도 두는 건 사람이 claim 을 안 거치고 직접 인계하는 경우의 방어이고,
 #     verify-pick·closeout-pick·closeout-dup 의 것은 방어적 제거다(정상 흐름에선 이미 없다).
@@ -59,7 +59,7 @@
 #   · `needs-human` 은 **사람이 직접 세운 정지** 하나만 뜻한다(#244, 플랜 3단계). 기계 정지
 #     세 전이(verify-held·closeout-blocked·runner-held)는 `hold:<사유>` 만 붙인다 — 겹쳐
 #     붙이던 옛 표에서는 `needs-human` 이 "사람 호출" 이 아니라 "루프 손대지 마" 로 읽혀,
-#     사람 대시보드의 사람대기 칸이 **손댈 게 없는 것**(창이 지나면 루프가 스스로 재개하는
+#     사람 대시보드의 needs-human 칸이 **손댈 게 없는 것**(창이 지나면 루프가 스스로 재개하는
 #     `hold:ladder`)으로 찼다. 루프가 `needs-human` 을 붙이는 곳은 이제 `policy-kept`
 #     하나뿐이다 — `hold:policy` 재심(#155)이 "사람 몫 유지" 로 끝났을 때.
 #     이미 붙어 있는 `needs-human`(사람이 손으로 세운 것)은 위에 적힌 전이 외엔 건드리지
@@ -214,7 +214,7 @@ case "$name" in
   policy-kept)
     # `hold:policy` 재심(#155)이 "사람 몫 유지"(`<!-- policy-review: kept -->`)로 끝났다 —
     # 루프가 `needs-human` 을 붙이는 **유일한** 자리다(#244). 떼는 라벨은 없다: `hold:policy`
-    # 는 사유로 남고(사람대기 줄에 "왜" 가 계속 보인다), 단계 라벨은 이미 홀드 전이가 정리했다.
+    # 는 사유로 남고(needs-human 줄에 "왜" 가 계속 보인다), 단계 라벨은 이미 홀드 전이가 정리했다.
     # PR 미러도 같이 — 정지 라벨은 이슈와 PR 양쪽에 붙이고 함께 되돌리는 것이 규약이다.
     pr_add="needs-human"; pr_rm=""
     iss_add="needs-human"; iss_rm="" ;;

@@ -22,7 +22,7 @@
 #   · **stdout = 후보 JSON 배열 하나뿐.** 디스패처 파이프라인이 이걸 SSOT 로 읽으므로
 #     어떤 진단도 stdout 으로 새면 안 된다(한 바이트도 더하지 않는다).
 #   · stderr = 진단. 게이트에 탈락한 이슈마다 `blocked: <owner/repo>#<num> ← #<b>(<상태>)`,
-#     스캔 끝에 `blocked-summary: 막힘 N건 (사람대기 블로커 M건)`, 검색 창 경고는 `warn: `.
+#     스캔 끝에 `blocked-summary: 막힘 N건 (needs-human 블로커 M건)`, 검색 창 경고는 `warn: `.
 #     ④ Report 가 이 셋을 그대로 옮긴다(SKILL.md ③-2 · ④) — 게이트 탈락이 조용히
 #     `continue` 로 빠지면 "15개 놀고 있는데 루프가 멍때린다" 로만 보인다.
 set -euo pipefail
@@ -177,26 +177,29 @@ esac
 TAB=$(printf '\t')
 BLOCKER_Q='.state + "\t" + ([.labels[].name] | join(","))'
 
-# 블로커의 라벨 → 사람이 읽는 한 낱말. 사다리 뒤 단계가 이긴다(사람 몫 게이트가 최우선 —
+# 블로커의 라벨 → 사람이 읽는 한 낱말 — **`loop-status.sh` 의 버킷 표시 이름과 같은 낱말**이다
+# (#276: "누가 들고 있나" — `X대기` 는 그 루프가 집기 전, 루프 이름은 그 루프가 들고 있음.
+# 두 스크립트가 같은 라벨을 다른 이름으로 부르면 `막힘: #N ← #M(<상태>)` 이 대시보드의 줄
+# 이름과 안 맞는다). 사다리 뒤 단계가 이긴다(사람 몫 게이트가 최우선 —
 # 사람이 답해야 풀리는 게이트라 하위가 영원히 대기한다). 그다음이 기계 정지(`hold:*`)인
 # `보류` (#244) — 기계 정지가 `needs-human` 을 떼고 사유 라벨만 남기게 된 뒤로, 이 줄이
 # 없으면 홀드된 블로커가 `대기`(= 곧 집힐 것)로 읽혀 하위가 왜 안 풀리는지 안 보인다.
-# `hold:conflict` 는 `hold:*` 이면서도 **사람대기**다 — 충돌은 루프가 재시도로 못 푸는
-# 사람 몫이라, `loop-status.sh` 가 사람대기 버킷을 `needs-human` ∪ `hold:conflict` 로
+# `hold:conflict` 는 `hold:*` 이면서도 **needs-human**이다 — 충돌은 루프가 재시도로 못 푸는
+# 사람 몫이라, `loop-status.sh` 가 needs-human 버킷을 `needs-human` ∪ `hold:conflict` 로
 # 정의한다(같은 이슈 #244). 여기서만 일반 `hold:*` 갈래로 보내면 같은 라벨을 두 스크립트가
-# 다르게 읽고, 막힌 하위가 아래 `blocked_human` 카운트에서 빠져 사람대기 경보에 안 잡힌다.
+# 다르게 읽고, 막힌 하위가 아래 `blocked_human` 카운트에서 빠져 needs-human 경보에 안 잡힌다.
 # 그래서 **일반 `hold:*` 보다 앞**에 둔다 — `case` 는 첫 일치가 이기므로 순서가 판정의 전부다.
-# 순서는 loop-status 의 버킷 우선순위와 같다: 사람대기 > 보류 > 단계 라벨 > 대기.
+# 순서는 loop-status 의 버킷 우선순위와 같다: needs-human > 보류 > 단계 라벨(뒤가 이김) > 대기.
 blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
   case ",$1," in
-    *",needs-human,"*)   printf '사람대기' ;;
-    *",hold:conflict,"*) printf '사람대기' ;;
+    *",needs-human,"*)   printf 'needs-human' ;;
+    *",hold:conflict,"*) printf 'needs-human' ;;
     *",hold:"*)          printf '보류' ;;
-    *",agent:claimed,"*) printf '구현중' ;;
-    *",verifying,"*)     printf '검증중' ;;
-    *",flow:verify,"*)   printf '검증대기' ;;
+    *",harvesting,"*)    printf 'closeout' ;;
     *",flow:ready,"*)    printf '마감대기' ;;
-    *",harvesting,"*)    printf '마감중' ;;
+    *",verifying,"*)     printf 'verify-runner' ;;
+    *",flow:verify,"*)   printf '검증대기' ;;
+    *",agent:claimed,"*) printf 'issue-runner' ;;
     *)                   printf '대기' ;;
   esac
 }
@@ -355,7 +358,7 @@ while [ "$i" -lt "$count" ]; do
     # 탈락을 말한다 — 조용한 continue 는 ④ Report 를 "신규 0" 한 줄로 만든다(#247).
     echo "blocked: $repo#$num ← #$blocker_num($blocker_state)" >&2
     blocked_n=$((blocked_n + 1))
-    if [ "$blocker_state" = "사람대기" ]; then
+    if [ "$blocker_state" = "needs-human" ]; then
       blocked_human=$((blocked_human + 1))
     fi
     continue
@@ -388,7 +391,7 @@ done
 if [ "$blocked_n" = 0 ]; then
   echo "blocked-summary: 막힘 0건" >&2
 else
-  echo "blocked-summary: 막힘 ${blocked_n}건 (사람대기 블로커 ${blocked_human}건)" >&2
+  echo "blocked-summary: 막힘 ${blocked_n}건 (needs-human 블로커 ${blocked_human}건)" >&2
 fi
 
 # 정렬 키 = (우선순위, 오래된 순) 둘뿐. 같은 P 는 **FIFO**(created asc)고, 에픽 축은 없다 (#401).

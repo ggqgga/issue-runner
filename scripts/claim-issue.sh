@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # usage: claim-issue.sh <owner/repo> <issue-number>
 # 검색 인덱스 지연 방어: claim 직전에 직접 API로 라벨 재확인(이중 디스패치 방지),
-# claim 직후 재조회로 부착 확인. 그 뒤 열린 `agent/issue-<N>` PR 이 있으면 구현중 칸을
+# claim 직후 재조회로 부착 확인. 그 뒤 열린 `agent/issue-<N>` PR 이 있으면 issue-runner 칸을
 # PR 에도 미러한다(`flow:claimed` 부착·`flow:agent-ready` 제거, best-effort — #281, 맨 아래).
 #
 # 라벨/assignee 부착은 **멱등**이라 그 자체로는 잠금이 못 된다 — 두 루프 세션이
@@ -172,7 +172,7 @@ post=$(gh issue view "$num" --repo "$repo" --json labels)
 printf '%s' "$post" | jq -e '.labels | map(.name) | index("agent:claimed")' >/dev/null \
   || { echo "claim 실패: 라벨 미부착 $repo#$num" >&2; exit 1; }
 
-# ── PR 미러 (#281) — 이슈가 구현중 칸(agent:claimed)에 들어선 그 자리에서, 같은 레포의 열린
+# ── PR 미러 (#281) — 이슈가 issue-runner 칸(agent:claimed)에 들어선 그 자리에서, 같은 레포의 열린
 # `agent/issue-<N>` PR 이 있으면(반송 재디스패치) 그 PR 도 같은 칸으로 옮긴다: `flow:claimed`
 # 부착 · `flow:agent-ready`(반송이 붙인 대기 칸) 제거. PR 이 없으면(첫 디스패치) 아무것도 안 한다 —
 # 첫 PR 은 워커가 `gh pr create --label flow:claimed` 로 연다.

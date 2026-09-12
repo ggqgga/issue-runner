@@ -51,7 +51,7 @@ gh label create epic --repo "$repo" --color 8C959F \
 # PR 생애주기 표시 라벨(flow:*) — PR 리스트만으로 "기계가 물고 있음 vs 사람이 봐야 함"이
 # 갈리게 한다. 워커가 각 단계에서 직접 부착(worker-template 의 flow:* 예외) + 틱 루프가
 # PR 스캔 시 마지막 판정 코멘트로 best-effort 보정. 이후 harvesting→needs-human 으로 이어짐.
-# PR 미러 앞 두 칸(#281) — 이슈의 `agent-ready`(대기)·`agent:claimed`(구현중)에 대응한다. 이름을
+# PR 미러 앞 두 칸(#281) — 이슈의 `agent-ready`(대기)·`agent:claimed`(issue-runner)에 대응한다. 이름을
 # 달리 한 이유: 이슈의 `agent-ready` 는 사다리 내내 남는 **자격** 라벨이라 같은 이름을 PR 의 단계로
 # 쓰면 뜻이 갈린다. 반송 전이가 `flow:agent-ready` 를 붙이고 claim(claim-issue.sh)이 `flow:claimed`
 # 로 바꾸며, 워커의 첫 `gh pr create --label flow:claimed` 도 이 칸에서 태어난다. 둘 다 B 티어(한색).
@@ -77,7 +77,7 @@ gh label create "flow:ready" --repo "$repo" --color 2DA44E \
 # 목록에서 바로 가른다. `deploy-wait` 는 **단독으로** 붙는다(#243) — needs-human 과 병행하던
 # 것을 멈췄다. 그 라벨을 배포 대기 이슈에서 읽는 소비자가 하나도 없었기 때문이다(디스패치
 # 게이트는 agent-ready 를 요구 · loop-status 버킷은 deploy-wait 가 이김 · deploy-bodat 수집은
-# 제목 정규식). 배포 대기는 `deploy-wait` 하나로 사람대기와 갈린다.
+# 제목 정규식). 배포 대기는 `deploy-wait` 하나로 needs-human 과 갈린다.
 # 색은 B 티어(한색)로 옮겼다(#243 2회차) — 옛 색 BF3989 는 난색 고채도라 위 A/B 축 주석과
 # 모순이었다(설명은 "사람 정지 아님" 인데 색은 "사람 차례" 티어). 새 색 17A2B8 은 팔레트
 # 안에서 아직 안 쓴 청록 계열 — flow:verify(79C0FF)·hold:ladder(B6E3FF) 같은 파랑 계열과도

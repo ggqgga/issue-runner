@@ -321,7 +321,7 @@ so it is a brake a human put there by hand. Per event:
   **The order is the contract** (#244): the marker *is* "re-review done", so posting it first
   means a dead transition still folds the issue to `reviewed` on the next tick — `needs-human`
   is never attached, the issue keeps only `hold:policy`, and **nobody ever asks again** (a human
-  decision sealed out of the human-waiting column).
+  decision sealed out of the needs-human column).
   If the transition exits non-zero, **do not post the marker comment**; leave one line
   `BLOCKED: 전이 실패 policy-kept #<issue>(exit N)` in ④ Report instead — with no marker the next
   sweep **emits the same issue again** as `policy_review_due`. `policy-kept` only adds labels and
@@ -482,7 +482,7 @@ One-line summary: `reconciled N · maintained N · new N · resumed N · escalat
 by an OPEN blocker. Print it even when it is 0).
 Below it, **name the numbers item by item** — counts alone do not tell the next tick where
 each issue/PR went:
-`reconciled: #4801(bodat, PR #4810 merged) · maintained: PR #4812(bodat, rebase) · new: #4818(bodat) · resumed: #4772(bodat, 2/2) · escalated: #4803(bodat, hold:policy) · blocked: #4986(bodat ← #4985 human-wait) · warn: #4799(bodat) dirty worktree`.
+`reconciled: #4801(bodat, PR #4810 merged) · maintained: PR #4812(bodat, rebase) · new: #4818(bodat) · resumed: #4772(bodat, 2/2) · escalated: #4803(bodat, hold:policy) · blocked: #4986(bodat ← #4985 needs-human) · warn: #4799(bodat) dirty worktree`.
 Copy the search-window `warn:` lines (`검색 창 절단` / `검색 창 임박`) into the warn list as
 they are — once the window fills, the **newest** issues silently drop out of the candidate
 list, so losing that signal means a dying queue looks exactly like a healthy one.
