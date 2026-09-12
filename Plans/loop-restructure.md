@@ -85,6 +85,8 @@ closeout 하나가 1,185줄이다. #379(사람 코멘트 필터가 ✅ 이전 �
 | `smoke-tally.sh` | `[칸 ③]` 표식 판별·분모 제외·보류 합산 (926–974) — `smoke-prompt.md` 와 계산기 둘 | |
 | `resume-sweep.sh --count-ladder` | SKILL.md:425 의 200자 jq 복붙 | |
 | `pr-state.sh <repo> <pr>` | 규칙0 "마지막 판정 코멘트 → flow:* 목표 라벨" (302–314) | 0단계 표를 기계가 읽는 진입점 |
+| 탈락 사유 채널 `skip: <repo>#<pr> <사유>` (eligible 3종 공통) | closeout-eligible 의 `continue` 12곳 중 #379 가 소리를 내게 한 1곳만 — 나머지 11곳도 같은 원칙(#206 조용한 큐 사망 금지) | PR #384 simplify 깊이 리뷰 메모 |
+| `bounce-state.sh --verdict-index` | closeout-eligible 이 ✅ 마지막 인덱스를 자체 계산(#384) — bounce-state 가 같은 `$vi` 를 이미 계산하지만 출력을 위치로 파싱하는 소비자(`:381-383`)가 있어 필드 추가는 파서까지 손봐야 함 | 1단계 `loop.jq` 로 흡수되면 불필요 |
 
 - 각 행이 leaf 하나. 전부 루프에 태울 수 있다(스펙이 곧 지금의 프로즈).
 
