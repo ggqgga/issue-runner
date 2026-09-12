@@ -1542,6 +1542,22 @@ has_line "무회귀: 파생 줄은 에픽 병기 없이 종전 그대로(레포�
 #   #92 無 / PR #192 有   warn 없음 — 짝도 서고 closes 전건도 깨끗한데 PR 정지가 맨몸
 #                          `needs-human` 뿐이다. 위 #170 과 달리 head 는 `agent/issue-92` 라
 #                          **이 관문 하나만** 이 칸을 조용하게 만든다(짝짓기로는 안 걸린다)
+#
+# (#331 쌍둥이 정합) ⑶ 전건 게이트의 판정 집합은 **열린 이슈 ∪ 닫힌 이슈**다. 교정 갈래
+# (`resume-sweep.sh` 의 `read_labels_state`)는 닫는 이슈를 번호로 실제 조회해 CLOSED 도
+# 판정하므로, 여기가 열린 목록만 보면 두 술어가 갈린다 — 경보는 "안 고친다" 고 말하는데
+# 교정은 몰래 도는 상태다(#293 마감 검증 WARN 의 실측 픽스처가 바로 아래 #93 이다).
+#   #93 無 / PR #193 有   **warn** — closes `[93 OPEN 깨끗, 97 CLOSED 깨끗]`. 닫힌 쪽도
+#                          깨끗하므로 스윕은 편집한다 → 경보도 울려야 한다
+#   #94 無 / PR #194 有   warn 없음 — closes `[94 OPEN 깨끗, 96 CLOSED hold:policy]`.
+#                          닫힌 이슈에 사람 게이트가 살아 있어 스윕도 무편집이다
+#                          (`read_labels_state` 는 상태를 판정에 쓰지 않는다)
+#   #95 無 / PR #195 有   warn 없음 — closes `[95 OPEN 깨끗, 9999 어느 목록에도 없음]`.
+#                          남는 비대칭(각 200건 상한 절단 — 둘 중 어느 목록에도 없는 번호)을
+#                          못 박는 칸이다: "못 봤다" 는 조용한 쪽으로 틀린다. 타 레포 참조는
+#                          비대칭이 **아니다** — 부재가 아니라 동번호 로컬 이슈와의 충돌로
+#                          나타나고 교정 갈래도 같은 레포 같은 번호를 묻는다(`loop-status.sh`
+#                          ⑶ 주석과 같은 문장)
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.issues.json" <<'FX'
 [
  {"number":10,"title":"둘 다 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
@@ -1555,7 +1571,10 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.issues.json" <<'FX'
  {"number":99,"title":"같은 PR 이 닫는 딴 이슈 — 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"}]},
  {"number":91,"title":"묶음 디스패치의 브랜치 이슈 — 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
  {"number":98,"title":"묶음 디스패치의 딴 이슈 — 사람 게이트가 살아 있다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"hold:policy"}]},
- {"number":92,"title":"맨몸 needs-human 이 PR 에만 — 사람이 손으로 세운 브레이크","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:ready"}]}
+ {"number":92,"title":"맨몸 needs-human 이 PR 에만 — 사람이 손으로 세운 브레이크","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:ready"}]},
+ {"number":93,"title":"닫힌 짝 이슈가 깨끗하다 — 스윕이 고치는 칸","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":94,"title":"닫힌 짝 이슈에 사람 게이트가 살아 있다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":95,"title":"닫는 이슈 하나가 어느 목록에도 없다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]}
 ]
 FX
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.pr_open.json" <<'FX'
@@ -1581,15 +1600,28 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.pr_open.json" <<'FX'
  {"number":191,"headRefName":"agent/issue-91","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
   "closingIssuesReferences":[{"number":91},{"number":98}],"labels":[{"name":"flow:verify"},{"name":"needs-human"}]},
  {"number":192,"headRefName":"agent/issue-92","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
-  "closingIssuesReferences":[{"number":92}],"labels":[{"name":"flow:ready"},{"name":"needs-human"}]}
+  "closingIssuesReferences":[{"number":92}],"labels":[{"name":"flow:ready"},{"name":"needs-human"}]},
+ {"number":193,"headRefName":"agent/issue-93","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":93},{"number":97}],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]},
+ {"number":194,"headRefName":"agent/issue-94","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":94},{"number":96}],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]},
+ {"number":195,"headRefName":"agent/issue-95","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":95},{"number":9999}],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]}
 ]
 FX
 echo '[]' > "$tmp/fx/ggqgga_Mirror.pr_closed.json"
-echo '[]' > "$tmp/fx/ggqgga_Mirror.issues_closed.json"
+# (#331) 닫힌 이슈 — ⑶ 전건 게이트가 **실제로** 이 목록을 본다는 것의 실측 입력.
+# #97 은 깨끗(→ PR #193 이 warn) · #96 엔 사람 게이트가 살아 있다(→ PR #194 는 조용).
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.issues_closed.json" <<'FX'
+[
+ {"number":96,"body":"","closedAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":97,"body":"","closedAt":"@NOW@","labels":[{"name":"agent-ready"}]}
+]
+FX
 
 run --repo ggqgga/Mirror --since 24h
 ck "(#265) 격자: exit 0" "$RC" 0
-has_line "(#265) 새 판정이 낸 줄은 정확히 3건(오탐 0)" "$tmp/out" "  warn      3"
+has_line "(#265·#331) 새 판정이 낸 줄은 정확히 4건(오탐 0)" "$tmp/out" "  warn      4"
 has_line "(#265) PR 에만 정지 라벨 → warn" "$tmp/out" \
   "    - 정지 미러 불일치 #20(mirror) ↔ PR #120(mirror) — 이슈 없음 · PR hold:policy needs-human"
 has_line "(#265) needs-human 없이 hold:* 만 남아도 warn (#244 대비)" "$tmp/out" \
@@ -1614,6 +1646,15 @@ no_sub "(#265) 정지가 남은 #98 자신도 후보가 아니다" "$tmp/out" "�
 # 조용하게 만든다. 교정 갈래가 안 떼는 것을 경보만 울리면 상시 잡음이다(#190).
 no_sub "(#265) 맨몸 needs-human(PR #192)은 warn 이 아니다 — 기계가 못 만드는 모양" \
   "$tmp/out" "불일치 #92"
+# (#331 쌍둥이 정합) ⑶ 전건 게이트는 **닫힌 이슈도** 본다 — 교정 갈래(resume-sweep ④)의
+# `read_labels_state` 가 번호로 실제 조회해 CLOSED 를 판정하므로, 여기가 열린 목록만 보면
+# 경보는 "안 고친다" 고 말하는데 교정이 몰래 도는 상태가 된다(#293 마감 검증 WARN 의 실측).
+has_line "(#331) 닫힌 짝 이슈가 깨끗하면 경보도 울린다(교정 갈래와 같은 판정)" "$tmp/out" \
+  "    - 정지 미러 불일치 #93(mirror) ↔ PR #193(mirror) — 이슈 없음 · PR hold:policy"
+no_sub "(#331) 닫힌 이슈에 사람 게이트가 살아 있으면 조용하다 — 스윕도 무편집" \
+  "$tmp/out" "불일치 #94"
+no_sub "(#331) 닫는 이슈가 어느 목록에도 없으면 조용하다 — '못 봤다' 는 조용한 쪽으로" \
+  "$tmp/out" "불일치 #95"
 # 단계 미러 판정은 정지 라벨에 오염되지 않는다 — 정지 라벨을 mirror_labels 에 밀어 넣었다면
 # #20·#50 이 **단계** 미러 불일치로도 울렸을 자리다(별도 판정이라는 것의 실측).
 no_sub "(#265) 정지 라벨이 단계 미러 판정을 깨뜨리지 않는다" "$tmp/out" "- 미러 불일치 #20"
@@ -1622,7 +1663,7 @@ no_sub "(#265) 정지 라벨이 단계 미러 판정을 깨뜨리지 않는다(#
 run --repo ggqgga/Mirror --since 24h --json
 ck "(#265) --json: kind·issue·pr·labels" \
   "$(jq -c '[.repos[0].warns[] | select(.kind=="hold_mirror_mismatch") | {i:.issue, p:.pr, l:.labels}]' < "$tmp/out")" \
-  '[{"i":20,"p":120,"l":["hold:policy","needs-human"]},{"i":50,"p":150,"l":["hold:conflict"]},{"i":90,"p":190,"l":["hold:policy"]}]'
+  '[{"i":20,"p":120,"l":["hold:policy","needs-human"]},{"i":50,"p":150,"l":["hold:conflict"]},{"i":90,"p":190,"l":["hold:policy"]},{"i":93,"p":193,"l":["hold:policy"]}]'
 
 # ── --post 대시보드(#163) ──────────────────────────────────────────────────
 fx="$tmp/fx/ggqgga_issue-runner"
