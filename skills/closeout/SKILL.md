@@ -214,7 +214,8 @@ PR 은 워커·verify·closeout 코멘트가 겹겹이 쌓여 100건이 먼 숫�
 
 **대상**: `me=$(gh api user -q .login)` 후 `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc`(FIFO)로 열린 PR 을 모으고,
-head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify` 미부착**·**`verifying` 미부착**이고
+head 가 `agent/issue-*` 이고 **`full-cycle` 미부착**(사람 세션 레인 소유 표시 — head 이름은 관례라
+라벨이 명시적 제외 축이다, #246)이며 **`harvesting` 미부착**이며 **`flow:verify` 미부착**·**`verifying` 미부착**이고
 **`needs-human` 미부착**이며 **`hold:` 접두 미부착**인 PR 마다 판정한다. 두 라벨은 **다른 정지**다(#244) —
 `needs-human` 은 사람이 직접 세운 정지고, `hold:<사유>` 는 기계 정지(verify-held·closeout-blocked·
 디스패처 runner-held 보수 상한) 그 자체다. 전이는 기계 정지에 사유 라벨 **하나만** 붙이므로

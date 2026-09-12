@@ -98,7 +98,7 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
 ## ① Reconcile
 
 `$SCRIPTS/verify-eligible.sh` 를 실행한다(세션 cwd 의 `.loop/repos` 스코프를 자동
-적용). 출력은 (`verifying` 또는 `flow:verify`) + `agent/issue-*` + `¬harvesting` PR 을
+적용). 출력은 (`verifying` 또는 `flow:verify`) + `agent/issue-*` + `¬full-cycle`(#246) + `¬harvesting` PR 을
 **`verifying` 먼저, 그 다음 `flow:verify` FIFO(오래된 순)** 로, 각 줄
 `{repo,pr,issue,head,ci,orphan}` (ci=pass|revalidate|fail · orphan=true|false). 이게 이 루프의 큐다.
 

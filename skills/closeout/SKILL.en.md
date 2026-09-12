@@ -250,7 +250,8 @@ missing from `head_at` and an unverified head would surface as a candidate.
 
 **Targets**: `me=$(gh api user -q .login)`, then `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc` (FIFO). For each PR whose head is
-`agent/issue-*` and that is **not labeled `harvesting`**, **not labeled `flow:verify`**,
+`agent/issue-*` and that is **not labeled `full-cycle`** (the human-session lane-ownership mark —
+the head name is a convention, so the label is the explicit exclusion axis, #246), **not labeled `harvesting`**, **not labeled `flow:verify`**,
 **not labeled `verifying`** (verify-runner's occupation label — set by `verify-pick` the moment it picks the PR,
 replacing `flow:verify`; the `harvesting` twin, #275 — E2E/codex is running *right now*, so adopting or
 re-dispatching it would void that verification; `closeout-eligible.sh` excludes the same label), **not
