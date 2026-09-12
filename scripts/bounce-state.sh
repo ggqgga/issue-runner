@@ -28,15 +28,31 @@
 #                            순수 ⚠ — 은 이 파일 밖의 별개 판정이라 영향받지 않는다.)
 #   무출력           exit 1  판정 못 함(코멘트 조회·파싱 실패·인자 누락)
 #
-# 호출자 계약: **출력이 정확히 `ok` 일 때만 정상 진행**한다. `held`·`bounced`·판정
-# 실패(exit 1) 는 **전부 같은 방향(무접촉)** 이다 — `held` 를 특별히 갈라 needs-human
-# 으로 승격하던 계약은 #218 두 번째 회차에서 폐지됐다(아래 "스윕 재부착 폐지" 절).
-# 판정 실패(exit 1)와 `bounced` 를 같은 방향(무접촉)으로 받는
-# 것이 fail-closed 다: 반송되지 않았음을 *증명하지 못한* 상태를 통과로 처리하면 그게
-# fail-open 이다(PR#139 교훈 — 빈 결과와 실패를 구분하고, 실패는 가드 분기로 보내라).
+# `--marker-index <repo> <pr>` 모드는 같은 판정의 **중간값**만 낸다: 최신 반송 마커의
+# 코멘트 배열 인덱스(정수) 또는 마커가 없으면 `none`. 판정 실패는 위와 같이 exit 1 이다.
+# 이 모드가 있는 이유는 소비자 3(아래)이 "이 코멘트가 반송보다 뒤인가" 를 물어야 하는데,
+# 그 질문에 답하려고 마커 매칭을 한 벌 더 쓰면 #171 이 막은 사고(채널마다 가드를 베껴
+# 한쪽이 빠진 채 fail-open)가 그대로 돌아오기 때문이다. 두 모드는 **같은 jq 한 판**에서
+# 나온다 — 값이 갈릴 수 없다.
 #
-# ── 왜 스크립트로 뽑았나 (#196) ──────────────────────────────────────────
-# 소비자가 둘이고 실행 주체가 다르다:
+# ── 호출자 계약 ─────────────────────────────────────────────────────────
+# **이 값은 "만져도 되는가" 가 아니라 "지금 반송 회차 안인가" 다.** 그 사실을 무엇으로
+# 쓰는지는 호출자마다 다르므로, `ok` 외의 값에 대한 조치는 **호출자별로** 적는다
+# (#271 — 아래 소비자 3이 생기며 옛 한 줄 계약 "ok 일 때만 정상 진행 · 나머지는 전부
+# 무접촉" 이 거짓이 됐다. 거기선 `bounced` 가 **능동 전이 재시도**의 신호다):
+#   · 소비자 1·2(후보 필터·입양) — `ok` 일 때만 진행. `held`·`bounced`·exit 1 은 무접촉.
+#   · 소비자 3(resume 재개 지점) — `bounced` 는 **무접촉이 아니다**: ③-1 ⓐ 의
+#     `closeout-redispatch` 를 같은 자리에서 다시 건다(반송 코멘트는 다시 남기지 않는다).
+#     `held`·exit 1 은 여기서도 무접촉이고, `ok` 는 마커표 경로로 간다.
+#   · 소비자 4(`--marker-index`) — 인덱스를 선후 비교에만 쓴다. exit 1 이면 호출자가
+#     자기 판정을 fail-closed 로 접는다(증명 실패는 통과가 아니다).
+# 공통으로 참인 것 하나: **판정 실패(exit 1)를 통과로 바꾸지 마라.** 반송되지 않았음을
+# *증명하지 못한* 상태를 통과로 처리하면 그게 fail-open 이다(PR#139 교훈 — 빈 결과와
+# 실패를 구분하고, 실패는 가드 분기로 보내라). `held` 를 특별히 갈라 needs-human 으로
+# 승격하던 계약은 #218 두 번째 회차에서 폐지됐다(아래 "스윕 재부착 폐지" 절).
+#
+# ── 왜 스크립트로 뽑았나 (#196 · 소비자 3·4 는 #271) ─────────────────────
+# 소비자가 넷이고 실행 주체가 다르다:
 #   1. `closeout-eligible.sh` — ✅ 정상 후보 필터의 마지막 관문(셸에서 호출)
 #   2. `skills/closeout/SKILL.md` ①-b 의 **CONFLICTING 입양** 경로 — 프로즈가 이 스크립트를
 #      직접 부른다. 입양(rebase)은 `finish-classify.sh` 의 다섯 갈래 중 어디에도 없는
@@ -44,6 +60,9 @@
 #      (#206 이후: 그 경로에서 `bounced` 는 **무접촉으로 끝나지 않고** finish-classify 로
 #      넘어가 `stale_reverify` 만 재디스패치로 갈라진다. 이 스크립트의 판정 자체는
 #      그대로다 — 입양을 여는 것은 여전히 `ok` 뿐이다.)
+#   3. `skills/closeout/SKILL.md` ① Reconcile 의 **`resume` 재개 지점**(#271) — 프로즈가
+#      마커표를 보기 **전에** 부른다. 여기서 `bounced` 는 능동 전이 재시도다(위 계약).
+#   4. `closeout-step1-marker.sh`(#271) — `--marker-index` 로 선후 비교에만 쓴다.
 # `finish-classify.sh` 에 출력 하나를 더 얹는 길도 있었지만 택하지 않았다 — 거기 다섯
 # 출력은 "완결 유실 상태" 라는 한 축의 값이고, 반송 여부는 **직교하는 다른 축**이다.
 # 한 stdout 에 두 축을 섞으면 소비자가 문자열로 축을 다시 갈라야 한다(PR#168 교훈:
@@ -64,6 +83,12 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+mode=state
+if [ "${1:-}" = "--marker-index" ]; then
+  mode=marker-index
+  shift
+fi
 
 repo=${1:-}
 pr=${2:-}
@@ -284,7 +309,7 @@ fi
 # 필요하면 그대로 쓸 수 있게 남겨 둔다. 폐지되는 것은 "이 특정 호출자(closeout 스윕)가
 # 이 값을 어떻게 조치하는가" 뿐이다 — 조치는 `bounce-state.sh` 밖(SKILL.md 프로즈)의
 # 계약이라 이 파일은 그 계약을 문서로만 반영한다.
-state=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
+raw=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
   [.[].body] as $bodies
   | ([ $bodies | to_entries[]
        | select(.value as $x
@@ -325,8 +350,8 @@ state=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
   | (if $hi != null and $hi > $bi then $hi else null end) as $h_after
   | (if $pi != null and $pi > $bi then $pi else null end) as $p_after
   # 후보 중 인덱스가 가장 큰(=가장 늦은) 것이 이긴다. 후보가 없으면 bounced.
-  | if   $bi == null then "ok"
-    else ([
+  | (if   $bi == null then "ok"
+     else ([
             {i:$p_after, s:"bounced"},   # MUT-P: 해제 경로 후보(#218 attempt 4)
             {i:$v_after, s:"ok"},
             {i:$h_after, s:"held"} ]      # 값 계산은 그대로 — 스윕이 이 값을 더 이상
@@ -334,10 +359,24 @@ state=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
                                           # "스윕 재부착 폐지" 절)
           | map(select(.i != null)) | sort_by(.i) | last
           | if . == null then "bounced" else .s end)
-    end' 2>/dev/null) || exit 1
+     end) as $state
+  # 두 모드가 **같은 jq 한 판**에서 나온다 — `--marker-index` 를 위해 마커 매칭을 두 벌로
+  # 두면 #171 이 막은 사고(채널마다 가드를 베껴 한쪽이 빠진 채 fail-open)가 그대로 돌아온다.
+  | "\($state) \(if $bi == null then "none" else ($bi|tostring) end)"' 2>/dev/null) || exit 1
 
 # jq 가 성공해도 형상이 어긋나면(빈 출력·예상 밖 값) 판정으로 인정하지 않는다.
+state=${raw%% *}
+bidx=${raw##* }
 case "$state" in
-  ok|bounced|held) printf '%s\n' "$state" ;;
+  ok|bounced|held) ;;
   *) exit 1 ;;
 esac
+case "$bidx" in
+  none) ;;
+  ''|*[!0-9]*) exit 1 ;;
+esac
+if [ "$mode" = marker-index ]; then
+  printf '%s\n' "$bidx"
+else
+  printf '%s\n' "$state"
+fi
