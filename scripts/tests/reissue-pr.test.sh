@@ -13,7 +13,7 @@
 #   ③ `blocked-by:<구>` 라벨을 단 이슈는 새 번호로 옮긴다(옮기기 전엔 원 이슈를 안 닫는다 —
 #      닫힌 블로커는 eligible 게이트가 해제로 읽어 하위가 조기 풀린다).
 #   ④ `회차 허용: +1 — 범위: <한 줄>` 1회 → PR 본문 verify-attempt 를 LIMIT-1 로 갱신 +
-#      `<!-- round-granted -->` 마커 코멘트.
+#      `<!-- round-granted -->` 마커 코멘트(갱신 **성공 뒤에만** — 마커 = 적용 완료, ④-f).
 #   ⑤ 2회(마커가 이미 있음) → 무시 + warn. 예외는 이슈당 한 번.
 #   ⑥ **인용은 신호가 아니다** — 코드펜스·인라인 백틱 안의 문형, 그리고 이 기능의 **자기
 #      문서**(SKILL.md·README)를 통째로 붙여넣은 코멘트도 판정에 안 걸린다.
@@ -357,6 +357,26 @@ want_in "④ round-granted 마커 코멘트"      "$tmp/state/comments-posted.tx
 want_in "④ 마커 코멘트에 범위 인용"        "$tmp/state/comments-posted.txt" "bounce-state 판정만 손대라"
 want_in "④ PR 본문 verify-attempt = LIMIT-1" "$tmp/state/pr-body-new.md" "<!-- verify-attempt: 2 -->"
 want_in "④ PR 본문 나머지 보존"              "$tmp/state/pr-body-new.md" "PR 본문"
+
+echo "── ④-f verify-attempt 갱신 실패 → 마커를 남기지 않는다 (마커 = 적용 완료) ──"
+# 마커가 먼저 남고 `gh pr edit` 가 실패하면, 다음 실행은 요청이 마커보다 앞이라 none —
+# 사람의 이슈당 한 번뿐인 예외가 **소비된 채 미적용**이 된다(#318 재심 P1-2). 순서는
+# 갱신 → 마커. 갱신이 실패하면 마커 없이 exit 비0 → 다음 틱이 같은 요청을 다시 집는다.
+setup 2
+issue_comments '[{"body":"회차 허용: +1 — 범위: 여기만","created_at":"2026-09-11T03:00:00Z"}]'
+touch "$tmp/state/fail-pr-edit"
+run grant-round "$REPO" "$PR" "$OLD"
+check "④-f exit 비0"                        "$([ "$(rc)" != 0 ] && echo ok || echo no)"
+want_not_in "④-f 마커 코멘트를 남기지 않았다" "$STUB_LOG" "issue comment"
+want_in "④-f 사유가 stderr 에"               "$tmp/state/err.txt" "verify-attempt 갱신 실패"
+# 다음 실행(갱신이 되는 틱)은 같은 요청을 다시 집어 적용한다.
+rm -f "$tmp/state/fail-pr-edit"; : > "$STUB_LOG"
+run grant-round "$REPO" "$PR" "$OLD"
+want_in "④-f 재실행 granted"                 "$tmp/state/out.txt" "granted"
+c_edit=$(grep -n '^pr edit' "$STUB_LOG" | head -1 | cut -d: -f1)
+c_mark=$(grep -n '^issue comment' "$STUB_LOG" | head -1 | cut -d: -f1)
+check "④-f 순서: 갱신 < 마커" \
+  "$([ -n "$c_edit" ] && [ -n "$c_mark" ] && [ "$c_edit" -lt "$c_mark" ] && echo ok || echo no)"
 
 echo "── ④-d 실사용 문형(2026-09-12 #283·#244) — 머리말·굵게 표시 뒤의 문형도 같은 신호 ──"
 # 사람이 실제로 적은 줄은 줄 머리가 아니라 `사람 결정: **ⓐ — ` 뒤에 문형이 오고, 범위 문장은

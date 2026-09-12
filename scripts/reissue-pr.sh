@@ -212,14 +212,13 @@ if [ "$mode" = grant ]; then
   scope=$(printf '%s\n' "$fresh_scopes" | head -1)
   target=$((LIMIT - 1))
 
-  # 마커 코멘트가 **먼저**다 — 카운터 없는 허용은 상한이 안 걸리는 무한 재시도가 된다
-  # (resume-sweep 의 "마커 먼저 → 라벨" 과 같은 이유).
-  if ! gh issue comment "$issue" --repo "$repo" --body "회차 허용 접수: attempt 을 $target 로 되돌린다 — 범위: $scope
-<!-- round-granted -->
-$MARKER_WORKER" >/dev/null 2>&1; then
-    die 4 "회차 허용 마커 코멘트 실패 (#$issue) — 아직 아무것도 적용하지 않았다, 다음 틱 재시도"
-  fi
-
+  # 순서는 **갱신 → 마커**다(재심 2026-09-12, P1-2). 마커 = "적용 완료" 이므로 갱신 성공 뒤에만
+  # 남긴다. 마커를 먼저 남기고 갱신이 실패하면 다음 실행은 요청이 마커보다 앞이라 none 으로
+  # 흘려, 사람의 이슈당 한 번뿐인 예외가 **소비된 채 미적용**이 된다. 갱신이 실패하면 마커
+  # 없이 exit 비0 → 다음 틱이 같은 요청을 다시 집는다(요청은 여전히 마커 이후다).
+  # 반대 창(갱신 성공 → 마커 실패)은 다음 틱이 갱신을 한 번 더 하는 것뿐이다 — 같은 값으로
+  # 덮어쓰니 멱등이고, 회차가 새로 생기지 않는다(카운터가 이미 LIMIT-1 이다).
+  #
   # PR 본문 attempt 를 LIMIT-1 **로 되돌린다**. 이미 그 아래면 되돌릴 것이 없다 —
   # 덮어쓰면 남은 정상 회차를 깎는다(허용이 회차를 뺏는 방향으로 틀리면 안 된다).
   if [ "$attempt" -ge "$target" ]; then
@@ -229,10 +228,16 @@ $MARKER_WORKER" >/dev/null 2>&1; then
       printf '%s\n<!-- verify-attempt: %s -->\n' "$pr_body" "$target" > "$tmp/prbody.md"
     fi
     if ! gh pr edit "$pr" --repo "$repo" --body-file "$tmp/prbody.md" >/dev/null 2>&1; then
-      die 4 "PR #$pr 본문 verify-attempt 갱신 실패 — 마커는 남았다(중복 적용은 안 된다), 사람 확인"
+      die 4 "PR #$pr 본문 verify-attempt 갱신 실패 — 마커를 남기지 않았다(요청은 소비되지 않는다), 다음 틱 재시도"
     fi
   else
     warn "note: PR #$pr 의 attempt=$attempt 은 이미 $target 이하 — 되돌릴 것이 없다(회차를 깎지 않는다)"
+  fi
+
+  if ! gh issue comment "$issue" --repo "$repo" --body "회차 허용 접수: attempt 을 $target 로 되돌린다 — 범위: $scope
+<!-- round-granted -->
+$MARKER_WORKER" >/dev/null 2>&1; then
+    die 4 "회차 허용 마커 코멘트 실패 (#$issue) — attempt 은 $target 로 갱신됐다, 다음 틱이 같은 요청을 다시 적용한다(같은 값이라 멱등)"
   fi
 
   echo "granted: #$issue — 범위: $scope"
