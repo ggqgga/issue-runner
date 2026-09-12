@@ -1752,4 +1752,78 @@ grep -qF '라벨 공백 창' skills/closeout/SKILL.md \
 grep -qF 'label gap' skills/closeout/SKILL.en.md \
   || { echo "  ✗ skills/closeout/SKILL.en.md 에 반송 직후 'label gap' 미러 없음"; exit 1; }
 
+echo "[#310] '사람 게이트' 잔여 두 자리 — README 한/영 배포 절 + closeout 5단계 진입 조건"
+# #298(#278)이 closeout 4·5단계를 'deploy-cycle 레인 인계' 로 옮겼는데, 그 겹의 **소비자**
+# 두 자리(README 한/영 배포 절 · 5단계 진입 조건)는 옛 모델로 남아 같은 경계에 대해 두
+# 문서가 다른 주인을 지목했다. #298 의 교훈은 **문구 grep 0건이 계약 성립의 증거가 아니라는
+# 것**이다(옛 말이 사라졌다 ≠ 새 계약이 섰다). 그래서 이 가드는 음/양을 함께 잰다 —
+# (a) 옛 프레이밍 0건 · (b) 새 주어가 그 **구간 안에** 실제로 있음 · (c) 금지 규칙 존치 ·
+# (d) 5단계 진입 조건이 행위자 무관.
+
+# (a) README 한/영 — '사람 게이트'/'human gate' 가 되살아나면 빨강.
+if grep -nI -e '사람 게이트' -e '[Hh]uman gate' README.md README.ko.md; then
+  echo "  ✗ README 에 '사람 게이트/human gate' 프레이밍이 되살아남 — 배포 게이트의 주인은 deploy-cycle 레인 (#310)"
+  exit 1
+fi
+
+# (b) 배포 절 **구간 스코프** 양의 단언 — "파일 어딘가" 면 문구가 다른 절로 밀려도 초록이다(#223·#278).
+for f in README.ko.md README.md; do
+  case "$f" in
+    README.ko.md) sec_anchor='^## 배포 —'
+                  lane='deploy-cycle 레인'
+                  subg='subgraph lane["deploy-cycle 레인 (무인)"]'
+                  edge='G -.->|레인 인계| D["deploy-cycle 레인:<br/>검증 → 승격 → 배포"]' ;;
+    *)            sec_anchor='^## Shipping —'
+                  lane='deploy-cycle lane'
+                  subg='subgraph lane["deploy-cycle lane (unattended)"]'
+                  edge='G -.->|lane handoff| D["deploy-cycle lane:<br/>verify → promote → ship"]' ;;
+  esac
+  s_line=$(grep -nE "$sec_anchor" "$f" | head -1 | cut -d: -f1)
+  [ -n "$s_line" ] || { echo "  ✗ $f: 배포 절 헤더 앵커($sec_anchor) 없음 (#310)"; exit 1; }
+  e_rel=$(sed -n "$((s_line + 1)),\$p" "$f" | grep -nE '^## ' | head -1 | cut -d: -f1)
+  [ -n "$e_rel" ] || { echo "  ✗ $f: 배포 절 다음 '## ' 헤더 없음 (#310)"; exit 1; }
+  sec=$(sed -n "${s_line},$((s_line + e_rel))p" "$f")
+  n=$(printf '%s\n' "$sec" | grep -oF "$lane" | wc -l | tr -d ' ')
+  [ "$n" -ge 5 ] || { echo "  ✗ $f 배포 절에 '$lane' 이 ${n}회뿐 — 5단계 서술의 주어가 deploy-cycle 레인이어야 한다 (#310, 기대 5회 이상)"; exit 1; }
+  printf '%s\n' "$sec" | grep -qF 'deploy-cycle ⑦' \
+    || { echo "  ✗ $f 배포 절에 'deploy-cycle ⑦' 없음 — 마감(Close) 주체가 #278 어휘여야 한다 (#310)"; exit 1; }
+  printf '%s\n' "$sec" | grep -qF "$subg" \
+    || { echo "  ✗ $f 배포 절 다이어그램 subgraph 라벨이 '$subg' 가 아니다 (#310)"; exit 1; }
+  grep -qF "$edge" "$f" \
+    || { echo "  ✗ $f 루프 삼형제 다이어그램 엣지가 '$edge' 가 아니다 (#310)"; exit 1; }
+done
+
+# (c) '되돌리지 마라' — 무인 배포·승격·main 직접 push 금지는 **주인만 바뀌고 효력은 불변**이다.
+for tok in 'production 무인 배포' '승격(검증된 SHA' 'push(문서 reconcile'; do
+  grep -qF -- "$tok" skills/closeout/SKILL.md \
+    || { echo "  ✗ closeout SKILL.md 의 절대 금지 목록에서 '$tok' 가 사라짐 — 효력 불변이어야 한다 (#310)"; exit 1; }
+done
+for tok in 'unattended production deploys' 'promotion of a production pointer branch' 'pushing directly to main'; do
+  grep -qF -- "$tok" skills/closeout/SKILL.en.md \
+    || { echo "  ✗ closeout SKILL.en.md 의 금지 목록에서 '$tok' 가 사라짐 — 효력 불변이어야 한다 (#310)"; exit 1; }
+done
+
+# (d) 5단계 진입 조건 — 행위자 무관("배포 완료가 보고된"). 옛 문면은 "사람이 배포를 보고한"
+#     이라 새 모델(배포 보고를 deploy-cycle 레인이 남긴다)에서 실행자가 스모크를 통째로
+#     건너뛴다. 구간(5단계~6단계)으로 좁혀 음/양을 함께 잰다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) s5_anchor='^\*\*Step 5 —'; s6_anchor='^\*\*Step 6 —'
+             want='For a deploy issue **reported deployed**'; old='a human has' ;;
+    *)       s5_anchor='^\*\*5단계 —';   s6_anchor='^\*\*6단계 —'
+             want='**배포 완료가 보고된** 배포 이슈에 대해'; old='사람이 배포를 보고한' ;;
+  esac
+  s5_line=$(grep -nE "$s5_anchor" "$f" | head -1 | cut -d: -f1)
+  s6_line=$(grep -nE "$s6_anchor" "$f" | head -1 | cut -d: -f1)
+  [ -n "$s5_line" ] || { echo "  ✗ $f: 5단계 헤더 앵커 없음 (#310)"; exit 1; }
+  [ -n "$s6_line" ] || { echo "  ✗ $f: 6단계 헤더 앵커 없음 (#310)"; exit 1; }
+  s5_body=$(sed -n "${s5_line},${s6_line}p" "$f")
+  printf '%s\n' "$s5_body" | grep -qF -- "$want" \
+    || { echo "  ✗ $f 5단계 진입 조건이 '$want' 가 아니다 — 행위자 무관이어야 한다 (#310)"; exit 1; }
+  if printf '%s\n' "$s5_body" | grep -nF -- "$old"; then
+    echo "  ✗ $f 5단계에 사람 주어 진입 조건('$old')이 되살아남 — 배포 보고는 deploy-cycle 레인이 남긴다 (#310)"
+    exit 1
+  fi
+done
+
 echo "CI pass"
