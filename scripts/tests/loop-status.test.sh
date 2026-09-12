@@ -257,7 +257,7 @@ sed "s/@NOW@/$NOW/g; s/@OLD@/$OLD/g" > "$tmp/fx/ggqgga_BodaT.issues.json" <<'FX'
  {"number":4901,"title":"옛 파생건","createdAt":"@OLD@","labels":[{"name":"agent-ready"},{"name":"spinoff"}]},
  {"number":4803,"title":"issue-runner 건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
  {"number":4701,"title":"좌초건","createdAt":"@NOW@","labels":[{"name":"agent:claimed"}]},
- {"number":4810,"title":"검증중건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":4810,"title":"검증대기건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
  {"number":4500,"title":"배포 대기 (승격만) — 사다리가 이긴다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
  {"number":4811,"title":"마감대기건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:ready"}]},
  {"number":4818,"title":"closeout 건","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"harvesting"}]},

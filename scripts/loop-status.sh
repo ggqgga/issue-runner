@@ -259,7 +259,7 @@
 #   `… epic #N …`(줄 시작이 아님)은 leaf 로 잡히지 않는다(과잉 포획 방지 — Blockers 픽스처의
 #   #15/#21/#22 반증과 같은 이유).
 #   한 줄 형식(leaf ≥ 1): `#<에픽> <종료>/<전체> · <버킷 분포> · <P 분포>`. 버킷 분포는
-#   **열린** leaf 만 세고, 9버킷을 5칸으로 접는다 — `agent:claimed`·`flow:verify`·`verifying`·
+#   **열린** leaf 만 세고, 9버킷을 6칸으로 접는다 — `agent:claimed`·`flow:verify`·`verifying`·
 #   `flow:ready`·`harvesting` 은 한데 묶어 `진행`, 나머지(`막힘`·`대기`·`보류`·`needs-human`·`배포대기`)
 #   는 그대로. 0건인 칸은 생략(`· `로 안 이어 붙인다). P 분포도 **열린** leaf 만(닫힌 leaf 의
 #   P 는 과거라 못 고치니 뺀다 — 위 warn 정의와 같은 이유), P 라벨 없는 leaf 는 세지 않는다.
@@ -814,7 +814,7 @@ def prio_of($l):
    | map(if .bucket == "waiting" and ((.openblk | length) > 0)
          then .bucket = "blocked" else . end)) as $iss
 # ── 에픽 절 (#260) — 열린 leaf(.bucket 은 위에서 이미 확정) + 닫힌 leaf($cls) 를 에픽 번호로
-# 묶는다. 9버킷을 5칸으로 접는다: claimed/verify/verifying/ready/harvesting → `progress`(사람용 `진행`),
+# 묶는다. 9버킷을 6칸으로 접는다: claimed/verify/verifying/ready/harvesting → `progress`(사람용 `진행`),
 # 나머지는 그대로. P 분포·leaf 전부 종료·P 혼재 판정은 전부 **열린** leaf 만 본다(닫힌
 # leaf 의 P·버킷은 과거라 못 고친다 — ★warn 정의★ 와 같은 근거).
 | def epic_bucket_key($b):

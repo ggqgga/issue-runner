@@ -321,7 +321,7 @@ so it is a brake a human put there by hand. Per event:
   **The order is the contract** (#244): the marker *is* "re-review done", so posting it first
   means a dead transition still folds the issue to `reviewed` on the next tick — `needs-human`
   is never attached, the issue keeps only `hold:policy`, and **nobody ever asks again** (a human
-  decision sealed out of the human-waiting column).
+  decision sealed out of the needs-human column).
   If the transition exits non-zero, **do not post the marker comment**; leave one line
   `BLOCKED: 전이 실패 policy-kept #<issue>(exit N)` in ④ Report instead — with no marker the next
   sweep **emits the same issue again** as `policy_review_due`. `policy-kept` only adds labels and
