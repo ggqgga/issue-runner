@@ -91,7 +91,7 @@ ln -s ~/Projects/refs/issue-runner ~/.claude/skills/issue-runner
 4. **라벨 부착 후 루프 실행.** Claude Code 에서:
 
    ```bash
-   gh issue edit <N> --repo <owner/repo> --add-label agent-ready --add-label P2
+   gh issue edit <N> --repo <owner/repo> --add-label agent-ready --add-label P1
    ```
    ```
    /loop 15m /issue-runner
@@ -230,7 +230,7 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 |---|---|
 | `agent-ready` | 집어가도 되는 이슈. 스펙 완결 후 **마지막에** 사람이(또는 `/loop-issues` 로) 부착. 디스패처는 임의로 붙이지 않는다 |
 | `agent:claimed` | 디스패처가 점유 중. **수동 부착/제거 금지** — 루프가 라이프사이클을 관리 |
-| `P0` / `P1` / `P2` | 우선순위 — **주제(에픽) 단위**로 정하고 leaf 가 상속한다(leaf 마다 따로 매기지 않는다). `P0` 장애·차단(루프 전체가 기다린다) · `P1` 지금 끝내려는 에픽의 leaf(에픽 P 를 그대로 상속, P1 에픽은 **동시 2개**까지) · `P2` 기본(에픽 없는 단발, 우선순위 미정 에픽의 leaf). 없으면 최하순위. **에픽 본체에는 붙이지 않는다** — 에픽의 P 는 leaf 들의 P 로 표현된다 |
+| `P0` / `P1` | 우선순위 — **주제(에픽) 단위**로 정하고 leaf 가 상속한다(leaf 마다 따로 매기지 않는다). 축은 **둘뿐**이다(2026-09-13 `P2` 폐지). `P0` 장애·차단(루프 전체가 기다린다) · `P1` 기본 = P0 아닌 전부(에픽의 leaf 는 에픽 P 를 그대로 상속, 에픽 없는 단발도 여기). 없으면 P1 과 같은 칸. 같은 칸 안의 순서는 생성순(FIFO). **에픽 본체에는 붙이지 않는다** — 에픽의 P 는 leaf 들의 P 로 표현된다 |
 | `blocked-by:<N>` / `Blocked by #N` | 의존성. 라벨 또는 전용 본문 라인 중 하나. OPEN 인 블로커가 하나라도 있으면 디스패치 제외. `<N>` 은 **이슈** 번호이며, 블로커가 닫히면 게이트가 자동 해제 |
 | `Epic #N` | 주제 연결. 에픽에 속한 leaf 의 본문 **전용 라인**(형식은 `Blocked by #N` 과 같다 — 줄 시작 위치, 이슈당 하나, 대소문자 무시). 디스패처가 같은 P 안에서 시작한 에픽부터 집고, closeout 이 leaf 전부 종료된 에픽을 닫는다. 의존이 아니라 디스패치를 막지 않는다 |
 | `spinoff` | closeout 6단계가 발행한 파생 이슈라는 출처 표식. `loop-status.sh` 의 `파생` 집계가 이 라벨로만 센다 |
@@ -239,7 +239,7 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 | `hold:conflict` · `hold:policy` · `hold:ladder` | **기계 정지**와 그 사유. `transition.sh verify-held|closeout-blocked|runner-held --reason <사유>` 가 **이 라벨만** 붙인다(#244 — `needs-human` 을 겹쳐 붙이지 않는다. 그래야 사람대기 칸이 사람이 손댈 수 없는 것으로 차지 않는다). `ladder` 만 창(`RESUME_AFTER_MIN`)이 지나면 재개 스윕이 자동 재개하고(사람 개입 불요), `policy` 는 루프 재심 1회(#155) 뒤 "사람 몫 유지" 판정에서만 `needs-human` 이 붙는다(`transition.sh policy-kept`). `conflict` 는 그 자체가 사람 몫이다(자동 재개 없음). 디스패치·검증·마감 게이트는 이 **접두**를 직접 본다(#242) — 사람이 홀드를 풀 때는 **이슈와 열린 PR 양쪽에서** 뗀다(PR 에 남은 사본은 스윕의 정지 미러 정리가 떼 준다, #265). `hold:dup`·`hold:hardware` 는 일부러 없다 — 중복은 `closeout-dup` 이 닫고, 실장비는 사다리를 오른다 |
 | `dup` | `closeout-dup` 으로 머지 없이 닫힌 PR(이미 main 에 반영·중복). `loop-status.sh` 가 `실패` 와 갈라 `중복종료` 로 센다 |
 
-자격 조건: `open + agent-ready + ¬agent:claimed + 모든 블로커 CLOSED`. 정렬: `P0 > P1 > P2 > 없음`, 동순위는 오래된 순.
+자격 조건: `open + agent-ready + ¬agent:claimed + 모든 블로커 CLOSED`. 정렬: **`P0` 먼저, 나머지는 생성순(FIFO)** — 에픽은 정렬에 쓰이지 않는다.
 
 **(선택) 워크플로우 hook.** GitHub Actions 를 쓰지 않는다 — 대신 레포가 루프 위생을 강제하는 Claude Code hook 세트([`hooks/`](hooks/))를 동봉한다: 로컬 CI 캐시 + 머지 게이트, 모든 PR 에 자동 codex 리뷰, 그리고 작업을 토픽 브랜치·이슈 추적 가능 상태로 묶는 가드 2개. 각각 옵트인 — 심링크 후 `~/.claude/settings.json` 에 등록한다.
 

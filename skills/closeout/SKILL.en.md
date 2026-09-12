@@ -959,7 +959,7 @@ and that fact must be visible to a human.
 
   ```
   gh issue create --repo <repo> --title "배포 대기: PR #<pr> — <summary>[ (승격만)]" \
-    --body-file <body-file> --label deploy-wait [--label <P1|P2>]
+    --body-file <body-file> --label deploy-wait [--label P1]
   ```
 
   `deploy-wait` is the bucket label `loop-status.sh` uses to separate deploy-waiting from
@@ -1203,7 +1203,7 @@ on the original PR (a duplicate-issuance marker).
   ```
 
   `spinoff-inherit.sh` reads the parent **once** and emits exactly two lines,
-  `epic=<N|->` and `priority=<P0|P1|P2>` (read-only — it never edits the parent).
+  `epic=<N|->` and `priority=<P0|P1>` (read-only — it never edits the parent).
   **On exit 1 (no output), stop issuing** — report it as the same BLOCKED as an unknown
   parent above. Fill the body file's `<EPIC_LINE>` slot with the single line `Epic #N`
   when `epic=N`, or with an **empty line** when `epic=-` — an epic is linked by that
@@ -1219,9 +1219,11 @@ on the original PR (a duplicate-issuance marker).
   the loop — while step 4, whose command literally carries the label (back then
   `--label needs-human`, today `--label deploy-wait`, #243), was
   correct on all 186. The step with a command did not leak; the prose-only step did).
-  `--label "$priority"` is **not optional** either — without one the issue sorts last
-  (`P0 > P1 > P2 > none`). Do not invent that value; use exactly what the helper emitted
-  (if the parent carries no P label the helper hands you `P2`).
+  `--label "$priority"` is **not optional** either — without one the issue falls into the
+  non-P0 bin (the same bin as P1; #401 — the axis is `P0` and everything else, and order
+  inside one bin is oldest-first FIFO). Do not invent that value; use exactly what the
+  helper emitted (if the parent carries no P label, or carries a transitional `P2`, the
+  helper hands you `P1`).
   Add the other axes per repo convention (BoDAT: `difficulty:*`·`frontend` (only when UI is
   touched)·`needs:hardware` — the repo CLAUDE.md label section is the SSOT), but **never let
   convention labels displace `agent-ready`** —
@@ -1292,7 +1294,7 @@ if it became that tick's Pick), and `stale_reverify` re-dispatches / `held` need
 
 Below that, **name the numbers item by item** — counts alone do not tell the next tick where
 each PR/issue went:
-`closed: PR #4795(bodat)←#4788 · spinoff: #4823(bodat)←PR #4788 (Epic #4968 · P2) · re-dispatched: #4770(bodat, stale_reverify)`.
+`closed: PR #4795(bodat)←#4788 · spinoff: #4823(bodat)←PR #4788 (Epic #4968 · P1) · re-dispatched: #4770(bodat, stale_reverify)`.
 Write the spinoff item in the **same shape** as step 6's PR marker comment —
 `#<new number> (Epic #<N|없음> · <P>)` — so spinoffs that failed to inherit an epic
 (`Epic 없음`) are visible as they accumulate, tick by tick.

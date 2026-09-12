@@ -19,7 +19,7 @@ repo="${1:?usage: setup-labels.sh <owner/repo>}"
 # 를 색만으로 가르는 축이라 임의로 바꾸면 축이 무너진다 — 옛 팔레트가 정확히 거꾸로였다
 # (사람이 봐야 할 유일한 라벨 needs-human 이 가장 조용한 연라벤더, 루프가 알아서 집어가
 # 사람이 볼 일 없는 agent-ready 가 가장 시끄러운 핫핑크).
-# P0/P1/P2 는 이 축 **밖**이다 — "차례" 가 아니라 "중요도" 라 빨강-노랑-연두 관습을 유지한다.
+# P0/P1 은 이 축 **밖**이다 — "차례" 가 아니라 "중요도" 라 빨강-노랑 관습을 유지한다.
 gh label create "agent-ready"   --repo "$repo" --color 1F6FEB --force \
   --description "에이전트가 집어가도 되는 이슈 (스펙 완결 후 마지막에 부착)"
 gh label create "agent:claimed" --repo "$repo" --color 054A91 --force \
@@ -33,10 +33,13 @@ gh label create "needs-human" --repo "$repo" --color D73A49 --force \
 # P 는 **주제(에픽) 단위**로 정하고 leaf 가 상속한다(#259) — leaf 마다 따로 매기지 않는다.
 # 정의의 SSOT 는 skills/loop-issues/SKILL.md 체크리스트 6 이고, 여기 설명은 그 요약이다
 # (라벨 목록만 보는 사람이 "보통/낮음" 으로 읽고 leaf 마다 임의로 매기던 것이 이 이슈의 원인).
+# 축은 **둘뿐**이다 (#401 — `P2` 폐지): P0 아닌 전부가 P1 이고, 같은 칸 안의 순서는
+# 디스패치가 생성순(FIFO)으로 정한다. 등급을 더 쪼개 봐야 실제로는 뒤죽박죽이 돼
+# 정렬 신호가 못 됐다(사용자 결정 2026-09-13). `P2` 라벨 삭제는 레포별 데이터 작업이라
+# 여기 범위 밖 — 이 스크립트는 더 이상 만들지 않을 뿐이다.
 gh label create "P0" --repo "$repo" --color B60205 --force --description "장애·차단"
 gh label create "P1" --repo "$repo" --color FBCA04 --force \
-  --description "지금 끝내는 에픽의 leaf (에픽 P 상속, 동시 2개)"
-gh label create "P2" --repo "$repo" --color C2E0C6 --force --description "기본"
+  --description "기본 — P0 아닌 전부 (에픽 P 상속, 2026-09-13 P2 폐지)"
 
 # closeout 마감 루프 (#41) — harvesting(점유)·epic(부모 탐지)
 gh label create harvesting --repo "$repo" --color 1A7F37 \

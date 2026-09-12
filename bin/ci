@@ -1738,7 +1738,7 @@ echo "[test] verify·closeout 레인 판별 — head 이름 + full-cycle 라벨 
 bash scripts/tests/lane-gate.test.sh
 
 echo "[test] eligible-issues.sh 막힘 stderr 보고·블로커 상태 표기·검색 창 warn·stdout 불변 (#247)"
-echo "       + 에픽 finish-first 정렬·Epic #N 파싱·시작 집합 두 출처·loop-status 정규식 동기 (#257)"
+echo "       + 정렬 P0 먼저·같은 P 는 FIFO(#401)·Epic #N 파싱·loop-status 정규식 동기 (#257 → #401)"
 bash scripts/tests/eligible-issues.test.sh
 
 echo "[test] bounce-state.sh 반송 판정 — ①-b 입양 안전망·해제 경로 격자 (#196 · #218)"
@@ -2805,9 +2805,11 @@ echo "[loop-issues] 우선순위=에픽 단위 · 의존 정의 문면 검사 (#
 # 안 깨지므로 아래 토큰이 유일한 방지선이다. `Epic #N` 줄 형식의 SSOT 는 문서가 아니라
 # `scripts/loop-status.sh` 의 `epic_of`(`^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)` —
 # 줄 시작 앵커, 이슈당 첫 매치 하나, 대소문자 무시)이고 문서는 그것을 옮긴 것이다.
-# 축: 에픽 줄 · P1 동시 상한 · 에픽 본체 무 P · 의존의 정의 · 깊이 상한 · 분해≠직렬화.
+# 축: 에픽 줄 · P1 동시 상한 **철회**(#401) · 에픽 본체 무 P · 의존의 정의 · 깊이 상한 ·
+# 분해≠직렬화. 상한 토큰은 "지켜라" 에서 "철회됐다" 로 뒤집혔다 — 옛 문구가 되살아나면
+# 문서가 다시 없는 규칙을 가르친다.
 for tok in 'Epic #N' \
-           '동시에 2개까지' \
+           'P1 에픽 수 상한' \
            '에픽 본체에는 P 를 붙이지 않는다' \
            '컴파일·실행 시점' \
            '2 를 넘으면' \
@@ -2816,7 +2818,7 @@ for tok in 'Epic #N' \
     || { echo "  ✗ skills/loop-issues/SKILL.md 에 '$tok' 문구 없음"; exit 1; }
 done
 for tok in 'Epic #N' \
-           'At most two' \
+           'cap of two P1 epics' \
            'never gets a P' \
            'compile/run time' \
            'more than 2' \
@@ -2842,8 +2844,13 @@ grep -qE '"P0".*--description "장애·차단"' scripts/setup-labels.sh \
 # P1 은 설명이 길어 다음 줄로 이어지므로 라벨 줄 + 뒤 2줄 구간에서 찾는다.
 grep -A2 -E '"P1"' scripts/setup-labels.sh | grep -qF '에픽 P 상속' \
   || { echo "  ✗ scripts/setup-labels.sh: P1 설명에 '에픽 P 상속' 없음"; exit 1; }
-grep -qE '"P2".*--description "기본"' scripts/setup-labels.sh \
-  || { echo "  ✗ scripts/setup-labels.sh: P2 설명이 '기본' 이 아님"; exit 1; }
+# `P2` 설명(`기본`) 가드는 #401 로 폐기 — 축이 P0·P1 둘이라 그 라벨 정의 자체가 없다.
+# 대신 되살아나지 않는지를 문다(이 스크립트가 P2 를 다시 만들면 폐지가 무효가 된다).
+if grep -nE 'gh label create "?P2"?' scripts/setup-labels.sh; then
+  echo "  ✗ scripts/setup-labels.sh: P2 라벨 정의가 되살아남 — 축은 P0·P1 둘뿐이다 (#401)"; exit 1
+fi
+grep -A2 -E '"P1"' scripts/setup-labels.sh | grep -qF 'P0 아닌 전부' \
+  || { echo "  ✗ scripts/setup-labels.sh: P1 설명에 'P0 아닌 전부' 없음 (#401)"; exit 1; }
 
 echo "[README] 라벨 표 — P 행 에픽 단위 정의 + Epic #N 행 (한/영)"
 # 표 행만 집도록 **줄머리 파이프**로 앵커한다 — 두 README 본문 산문(loop-status 절)에도
@@ -2853,9 +2860,11 @@ for f in README.ko.md README.md; do
   grep -qE '^\|[[:space:]]*.Epic #N.[[:space:]]*\|' "$f" \
     || { echo "  ✗ $f 라벨 표에 Epic #N 행 없음 (줄머리 표 행이어야 한다)"; exit 1; }
 done
-grep -E '^\|[[:space:]]*.P0. / .P1. / .P2.' README.ko.md | grep -qF '에픽' \
+# 앵커는 **두 칸**이다 (#401 — `P2` 폐지). 에픽 단위 *부착* 규약은 그대로 살아 있으므로
+# 행 본문의 에픽/epic 검사는 유지한다(정렬 키에서만 빠졌다).
+grep -E '^\|[[:space:]]*.P0. / .P1.[[:space:]]*\|' README.ko.md | grep -qF '에픽' \
   || { echo "  ✗ README.ko.md 라벨 표 P 행에 에픽 단위 정의 없음"; exit 1; }
-grep -E '^\|[[:space:]]*.P0. / .P1. / .P2.' README.md | grep -qF 'epic' \
+grep -E '^\|[[:space:]]*.P0. / .P1.[[:space:]]*\|' README.md | grep -qF 'epic' \
   || { echo "  ✗ README.md 라벨 표 P 행에 에픽 단위 정의 없음"; exit 1; }
 
 echo "[#292] loop-status 에픽 닫힌 leaf 조회 — 검색 쿼리 형태·단일 epic_of·헤더 계약"
@@ -2941,7 +2950,9 @@ for tok in '출처' '상태 아님'; do
 done
 # ⑸ 이 이슈는 **추가와 설명 변경만** 한다 — 기존 라벨 정의가 하나라도 사라지면 빨강
 #    (이름 변경·삭제는 다중 레포 마이그레이션이라 범위 밖).
-for lbl in agent-ready agent:claimed needs-human P0 P1 P2 harvesting epic flow:ci flow:verify \
+#    예외 하나: `P2` 는 #401 이 축을 P0·P1 둘로 줄이며 **의도적으로** 목록에서 뺐다
+#    (레포별 라벨 삭제는 여전히 데이터 작업이라 이 스크립트 밖이다 — 더 만들지 않을 뿐).
+for lbl in agent-ready agent:claimed needs-human P0 P1 harvesting epic flow:ci flow:verify \
            flow:codex flow:ready spinoff deploy-wait loop-dashboard hold:conflict hold:policy hold:ladder dup; do
   grep -qE "gh label create \"?${lbl}\"? " scripts/setup-labels.sh \
     || { echo "  ✗ scripts/setup-labels.sh: 기존 라벨 '$lbl' 정의가 사라짐 — 이 축 정리는 삭제·이름변경을 하지 않는다 (#245)"; exit 1; }
