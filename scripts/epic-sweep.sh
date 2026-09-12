@@ -4,9 +4,10 @@
 # 사용: epic-sweep.sh [--repos-file <경로>] [--repo <owner/repo>]... [--dry-run]
 #   스코프: `--repo` 가 있으면 그것들, 없으면 `--repos-file`(기본 `$PWD/.loop/repos`).
 #           둘 다 없으면 usage exit 64 — `loop-status.sh` 와 **같은 규약**.
-#   환경변수: EPIC_LIST_LIMIT(기본 100) · EPIC_SEARCH_PER_PAGE(기본 100)
+#   환경변수: EPIC_LIST_LIMIT(기본 100) · EPIC_SEARCH_PER_PAGE(기본 100) · EPIC_OPEN_LIMIT(기본 500)
 #             — 테스트가 상한 도달 경로를 100건짜리 픽스처 없이 재현하려고 열어 둔 값이다
 #               (운영에서 내리는 값이 아니다 — 내리면 그만큼 잘리고, 잘림은 warn 으로 드러난다).
+#               EPIC_OPEN_LIMIT 은 두 겹 가드 ⓑ 의 열린 이슈 전체 목록 상한(gh 가 페이지를 넘겨 채운다).
 #             EPIC_CLOSE_RETRIES(기본 3) · EPIC_CLOSE_RETRY_SLEEP(기본 10, 초)
 #             — close 의 같은 틱 재시도(아래 "멱등" 절). 테스트는 sleep 0 으로 돌린다.
 #               기본 창은 3회·간격 10초(≈20초 대기) — "코멘트 직후 close 실패" 의 가장 흔한 원인이
@@ -37,18 +38,26 @@
 #      leaf 만으로 끝나지 않는다(BoDAC #2: 완료 기준 5개 전부 `[ ]` 인데 leaf 로 언급된 옛
 #      스파이크 하나가 CLOSED 라 닫힐 뻔했다). 체크박스가 없는 에픽은 이 겹을 그냥 지난다.
 #      호출이 없는 판정이라 **먼저** 본다(다음 겹의 검색 1회를 아낀다).
-#   ⓑ **leaf 의 하류 배포 대기 이슈(`label:deploy-wait`, 열림)가 있다** — leaf 가 닫혔어도
-#      그 PR 이 프로덕션에 안 올라갔으면 에픽은 끝난 게 아니다(BoDAT #4964: leaf 3건 전부
-#      CLOSED, 배포 대기 3건 전부 열림). 에픽당 검색을 **한 번 더** 한다: `label:deploy-wait
-#      is:open` 에 leaf 번호를 `"#N" OR "#M" …` 로 실어(제목의 `(#leaf)`·본문의 `Closes 한
-#      이슈: #leaf` — closeout 4단계 형식 — 어느 쪽에 걸려도 된다). GitHub 검색은 AND/OR/NOT
-#      연산자를 **5개까지**만 받으므로 leaf 6건씩 묶어 나눠 묻는다(7 leaf = 2회).
-#      검색은 **후보를 좁힐 뿐** 판정이 아니다(leaf 검색과 `epic_of` 의 관계와 같다): GitHub
-#      는 `"#1"` 을 토큰 `1` 로 풀어 본문 어디의 `1` 이든 문다(실측: BoDAT 에서 `"#1" OR "#2"
-#      OR "#3"` 이 열린 배포 대기 12건 전부를 물어 왔다). 그래서 물어 온 이슈의 제목+본문에
-#      leaf 번호가 **단어 경계**(`#N` 앞뒤가 숫자 아님)로 실제로 있는 것만 배포 대기 이슈로
-#      친다 — 첫 (leaf, 이슈) 짝을 why 에 적는다(`leaf #N 의 배포 대기 이슈 #M 열림`).
-#      실패·파싱 실패는 warn + rc 1 · 상한은 warn + 보류 — leaf 검색과 같은 규약.
+#   ⓑ **leaf 의 하류 배포 대기 이슈가 열려 있다** — leaf 가 닫혔어도 그 PR 이 프로덕션에 안
+#      올라갔으면 에픽은 끝난 게 아니다(BoDAT #4964: leaf 3건 전부 CLOSED, 배포 대기 3건 전부
+#      열림). 에픽당 `gh issue list --state open`(core API — 검색이 아니라 색인 지연이 없다)
+#      **1회**로 열린 이슈 전체를 받아 **후보**를 고른다: `deploy-wait` 라벨 **또는** 제목이
+#      `배포 (대기|검증)` 로 시작(closeout 4단계의 라벨 부착 실패 폴백은 **무라벨** `배포 대기:`
+#      이슈다 — SKILL.md 4단계 · 실측 BoDAT #5095. 제목 술어는 `loop-status.sh` 의 배포대기
+#      버킷 폴백과 같은 문자열). `label:deploy-wait` 검색만 보던 판본은 그 폴백을 놓쳤다.
+#      후보와 leaf 의 **연결은 PR 로 파생한다**: 발행 형식(`배포 대기: PR #<pr> — <요약>`,
+#      references/deploy-check-issue.md)에는 leaf 자리표가 **없다**(실측 BoDAT #5215·#5147·#5145
+#      본문에 `Closes` 없음 — 제목의 `(#leaf)` 는 PR 제목 관례가 우연히 따라온 것이라 보장이
+#      아니다). 그래서 후보 제목·본문의 첫 `PR #M` 을 뽑아 `gh pr view M --json
+#      closingIssuesReferences,headRefName` 으로 그 PR 이 닫은 이슈 **전부**(`[0]` 만이 아니다 —
+#      #239 교훈) ∪ head 브랜치 `agent/issue-N` 을 연결 이슈 집합으로 삼고, leaf 와 교집합이
+#      있으면 배포 대기 이슈로 친다. 보조로 후보의 제목+본문에 leaf 번호가 **단어 경계**(`#N`
+#      앞뒤가 숫자 아님)로 있으면 PR 조회 없이 같은 판정(옛 형식·손으로 쓴 이슈 방어 — 방향이
+#      "안 닫는다" 쪽이라 무해). 후보는 번호 오름차순으로 보고 첫 짝에서 멈춘다 — why 는
+#      `leaf #N 의 배포 대기 이슈 #M 열림`. `PR #M` 도 leaf 언급도 없는 후보는 근거가 아니다.
+#      실패·파싱 실패(목록·PR 조회)는 warn + rc 1 · 목록 상한은 warn + 보류 — leaf 검색과
+#      같은 규약. 호출 수: 목록 1 + 후보마다 PR 조회 ≤ 1(텍스트로 걸리면 0, 첫 짝에서 멈춤) —
+#      이 겹은 leaf 전부 CLOSED 가 확정된 에픽만 닿으므로 틱당 한 줌이다.
 #   종전 가드는 `deploy-wait` 를 **에픽 라벨**에서 찾았는데, 그 라벨은 에픽이 아니라 leaf 의
 #   하류 배포 대기 이슈에 붙는다 — 한 번도 발화하지 않았다(#328 dry-run 실측). 그 검사는
 #   무해해서 남긴다(라벨이 잘못 겹친 에픽 방어).
@@ -105,6 +114,7 @@ usage() {
 
 EPIC_LIST_LIMIT="${EPIC_LIST_LIMIT:-100}"
 EPIC_SEARCH_PER_PAGE="${EPIC_SEARCH_PER_PAGE:-100}"
+EPIC_OPEN_LIMIT="${EPIC_OPEN_LIMIT:-500}"
 EPIC_CLOSE_RETRIES="${EPIC_CLOSE_RETRIES:-3}"
 EPIC_CLOSE_RETRY_SLEEP="${EPIC_CLOSE_RETRY_SLEEP:-10}"
 
@@ -118,6 +128,10 @@ if ! _pos_int "$EPIC_LIST_LIMIT"; then
 fi
 if ! _pos_int "$EPIC_SEARCH_PER_PAGE"; then
   echo "$SELF: EPIC_SEARCH_PER_PAGE 는 1 이상의 정수여야 한다 (받은 값: '$EPIC_SEARCH_PER_PAGE')" >&2
+  exit 64
+fi
+if ! _pos_int "$EPIC_OPEN_LIMIT"; then
+  echo "$SELF: EPIC_OPEN_LIMIT 은 1 이상의 정수여야 한다 (받은 값: '$EPIC_OPEN_LIMIT')" >&2
   exit 64
 fi
 if ! _pos_int "$EPIC_CLOSE_RETRIES"; then
@@ -258,7 +272,7 @@ rc=0
 sweep_epic() {  # sweep_epic <repo> <에픽 JSON 한 줄>
   local repo="$1" row="$2"
   local num labels sres stats total open_n leaves_json items_n total_count inc ctext cjson marker
-  local unchecked dw_terms dw_q dres dstats d_items d_total d_inc d_hit
+  local unchecked olist ocount cands c_num c_pr c_txt pres linked d_hit
 
   num=$(printf '%s' "$row" | jq -r '.number // "" | tostring' 2>/dev/null) || num=""
   if ! _json_int "$num"; then
@@ -359,64 +373,81 @@ EOF
     return 0
   fi
 
-  # ── 두 겹 가드 ⓑ — leaf 의 배포 대기 이슈 (#343, 에픽당 검색 1회 이상) ────────
-  # leaf 번호를 6건씩 묶어 `"#N" OR "#M" …` 로 묻는다(OR 5개 = GitHub 검색 연산자 상한).
-  # 한 묶음이라도 실패·상한이면 그 자리에서 보류 — 나머지 묶음을 묻지 않는다(어차피 안 닫는다).
-  # `_nwise(n)` 은 jq 의 밑줄 접두 내장(1.5~1.7 에 존재, 매뉴얼엔 `splits` 류만 문서화) —
-  # 사라지면 이 jq 가 실패해 warn(fail-closed) 이고, 스위트 ⑫-f 가 7 leaf 로 실제로 태운다.
-  if ! dw_terms=$(printf '%s' "$leaves_json" | jq -r '
-        [ _nwise(6) | map("\"#" + tostring + "\"") | join(" OR ") ] | .[]' 2>/dev/null) \
-     || [ -z "$dw_terms" ]; then
-    emit_warn "$repo" "$num" "배포 대기 질의 생성 실패 — 닫지 않는다"
+  # ── 두 겹 가드 ⓑ — leaf 의 배포 대기 이슈 (#343, 목록 1회 + 후보마다 PR 조회 ≤ 1) ────
+  # 열린 이슈 **전체**를 받는다(라벨 필터 없음) — 후보 술어(라벨 ∪ 제목)는 jq 로 건다. 검색이
+  # 아니라 core API 라 방금 발행된 배포 대기 이슈도 색인 지연 없이 보인다(헤더 ⓑ).
+  if ! olist=$(gh issue list --repo "$repo" --state open --limit "$EPIC_OPEN_LIMIT" \
+        --json number,title,body,labels 2>/dev/null); then
+    emit_warn "$repo" "$num" "배포 대기 후보 조회 실패(열린 이슈 목록) — 닫지 않는다(다음 틱 재시도)"
+    rc=1
+    return 0
+  fi
+  if ! printf '%s' "$olist" | jq -e 'type=="array"' >/dev/null 2>&1; then
+    emit_warn "$repo" "$num" "배포 대기 후보 조회 응답 파싱 실패 — 닫지 않는다"
+    rc=1
+    return 0
+  fi
+  ocount=$(printf '%s' "$olist" | jq 'length' 2>/dev/null) || ocount=""
+  if ! _json_int "$ocount"; then
+    emit_warn "$repo" "$num" "배포 대기 후보 집계 실패 — 닫지 않는다"
+    rc=1
+    return 0
+  fi
+  # 잘린 목록으로 판정하면 "배포 대기 이슈는 잘린 쪽에 있었다" 를 못 보고 닫는다 — leaf 조회 상한과 같은 보류.
+  if [ "$ocount" -ge "$EPIC_OPEN_LIMIT" ]; then
+    emit_warn "$repo" "$num" "배포 대기 후보 조회 상한($EPIC_OPEN_LIMIT) — 판정 보류"
+    return 0
+  fi
+  # 후보 한 줄 = `번호<TAB>PR번호<TAB>텍스트로 걸린 leaf`, 번호 오름차순. 빈 칸은 `-` 로 채운다 —
+  # 탭은 IFS 공백류라 `read` 가 연속 탭을 **하나로 접어** 빈 가운데 칸이 뒤 칸을 당겨 온다
+  # (`903<TAB><TAB>101` → PR=101). 그러면 손으로 쓴(PR 없는) 이슈의 leaf 언급이 PR 번호로 읽힌다.
+  # 제목 술어 `^배포 (대기|검증)` 은 loop-status.sh 배포대기 버킷의 폴백과 같은 문자열이다.
+  # `PR #M` 은 제목+본문의 **첫** 매치(제목이 앞이라 발행 형식의 `배포 대기: PR #<pr>` 이 이긴다).
+  if ! cands=$(printf '%s' "$olist" | jq -r --argjson leaves "$leaves_json" '
+      [ .[] | select((.number // -1) != -1)
+        | select(([.labels[]?.name] | index("deploy-wait")) != null
+                 or ((.title // "") | test("^배포 (대기|검증)")))
+        | . as $it
+        | (($it.title // "") + "\n" + ($it.body // "")) as $txt
+        | [ $it.number,
+            (($txt | [match("PR #([0-9]+)").captures[0].string] | first) // "-"),
+            ((first($leaves[] | . as $n
+                | select($txt | test("(^|[^0-9])#" + ($n|tostring) + "([^0-9]|$)")))) // "-") ] ]
+      | sort_by(.[0]) | .[] | map(tostring) | @tsv' 2>/dev/null); then
+    emit_warn "$repo" "$num" "배포 대기 후보 집계 실패 — 닫지 않는다"
     rc=1
     return 0
   fi
   d_hit=""
   # fd 4 로 읽는다 — 아래 에픽 루프(fd 3)와 같은 이유: 안에서 부르는 gh 가 stdin 을 건드리면
-  # 두 번째 묶음부터 조용히 사라져 그 묶음에만 걸리는 배포 대기 이슈를 놓친다(닫는 방향).
-  while IFS= read -r dw_q <&4; do
-    [ -n "$dw_q" ] || continue
-    if ! dres=$(gh api -X GET search/issues \
-          -f q="repo:$repo is:issue is:open label:deploy-wait in:title,body $dw_q" \
-          -f per_page="$EPIC_SEARCH_PER_PAGE" 2>/dev/null); then
-      emit_warn "$repo" "$num" "배포 대기 이슈 검색 실패 — 닫지 않는다(다음 틱 재시도)"
+  # 뒤 후보가 조용히 사라져 그 후보에만 걸리는 배포 대기 이슈를 놓친다(닫는 방향).
+  while IFS=$'\t' read -r c_num c_pr c_txt <&4; do
+    [ -n "$c_num" ] || continue
+    if [ "$c_txt" != "-" ]; then
+      d_hit="$c_txt $c_num"
+      break
+    fi
+    [ "$c_pr" != "-" ] || continue   # PR 도 leaf 언급도 없는 후보 — 근거가 아니다
+    if ! pres=$(gh pr view "$c_pr" --repo "$repo" --json closingIssuesReferences,headRefName 2>/dev/null); then
+      emit_warn "$repo" "$num" "배포 대기 이슈 #$c_num 의 PR #$c_pr 조회 실패 — 연결 leaf 를 몰라 닫지 않는다(다음 틱 재시도)"
       rc=1
       return 0
     fi
-    if ! printf '%s' "$dres" | jq -e 'type=="object" and (.items|type=="array")' >/dev/null 2>&1; then
-      emit_warn "$repo" "$num" "배포 대기 이슈 검색 응답 파싱 실패 — 닫지 않는다"
+    # 연결 이슈 = closingIssuesReferences **전부** ∪ head 브랜치 `agent/issue-N`. leaf 와의 첫 교집합.
+    if ! linked=$(printf '%s' "$pres" | jq -r --argjson leaves "$leaves_json" '
+        ([.closingIssuesReferences[]?.number | select(type=="number")]
+         + [(.headRefName // "") | match("^agent/issue-([0-9]+)$").captures[0].string | tonumber]) as $l
+        | (first($leaves[] | select(. as $n | $l | index($n) != null))) // ""' 2>/dev/null); then
+      emit_warn "$repo" "$num" "배포 대기 이슈 #$c_num 의 PR #$c_pr 응답 파싱 실패 — 닫지 않는다"
       rc=1
       return 0
     fi
-    # 국소 대조 — leaf 번호가 제목·본문에 **단어 경계**로 있는 (leaf, 이슈) 짝 중 이슈 번호가
-    # 가장 작은 것 하나. 검색만 걸리고 대조에 안 걸린 후보는 판정 근거가 아니다(헤더 참고).
-    dstats=$(printf '%s' "$dres" | jq -r --argjson leaves "$leaves_json" '
-      [ .items[]? | . as $it
-        | (($it.title // "") + "\n" + ($it.body // "")) as $txt
-        | first($leaves[] | . as $n
-                | select($txt | test("(^|[^0-9])#" + ($n|tostring) + "([^0-9]|$)"))
-                | [$n, ($it.number // -1)]) ] as $pairs
-      | [ (.items | length), (.total_count // 0),
-          (if (.incomplete_results // false) then 1 else 0 end),
-          (if ($pairs | length) > 0 then ($pairs | sort_by(.[1]) | .[0] | map(tostring) | join(" ")) else "" end) ]
-      | @tsv' 2>/dev/null) || dstats=""
-    if [ -z "$dstats" ]; then
-      emit_warn "$repo" "$num" "배포 대기 이슈 집계 실패 — 닫지 않는다"
-      rc=1
-      return 0
+    if [ -n "$linked" ]; then
+      d_hit="$linked $c_num"
+      break
     fi
-    IFS=$'\t' read -r d_items d_total d_inc d_hit <<EOF
-$dstats
-EOF
-    if [ "${d_items:-0}" -ge "$EPIC_SEARCH_PER_PAGE" ] \
-       || [ "${d_total:-0}" -gt "${d_items:-0}" ] \
-       || [ "${d_inc:-0}" -ne 0 ]; then
-      emit_warn "$repo" "$num" "배포 대기 이슈 조회 상한($EPIC_SEARCH_PER_PAGE, total=$d_total) — 판정 보류"
-      return 0
-    fi
-    [ -z "$d_hit" ] || break
   done 4<<EOF
-$dw_terms
+$cands
 EOF
   if [ -n "$d_hit" ]; then
     emit_note "$repo" "$num" "leaf #${d_hit%% *} 의 배포 대기 이슈 #${d_hit#* } 열림"

@@ -648,11 +648,10 @@ run
 check "⑫-h-b 라벨·제목 어느 쪽도 아닌 이슈는 후보가 아니다 → closed" "$(has_ev closed)"
 check "⑫-h-b PR 조회 0회" "$([ "$(count_cmd 'pr view')" = 0 ] && echo ok || echo no)"
 
-# ⓒ 보조 대조 — 제목·본문의 `#leaf` 언급(PR 이 leaf 에 연결돼 있지 않아도 잡는다, 호출 없이)
+# ⓒ 보조 대조 — 제목·본문의 `#leaf` 언급(손으로 쓴 이슈라 `PR #M` 이 없어도 잡는다, 호출 없이)
 reset
 search "$(two_leaves)"
-deploy "$(jq -n --argjson a "$(dw 904 '배포 대기: PR #804 — 요약 (#101)')" '[$a]')"
-prs "$(pr 804 '')"
+deploy "$(jq -n --argjson a "$(dw 904 '배포 대기: 수동 배포 (#101)')" '[$a]')"
 run
 check "⑫-a 제목의 (#leaf) 언급 → note(leaf #101 · #904)" \
   "$([ "$(ev note | jq -r '.why')" = 'leaf #101 의 배포 대기 이슈 #904 열림' ] && echo ok || echo no)"
