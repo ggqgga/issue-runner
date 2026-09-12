@@ -83,6 +83,9 @@ Run `$SCRIPTS/closeout-reconcile.sh` and handle each event:
   resume).
 - `resume` — the PR is OPEN and still holds `harvesting`. Skip the steps the
   marker table shows as finished and resume the pipeline from where it stopped.
+- `lookup_failed` — the PR **state could not be read** (gh failure or empty reply, #433). That is not
+  CLOSED — leave labels alone, **no-touch**, the next tick re-queries. ④ Report gets one line
+  `보류: PR #<pr>(<repo_short>) — 상태 조회 실패`.
 - `human_hold` — the PR is OPEN but carries `needs-human` (a human is investigating), or
   that label could not be read (`why` tells which). **Touch nothing** — leave one line in
   ④ Report, `보류: PR #<pr>(<repo_short>) — 사람 보류(<why>)`, and touch the PR no further
@@ -186,17 +189,21 @@ event:
 - `closed` — the epic was closed (rationale comment + `--reason completed`). Report it in
   ④ Report as `에픽 종료: #N(<repo short name>, leaf K)` (K = the length of `leaves`).
 - `note` — a line that **touched nothing** and is a normal state (an old epic with no
-  `Epic #N` lines · an epic carrying `deploy-wait` · leaves all closed but the **epic body
-  still has unchecked `- [ ]`** (`완료 기준 미체크 N개`) · a leaf's **deploy-wait issue is
-  still open** (`leaf #N 의 배포 대기 이슈 #M 열림`, #343 — an epic not yet in production is
-  not done). **Do not report it** — the same line every tick buries the real signals.
+  `Epic #N` lines · an epic carrying `deploy-wait` · an epic the sweep closed and a **human
+  reopened** — marker present but open means never close it again, #377 · leaves all closed
+  but the **epic body still has unchecked `- [ ]`** (`완료 기준 미체크 N개`) · a leaf's
+  **deploy-wait issue is still open** (`leaf #N 의 배포 대기 이슈 #M 열림`, #343 — an epic
+  not yet in production is not done). **Do not report it** — the same line every tick
+  buries the real signals.
 - `warn` — the judgment was **deferred** (the leaf or deploy-wait search hit its cap) or a
   read/write failed. Copy `why` verbatim into ④ Report's warn lines. A deferral is not a
   failure, so exit 0 is possible alongside it.
 
 exit 1 means this tick had a read/write **failure** — leave it alone, the next tick retries
 (the `<!-- epic-sweep -->` marker in the rationale comment keeps it idempotent, so comments
-never pile up). exit 64 means no scope (`.loop/repos` missing): call it once more naming the
+never pile up). One exception: the `에픽 close 실패(N회 시도)` warn is **not** retried next
+tick (the marker stays and reads as a human revert) — copy its why into Report verbatim so a
+human closes it. exit 64 means no scope (`.loop/repos` missing): call it once more naming the
 repos touched this tick with `--repo <owner/repo>`, and if there are none, leave one warn line
 `epic-sweep: 스코프 없음`.
 
@@ -494,6 +501,7 @@ gate of their own:
 | `done_verdict` | latest `머지 판정: ✅` **and it is proven to postdate the current head commit** (#171) | eligible.sh's normal path handles it — sweep skips |
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). Except: a `stale_inline` coming out of the `bounced` branch in 1) is **re-dispatched, never adopted** (that CLEAN may predate the bounce). |
 | `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer + **no progress evidence** (#206) (died before verifying, implementation may be incomplete, #971-type). A CONFLICTING PR whose bounce marker is latest landing here *is* the "died just before ✅ after a bounce" class from 1) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
+| `no_verdict` | **zero** `머지 판정:` comments (no 🔄, ✅ or ⚠) + **green CI** (zero failing **and zero still-running** checks — one pending check disqualifies the class, #421) + past buffer + **no progress evidence** (#396). The worker died **before** step 10 (final verdict) — CI is green but there is no verdict, so until now no lane picked it up (issue-runner ② leaves "CI green, no review" alone; this table presumes 🔄/✅). A comment **lookup failure** is not this class (`active`) | **Re-dispatch** — the **same action** as the row above: `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` plus the idempotency marker below (same signature — it died before verification). Do not merge unverdicted code on codex re-verify alone. **With no linked issue, leave it** — there is nothing to return to `agent-ready`, so skip the transition and report one line in ④ Report for a human. |
 | `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold) | **Stop (`hold:policy`)** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the stop signal survives even with no linked issue. **`needs-human` is not attached** (#244): a machine stop carries only its reason label, and the human call is attached by `transition.sh policy-kept` only when the resume sweep's ③ re-review ends as "kept"), closeout leaves it (no auto-progress). |
 | `active` | in progress · buffer not reached · not our shape, **or the ✅'s freshness could not be proven** (✅ predates the head commit, or either timestamp could not be obtained, #171), **or there is progress evidence** (commit within `STALL_MIN` · the head SHA's CI ticket alive in the queue · **the current round's `agent:claimed` was attached within the timebox** — or that judgment itself is unavailable: queue.log unreadable · head lookup failed · claim lookup failed (`unknown` ≠ `none`), #206 · `progress-evidence.sh`). A MERGEABLE bounce round is already filtered to leave-it by the 1) gate and never reaches here (#218) — the only bounce rounds that arrive here came through 1)'s **CONFLICTING exception branch** (#206), and an undecidable bounce state was filtered there as well (#196) | **Leave it** (next tick). |
 
@@ -502,7 +510,7 @@ gate of their own:
 (the labels are set outside this skill by the worker runtime — use as a supplement when
 present; judge by finish-classify alone when absent).
 
-**Re-dispatch idempotency marker (required)**: on a `stale_reverify` re-dispatch, leave the
+**Re-dispatch idempotency marker (required)**: on a `stale_reverify` / `no_verdict` re-dispatch, leave the
 comment with `$SCRIPTS/bounce-comment.sh redispatch <repo> <pr> <issue>` (do not hand-type the
 wording — a dropped colon or reordering lets the `bounce-state.sh` bounce safety net miss it,
 #212. The generated body is `재디스패치: #<issue> — 완결 유실(검증 전 사망) <!-- bodat:worker -->`
@@ -903,7 +911,7 @@ for out-of-merge-scope verification the step-1 verifier excluded from the merge 
 **`<LIVE_CHECKS>` must take one of two shapes — no free prose.**
 - If there is **nothing at all** to step through after deploy, exactly the one word
   `없음`. Do not append an explanation after it.
-- Otherwise a **`- [ ]` checkbox list**. One line = one action deploy-cycle ⑦ performs
+- Otherwise a **`- [ ]` checkbox list**. One line = one action `e2e-test` performs after the deploy (deploy-cycle ⑤ moves these lines into a `테스트` issue once the deploy is done — BoDAT #5197)
   once. Background·rationale·caveats go in `## 변경 요약`; leave only the actions here.
 - **A real-hardware line REQUIRES the `[칸 ③]` prefix marker** — write it as
   `- [ ] [칸 ③] <action>`. Saying in prose that real hardware means an action only
@@ -936,7 +944,7 @@ not be copied into this section as-is — doing so shoves work nobody attempted 
 into the deploy lane. closeout attempts **rung ① (dev server — `bin/rails runner`·localhost) and
 rung ② (`bin/dry-run`·the AdsPower relay)** of
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-**once each** first. **Rung ③ (the TEST worker) is deploy-cycle ⑦'s job** — that is why
+**once each** first. **Rung ③ (the TEST worker) is `e2e-test`'s job after the deploy** — that is why
 the item moves into `<LIVE_CHECKS>` rather than being escalated into a human's lap, and
 the ①② attempt results ride along so ⑦ does not repeat the same rungs.
 - If rung ①② **yields a verdict**, **drop** the item from `<LIVE_CHECKS>` (it is not a
@@ -963,15 +971,17 @@ and that fact must be visible to a human.
   ```
 
   `deploy-wait` is the bucket label `loop-status.sh` uses to separate deploy-waiting from
-  human-waiting, and it is **the lane mark the deploy-cycle loop picks this ticket up by** —
+  needs-human, and it is **the lane mark the deploy-cycle loop picks this ticket up by** —
   that one label is required.
-  **`needs-human` is deliberately not attached (#243, plan step 2) — do not revert it.**
-  All three consumers of a deploy-pending issue ignore that label: ⑴ the dispatch gate
-  **requires** `label:agent-ready` (`scripts/eligible-issues.sh`), which a deploy-pending
-  issue never has, so it is not a candidate to begin with; ⑵ the bucket decision at
-  `scripts/loop-status.sh:474` lets `deploy-wait` **win over** `needs-human`; ⑶ deploy-bodat
-  collects by **title regex** (`배포 대기: PR #<M>`), not by label. All that was left was a
-  duplicate mark that blurred what `needs-human` means (= a stop a human raised) (#190).
+  **closeout does not attach `needs-human` (#243, plan step 2) — do not revert it.** At filing
+  time there is nothing for a human to do: ⑴ the dispatch gate **requires** `label:agent-ready`
+  (`scripts/eligible-issues.sh`), which a deploy-pending issue never has, so it is not a
+  candidate to begin with; ⑵ deploy-bodat collects by **title regex** (`배포 대기: PR #<M>`),
+  not by label. Attaching it would be a duplicate mark that blurs what `needs-human` means
+  (= a human's share is left) (#190). The party that **does** attach it is deploy-cycle — on a
+  promotion/deploy/smoke failure, with a reason comment (BoDAT #5197, its hidden HALT file was
+  retired). That is why the loop-status bucket puts needs-human **ahead of** deploy-waiting
+  (2026-09-13) — so that failure mark never hides inside the deploy-waiting row.
   After issuance leave the
   marker `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
   **exit as approval-required**.
@@ -1032,8 +1042,9 @@ keeps accruing items loses its closing moment and becomes an issue that never en
 decision, 2026-08-13). Even as the count grows, keep **one PR = one ticket = a container with
 a clear closing moment**.
 
-**Step 5 — post-deploy handling (Chrome smoke).** For a deploy issue a human has
-reported deployed, without any new detection mechanism (no polling/timing), actively run
+**Step 5 — post-deploy handling (Chrome smoke).** For a deploy issue **reported deployed**
+(it does not ask who reported it — in the new model the deploy-cycle lane leaves that
+report), without any new detection mechanism (no polling/timing), actively run
 a Chrome smoke to judge it. Parse `## 검증 URL` (`<VERIFY_URL>`) and
 `## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body, fill
 `references/smoke-prompt.en.md`'s placeholders
@@ -1067,9 +1078,9 @@ structure/empty-state confirmation from real-data render confirmation in the res
   them makes both a pass and a fail a lie (the same false green as "no items" above). If dropping them leaves zero items to
   compare, do not open Chrome — skip the smoke exactly like the "no items" bullet above.
   And if **even one** such line remains, **do not close the deploy issue even when
-  everything else passes** — rung ③ is deploy-cycle ⑦'s job, so closing here finalizes a
+  everything else passes** — rung ③ is `e2e-test`'s job after the deploy, so closing here finalizes a
   ticket whose real-hardware items never met the TEST worker once. Leave the reason as a
-  comment instead: `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦`. That issue is a
+  comment instead: `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다`. That issue is a
   container the deploy-cycle lane's ⑦ closes after it steps rung ③.
   **Unmarked lines — do not catch them by a string; hand them to rung ③ fail-closed.**
   Deploy issues filed before this discipline and still open carry no `[칸 ③]` at all
@@ -1093,7 +1104,7 @@ structure/empty-state confirmation from real-data render confirmation in the res
     runner` · a `log/*.out` grep — anything needing a tool the production console screen
     does not have) → **print it as neither a pass nor a fail; count it as held, exactly
     like a marked line** — drop it from the denominator and **add it to** the marked
-    count in `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦`, leaving the issue open.
+    count in `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다`, leaving the issue open.
     **Do not file a follow-up issue** — it is not a defect, only a different lane, and
     dropping it into fail files a `needs-human` follow-up whose recorded reason is a
     false "smoke failure" (#309 attempt 1 leaked exactly this way).
@@ -1122,7 +1133,7 @@ structure/empty-state confirmation from real-data render confirmation in the res
   promotion-model repo).
 - **Degrade — no silent skip.** If the chrome-devtools MCP is absent from the session
   (headless/cron — interactive-auth MCP may be missing) or `<VERIFY_URL>` is blank or
-  unreachable, skip the smoke and fall back to the existing human-report path, but leave
+  unreachable, skip the smoke and fall back to the deploy-cycle lane's human-report path, but leave
   a `스모크 skip: <reason>` comment on the deploy issue (no hiding the gap).
   But **"unreachable" is the last word, not the first** (#153): some addresses open only
   outside Chrome, so before writing the skip, walk the retry ladder in smoke-prompt —
@@ -1138,7 +1149,7 @@ structure/empty-state confirmation from real-data render confirmation in the res
   **Unless the real-hardware exception above applies** — if even one rung-③ item
   (a marked line, or a line held unstepped by the fail-closed branch above) is
   still `- [ ]`, stop at the label cleanup, leave the issue open, and finish with the
-  `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦` comment (verification was not the only
+  `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` comment (verification was not the only
   remaining gate — rung ③ is). Since #243 a step-4 issue
   never carries `needs-human` in the first place — this removal is harmless leftover
   cleanup for issues filed before that (`--remove-label` is a no-op for an absent label).

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # finish-classify.sh 픽스처 테스트 — 네트워크 무접속(모든 입력을 env 로 주입).
-# 5개 분류(done_verdict·held·stale_inline·stale_reverify·active) + 시간버퍼 경계
+# 6개 분류(done_verdict·held·stale_inline·stale_reverify·no_verdict·active) + 시간버퍼 경계
 # + 재리뷰(마지막 매칭) 케이스를 결정적으로 검증한다. bats 미도입 레포라
 # bin/ci 인라인 스모크(repo-dir.sh)와 동일한 순수 bash assert 관행을 따른다.
 set -uo pipefail
@@ -696,8 +696,11 @@ cat > "$GT/held.json" <<'J'
 J
 
 # run_fc <comments-file> <head_at> <head_sha> <queue.log> [STALE_FINISH_MIN] [claimed_at]
+# 7번째 인자 = CI 롤업의 **미완료 수**(#421). 기본 0 = 전부 종결(종전 격자 전부 불변).
+# 위치 인자로 받는 이유: `FC_PENDING=1 run_fc …` 접두는 명령치환 밖에서 쓰면 다음 행까지
+# 값이 남는다(bash 는 함수 호출의 접두 대입을 셸에 남긴다) — 격자가 조용히 오염된다.
 run_fc() {
-  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN="${5:-30}" STALL_MIN=25 \
+  FC_NOW="$NOW" FC_FAILING=0 FC_PENDING="${7:-0}" STALE_FINISH_MIN="${5:-30}" STALL_MIN=25 \
     ISSUE_TIMEBOX_HOURS=1 \
     FC_COMMENTS_FILE="$1" FC_HEAD_AT="$2" FC_HEAD_SHA="$3" FC_QUEUE_LOG="$4" \
     FC_CLAIMED_AT="${6:-none}" \
@@ -1246,6 +1249,79 @@ row "J-R1 CONFLICTING·반송 마커 신선·증거 전무→무접촉(사인 �
   CONFLICTING "$GT/b308_fresh.json" "$G_OLD" "$G_SHA" "$GT/empty.log" "" 30 none
 row "J-R2 CONFLICTING·반송 마커 old·증거 전무→재디스패치(무회귀)" redispatch \
   CONFLICTING "$GT/b308_old.json" "$G_OLD" "$G_SHA" "$GT/empty.log" "" 30 none
+
+# ══════════════════════════════════════════════════════════════════════════════
+# K. `no_verdict` — 판정 코멘트가 **0건**인 초록 PR (#396)
+#
+# 워커가 `머지 판정: 🔄` 를 찍기 전에 죽으면 판정 코멘트가 하나도 없다. 종전엔 그 칸이
+# `active` 라 어느 레인도 안 집었다(issue-runner ② 는 사람 리뷰 대기로 무접촉, closeout ①-b
+# 는 🔄/✅ 전제). 세 축을 **따로** 문다 — 시간버퍼 · 진행 증거 · 증명 실패.
+# ══════════════════════════════════════════════════════════════════════════════
+echo "  [#396] no_verdict — 판정 코멘트 0건 + 증거 없음 + 버퍼 초과"
+
+cat > "$GT/no_verdict_empty.json" <<'J'
+[]
+J
+# 판정 코멘트가 아닌 코멘트만 있는 형상(워커가 초반 보고만 남기고 죽음) — 위와 같은 칸이다.
+cat > "$GT/no_verdict_other.json" <<'J'
+[
+  {"body":"진행 보고: 구현 시작\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:05:00Z"}
+]
+J
+G_CLAIM_45M="2026-07-05T11:15:00Z"   # 45분 전 — 버퍼(30) 밖이지만 타임박스(60) 안
+
+check_nv() {  # check_nv <이름> <기대> <실제>
+  if [ "$3" = "$2" ]; then pass=$((pass + 1)); else
+    fail=$((fail + 1)); echo "  ✗ [#396] $1 — 기대=$2 실제=$3"; fi
+}
+
+# K1 이 이슈가 여는 칸 — 코멘트 0건 · head 120분 전 · claim 미부착 · 큐 증거 없음.
+check_nv "K1 판정 0건·증거 전무·버퍼 초과" no_verdict   "$(run_fc "$GT/no_verdict_empty.json" "$G_OLD" none "$GT/empty.log" 30 none)"
+# K2 판정 아닌 코멘트만 있어도 같은 칸이다(`머지 판정:` 접두가 없으면 판정 0건).
+check_nv "K2 판정 아닌 코멘트만·증거 전무·버퍼 초과" no_verdict   "$(run_fc "$GT/no_verdict_other.json" "$G_OLD" none "$GT/empty.log" 30 none)"
+# K3 **진행 증거 ③** — claim 이 45분 전(버퍼 밖·타임박스 안)이면 워커는 살아 있다 → active.
+#    K1 과 다른 것은 claim 하나뿐이다(교락 없음).
+check_nv "K3 claim 45분전(타임박스 안)→active" active   "$(run_fc "$GT/no_verdict_empty.json" "$G_OLD" none "$GT/empty.log" 30 "$G_CLAIM_45M")"
+# K4 **시간버퍼 미도달** — head 40분 전인데 버퍼가 60분이면 아직 이르다 → active.
+#    (STALL_MIN 25 밖이라 커밋 증거로 살아난 것이 아니다 — 버퍼 축만 움직였다.)
+check_nv "K4 버퍼 미도달(head 40분전·버퍼 60)→active" active   "$(run_fc "$GT/no_verdict_empty.json" "$G_40M" none "$GT/empty.log" 60 none)"
+# K5 **증명 실패는 열지 않는다** — claim 조회 실패(unknown)는 "증거 없음" 이 아니다.
+check_nv "K5 claim 조회실패(unknown)→active" active   "$(run_fc "$GT/no_verdict_empty.json" "$G_OLD" none "$GT/empty.log" 30 unknown)"
+# K6 기준 시각 두 축을 **하나도** 못 얻으면(head 빈 값 + claim none) 회수하지 않는다.
+check_nv "K6 기준 시각 전무(head 빈 값·claim none)→active" active   "$(run_fc "$GT/no_verdict_empty.json" "" none "$GT/empty.log" 30 none)"
+# K7-a **못 읽는 판정 본문** — `머지 판정:` 은 있는데 세 기호가 없다(새 문형·기호 없는 판정).
+#      판정이 **있는** PR 이므로 "판정 0건" 주장이 성립하지 않는다 → active(재디스패치 금지).
+cat > "$GT/no_verdict_unreadable.json" <<'J'
+[
+  {"body":"머지 판정: 보류합니다 — 기호 없는 새 문형","createdAt":"2026-07-05T10:05:00Z"}
+]
+J
+check_nv "K7-a 못 읽는 판정 본문(개수 1)→active" active \
+  "$(run_fc "$GT/no_verdict_unreadable.json" "$G_OLD" none "$GT/empty.log" 30 none)"
+# K7-b 코멘트 JSON 이 배열이 아니다(형상 밖) — 개수를 못 세므로 주장 불가 → active.
+printf '%s' '{"comments":[]}' > "$GT/no_verdict_notarray.json"
+check_nv "K7-b 코멘트 JSON 이 배열 아님→active" active \
+  "$(run_fc "$GT/no_verdict_notarray.json" "$G_OLD" none "$GT/empty.log" 30 none)"
+
+# K7 무회귀 대조 — 같은 증거 전무·버퍼 초과라도 🔄 가 있으면 종전 계급(stale_reverify)이다.
+check_nv "K7 🔄 있음·증거 전무→stale_reverify(무회귀)" stale_reverify   "$(run_fc "$GT/bounced_noverifier.json" "$G_OLD" none "$GT/empty.log" 30 none)"
+
+# ── K8 **CI 축**(#421 [P2-2]) — "초록" 은 실패 0 만이 아니라 미완료 0 이기도 하다 ──
+# K1 과 다른 것은 미완료 수 하나뿐이다(교락 없음). 진행 증거는 여전히 전무하고 버퍼도 넘겼다 —
+# 그런데도 체크가 도는 중이면 이 PR 은 아직 초록이 아니므로 재디스패치 대상이 아니다
+# (박스 전역 CI 큐 대기가 정확히 이 모양이다 — #127·#200).
+check_nv "K8-a CI 미완료 1건(실패 0)→active" active \
+  "$(run_fc "$GT/no_verdict_empty.json" "$G_OLD" none "$GT/empty.log" 30 none 1)"
+# K8-b 대조군 — 같은 형상에서 미완료 0 이면 종전대로 이 계급이 열린다(축이 정말 미완료뿐임).
+check_nv "K8-b CI 미완료 0(대조군)→no_verdict" no_verdict \
+  "$(run_fc "$GT/no_verdict_empty.json" "$G_OLD" none "$GT/empty.log" 30 none 0)"
+# K8-c 롤업을 못 읽으면(정수 아님 = 조회 실패 경로) "초록" 을 증명 못 한다 → active.
+check_nv "K8-c 롤업 조회 실패(정수 아님)→active" active \
+  "$(run_fc "$GT/no_verdict_empty.json" "$G_OLD" none "$GT/empty.log" 30 none boom)"
+# K8-d 무회귀 — CI 축 게이트는 `no_verdict` **한 계급에만** 걸린다. 🔄 갈래는 미완료가 있어도
+#      종전 판정 그대로다(이 회차가 다른 계급의 출력을 옮기지 않았다는 증거).
+check_nv "K8-d 🔄 있음·미완료 1건→stale_reverify(무회귀)" stale_reverify \
+  "$(run_fc "$GT/bounced_noverifier.json" "$G_OLD" none "$GT/empty.log" 30 none 1)"
 
 chmod 644 "$GT/unreadable.log" 2>/dev/null || true
 rm -rf "$GT"

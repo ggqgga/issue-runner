@@ -7,6 +7,11 @@
 #   환경변수: EPIC_LIST_LIMIT(기본 100) · EPIC_SEARCH_PER_PAGE(기본 100)
 #             — 테스트가 상한 도달 경로를 100건짜리 픽스처 없이 재현하려고 열어 둔 값이다
 #               (운영에서 내리는 값이 아니다 — 내리면 그만큼 잘리고, 잘림은 warn 으로 드러난다).
+#             EPIC_CLOSE_RETRIES(기본 3) · EPIC_CLOSE_RETRY_SLEEP(기본 10, 초)
+#             — close 의 같은 틱 재시도(아래 "멱등" 절). 테스트는 sleep 0 으로 돌린다.
+#               기본 창은 3회·간격 10초(≈20초 대기) — "코멘트 직후 close 실패" 의 가장 흔한 원인이
+#               연속 쓰기 뒤 secondary rate limit 이라 2초 간격으로는 창이 닿지 않는다. 더 길게
+#               잡지 않는 이유: 이 대기는 closeout 틱 전체를 세운다.
 #
 # 왜 있나: 에픽 이슈는 **워커가 집지 않아** 아무 루프도 닫지 않는다. leaf 를 다 닫고도
 # 열린 채 남아 목록을 채운다(2026-09-11 실측: leaf 12건 중 11건 종료된 에픽이 덩그러니
@@ -50,21 +55,39 @@
 #   `--dry-run` 도 두 겹의 note 를 그대로 낸다 — #328 이 dry-run 출력으로 판정한다.
 #
 # 상태 파일 없음 — SSOT 는 GitHub(이슈 상태·라벨·코멘트 마커). 멱등성은 에픽에 달린
-# `<!-- epic-sweep -->` 코멘트 마커가 보장한다: 마커가 이미 있으면 코멘트를 다시 달지 않고
-# close 만 재시도한다(코멘트는 성공했는데 close 가 실패한 중간 상태의 재개 경로).
+# `<!-- epic-sweep -->` 코멘트 마커가 보장한다 — 마커는 코멘트뿐 아니라 **close 의 게이트**다(#377):
+#   마커가 있는 에픽이 지금 **열려 있으면** "스윕이 한 번 닫았는데 사람이 되돌렸다" 는 뜻이라
+#   코멘트도 close 도 하지 않는다(note). 마커가 코멘트만 막고 close 는 매 틱 그대로 실행하던
+#   판본에서는 사람의 재오픈이 다음 틱에 **새 코멘트 없이** 다시 닫혀 흔적조차 안 남았다.
+#   그래서 "코멘트는 됐는데 close 가 실패한" 중간 상태는 다음 틱으로 **이월할 수 없다**(다음
+#   틱은 그것을 되돌림으로 읽는다) — 같은 틱 안에서 close 를 `EPIC_CLOSE_RETRIES` 번 재시도하고,
+#   그래도 실패하면 warn(rc 1) 으로 "다음 틱이 재시도하지 않는다" 를 말한다. 그 에픽은 사람이
+#   직접 닫거나, 마커 코멘트를 지우면 다음 틱이 처음부터(코멘트 → close) 다시 한다.
+#   게이트는 "사람 되돌림" 과 "재시도를 다 쓴 close 실패 잔여" 를 **구분하지 못한다**(둘 다 마커
+#   있음 + 열림) — 그래서 note 의 why 는 둘 다를 말하고 어느 쪽이라고 단정하지 않는다. 후자를
+#   알리는 warn 은 실패한 그 틱에 한 번만 뜬다 — 이후는 `loop-status.sh` 의 `에픽 leaf 전부 종료`
+#   warn 이 그 에픽을 계속 보여 준다.
+#   (대안이던 "마커 2종 — 코멘트에 close 성공 여부를 실어 넣기" 는 close 뒤 코멘트 편집이라는
+#   세 번째 쓰기가 필요하고 그 편집이 실패하는 창에서 같은 버그가 좁게 남아 택하지 않았다.)
+#   같은 종류의 창이 선택안에도 남는다 — **코멘트 쓰기의 거짓 실패**(서버엔 반영됐는데 클라이언트가
+#   타임아웃 등으로 실패로 본 경우): 이 틱은 warn 으로 끝나고 다음 틱은 마커를 보고 note(되돌림)로
+#   읽어 닫지 않는다. 방향이 "덜 닫는다" 쪽이고 `loop-status.sh` warn 이 계속 보여 주므로 사람이
+#   직접 닫거나 마커를 지운다(closeout 검증 WARN, #377 파생).
 #
 # 알려진 느슨함 ⑴ (숨기지 않는다): **검색 인덱싱 지연**. leaf 를 GitHub 검색으로 찾으므로,
 # 방금 열린 leaf 가 아직 색인되지 않았으면 세 상한 신호(items·total_count·incomplete)가 전부
 # 정상인 채 그 leaf 만 안 보인다 — 그 순간 에픽이 닫힐 수 있다. 이슈 #258 이 "검색 한 번" 을
 # 설계로 지정했으므로 여기서 뒤집지 않는다(이슈 목록 전수 스캔은 레포당 비용이 전혀 다르다).
-# 피해는 되돌릴 수 있다: 에픽 재오픈은 사람이 클릭 한 번이고, 근거 코멘트에 그때 세어진 leaf
-# 번호가 그대로 남아 무엇을 못 봤는지 바로 대조된다.
+# 피해는 되돌릴 수 있다: 에픽 재오픈은 사람이 클릭 한 번이고, 위 마커 게이트가 그 재오픈을
+# **지킨다**(다시 닫지 않는다). 근거 코멘트에 그때 세어진 leaf 번호가 그대로 남아 무엇을
+# 못 봤는지 바로 대조된다. 되돌린 에픽은 이후 leaf 가 전부 닫혀도 스윕이 닫지 않으므로 종료는
+# 사람 몫이다 — `loop-status.sh` 의 `에픽 leaf 전부 종료` warn 이 그 에픽을 계속 보여 준다.
 #
 # 알려진 느슨함 ⑵: 마커 탐지는 인용 구간(코드펜스·백틱)을 걷어내지 않는다
 # (resume-sweep.sh 의 `JQ_UNQUOTE` 같은 장치가 없다). 누군가 코멘트에 마커를 **인용**하면
-# 그 틱은 코멘트를 건너뛰고 close 만 한다 — 방향이 "덜 쓴다" 쪽이고, 에픽 종료는 코멘트가
-# 아니라 close 가 본체라 실질 피해가 없다. 반대 방향(마커를 못 봐서 코멘트가 하나 더 붙는
-# 것)도 close 는 한 번뿐이라 마찬가지다.
+# 그 에픽은 스윕이 되돌림으로 읽어 **닫지 않는다**(note) — 방향이 "덜 쓴다" 쪽이고, 그 인용을
+# 지우거나 사람이 직접 닫으면 풀린다. 반대 방향(마커를 못 봐서 코멘트가 하나 더 붙는 것)은
+# close 는 한 번뿐이라 코멘트 하나가 더 붙는 데서 그친다.
 set -uo pipefail
 
 SELF=$(basename "$0")
@@ -82,6 +105,8 @@ usage() {
 
 EPIC_LIST_LIMIT="${EPIC_LIST_LIMIT:-100}"
 EPIC_SEARCH_PER_PAGE="${EPIC_SEARCH_PER_PAGE:-100}"
+EPIC_CLOSE_RETRIES="${EPIC_CLOSE_RETRIES:-3}"
+EPIC_CLOSE_RETRY_SLEEP="${EPIC_CLOSE_RETRY_SLEEP:-10}"
 
 # 값 검증은 **모든 GitHub 호출 앞**에 둔다 — `[ "$x" -ge "$y" ]` 는 정수가 아니면 bash 가
 # 에러를 내고 거짓으로 떨어지는데, set -e 가 아니라 그대로 흘러 "상한에 안 닿았다" 로
@@ -95,6 +120,15 @@ if ! _pos_int "$EPIC_SEARCH_PER_PAGE"; then
   echo "$SELF: EPIC_SEARCH_PER_PAGE 는 1 이상의 정수여야 한다 (받은 값: '$EPIC_SEARCH_PER_PAGE')" >&2
   exit 64
 fi
+if ! _pos_int "$EPIC_CLOSE_RETRIES"; then
+  echo "$SELF: EPIC_CLOSE_RETRIES 는 1 이상의 정수여야 한다 (받은 값: '$EPIC_CLOSE_RETRIES')" >&2
+  exit 64
+fi
+case "$EPIC_CLOSE_RETRY_SLEEP" in
+  ''|*[!0-9]*)
+    echo "$SELF: EPIC_CLOSE_RETRY_SLEEP 은 0 이상의 정수(초)여야 한다 (받은 값: '$EPIC_CLOSE_RETRY_SLEEP')" >&2
+    exit 64 ;;
+esac
 
 repos=()
 repos_file=""
@@ -186,6 +220,18 @@ emit_warn() {  # emit_warn <repo> <num> <why>
 has_label() {  # has_label <콤마목록> <라벨>
   case ",$1," in *",$2,"*) return 0 ;; esac
   return 1
+}
+
+# close 를 같은 틱 안에서 `EPIC_CLOSE_RETRIES` 번까지 시도한다. 마커 게이트(sweep_epic 참고)
+# 때문에 "코멘트만 남고 안 닫힌" 상태는 다음 틱이 이어받지 못하므로 재시도는 여기뿐이다.
+close_epic() {  # close_epic <repo> <num>
+  local i=1
+  while :; do
+    gh issue close "$2" --repo "$1" --reason completed >/dev/null 2>&1 && return 0
+    [ "$i" -lt "$EPIC_CLOSE_RETRIES" ] || return 1
+    i=$((i + 1))
+    [ "$EPIC_CLOSE_RETRY_SLEEP" -eq 0 ] || sleep "$EPIC_CLOSE_RETRY_SLEEP"
+  done
 }
 
 # leaf 판정 — `loop-status.sh` 의 `epic_of`(#260)와 **같은 술어**다. 본문의 **전용 줄**
@@ -388,15 +434,14 @@ EOF
     rc=1
     return 0
   fi
-  if [ "$dry_run" = 1 ]; then
-    emit_closed "$repo" "$num" "$leaves_json"
-    return 0
-  fi
 
-  # 멱등 — 마커가 이미 있으면 코멘트를 다시 달지 않는다(코멘트는 됐는데 close 가 실패한
-  # 중간 상태의 재개 경로). 코멘트 전량은 `pr-comments.sh` 로 읽는다: `gh issue view
-  # --json comments` 는 페이지네이션 없이 **첫 100건만** 주고, 그 상한을 넘긴 에픽은
-  # 마커를 못 봐 매 틱 코멘트를 하나씩 더 붙인다(PR#173 교훈, 같은 함정의 이슈 판).
+  # ── 마커 게이트 — dry-run **앞**에서 본다(읽기라 쓰기 0 규약과 무관) ──────────
+  # 마커(`<!-- epic-sweep -->`)가 있는데 이 에픽이 열려 있다 = 스윕이 한 번 닫았고 사람이
+  # 되돌렸다. 코멘트도 close 도 하지 않는다. dry-run 도 같은 판정을 내야 한다 — #377 의 실측이
+  # `--dry-run` 으로 "다시 닫겠다" 는 거짓 예측을 봤다. 코멘트 전량은 `pr-comments.sh` 로
+  # 읽는다: `gh issue view --json comments` 는 페이지네이션 없이 **첫 100건만** 주고, 그
+  # 상한을 넘긴 에픽은 마커를 못 봐 매 틱 코멘트를 하나씩 더 붙인다(PR#173 교훈, 같은 함정의
+  # 이슈 판).
   if ! cjson=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$num"); then
     emit_warn "$repo" "$num" "코멘트 조회 실패 — 마커 유무를 몰라 쓰지 않는다(중복 코멘트 방지)"
     rc=1
@@ -409,25 +454,32 @@ EOF
     rc=1
     return 0
   fi
-
-  if [ "$marker" -eq 0 ]; then
-    # 마커 둘: `epic-sweep` 는 이 스크립트의 **멱등 판정 축**이고, `bodat:worker` 는 이
-    # 레포의 기계 코멘트 표식이다(resume-sweep.sh 의 재개·승격 코멘트와 같은 관행).
-    # 멱등은 `epic-sweep` 만 본다 — 표식이 바뀌어도 판정이 흔들리지 않게.
-    ctext="leaf 전부 종료로 자동 종료 — leaf $leaves_txt <!-- epic-sweep --><!-- bodat:worker -->"
-    # 코멘트를 **먼저**, close 는 그다음. 반대로 하면 close 가 성공하고 코멘트가 실패했을 때
-    # 닫힌 에픽에 근거가 없다(사람이 왜 닫혔는지 못 읽고, 다음 틱은 열린 에픽만 보므로
-    # 영영 안 고친다). 이 순서의 실패(코멘트만 남고 안 닫힘)는 다음 틱이 마커를 보고
-    # 코멘트를 건너뛴 뒤 close 만 재시도한다.
-    if ! gh issue comment "$num" --repo "$repo" --body "$ctext" >/dev/null 2>&1; then
-      emit_warn "$repo" "$num" "종료 근거 코멘트 실패 — 닫지 않는다(다음 틱 재시도)"
-      rc=1
-      return 0
-    fi
+  if [ "$marker" -gt 0 ]; then
+    emit_note "$repo" "$num" "스윕 마커가 있는데 열려 있다 — 다시 닫지 않는다(사람 되돌림 또는 이전 close 실패 잔여 — 종료는 사람 몫)"
+    return 0
   fi
 
-  if ! gh issue close "$num" --repo "$repo" --reason completed >/dev/null 2>&1; then
-    emit_warn "$repo" "$num" "에픽 close 실패 — 근거 코멘트는 남았다(다음 틱이 close 만 재시도)"
+  if [ "$dry_run" = 1 ]; then
+    emit_closed "$repo" "$num" "$leaves_json"
+    return 0
+  fi
+
+  # 마커 둘: `epic-sweep` 는 이 스크립트의 **멱등 판정 축**이고, `bodat:worker` 는 이
+  # 레포의 기계 코멘트 표식이다(resume-sweep.sh 의 재개·승격 코멘트와 같은 관행).
+  # 멱등은 `epic-sweep` 만 본다 — 표식이 바뀌어도 판정이 흔들리지 않게.
+  ctext="leaf 전부 종료로 자동 종료 — leaf $leaves_txt <!-- epic-sweep --><!-- bodat:worker -->"
+  # 코멘트를 **먼저**, close 는 그다음. 반대로 하면 close 가 성공하고 코멘트가 실패했을 때
+  # 닫힌 에픽에 근거가 없다(사람이 왜 닫혔는지 못 읽고, 다음 틱은 열린 에픽만 보므로
+  # 영영 안 고친다). 이 순서의 실패(코멘트만 남고 안 닫힘)는 위 마커 게이트 때문에 다음 틱이
+  # 이어받지 못한다 — 그래서 close 는 `close_epic` 이 같은 틱에서 재시도한다.
+  if ! gh issue comment "$num" --repo "$repo" --body "$ctext" >/dev/null 2>&1; then
+    emit_warn "$repo" "$num" "종료 근거 코멘트 실패 — 닫지 않는다(다음 틱 재시도)"
+    rc=1
+    return 0
+  fi
+
+  if ! close_epic "$repo" "$num"; then
+    emit_warn "$repo" "$num" "에픽 close 실패(${EPIC_CLOSE_RETRIES}회 시도) — 근거 코멘트는 남았고 다음 틱은 그 마커를 되돌림으로 읽어 재시도하지 않는다: 사람이 직접 닫거나 마커 코멘트를 지워라"
     rc=1
     return 0
   fi

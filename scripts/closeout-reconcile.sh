@@ -58,6 +58,13 @@ printf '%s' "$items" | jq -c '.[]' | while IFS= read -r row; do
         *)
           printf '{"event":"human_hold","repo":"%s","pr":%s,"why":"라벨 판정 실패"}\n' "$repo" "$num" ;;
       esac ;;
+    '')
+      # 상태를 **못 읽은** 것(gh 실패·빈 응답)은 CLOSED 가 아니다(#433). 종전엔 빈 값이
+      # `그 외` 로 떨어져 `harvesting` 을 떼고 `stale` 을 냈다 — 일시적 API 실패로 살아 있는
+      # 마감 PR 이 레인 밖으로 밀리는 fail-open. 위 `hh`(라벨 판정 실패 → human_hold)와 같은
+      # 방향으로 무접촉: 다음 틱이 다시 조회한다. 조용히 넘기지 않게 stderr 한 줄.
+      echo "warn: closeout-reconcile — PR #$num($repo) 상태 조회 실패, 무접촉(다음 틱 재조회)" >&2
+      printf '{"event":"lookup_failed","repo":"%s","pr":%s}\n' "$repo" "$num" ;;
     *)
       gh issue edit "$num" --repo "$repo" --remove-label harvesting >/dev/null 2>&1 || true
       printf '{"event":"stale","repo":"%s","pr":%s}\n' "$repo" "$num" ;;

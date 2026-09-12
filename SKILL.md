@@ -52,6 +52,13 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   스윕이 집는다 (`resume-sweep.sh` 에 동명 환경변수로 전달된다).
 - `LADDER_RESUME_LIMIT = 2` — 이슈 1건당 자동 재개 상한. 초과하면 재개 대신
   `hold:policy` 승격 — 그때만 사람이다(무한 재시도 금지).
+- `MIRROR_RETRY_LIMIT = 3` — ① 재개 스윕의 **정지 미러 정리**가 양성 증거를 못 얻었을 때
+  같은 건을 다시 시도하는 상한(#397). 회차는 짝 이슈 코멘트의 `<!-- mirror-retry: <사유> pr=<n> -->`
+  마커 개수이고 — **그 PR 의 것만**, **사람이 개입한 경계**(마지막 `policy-review`·`hold-note` 코멘트)
+  **이후**의 것만 센다(옛 에피소드를 물려받지 않는다) —
+  상한에 닿으면 스크립트가 `mirror_retry_exhausted` 를 낸다(전이는 아래
+  이벤트 처리 참조). 값은 `resume-sweep.sh` 의 동명 상수와 **같아야 한다** — 그 파일이
+  이 절을 가리키고 있다(플랜 1단계 전이라 두 벌 허용).
 - `STALE_FINISH_MIN = 30` — 완결 유실 판별 시간버퍼(분). `finish-classify.sh` 의
   버퍼이며, 이제 이 헬퍼는 **closeout ①-b 정체 스윕**이 소비한다(issue-runner 는 규칙4
   원복 후 직접 쓰지 않음). 살아있는 워커는 `검증자 리뷰:` 직후 수초 내 최종 판정을
@@ -135,6 +142,18 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   않는다 (agent-ready가 이미 제거됨).
 - `stale` — 죽은 claim 해제됨. 보고만.
 - `warn` — dirty/unpushed worktree. **건드리지 말고** Report에 그대로 올려 사람이 보게 하라.
+- `half_moved_redispatch` — `verify-redispatch` 가 **반쯤 실패한** PR 이다(#394): PR 은 단계
+  라벨(`flow:*`·`verifying`)을 잃었는데 이슈는 `agent:claimed` 를 유지해 세 게이트
+  (`verify-eligible`·`closeout-eligible`·`eligible-issues`) **전부에서 빠진다** — verify-runner 가
+  "다음 틱이 잡게" 라고 넘긴 그 상태의 주체가 여기다(`references/state-machine.md` 회수 열).
+  **같은 전이를 멱등 재실행하라**: `$SCRIPTS/transition.sh verify-redispatch <repo> <이슈> <pr>`
+  (PR 쪽은 이미 이동해 있어 no-op 이고 이슈만 `agent-ready` 로 돌아온다 → 이번 틱 ③ 후보).
+  성사되면 ④ Report 의 `보수` 에 `#<num>(반쯤 이동 회수)` 한 줄. 전이가 exit 1·2 면 ④ Report 에
+  `BLOCKED: 전이 실패 verify-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>` 만 남기고 다음
+  이벤트로 간다(공통 규칙 — 조용히 넘어가지 않는다. 다음 틱이 같은 이벤트를 다시 낸다).
+  이 이벤트가 난 PR 은 **② Maintain 입력이 아니다**(`pr_open` 이 안 나온다 — `harvesting` 과
+  같은 모양). 살아 있는 워커(`progress-evidence.sh` 진행 증거 있음)와 증명 실패는 스크립트가
+  이미 걸러 이 이벤트를 내지 않으니, 여기서 신선도를 다시 재지 마라.
 - `pr_open` — ② Maintain 의 입력.
 - `working` — 워커 진행 중. TaskList 로 해당 백그라운드 에이전트가 실제 살아있는지
   확인. **"죽어 보임"(TaskList 상 종료)을 바로 사망으로 단정하지 마라** — 그 태스크의
@@ -178,7 +197,7 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   claim 해제 **전에** 이슈 최신 코멘트를 확인하라 —
   `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body | test("<!--\\s*timebox-grace:")) | not)] | last.body'`
   (timebox 유예 마커 코멘트는 건너뛴다 — 마커가 최신 코멘트 자리를 차지하면 워커가 남긴
-  `BLOCKED:` 가 가려져 사람대기 승격 대신 조용한 claim 해제로 샌다, #200)
+  `BLOCKED:` 가 가려져 needs-human 승격 대신 조용한 claim 해제로 샌다, #200)
   가 `BLOCKED:` 로 시작하면 워커가 사람 개입이 필요해서 멈춘 것이다 (모호 스펙 /
   계획-현실 불일치 / 동일 실패 반복): 재디스패치 복귀 대신
   `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy --note "<사람이 답해야 할 질문 한 줄>"` 로
@@ -234,7 +253,7 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 재개 횟수는 이슈 **코멘트**에 붙은 마커(`<!-- ladder-resume: N -->`)의 개수다 — 본문은
 읽지도 쓰지도 않는다(append-only 라 남의 편집을 덮어쓸 일이 없다). 정지 라벨은 이슈와
 **연결된 열린 PR 양쪽**에 미러돼 있으므로 재개·승격은 PR 라벨까지 함께 되돌린다 — 안 그러면
-PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·closeout-pick)가 그걸 안 뗀다.
+PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·closeout-pick)가 그걸 안 뗀다.
 그 되돌림은 스윕이 **스스로 재개·승격할 때**뿐이라, 사람이 `hold:policy`·`hold:conflict` 를
 푸는 경로엔 PR 사본을 지우는 자리가 없었다 — 그래서 같은 실행이 **정지 미러 정리**(#265)도
 한다: 이슈에 정지 라벨이 하나도 없는데 짝이 되는 열린 PR 에 남아 있으면 **PR 쪽만** 뗀다
@@ -252,6 +271,14 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
   이슈는 원래 깨끗하니 건드리지 않는다. **추가 조치 없다** — 그 PR 은 이번 틱부터
   `verify-eligible.sh`·`closeout-eligible.sh` 후보로 자연히 돌아온다. ④ Report 에
   `미러 정리 N` 으로 한 줄(번호는 `pr`, 연결 이슈는 `number`, 뗀 라벨은 `removed`).
+- `mirror_retry_exhausted` — 정지 미러 정리가 **양성 증거를 못 얻은 채** `MIRROR_RETRY_LIMIT`
+  회를 채웠다(#397 — `attempts`/`limit` 를 `3/3` 으로 읽는다). 스크립트는 라벨을 한 번도
+  건드리지 않았다(증거 없이 사람 게이트를 벗기지 않는 게 그 갈래의 규율). 여기서 **사람 몫으로
+  올려라**: `$SCRIPTS/transition.sh runner-held <repo> <number> <pr> --reason policy --note "미러 불일치 증거 부재 <attempts>회 — PR 과 이슈의 정지 라벨이 어긋난다"`
+  (이슈와 PR 양쪽에 `hold:policy` + 질문 코멘트). 전이가 exit 1·2 면 ④ Report 에
+  `BLOCKED: 전이 실패 runner-held #<number>(exit N)` 한 줄 — 다음 틱이 같은 이벤트를 다시 낸다
+  (마커를 더 쌓지 않으므로 회차가 부풀지 않는다). 성사되면 이슈에 정지 라벨이 생겨 그 PR 은
+  다음 틱부터 미러 정리 대상에서 빠진다(자연 종료). ④ Report 의 warn 에 `미러 상한 #<pr>` 한 줄.
 - `resumed` — `hold:ladder` 가 떨어졌고 `agent-ready` 는 그대로다(자격은
   건드리지 않는다). **디스패처가 따로 할 일은 없다** — 이번 틱 ③ 의 `eligible-issues.sh`
   후보로 자연히 다시 나타난다. ④ Report 의 `재개` 에 번호와 `attempt` 를 적는다. 배포 대기
@@ -286,7 +313,7 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
   <!-- policy-review: kept --><!-- bodat:worker -->` 코멘트를 남긴다.
   **순서가 계약이다**(#244): 마커가 곧 "재심 끝" 이라, 마커를 먼저 올리면 전이가 죽어도
   다음 틱부터 `reviewed` 로 접혀 `needs-human` 은 영영 안 붙고 그 건은 `hold:policy` 만 남은
-  채 **아무도 다시 묻지 않는다**(사람 결정이 사람대기 칸에 영영 안 뜨는 봉인).
+  채 **아무도 다시 묻지 않는다**(사람 결정이 needs-human 칸에 영영 안 뜨는 봉인).
   전이가 **비0이면 마커 코멘트를 올리지 말고** ④ Report 에
   `BLOCKED: 전이 실패 policy-kept #<이슈>(exit N)` 한 줄만 남겨라 — 마커가 없으니 다음 스윕이
   같은 건을 `policy_review_due` 로 **다시 낸다**. `policy-kept` 는 붙이기만 하는 멱등 전이라
@@ -294,6 +321,22 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
   `0`=붙었다→마커 남긴다 · `1`(readback 불일치)·`2`(gh 실패)·`64`(호출 형태 오류)=마커
   남기지 않는다(다음 스윕이 재심을 다시 낸다). **마커가 남은 건만**
   **두 번 묻지 않는다**(사람이 라벨을 뗄 때까지). ④ Report 에 `재심 N(재개 n·유지 m)`.
+  **PR 단독 홀드는 언제나 "사람 몫 유지" 로 끝난다**(#395 → #421). 이벤트의 `pr` 필드가 축을
+  가른다 — `pr` 이 채워져 있고 `number` 가 `null` 이면 **열린 연결 이슈가 없는 PR** 의
+  `hold:policy` 다(`verify-held`·`closeout-blocked` 를 `<issue>` 자리 `-` 로 부른 경우, 또는
+  참조 이슈가 전부 닫힌 경우). 질문(`<!-- hold-note: policy -->`)은 그 PR 에 있으니 거기서 읽되,
+  **답이 플랜에서 나오더라도 재개하지 마라** — verify-runner ④ 가 "연결 이슈 부재" 를 **사람 칸**
+  으로 못박았고(어느 이슈에 붙일지가 사람 결정이다), 이 축에는 재개가 **소비자 없는 상태**다:
+  `verify-redispatch` 를 `<issue>` 자리 `-` 로 부르면 PR 에 `flow:agent-ready` 만 남는데
+  `eligible-issues.sh` 는 **이슈**만 디스패치하고 `verify-eligible.sh` 는 `flow:verify`·`verifying`
+  를 요구한다 — 아무 레인도 그 PR 을 집지 않아 영구 미아가 된다. 그래서 이 축의 처분은 하나다:
+  `$SCRIPTS/transition.sh policy-kept <repo> - <pr>`(전이의 이슈 인자는 `-`)가 exit 0 `ok` 로
+  끝난 뒤에만 `재심: 사람 몫 유지 — 연결 이슈 없음 — 사람이 이슈를 연결하거나 PR 을 닫는다
+  <!-- policy-review: kept --><!-- bodat:worker -->` 를 `gh pr comment <pr>` 로 **그 PR 에**
+  남긴다(순서·마커·비0 처분은 위와 글자 그대로 같다 — 비0이면 마커를 올리지 말고
+  `BLOCKED: 전이 실패 policy-kept #<PR>(exit N)` 한 줄). ④ Report 의 `유지 m` 에 함께 센다.
+  연결 이슈가 **열려 있는** PR 은 이 이벤트가 **안 난다** — 그 건은 이슈 축이 이미 냈다
+  (중복 금지).
 - `waiting` — 아직 창 안이다. 조용히 넘긴다(보고 불필요).
 - exit 2 — 일부 레포의 목록 조회 실패(나머지 레포는 정상 처리됐다) 또는 계정 전체 탐색 실패.
   ④ Report warn 에 `resume-sweep 부분 실패(레포 조회)` 한 줄을 남긴다.
@@ -424,17 +467,20 @@ N 도 디스패치당 1만 올린다.
       재개인지다(본문에는 마커가 없다 — 스윕은 본문을 건드리지 않는다):
       (인용은 세지 않는다 — 백틱 인라인 코드·코드펜스 안의 마커는 신호가 아니라 신호를
       *설명하는 글*이라, `resume-sweep.sh` 의 `JQ_UNQUOTE` 와 **같은 정의**로 먼저 걷어낸다.
-      두 곳이 갈라지면 사람 눈에 안 보이는 두 번째 계산기가 다른 수를 센다 — #197)
+      두 곳이 갈라지면 사람 눈에 안 보이는 두 번째 계산기가 다른 수를 센다 — #197.
+      **조회도 같은 자리다**(#397): `gh issue view --json comments` 는 첫 100건만 줘서 코멘트가
+      많은 이슈에선 스윕(페이지네이션)과 이 자리가 다른 수를 센다 — `pr-comments.sh` 로 전량을
+      읽는다. 출력이 `{comments:[…]}` 가 아니라 **배열**이라 `.[]` 다.)
 
       ````sh
-      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+      $SCRIPTS/pr-comments.sh <repo> <num> | jq 'def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
       ````
 
       채운 템플릿 뒤에 ⓐ 사다리 문서 경로
       `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (어느 칸을 어떤
       명령으로 올라가는지 워커가 읽을 곳) 와 ⓑ **직전 시도의 실패 출력** — 이슈의 마지막
       사다리 관련 코멘트 본문 — 을 덧붙인다:
-      `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body|test("사다리|ladder")) and ((.body|test("^재개 "))|not))] | last.body // ""'`
+      `$SCRIPTS/pr-comments.sh <repo> <num> | jq -r '[.[] | select((.body|test("사다리|ladder")) and ((.body|test("^재개 "))|not))] | last.body // ""'`
       (스윕이 남긴 `재개 N/…` 코멘트는 제외한다 — 그게 시간상 마지막이라 안 거르면 실패
       출력 대신 그 줄을 물려준다). 그리고 한 줄로 지시하라: **"같은 칸에서 같은 실패를
       반복하지 말고 다음 칸부터 시도하라(N번째 재개다). 그래도 못 오르면 시도한 칸과 실패
@@ -446,7 +492,7 @@ N 도 디스패치당 1만 올린다.
 (`재개`·`승격` 은 ① 재개 스윕의 `resumed`·`escalated` 수. `막힘` 은 ③-2 eligible 스캔의
 `blocked-summary:` 수 — 후보였는데 OPEN 블로커로 탈락한 건이다. 0 이어도 적는다).
 그 아래 **항목마다 번호를 적는다** — 숫자만으론 어느 이슈·PR 이 어디로 갔는지 다음 틱이 못 읽는다:
-`정리: #4801(bodat, PR #4810 머지) · 보수: PR #4812(bodat, rebase) · 신규: #4818(bodat) · 재개: #4772(bodat, 2/2) · 승격: #4803(bodat, hold:policy) · 막힘: #4986(bodat ← #4985 사람대기) · warn: #4799(bodat) dirty worktree`.
+`정리: #4801(bodat, PR #4810 머지) · 보수: PR #4812(bodat, rebase) · 신규: #4818(bodat) · 재개: #4772(bodat, 2/2) · 승격: #4803(bodat, hold:policy) · 막힘: #4986(bodat ← #4985 needs-human) · warn: #4799(bodat) dirty worktree`.
 검색 창 `warn:`(`검색 창 절단`·`검색 창 임박`)은 warn 줄에 그대로 옮긴다 — 창이 차면
 **가장 새 이슈부터** 후보 목록에서 조용히 사라지므로, 그 신호가 사라지면 큐가 죽어도 안 보인다.
 레포 짧은 이름 규칙은 `loop-status.sh` 와 같다(`owner/repo` 의 repo 를 소문자로 — bodat·bodac,

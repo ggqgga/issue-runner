@@ -2,7 +2,7 @@
 # finish-classify.sh <repo> <pr> [<issue>]
 #
 # 완결 유실 갭 판별자 (#88). PR 의 코멘트·타임스탬프·CI 를 읽어 종료 상태를 아래
-# 다섯 중 하나로 stdout 에 분류한다 (SKILL ② Maintain 규칙4 가 이 결과로 4a/4b/4c
+# 여섯 중 하나로 stdout 에 분류한다 (SKILL ② Maintain 규칙4 가 이 결과로 4a/4b/4c
 # 를 분기한다 — SKILL prose 를 얇게 유지하고 결정적으로 테스트 가능하게).
 #
 #   done_verdict   최신 `머지 판정:` 이 ✅ 이고, **두 시각(판정·head 커밋)을 모두 얻어**
@@ -13,11 +13,39 @@
 #                  초과            → 4b 인라인 최종 판정 대리 append(에이전트 없음)
 #   stale_reverify 🔄 + 검증자 부재 또는 미해결 BLOCKER + STALE_FINISH_MIN 초과
 #                  → 4c 완결 에이전트 재디스패치(검증자 재실행)
+#   no_verdict     `머지 판정:` 코멘트가 **한 건도 없음**(접두 매칭 **개수 0** 으로 확인한다 —
+#                  코멘트 조회 실패는 `comments_lookup`, 못 읽는 판정 본문은 개수 ≥ 1 이라
+#                  둘 다 이 계급이 아니다 · 🔄·✅·⚠ 어느 것도 없다 — 워커가
+#                  10단계 전에 죽었다) + **CI 가 초록**(실패 0 **이고 미완료 0** — #421)
+#                  + STALE_FINISH_MIN 초과 + **진행 증거 없음**(#396)
+#                  → closeout ①-b 재디스패치(`stale_reverify` 와 같은 조치)
 #   active         위 어디에도 안 걸림(진행 중·시간버퍼 미도달·우리 형상 아님) 또는
 #                  최신 `머지 판정: ✅` 의 신선도를 **증명하지 못함**(head 커밋보다 이르거나,
 #                  두 시각 중 하나라도 못 얻음 — 반송 뒤 재디스패치된 새 커밋이 아직
 #                  검증 안 됨, #171) → 무접촉(새 판정을 기다림)
 #                  또는 **진행 증거가 있음**(#206 — 아래 참조)
+#
+# **`no_verdict` — 판정 코멘트가 0건인 초록 PR (#396).** 워커가 `머지 판정: 🔄` 를 찍기 **전**에
+# 죽으면(handoff 이전 사망) PR 은 CI 초록인데 판정 코멘트가 0건이다. 그 칸은 세 레인 어디에도
+# 안 들어갔다 — issue-runner ② Maintain 은 "CI green·리뷰 없음" 을 사람 리뷰 대기로 무접촉,
+# closeout ①-b 는 🔄/✅ 를 전제, 이 파일은 판정이 없으면 `active` 였다(무한 무접촉).
+# 그래서 **판정 부재 + CI 초록 + 증거 없음 + 시간버퍼 초과**를 별도 계급으로 낸다.
+#
+# **"초록" 은 실패 0 이 아니라 실패 0 + 미완료 0 이다**(#421 [P2-2]). 이 계급의 주장은 "CI 는
+# 끝났는데 판정만 없다" 이므로, 아직 도는 체크(check-run `status != COMPLETED` · local-ci 커밋
+# 상태 `pending`)가 하나라도 있으면 주장할 수 없다 — 그 창에 커밋·claim 만 낡으면 **아직 초록도
+# 아닌 PR** 이 재디스패치된다(CI 큐 대기 중인 PR 이 정확히 그 모양이다, #127·#200). 롤업 조회
+# 실패도 같은 처분(`ci_lookup=unknown` → active) — 이 파일의 "증명 못 하면 안 연다" 규율.
+#
+# 스테일 클록의 기준 시각은 `agent:claimed` 부착 시각과 head 커밋 시각 중 **더 최신** 쪽이다
+# (🔄 계열과 같은 max 규율 — 판정 코멘트가 없으니 그 두 축만 남는다). 반송 마커 시각도 같은
+# 클록에 합류한다(#308). 두 시각을 **하나도** 못 얻거나 조회가 `unknown` 이면 `active` 다 — 이
+# 파일의 규율 그대로, 되돌릴 수 없는 쪽(재디스패치)을 증명 없이 열지 않는다.
+#
+# 실무에서 이 계급을 여는 것은 시간버퍼(`STALE_FINISH_MIN`)가 아니라 **타임박스**인 경우가 많다:
+# 살아 있는 회차는 `agent:claimed` 가 붙어 있어 진행 증거 ③(claim 이 `ISSUE_TIMEBOX_HOURS` 안)
+# 가 참이므로, claim 이 그 상한을 넘길 때까지는 `active` 다. 버퍼만 보고 "왜 안 걸리나" 를
+# 고치려 들지 마라 — 그 게이트가 살아 있는 워커의 브랜치를 지킨다.
 #
 # **진행 증거 게이트 (#206).** 🔄 계열 두 갈래(stale_inline·stale_reverify)는 "워커가 죽었다"
 # 는 주장이다. 그 주장을 내기 전에 `progress-evidence.sh` 에 워커가 살아 있다는 증거가
@@ -115,13 +143,19 @@ stale_sec=$((stale_min * 60))
 now=${FC_NOW:-$(date -u +%s)}
 
 # ── 입력 수집 (env 오버라이드 우선) ──
+# `comments_lookup` — 코멘트 **조회의 결말**을 담는 별도 플래그(#396). `head_lookup` 과 같은
+# 규율이다: 아래 폴백은 실패를 `[]`(빈 코멘트)로 떨어뜨리는데, `[]` 는 기존 갈래에선 전부
+# `active` 로 수렴해 안전했지만 `no_verdict` 갈래에선 **"판정 코멘트가 0건이다" 라는 적극적
+# 주장**과 글자가 같아진다. 조회 실패 한 번이 재디스패치 근거가 되면 이 파일이 지켜 온
+# fail-closed 가 그 칸에서만 뒤집힌다(PR#139: 빈 결과와 실패를 구분하라).
+comments_lookup=ok
 if [ -n "${FC_COMMENTS_FILE:-}" ]; then
   # 파일 경로 주입(#171 반송 4회차 [P2]) — 페이지네이션으로 상한이 사라진 코멘트 전량은
   # 환경변수 하나에 담기엔 크다(exec 한계 128KB). 읽기 실패는 **실조회로 새지 않는다**:
   # 호출자가 "이 파일이 곧 판정 입력" 이라고 계약한 이상, 그걸 못 읽었는데 다른 출처로
   # 조용히 갈아타면 어떤 입력으로 판정했는지 알 수 없다 → 빈 코멘트(=active) 로 떨어뜨려
   # 게이트를 닫는다.
-  comments=$(cat "$FC_COMMENTS_FILE" 2>/dev/null) || comments=''
+  comments=$(cat "$FC_COMMENTS_FILE" 2>/dev/null) || { comments=''; comments_lookup=unknown; }
 elif [ -n "${FC_COMMENTS_JSON:-}" ]; then
   comments="$FC_COMMENTS_JSON"
 else
@@ -135,18 +169,40 @@ else
   # 조회 실패는 `[]` 로 떨어뜨린다 — 빈 코멘트에는 판정 코멘트가 없으므로 아래 모든
   # 갈래가 active(게이트 닫힘)로 수렴한다. 부분 출력을 정상값으로 채택하지 않는 것이
   # 핵심이다(PR#139 교훈: 빈 결과와 실패를 구분하고, 실패는 가드 분기로 보내라).
-  comments=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$pr" 2>/dev/null) || comments=''
+  comments=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$pr" 2>/dev/null) || { comments=''; comments_lookup=unknown; }
 fi
-[ -n "$comments" ] || comments='[]'
+# 빈 문자열도 조회 실패다 — 성공한 조회는 코멘트 0건이라도 `[]` 라는 **글자**를 낸다
+# (pr-comments.sh 계약). 여기서 갈라 두지 않으면 위 세 경로의 실패가 다시 합쳐진다.
+[ -n "$comments" ] || { comments='[]'; comments_lookup=unknown; }
 
-if [ -n "${FC_FAILING:-}" ]; then
-  failing="$FC_FAILING"
+# ── CI 롤업 = 실패 수 + **미완료 수**, 한 조회에서 (#421) ──────────────────────
+# 미완료를 따로 세는 이유는 위 `no_verdict` 문단 참조(그 계급만 이 값을 읽는다 — 종전 갈래의
+# 입력인 `failing` 의 뜻과 처분은 한 글자도 안 바뀐다).
+# 미완료 술어는 `closeout-ci-pass.sh` 의 "그 외 레포" 분기와 **같은 낱말**이다(종결 상태
+# allowlist 의 여집합). 그 스크립트를 직접 부르지 않는 이유: 그것은 `repo-dir.sh` + 로컬 CI
+# 캐시를 타는 **통과 판정**이라, 모든 입력을 env 로 주입받는 이 파일의 무접속 테스트 계약
+# (`FC_*`)을 깬다. 여기서 세는 것은 통과 모양이 아니라 미완료 개수뿐이라 두 번째 판정기가
+# 되지 않는다.
+# `ci_lookup` — 조회의 결말을 담는 별도 플래그(head_lookup·comments_lookup 과 같은 3값 규율의
+# 2값판: ok|unknown). 조회 실패를 0 으로 접으면 "롤업을 못 읽었다" 가 "초록이다" 로 둔갑한다.
+ci_lookup=ok
+if [ -n "${FC_FAILING:-}" ] || [ -n "${FC_PENDING+x}" ]; then
+  failing="${FC_FAILING:-0}"
+  pending="${FC_PENDING:-0}"
 else
-  failing=$(gh pr view "$pr" --repo "$repo" --json statusCheckRollup \
-    -q '[.statusCheckRollup[]? | select((.conclusion // .state // "")
-        | test("FAILURE|ERROR|CANCELLED|TIMED_OUT"))] | length' 2>/dev/null || echo 0)
+  rollup=$(gh pr view "$pr" --repo "$repo" --json statusCheckRollup 2>/dev/null) || rollup=''
+  failing=$(printf '%s' "$rollup" | jq '[.statusCheckRollup[]? | select((.conclusion // .state // "")
+      | test("FAILURE|ERROR|CANCELLED|TIMED_OUT"))] | length' 2>/dev/null) || failing=''
+  # 미완료 = check-run 이 COMPLETED 가 아니고 커밋 상태도 종결값이 아닌 것.
+  pending=$(printf '%s' "$rollup" | jq '[.statusCheckRollup[]? | select(((.status // "") != "COMPLETED")
+      and ((.state // "") != "SUCCESS") and ((.state // "") != "FAILURE")
+      and ((.state // "") != "ERROR"))] | length' 2>/dev/null) || pending=''
 fi
-[ -n "$failing" ] || failing=0
+# 정수가 아니면(빈 값·jq 실패·주입 오타) 조회 실패와 같은 처분이다. `failing` 은 종전대로 0 으로
+# 정규화해 아래 CI 실패 가드의 출력을 보존하고, 그 사실은 `ci_lookup` 이 기억해 `no_verdict`
+# 만 읽는다.
+case "${failing:-}" in ''|*[!0-9]*) ci_lookup=unknown; failing=0 ;; esac
+case "${pending:-}" in ''|*[!0-9]*) ci_lookup=unknown; pending=0 ;; esac
 
 # head_lookup — **조회의 결말을 담는 별도 플래그**(#206 회차2). 값 셋:
 #   ok       조회(또는 주입)에 성공 — head_at·head_sha 가 그 PR 의 값이다
@@ -258,11 +314,11 @@ case "$verdict_body" in
   *⚠*) echo held; exit 0 ;;
 esac
 
-# 여기부터: 최종 판정 없음. 🔄 판정 코멘트가 있어야 우리 형상(워커가 10단계 도달).
-case "$verdict_body" in
-  *🔄*) : ;;
-  *) echo active; exit 0 ;;   # 판정 코멘트 자체가 없음 → 너무 이르거나 우리 형상 아님
-esac
+# 여기부터: 최종 판정 없음. 🔄 판정 코멘트가 있어야 우리 형상(워커가 10단계 도달)이고,
+# 🔄 가 없는 칸(판정 코멘트 0건)은 `no_verdict` 판별로 간다(#396). 그 게이트는 아래
+# **헬퍼 정의부 뒤**에 있다 — 판정에 `has_progress`·`join_bounce_epoch` 가 필요해서다.
+# 출력은 옮기기 전과 같다: 그 사이에 있는 CI 실패 가드도 같은 `active` 로 수렴하고,
+# 검증자 코멘트 추출은 로컬 jq 라 부작용이 없다.
 
 # CI 실패면 규칙1 대상 → 여기서 완결 판별 안 함(방어적 가드).
 if [ "${failing:-0}" -gt 0 ] 2>/dev/null; then
@@ -313,6 +369,13 @@ is_clean() {
 # 이 조회는 **🔄 계열 갈래를 내기 직전에만** 돈다(has_progress 안에서 불린다) — 정상 PR 은
 # ✅ 갈래에서 이미 빠져나가므로 스윕 한 틱의 gh 호출이 PR 수만큼 늘지 않는다.
 claimed_arg() {
+  # 같은 판정 안에서 **두 번 묻지 않는다**(#396). `no_verdict` 갈래는 이 값을 기준 시각(clock)과
+  # 진행 증거 ③ 두 곳에서 쓰는데, 그냥 두 번 부르면 gh 왕복이 두 번이다. 명령치환 안에서의
+  # 대입은 부모 셸로 나가지 않으므로 캐시는 **부모가** 채운다(`_claimed_arg_cache=`).
+  if [ -n "${_claimed_arg_cache+x}" ]; then
+    printf '%s' "$_claimed_arg_cache"
+    return 0
+  fi
   # 주입이 있으면 실조회로 **새지 않는다**. 빈 문자열 주입은 `none` 으로 본다
   # (호출자가 "claim 증거 없음" 을 뜻한 것 — 실패는 `unknown` 이라는 단어로 말한다).
   if [ -n "${FC_CLAIMED_AT+x}" ]; then
@@ -484,6 +547,60 @@ join_bounce_epoch() {  # join_bounce_epoch <ref_epoch> → stdout <epoch>
   [ "$be" = unknown ] && be="$now"
   max_epoch "$ref" "$be"
 }
+
+# ── 🔄 게이트 · `no_verdict` 판별 (#396) ──────────────────────────────────────
+# ✅/⚠ 갈래를 빠져나온 PR 중 `머지 판정: 🔄` 를 가진 것만 아래 완결 유실 갈래로 간다.
+# 나머지는 **판정 코멘트가 0건**(또는 `머지 판정:` 은 있는데 세 기호가 하나도 없는 형태)이고,
+# 그건 워커가 10단계 전에 죽었거나 애초에 우리 형상이 아니라는 뜻이다 — 둘을 가르는 것은
+# **시간과 증거**다: 기준 시각에서 `STALE_FINISH_MIN` 을 넘겼고 진행 증거가 없으면
+# `no_verdict`(회수 대상), 아니면 `active`(종전 동작 그대로).
+#
+# 기준 시각 = `agent:claimed` 부착 시각과 head 커밋 시각 중 **더 최신** 쪽(🔄 계열의 max 규율
+# 과 같다 — 판정 코멘트가 없으니 두 축만 남는다) + 반송 마커 시각 합류(#308).
+# **증명 실패는 전부 `active`** 다: claim 조회 `unknown` · head 조회 실패(`head_lookup`≠ok) ·
+# 두 축 모두 못 얻음. 이 파일의 규율 그대로, 되돌릴 수 없는 쪽(재디스패치)을 증명 없이 열지
+# 않는다. 진행 증거 게이트(`emit_stale`)도 한 번 더 탄다 — 살아 있는 회차는 claim 이
+# `ISSUE_TIMEBOX_HOURS` 안이라 증거 ③ 으로 `active` 가 된다.
+case "$verdict_body" in
+  *🔄*) : ;;
+  *)
+    # 코멘트를 **못 읽었으면** 판정 0건을 주장할 수 없다(위 comments_lookup 주석).
+    [ "$comments_lookup" = ok ] || { echo active; exit 0; }
+    # 이 갈래는 `verdict_body` 가 세 기호를 **안 가진** 모든 경우로 들어온다 — 그 안에는
+    # ⑴ 판정 코멘트가 정말 0건 ⑵ `머지 판정:` 은 있는데 우리가 못 읽는 본문(새 문형·기호
+    # 없는 판정) ⑶ `last_matching` 의 jq 가 실패해 빈 값이 나온 경우가 섞여 있다. ⑵⑶ 을
+    # `no_verdict` 로 부르면 **판정이 있는 PR 을 재디스패치**한다 — `comments_lookup` 이 막는
+    # 것은 조회 실패뿐이고 이 셋은 그 뒤에 온다. 그래서 주장하는 사실 그대로,
+    # **매칭 코멘트 수가 정확히 0** 일 때만 이 계급을 연다(그 외는 종전대로 active).
+    printf '%s' "$comments" | jq -e 'type=="array"' >/dev/null 2>&1 || { echo active; exit 0; }
+    nv_n=$(printf '%s' "$comments" | jq -r '
+      [ .[]? | (.body // "")
+        | select(startswith("머지 판정") or startswith("Merge verdict")) ] | length' 2>/dev/null) \
+      || { echo active; exit 0; }
+    case "$nv_n" in
+      0) ;;                              # 판정 코멘트 0건 — 이 계급의 유일한 형상
+      *) echo active; exit 0 ;;          # 1건 이상(못 읽는 본문) · 빈 값(jq 실패) = 주장 불가
+    esac
+    # CI 가 아직 도는 중이면 "초록인데 판정만 없다" 가 아니다(#421 [P2-2]) — 실패 가드(위)는
+    # 실패만 세므로 **미완료**는 여기서 따로 막는다. 롤업을 못 읽은 경우도 같은 처분.
+    [ "$ci_lookup" = ok ] || { echo active; exit 0; }
+    if [ "$pending" -gt 0 ]; then echo active; exit 0; fi
+    nv_claimed=$(claimed_arg)
+    _claimed_arg_cache="$nv_claimed"   # 아래 emit_stale 의 진행 증거 조회가 같은 값을 재사용
+    nv_claim_epoch=''
+    case "$nv_claimed" in
+      unknown) echo active; exit 0 ;;
+      none)    : ;;
+      *)       nv_claim_epoch=$(iso_to_epoch "$nv_claimed") || nv_claim_epoch='' ;;
+    esac
+    [ "$head_lookup" = ok ] || { echo active; exit 0; }
+    nv_ref=$(max_epoch "$head_epoch" "$nv_claim_epoch")
+    [ "${nv_ref:-0}" != 0 ] || { echo active; exit 0; }
+    nv_ref=$(join_bounce_epoch "$nv_ref")
+    nv_age=$((now - ${nv_ref:-$now}))
+    if [ "$nv_age" -gt "$stale_sec" ]; then emit_stale no_verdict; else echo active; fi
+    exit 0 ;;
+esac
 
 if [ -z "$verifier_body" ]; then
   # 검증자 부재 → 10단계 후 11단계 전 사망 가능. 🔄 판정 코멘트 vs head 커밋 중

@@ -57,6 +57,14 @@ maintenance must come before new work).
 - `LADDER_RESUME_LIMIT = 2` — cap on automatic resumes per issue. Beyond it the issue is
   escalated to `hold:policy` instead of resumed — only then is it a human's (no infinite
   retries).
+- `MIRROR_RETRY_LIMIT = 3` — cap on retries when ①'s resume sweep **stop-mirror cleanup**
+  cannot obtain positive evidence (#397). The round count is the number of
+  `<!-- mirror-retry: <reason> pr=<n> -->` marker comments on the paired issue — counting only that
+  PR's markers, and only those **after the last human-intervention boundary** (the latest
+  `policy-review`/`hold-note` comment), so a new episode never inherits the old rounds; at the cap the script emits
+  `mirror_retry_exhausted` (see the event handling below for the transition). The value must
+  match the constant of the same name in `resume-sweep.sh`, which points back at this section
+  (two copies are allowed until plan step 1).
 - `STALE_FINISH_MIN = 30` — lost-finish time buffer (minutes). The buffer for
   `finish-classify.sh`, which is now consumed by the **closeout ①-b stuck-PR sweep**
   (issue-runner no longer uses it directly after the rule-4 revert). A live worker
@@ -133,6 +141,20 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
 - `stale` — a dead claim was released. Report only.
 - `warn` — dirty/unpushed worktree. **Do not touch it** — surface it as-is in
   Report so a human sees it.
+- `half_moved_redispatch` — a PR whose `verify-redispatch` **half-failed** (#394): the PR lost its
+  stage labels (`flow:*`·`verifying`) while the issue kept `agent:claimed`, so it falls out of
+  **all three** gates (`verify-eligible`·`closeout-eligible`·`eligible-issues`) — this is the owner
+  of the state verify-runner hands off as "the next tick will catch it"
+  (see the recovery column in `references/state-machine.md`).
+  **Re-run the same transition idempotently**:
+  `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr>` (the PR side has already moved, so
+  it is a no-op; only the issue returns to `agent-ready` → a ③ candidate this tick). On success add
+  `#<num>(반쯤 이동 회수)` to `보수` in ④ Report. If the transition exits 1·2, report
+  `BLOCKED: transition failed verify-redispatch PR #<pr>(<repo_short>) — <one stderr line>` and move
+  on (the common rule — never silently; the next tick re-emits the same event).
+  A PR with this event is **not** ② Maintain input (no `pr_open` — same shape as `harvesting`).
+  A live worker (progress evidence via `progress-evidence.sh`) and any unprovable lookup are already
+  filtered out by the script, so do not re-judge freshness here.
 - `pr_open` — input to ② Maintain.
 - `working` — a worker is in progress. Use TaskList to check whether that
   background agent is actually alive. **Do not assume "looks dead" (the task has
@@ -277,6 +299,16 @@ so it is a brake a human put there by hand. Per event:
   further to do** — that PR returns as a `verify-eligible.sh`/`closeout-eligible.sh`
   candidate from this tick on. Put one line under `mirror cleared N` in ④ Report (`pr` is
   the PR, `number` the linked issue, `removed` the labels taken off).
+- `mirror_retry_exhausted` — the stop-mirror cleanup hit `MIRROR_RETRY_LIMIT` rounds **without
+  ever obtaining positive evidence** (#397 — read `attempts`/`limit` as `3/3`). The script never
+  touched a label (that branch never strips a human gate without proof). **Escalate it to a human
+  here**:
+  `$SCRIPTS/transition.sh runner-held <repo> <number> <pr> --reason policy --note "미러 불일치 증거 부재 <attempts>회 — PR 과 이슈의 정지 라벨이 어긋난다"`
+  (attaches `hold:policy` plus the question comment on both the issue and the PR). If the
+  transition exits 1·2, leave one line `BLOCKED: transition failed runner-held #<number>(exit N)`
+  in ④ Report — the next tick re-emits the same event (no new marker is added, so the round count
+  does not inflate). Once it lands, the issue carries a stop label and the PR drops out of mirror
+  cleanup on the next tick (it terminates itself). Report one warn line `미러 상한 #<pr>` in ④.
 - `resumed` — `hold:ladder` is off and `agent-ready` is untouched (the
   eligibility label is never touched). **Nothing for the dispatcher to do** — the issue
   reappears naturally as an `eligible-issues.sh` candidate in ③ this tick. Record the
@@ -321,7 +353,7 @@ so it is a brake a human put there by hand. Per event:
   **The order is the contract** (#244): the marker *is* "re-review done", so posting it first
   means a dead transition still folds the issue to `reviewed` on the next tick — `needs-human`
   is never attached, the issue keeps only `hold:policy`, and **nobody ever asks again** (a human
-  decision sealed out of the human-waiting column).
+  decision sealed out of the needs-human column).
   If the transition exits non-zero, **do not post the marker comment**; leave one line
   `BLOCKED: 전이 실패 policy-kept #<issue>(exit N)` in ④ Report instead — with no marker the next
   sweep **emits the same issue again** as `policy_review_due`. `policy-kept` only adds labels and
@@ -330,6 +362,23 @@ so it is a brake a human put there by hand. Per event:
   shape)=do not post the marker (the next sweep re-emits the re-review). **Only an issue whose
   marker remains** is **never asked twice** (until a human removes the label). Report it in ④ as
   `re-reviewed N (resumed n · kept m)`.
+  **A PR-only hold always ends as "kept human"** (#395 → #421). The event's `pr` field splits the
+  axes: a filled `pr` with `number` = `null` is the `hold:policy` of a **PR with no open linked
+  issue** (`verify-held`/`closeout-blocked` called with `-` in the `<issue>` slot, or every
+  referenced issue already closed). The question (`<!-- hold-note: policy -->`) lives on that PR, so
+  read it there — but **do not resume, even when the plan answers it**: verify-runner ④ nails
+  "no linked issue" down as a **human** case (which issue to attach is a human decision), and on
+  this axis a resume has **no consumer**: calling `verify-redispatch` with `-` in the `<issue>`
+  slot leaves only `flow:agent-ready` on the PR, while `eligible-issues.sh` dispatches **issues**
+  only and `verify-eligible.sh` requires `flow:verify`/`verifying` — no lane ever picks it up and
+  the PR is orphaned for good. So this axis has exactly one disposition: run
+  `$SCRIPTS/transition.sh policy-kept <repo> - <pr>` (the issue argument of the transition is `-`)
+  and **only after it ends with exit 0 `ok`** leave `재심: 사람 몫 유지 — 연결 이슈 없음 — 사람이
+  이슈를 연결하거나 PR 을 닫는다 <!-- policy-review: kept --><!-- bodat:worker -->` on **that PR**
+  via `gh pr comment <pr>` (order, marker and non-zero disposition are letter-for-letter the same
+  as above — on non-zero post no marker and leave `BLOCKED: 전이 실패 policy-kept #<PR>(exit N)`).
+  Count it in ④ Report's `kept m`. A PR that *does* have an **open** linked issue never produces
+  this event — the issue axis already emitted it (no duplicates).
 - `waiting` — still inside the window. Pass over it quietly (no reporting needed).
 - exit 2 — a listing failed for some repos (the rest were processed normally), or the
   account-wide search failed. Leave one warn line `resume-sweep 부분 실패(레포 조회)` in
@@ -457,17 +506,20 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       (quoted markers do not count — a marker inside inline backticks or a code fence is not
       the signal but prose *about* the signal, so it is stripped first, with the **same
       definition** as `JQ_UNQUOTE` in `resume-sweep.sh`. If the two drift apart, a second
-      invisible counter counts a different number — #197)
+      invisible counter counts a different number — #197. **The lookup is shared too** (#397):
+      `gh issue view --json comments` returns only the first 100, so on a chatty issue this spot
+      would count differently from the (paginated) sweep — read the full set with
+      `pr-comments.sh`. Its output is an **array**, not `{comments:[…]}`, hence `.[]`.)
 
       ````sh
-      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+      $SCRIPTS/pr-comments.sh <repo> <num> | jq 'def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
       ````
 
       After the filled template, append ⓐ the ladder document's path
       `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (where the
       worker reads which rung is climbed with which command) and ⓑ **the previous attempt's
       failure output** — the body of the issue's last ladder-related comment:
-      `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body|test("사다리|ladder")) and ((.body|test("^재개 "))|not))] | last.body // ""'`
+      `$SCRIPTS/pr-comments.sh <repo> <num> | jq -r '[.[] | select((.body|test("사다리|ladder")) and ((.body|test("^재개 "))|not))] | last.body // ""'`
       (exclude the sweep's own `재개 N/…` comment — it is the most recent one, so without the
       filter you would hand the worker that line instead of the failure output). Then state
       in one line: **"Do not repeat the same failure on the same rung — start from the next
@@ -482,7 +534,7 @@ One-line summary: `reconciled N · maintained N · new N · resumed N · escalat
 by an OPEN blocker. Print it even when it is 0).
 Below it, **name the numbers item by item** — counts alone do not tell the next tick where
 each issue/PR went:
-`reconciled: #4801(bodat, PR #4810 merged) · maintained: PR #4812(bodat, rebase) · new: #4818(bodat) · resumed: #4772(bodat, 2/2) · escalated: #4803(bodat, hold:policy) · blocked: #4986(bodat ← #4985 human-wait) · warn: #4799(bodat) dirty worktree`.
+`reconciled: #4801(bodat, PR #4810 merged) · maintained: PR #4812(bodat, rebase) · new: #4818(bodat) · resumed: #4772(bodat, 2/2) · escalated: #4803(bodat, hold:policy) · blocked: #4986(bodat ← #4985 needs-human) · warn: #4799(bodat) dirty worktree`.
 Copy the search-window `warn:` lines (`검색 창 절단` / `검색 창 임박`) into the warn list as
 they are — once the window fills, the **newest** issues silently drop out of the candidate
 list, so losing that signal means a dying queue looks exactly like a healthy one.

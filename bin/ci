@@ -954,12 +954,45 @@ bash scripts/tests/resume-sweep.test.sh
 
 echo "[test] loop-status.sh 파이프라인 스냅샷 버킷·창 필터·warn·부분 실패 (#144)"
 bash scripts/tests/loop-status.test.sh
+# (#276) 사다리 버킷은 "누가 들고 있나" 로 이름 짓는다 — 옛 버킷 문구(구현중·마감중·사람대기)가
+# loop-status·README·스킬·테스트 어디에도 남지 않는다(이슈 #276 수용 기준의 grep 그대로).
+# 산문이 옛 이름으로 대시보드 줄을 가리키면 사람이 없는 줄을 찾는다. 새 이름은 라벨/루프
+# 이름 그 자체(issue-runner·verify-runner·closeout·needs-human)라 이 grep 이 오탐할 자리가 없다.
+echo "[#276] 루프 현황 9줄 — 옛 버킷 문구(구현중·마감중·사람대기) 잔존 0건"
+old_bucket_hits=$(grep -rn '구현중\|마감중\|사람대기' scripts README.ko.md README.md skills 2>/dev/null || true)
+if [ -n "$old_bucket_hits" ]; then
+  echo "  ✗ 옛 버킷 문구가 남아 있다 — issue-runner·closeout·needs-human 으로 (#276):"
+  printf '%s\n' "$old_bucket_hits" | head -20 | sed 's/^/      /'
+  exit 1
+fi
+# 9줄 렌더 계약 — RENDER_JQ 의 padded 리터럴에 새 이름 9개가 전부 있고 폭이 같다(15칸 = verify-runner 13 + 2).
+for lit in '"waiting":"대기           "' '"claimed":"issue-runner   "' '"verify":"검증대기       "' \
+           '"verifying":"verify-runner  "' '"ready":"마감대기       "' '"harvesting":"closeout       "' \
+           '"held":"보류           "' '"human_wait":"needs-human    "' '"deploy_wait":"배포대기       "'; do
+  grep -qF -- "$lit" scripts/loop-status.sh \
+    || { echo "  ✗ scripts/loop-status.sh RENDER_JQ padded 에 $lit 이 없다 (#276 — 9줄 이름·15칸 폭)"; exit 1; }
+done
 
 echo "[test] epic-sweep.sh — leaf 전부 종료 에픽 자동 종료·전용 줄 판정·상한 보류·멱등 (#258)"
 # closeout ① 이 `"$SCRIPTS/epic-sweep.sh"` 로 직접 exec 하므로 실행 비트도 여기서 문다
 # (비트가 빠지면 조용히 exit 126 → 에픽 스윕이 매 틱 no-op 으로 degrade, PR#173 교훈과 동일 함정).
 [ -x scripts/epic-sweep.sh ] || { echo "  ✗ epic-sweep.sh 실행 비트 없음"; exit 1; }
 bash scripts/tests/epic-sweep.test.sh
+
+echo "[test] progress-evidence.sh 진행 증거 3축 격자 — 커밋/큐/claim·3값 어휘·경계 (#428)"
+bash scripts/tests/progress-evidence.test.sh
+
+echo "[test] claim-at.sh 부착 시각 격자 — 마지막 매칭 인덱스·100건 상한·부재/실패 분리 (#428)"
+bash scripts/tests/claim-at.test.sh
+
+echo "[test] pr-head-at.sh head 시각 격자 — 상한 없는 조회 경로·SHA 형태 검사·fail-closed (#428)"
+bash scripts/tests/pr-head-at.test.sh
+
+echo "[test] closeout-ci-pass.sh CI 통과 판정 격자 — 로컬 캐시 0/1/2·폴백 SUCCESS-only allowlist (#428)"
+bash scripts/tests/closeout-ci-pass.test.sh
+
+echo "[test] closeout-reconcile.sh harvesting 점검 격자 — 상태별 이벤트·needs-human fail-closed·범위 필터 (#428)"
+bash scripts/tests/closeout-reconcile.test.sh
 
 echo "[#206] 진행 증거 술어는 progress-evidence.sh 한 자리 (#200 → #206)"
 # 커밋 신선도(STALL_MIN)와 CI 큐 티켓 판정을 다른 스크립트가 자기 벌로 들고 있으면 언젠가
@@ -1510,7 +1543,7 @@ grep -qE '^  policy-kept\)' scripts/transition.sh \
 # (#244) 순서 계약 — **전이 먼저, 마커 나중**. `<!-- policy-review: kept -->` 는 resume-sweep 이
 # "재심 끝"(reviewed)으로 읽는 유일한 신호라, 마커를 전이보다 먼저 올리면 `policy-kept` 가
 # exit 1/2/64 로 죽어도 다음 틱부터 그 건이 접혀 `needs-human` 이 영영 안 붙고 `policy_review_due`
-# 가 다시는 안 난다(사람 결정이 사람대기 칸에서 봉인). 문단 스코프로 좁힌다(#223) — 파일 다른
+# 가 다시는 안 난다(사람 결정이 needs-human 칸에서 봉인). 문단 스코프로 좁힌다(#223) — 파일 다른
 # 곳의 같은 문자열이 순서를 대신 만족시키면 가드가 무의미해진다.
 for f in SKILL.md SKILL.en.md; do
   pr_s=$(grep -n '^- `policy_review_due`' "$f" | head -1 | cut -d: -f1)
@@ -1739,4 +1772,3 @@ grep -qF '라벨 공백 창' skills/closeout/SKILL.md \
 grep -qF 'label gap' skills/closeout/SKILL.en.md \
   || { echo "  ✗ skills/closeout/SKILL.en.md 에 반송 직후 'label gap' 미러 없음"; exit 1; }
 
-echo "CI pass"

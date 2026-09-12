@@ -16,7 +16,7 @@
 
 <p><strong>이슈&nbsp;→&nbsp;PR 공장. 루프가 <code>main</code> 을 소유하고, 릴리스는 당신 몫.</strong><br>
 검증·머지까지 잇는 도크 <code>/closeout</code> 과 짝을 이룬다.<br>
-두 루프, 한 레포, 사람 게이트는 중요한 곳에만.</p>
+두 루프, 한 레포, 배포 게이트는 deploy-cycle 레인이 돈다.</p>
 
 </div>
 
@@ -129,11 +129,11 @@ flowchart LR
   R -->|PR 오픈| V["verify-runner<br/><i>검증</i>"]
   V -->|"판정 ✅"| C["closeout<br/><i>마감</i>"]
   C -->|main 머지| G["배포 대기<br/>이슈"]
-  G -.->|사람 게이트| D["사람: 검증 → 승격 → 배포"]
+  G -.->|레인 인계| D["deploy-cycle 레인:<br/>검증 → 승격 → 배포"]
   V -.->|실패 반송| R
 ```
 
-세 루프가 충돌하지 않는 이유는 소유권이 **라벨 경계**이기 때문이다: closeout 이 PR 을 집으면 `harvesting` 라벨을 달고, issue-runner 는 `harvesting` PR 을 건드리지 않는다. verify-runner 도 `flow:verify` PR 을 같은 방식으로 점유한다. closeout 은 한 틱에 PR 하나를 끝까지 마감하며(`MAX_CLOSEOUT = 1`), 페이스는 `/loop` 주기로 조절한다. 그리고 자율에는 천장이 있다 — 루프는 `main` 머지·계획문서 reconcile·후속 이슈 발행까지 무인으로 하지만, **프로덕션 배포는 사람 게이트**다: closeout 이 "배포 대기" 이슈를 발행하고 거기서 멈춘다. 여기서 머지는 항상 사람이 한다는 issue-runner 불변은 그대로다. 상세는 [`skills/closeout/SKILL.md`](skills/closeout/SKILL.md).
+세 루프가 충돌하지 않는 이유는 소유권이 **라벨 경계**이기 때문이다: closeout 이 PR 을 집으면 `harvesting` 라벨을 달고, issue-runner 는 `harvesting` PR 을 건드리지 않는다. verify-runner 도 `flow:verify` PR 을 같은 방식으로 점유한다. closeout 은 한 틱에 PR 하나를 끝까지 마감하며(`MAX_CLOSEOUT = 1`), 페이스는 `/loop` 주기로 조절한다. 그리고 자율에는 천장이 있다 — 루프는 `main` 머지·계획문서 reconcile·후속 이슈 발행까지 무인으로 하지만, **프로덕션 배포는 closeout 이 하지 않는다** — closeout 이 "배포 대기" 이슈를 발행하고 거기서 멈추면, 그 이슈를 **deploy-cycle 레인**이 집어 검증 → 승격 → 배포 → 종료를 무인으로 돈다. 여기서 머지는 항상 사람이 한다는 issue-runner 불변은 그대로다. 상세는 [`skills/closeout/SKILL.md`](skills/closeout/SKILL.md).
 
 <details>
 <summary><b>왜 검증 레인을 따로 두나?</b></summary>
@@ -144,19 +144,19 @@ flowchart LR
 
 </details>
 
-세 루프가 라벨을 어긋나게 옮기지 않도록, 라벨 이동은 전부 `scripts/transition.sh` 한 곳을 지난다 — `transition.sh <전이> <owner/repo> <이슈|-> <PR|->` 가 PR 과 연결 이슈를 한 호출로 옮기고(전이 표는 그 파일 상단이 SSOT), 편집 뒤 라벨을 다시 읽어 어긋나면 exit 1·gh 실패면 exit 2 로 실패를 드러낸다. 그리고 "지금 무엇이 걸려 있는가"는 `scripts/loop-status.sh` 가 찍는다 — 라벨·PR 상태만 읽는 순수 읽기 스냅샷(쓰기 0)으로, 레포별로 배포대기·사람대기·**보류**·마감중·마감대기·검증대기·구현중·대기·막힘 버킷과 창 안의 실패·파생·승격 대기, 그리고 불변식 warn(무소속 PR·단계 라벨 중복·미러 불일치·**정지 미러 불일치**·좌초형·블로커 사람대기)을 낸다. `막힘` 은 `대기` 의 갈래다 — `대기` 판정을 통과한 이슈 중 열린 블로커(본문 줄 시작의 `Blocked by #N` ∪ 라벨 `blocked-by:<N>` — 규칙의 SSOT 는 `eligible-issues.sh`)가 있는 건이 `#4986 ← #4985(사람대기)` 처럼 블로커와 그 버킷을 달고 내려간다(대기에서 옮겨 온 것이라 `열림 N` 은 그대로). 블로커 상태는 이미 받은 열린 이슈·열린 PR 목록 안에서만 판정해 **추가 gh 호출이 0** 이고, 블로커가 사람대기·배포대기(사람이 답해야 풀리는 게이트)면 블로커 기준으로 묶어 warn `블로커 사람대기 #4985(bodat) — 하위 #4986 #4930 정체` 한 줄이 뜬다. `보류` 는 기계 정지 칸이다(#244) — `hold:*` 가 있는데 `needs-human` 이 없는 이슈(사다리 재개 대기 · `hold:policy` 재심 전)가 사유를 달고 온다(`#4772(ladder)`). 우선순위는 `배포대기 > 사람대기 > 보류 > 단계 라벨 > 막힘 > 대기` 로 단계 라벨보다 앞이다 — 기계가 멈춘 건은 그 단계를 들고 있는 루프가 없기 때문이고, 이 칸이 없으면 그 이슈들이 `대기`(집을 수 있는 이슈) 로 읽힌다. 사람대기 줄에는 사유 라벨(`hold:conflict`·`hold:policy`·`hold:ladder`)이 병기되고, 질문 한 줄이 필수인 `hold:policy`·`hold:conflict` 인데 **같은 사유의** `<!-- hold-note: <사유> -->` 코멘트가 없으면 `질문 없음` 이 함께 찍힌다(사람이 무엇을 답해야 할지 없는 홀드 — 마커는 홀드가 풀려도 남으므로 낡은 사유의 마커는 질문으로 세지 않는다) — 유무를 못 본 건은 `질문 없음` 으로 접지 않고 warn `질문 유무 미확인` 으로 낸다(조회 상한은 `HOLD_NOTE_MAX`, 기본 50). `closeout-dup` 으로 닫힌 PR 은 `중복종료` 로 따로 센다. `hold:ladder` 로 멈춘 이슈는 `scripts/resume-sweep.sh`(issue-runner ① Reconcile)가 `RESUME_AFTER_MIN` 뒤 자동 재개한다(상한 `LADDER_RESUME_LIMIT` 초과 시 `hold:policy` 로 승격) — 실측 필요는 멈출 이유가 아니라 다음 할 일이며, 통로는 `references/live-verification-ladder.md` 가 정한다. `승격 대기` 줄 위에는 `에픽` 절(#260)이 있다 — 열린 `epic` 라벨 이슈마다 leaf(본문의 `Epic #N` 전용 줄 — 줄 끝까지 그 줄뿐이어야 한다) 의 종료/전체·현재 버킷 분포·P 분포를 한 줄로 찍고, leaf 가 하나 이상인데 전부 닫혔으면 `에픽 leaf 전부 종료`, 열린 leaf 의 P 가 둘 이상 섞이면 `에픽 내 P 혼재` warn 을 낸다. 세 루프가 ④ Report 끝에 이 출력을 그대로 붙이고, 사람은 손으로 친다 — 루프 세션 cwd(`.loop/repos` 가 있는 곳)에서는 인자 없이 `scripts/loop-status.sh`, 아니면 `scripts/loop-status.sh --repo owner/repo`. 세 루프는 `--post <루프> --delta "<한 줄>"` 로 레포마다 고정 이슈 **루프 현황**(라벨 `loop-dashboard`, 첫 줄 마커 필수)의 본문을 매 틱 덮어쓴다 — 깃헙에서 그 이슈 하나만 열면 누가 들고 있고 각 루프가 마지막으로 언제 돌았는지 보인다.
+세 루프가 라벨을 어긋나게 옮기지 않도록, 라벨 이동은 전부 `scripts/transition.sh` 한 곳을 지난다 — `transition.sh <전이> <owner/repo> <이슈|-> <PR|->` 가 PR 과 연결 이슈를 한 호출로 옮기고(전이 표는 그 파일 상단이 SSOT), 편집 뒤 라벨을 다시 읽어 어긋나면 exit 1·gh 실패면 exit 2 로 실패를 드러낸다. 그리고 "지금 무엇이 걸려 있는가"는 `scripts/loop-status.sh` 가 찍는다 — 라벨·PR 상태만 읽는 순수 읽기 스냅샷(쓰기 0)으로, 레포별로 **"누가 들고 있나"** 로 이름 지은 9줄 버킷(#276) — 대기·issue-runner·검증대기·verify-runner·마감대기·closeout·**보류**·needs-human·배포대기(`X대기` 는 그 루프가 집기 전, 루프 이름은 그 루프가 지금 들고 있음; 라벨 대응은 `agent-ready` 만 → `agent:claimed` → `flow:verify` → `verifying` → `flow:ready` → `harvesting` → `hold:*` → `needs-human`/`hold:conflict` → `deploy-wait`, 표는 `scripts/loop-status.sh` 머리 주석이 SSOT) — 과 창 안의 실패·파생·승격 대기, 그리고 불변식 warn(무소속 PR·단계 라벨 중복·미러 불일치·**정지 미러 불일치**·좌초형·블로커 needs-human)을 낸다. `막힘` 은 `대기` 의 갈래다 — `대기` 판정을 통과한 이슈 중 열린 블로커(본문 줄 시작의 `Blocked by #N` ∪ 라벨 `blocked-by:<N>` — 규칙의 SSOT 는 `eligible-issues.sh`)가 있는 건이 `#4986 ← #4985(needs-human)` 처럼 블로커와 그 버킷을 달고 내려간다(대기에서 옮겨 온 것이라 `열림 N` 은 그대로). 블로커 상태는 이미 받은 열린 이슈·열린 PR 목록 안에서만 판정해 **추가 gh 호출이 0** 이고, 블로커가 needs-human·배포대기(사람이 답해야 풀리는 게이트)면 블로커 기준으로 묶어 warn `블로커 needs-human #4985(bodat) — 하위 #4986 #4930 정체` 한 줄이 뜬다. `보류` 는 기계 정지 칸이다(#244) — `hold:*` 가 있는데 `needs-human` 이 없는 이슈(사다리 재개 대기 · `hold:policy` 재심 전)가 사유를 달고 온다(`#4772(ladder)`). 우선순위는 `배포대기 > needs-human > 보류 > 단계 라벨(뒤 단계가 이김) > 막힘 > 대기` 로 단계 라벨보다 앞이고, 표시 순서는 그 역순(사다리 → 보류 → needs-human → 배포대기)이다 — 기계가 멈춘 건은 그 단계를 들고 있는 루프가 없기 때문이고, 이 칸이 없으면 그 이슈들이 `대기`(집을 수 있는 이슈) 로 읽힌다. needs-human 줄에는 사유 라벨(`hold:conflict`·`hold:policy`·`hold:ladder`)이 병기되고, 질문 한 줄이 필수인 `hold:policy`·`hold:conflict` 인데 **같은 사유의** `<!-- hold-note: <사유> -->` 코멘트가 없으면 `질문 없음` 이 함께 찍힌다(사람이 무엇을 답해야 할지 없는 홀드 — 마커는 홀드가 풀려도 남으므로 낡은 사유의 마커는 질문으로 세지 않는다) — 유무를 못 본 건은 `질문 없음` 으로 접지 않고 warn `질문 유무 미확인` 으로 낸다(조회 상한은 `HOLD_NOTE_MAX`, 기본 50). `closeout-dup` 으로 닫힌 PR 은 `중복종료` 로 따로 센다. `hold:ladder` 로 멈춘 이슈는 `scripts/resume-sweep.sh`(issue-runner ① Reconcile)가 `RESUME_AFTER_MIN` 뒤 자동 재개한다(상한 `LADDER_RESUME_LIMIT` 초과 시 `hold:policy` 로 승격) — 실측 필요는 멈출 이유가 아니라 다음 할 일이며, 통로는 `references/live-verification-ladder.md` 가 정한다. `승격 대기` 줄 위에는 `에픽` 절(#260)이 있다 — 열린 `epic` 라벨 이슈마다 leaf(본문의 `Epic #N` 전용 줄 — 줄 끝까지 그 줄뿐이어야 한다) 의 종료/전체·현재 버킷 분포·P 분포를 한 줄로 찍고, leaf 가 하나 이상인데 전부 닫혔으면 `에픽 leaf 전부 종료`, 열린 leaf 의 P 가 둘 이상 섞이면 `에픽 내 P 혼재` warn 을 낸다. 세 루프가 ④ Report 끝에 이 출력을 그대로 붙이고, 사람은 손으로 친다 — 루프 세션 cwd(`.loop/repos` 가 있는 곳)에서는 인자 없이 `scripts/loop-status.sh`, 아니면 `scripts/loop-status.sh --repo owner/repo`. 세 루프는 `--post <루프> --delta "<한 줄>"` 로 레포마다 고정 이슈 **루프 현황**(라벨 `loop-dashboard`, 첫 줄 마커 필수)의 본문을 매 틱 덮어쓴다 — 깃헙에서 그 이슈 하나만 열면 누가 들고 있고 각 루프가 마지막으로 언제 돌았는지 보인다.
 
 ## 배포 — main·release 와 배포 게이트
 
-루프는 `main` 까지 자율이고 **거기서 멈춘다.** `main` 머지는 배포가 *아니다.* 프로덕션은 별도 포인터 브랜치(관례상 `release`)를 추적하며, 그 브랜치는 사람만 전진시킨다 — 그래서 `main` 이 나아가도 "라이브" 를 뜻하지 않는다.
+closeout 은 `main` 까지 자율이고 **거기서 멈춘다.** `main` 머지는 배포가 *아니다.* 프로덕션은 별도 포인터 브랜치(관례상 `release`)를 추적하며, 그 브랜치는 **deploy-cycle 레인**만 전진시킨다 — 그래서 `main` 이 나아가도 "라이브" 를 뜻하지 않는다.
 
-핸드오프는 이슈다. closeout 이 초록불 PR 을 `main` 에 머지하면 배포하지 않고 **배포 대기 이슈**를 발행하고 멈춘다. 그 이슈가 루프 → 사람 경계다. 거기서부터 사람이 게이트를 돈다:
+핸드오프는 이슈다. closeout 이 초록불 PR 을 `main` 에 머지하면 배포하지 않고 **배포 대기 이슈**를 발행하고 멈춘다. 그 이슈가 closeout → **deploy-cycle 레인** 경계다. 거기서부터 deploy-cycle 레인이 게이트를 돈다:
 
 1. **일괄(Batch)** — 배포 대기 이슈가 `main` 위에 쌓인다. 하나하나가 머지됐지만 아직 배포 안 된 변경이다.
-2. **dev/스테이지 검증** — 사람이 배포 대기 이슈 묶음을 dev 서버/스테이지에서 확인한다. 루프가 스스로 완전히 증명하지 못한 동작을 실제로 돌려본다.
+2. **dev/스테이지 검증** — deploy-cycle 레인이 배포 대기 이슈 묶음을 dev 서버/스테이지에서 확인한다. 루프가 스스로 완전히 증명하지 못한 동작을 실제로 돌려본다.
 3. **승격(Promote)** — 통과한 SHA 를 `release` 로 승격하고 버전 태그를 찍는다. 실패하면 승격을 중단하고 프로덕션은 이전 `release` 를 유지한다.
 4. **배포(Ship)** — 프로덕션(또는 워커)이 `release` 를 당겨 배포하고 스모크한다.
-5. **마감(Close)** — 배포된 배포 대기 이슈를 일괄 종료한다. 사람이 깨졌다고 판단한 것은 고침 이슈가 되어 루프 맨 앞으로 다시 들어간다.
+5. **마감(Close)** — deploy-cycle ⑦ 이 배포된 배포 대기 이슈를 일괄 종료한다. 깨졌다고 판정된 것은 고침 이슈가 되어 루프 맨 앞으로 다시 들어간다.
 
 ```mermaid
 flowchart TD
@@ -165,7 +165,7 @@ flowchart TD
     A2 --> A3["main 머지"]
     A3 --> A4["배포 대기 이슈 발행 · 게이트에서 정지"]
   end
-  subgraph human["사람 게이트"]
+  subgraph lane["deploy-cycle 레인 (무인)"]
     H1["배포 대기 이슈 N건 일괄"] --> H2["dev / 스테이지 검증"]
     H2 -->|통과| H3["SHA 를 release 로 승격 + 버전 태그"]
     H3 --> H4["프로덕션 배포 → 스모크"]
@@ -180,7 +180,7 @@ flowchart TD
   H6 -.->|고침 이슈를 루프로| A1
 ```
 
-즉 `main` 은 루프가 소유하는 통합 브랜치, `release` 는 사람만 전진시키는 프로덕션 포인터, 버전 태그가 매 승격을 표시한다. 이 레포 자체의 스킬 변경도 같은 게이트를 지난다 — 머지된 PR 이 "배포 대기" 이슈를 발행하고, 사람이 심링크된 체크아웃을 동기화(`git pull`)·검증한 뒤에야 라이브가 된다.
+즉 `main` 은 루프가 소유하는 통합 브랜치, `release` 는 deploy-cycle 레인만 전진시키는 프로덕션 포인터, 버전 태그가 매 승격을 표시한다. 이 레포 자체의 스킬 변경도 같은 게이트를 지난다 — 머지된 PR 이 "배포 대기" 이슈를 발행하고, deploy-cycle 레인이 심링크된 체크아웃을 동기화(`git pull`)·검증한 뒤에야 라이브가 된다.
 
 ## 가드레일
 
@@ -235,8 +235,9 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 | `Epic #N` | 주제 연결. 에픽에 속한 leaf 의 본문 **전용 라인**(형식은 `Blocked by #N` 과 같다 — 줄 시작 위치, 이슈당 하나, 대소문자 무시). 디스패처가 같은 P 안에서 시작한 에픽부터 집고, closeout 이 leaf 전부 종료된 에픽을 닫는다. 의존이 아니라 디스패치를 막지 않는다 |
 | `spinoff` | closeout 6단계가 발행한 파생 이슈라는 출처 표식. `loop-status.sh` 의 `파생` 집계가 이 라벨로만 센다 |
 | `full-cycle` | **레인 소유** 표시 — 사람 세션 스킬 `full-cycle` 사이클이 들고 있는 산출물(구현 이슈·PR·배포 대기). 상태가 아니라 "누구 레인인가" 이며 `agent-ready` 와 **배타**(루프가 집지 않는다). `setup-labels.sh` 가 만든다(#245) — 없는 레포에선 `--add-label full-cycle` 편집이 통째로 실패한다 |
-| `deploy-wait` | closeout 4단계·full-cycle §7 이 만든 배포 대기 이슈 — **deploy-cycle 루프의 레인**(사람 정지가 아니다). `loop-status.sh` 가 배포대기를 사람대기·보류와 가르는 버킷 라벨이기도 하다. `needs-human` 은 붙이지 않는다(#243) — 디스패치 게이트는 `agent-ready` 를 요구하고, 버킷은 `deploy-wait` 가 이기며, deploy-bodat 수집은 제목 정규식이라 그 라벨을 아무도 안 본다 |
-| `hold:conflict` · `hold:policy` · `hold:ladder` | **기계 정지**와 그 사유. `transition.sh verify-held|closeout-blocked|runner-held --reason <사유>` 가 **이 라벨만** 붙인다(#244 — `needs-human` 을 겹쳐 붙이지 않는다. 그래야 사람대기 칸이 사람이 손댈 수 없는 것으로 차지 않는다). `ladder` 만 창(`RESUME_AFTER_MIN`)이 지나면 재개 스윕이 자동 재개하고(사람 개입 불요), `policy` 는 루프 재심 1회(#155) 뒤 "사람 몫 유지" 판정에서만 `needs-human` 이 붙는다(`transition.sh policy-kept`). `conflict` 는 그 자체가 사람 몫이다(자동 재개 없음). 디스패치·검증·마감 게이트는 이 **접두**를 직접 본다(#242) — 사람이 홀드를 풀 때는 **이슈와 열린 PR 양쪽에서** 뗀다(PR 에 남은 사본은 스윕의 정지 미러 정리가 떼 준다, #265). `hold:dup`·`hold:hardware` 는 일부러 없다 — 중복은 `closeout-dup` 이 닫고, 실장비는 사다리를 오른다 |
+| `deploy-wait` | closeout 4단계·full-cycle §7 이 만든 배포 대기 이슈 — **deploy-cycle 루프의 레인**(사람 정지가 아니다). `loop-status.sh` 가 배포대기를 needs-human·보류와 가르는 버킷 라벨이기도 하다. closeout 은 `needs-human` 을 붙이지 않는다(#243) — 붙이는 주체는 **deploy-cycle** 이다(승격·배포·스모크 실패에, BoDAT #5197 — 숨은 정지 파일 폐지, 사람 몫은 이 라벨 하나). 그래서 2026-09-13 부터 버킷은 needs-human 이 배포대기보다 앞이다 |
+| `테스트` | deploy-cycle ⑤ 가 배포 뒤에도 `- [ ]` 가 남은 배포 대기 이슈에서 항목을 그대로 옮겨 발행하는 배포 뒤 검증 이슈(BoDAT #5197) — 배포 대기 이슈는 닫힌다. 사람 정지가 아니라 **밟을 비용**(TEST 워커 런·시간 창·프로덕션 관측)이 남은 것 — 사용자가 `e2e-test` 스킬을 부를 때 비운다. 어느 루프도 안 집는다. `loop-status.sh` 버킷 `테스트`(needs-human 뒤·배포대기 앞). `needs-human` 과 축이 달라 겹칠 수 있다(실장비 **그리고** 사람 조작). `setup-labels.sh` 가 만든다 |
+| `hold:conflict` · `hold:policy` · `hold:ladder` | **기계 정지**와 그 사유. `transition.sh verify-held|closeout-blocked|runner-held --reason <사유>` 가 **이 라벨만** 붙인다(#244 — `needs-human` 을 겹쳐 붙이지 않는다. 그래야 needs-human 칸이 사람이 손댈 수 없는 것으로 차지 않는다). `ladder` 만 창(`RESUME_AFTER_MIN`)이 지나면 재개 스윕이 자동 재개하고(사람 개입 불요), `policy` 는 루프 재심 1회(#155) 뒤 "사람 몫 유지" 판정에서만 `needs-human` 이 붙는다(`transition.sh policy-kept`). `conflict` 는 그 자체가 사람 몫이다(자동 재개 없음). 디스패치·검증·마감 게이트는 이 **접두**를 직접 본다(#242) — 사람이 홀드를 풀 때는 **이슈와 열린 PR 양쪽에서** 뗀다(PR 에 남은 사본은 스윕의 정지 미러 정리가 떼 준다, #265). `hold:dup`·`hold:hardware` 는 일부러 없다 — 중복은 `closeout-dup` 이 닫고, 실장비는 사다리를 오른다 |
 | `dup` | `closeout-dup` 으로 머지 없이 닫힌 PR(이미 main 에 반영·중복). `loop-status.sh` 가 `실패` 와 갈라 `중복종료` 로 센다 |
 
 자격 조건: `open + agent-ready + ¬agent:claimed + 모든 블로커 CLOSED`. 정렬: **`P0` 먼저, 나머지는 생성순(FIFO)** — 에픽은 정렬에 쓰이지 않는다.

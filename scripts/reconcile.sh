@@ -8,6 +8,10 @@
 #   rejected — PR 이 머지 없이 닫힘 → 정리 + agent-ready 도 제거 (자동 재시도 금지)
 #   pr_open  — PR 열려 있음 (failing 카운트 포함 → Maintain 단계 입력)
 #   harvesting — closeout 가 점유한 OPEN PR (harvesting 라벨) → Maintain 제외, 건드리지 않음
+#   half_moved_redispatch — `verify-redispatch` 가 반쯤 실패한 형상(#394): PR 은 단계
+#              라벨을 잃었는데 이슈는 `agent:claimed` 를 유지해 **세 게이트 전부 제외**다
+#              (verify-eligible=라벨 없음 · closeout-eligible=✅ 없음/bounced ·
+#              eligible-issues=claimed). SKILL ① 이 전이를 **멱등 재실행**한다.
 #   working  — PR 없고 worktree 있음 → 워커 진행 중으로 간주
 #   stale    — PR 없고 worktree 도 없음 → 죽은 claim 해제
 #   warn     — dirty/unpushed worktree → 제거 보류, 사람 확인 필요.
@@ -78,6 +82,55 @@ if [ -z "$claimed" ]; then
   echo "reconcile 중단: agent:claimed 조회 실패 — 빈 결과와 구분 불가라 정리를 건너뛴다" >&2
   exit 1
 fi
+
+# ── 반쯤 이동한 `verify-redispatch` 형상 판별 (#394) ────────────────────────────
+# `transition.sh verify-redispatch` 는 PR 을 먼저·이슈를 나중에 편집한다. 이슈 편집이
+# exit 1(readback 불일치)·2(gh 실패)로 끝나면 PR 은 `flow:verify`/`verifying` 을 잃고
+# 이슈는 `agent:claimed` 그대로다 — 그 칸은 어느 레인의 게이트에도 안 걸려 영영 멈춘다
+# (`Plans/loop-restructure.md` 진단 §4). 여기서는 **형상만 판별**하고 전이는 걸지 않는다:
+# 이 스크립트는 이벤트만 내고 라벨 이동은 `transition.sh` 한 자리라는 규율 그대로다.
+#
+# 세 술어 모두 참이어야 한다 — 하나라도 **증명하지 못하면 형상이 아닌 것으로 본다**(return 1
+# → 종전대로 `pr_open`). 여기서 fail-open 하면 살아 있는 워커의 회차가 재디스패치된다.
+#   ⑴ PR 에 단계 라벨이 없다 — `flow:agent-ready` 는 **예외**다: #281 뒤 반송 두 전이는 PR 에
+#      먼저 `flow:agent-ready`(대기 칸 미러)를 붙이고 나서 이슈를 편집하므로, 이슈 편집이
+#      실패한 반쯤 이동 형상의 PR 에는 정확히 그 라벨 하나가 남는다. 그 외 `flow:*`·
+#      `verifying`·`harvesting` 이 하나라도 있으면 다른 칸이다.
+#   ⑵ PR 의 **마지막 판정성 코멘트**가 `재검증 실패`(= verify 채널의 반송)다.
+#      마커 **집합**의 SSOT 는 `bounce-state.sh` 지만, 그 헬퍼가 답하는 질문은 "반송됐나"
+#      (`bounced`)이고 여기서 묻는 것은 **"어느 채널이 마지막으로 반송했나"** 다 — 채널을
+#      가르지 않으면 closeout 의 `재디스패치` 반송까지 이 갈래로 들어온다(그쪽의 회수 주체는
+#      closeout ①-b 다). 그래서 마커 집합을 복제하지 않고 **접두 하나**만 본다.
+#   ⑶ 진행 증거가 없다 — 술어는 `progress-evidence.sh` 한 자리(#200·#206). 살아 있는
+#      워커(첫 푸시 전 창 포함)를 건드리지 않기 위한 게이트이고, 조회 실패(`unknown`,
+#      exit 2)는 "증거 없음" 이 아니다.
+half_moved_shape() {  # half_moved_shape <repo> <이슈> <PR> <PR 라벨 JSON 배열>
+  local repo="$1" issue="$2" prnum="$3" labels="$4"
+  local comments last head_raw head_sha head_at claimed pe
+  printf '%s' "$labels" | jq -e '
+    [ .[]? | select((startswith("flow:") and . != "flow:agent-ready") or . == "verifying" or . == "harvesting") ] | length == 0' \
+    >/dev/null 2>&1 || return 1
+  # 코멘트는 `pr-comments.sh` 로 **페이지네이션 전량**(첫 100건 상한 회피, #171).
+  comments=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$prnum" 2>/dev/null) || return 1
+  last=$(printf '%s' "$comments" | jq -r '
+    [ .[]? | .body // ""
+      | select(startswith("머지 판정") or startswith("Merge verdict")
+               or startswith("재검증 실패") or startswith("재디스패치")) ]
+    | last // ""' 2>/dev/null) || return 1
+  case "$last" in "재검증 실패"*) ;; *) return 1 ;; esac
+  head_raw=$("$SCRIPT_DIR/pr-head-at.sh" --with-sha "$repo" "$prnum" 2>/dev/null) || return 1
+  [ -n "$head_raw" ] || return 1
+  head_sha="${head_raw%% *}"
+  head_at="${head_raw##* }"
+  claimed=$("$SCRIPT_DIR/claim-at.sh" "$repo" "$issue" 2>/dev/null) || return 1
+  [ -n "$claimed" ] || return 1
+  pe=$("$SCRIPT_DIR/progress-evidence.sh" --now "$(date -u +%s)" \
+    --commit-at "$head_at" --head-sha "$head_sha" --claimed-at "$claimed" 2>/dev/null) || return 1
+  case "${pe%% *}" in
+    none) return 0 ;;   # 증거 없음 = 회수 대상
+    *)    return 1 ;;   # progress(살아 있음)·unknown(판정 불가) 둘 다 무접촉
+  esac
+}
 
 printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
   repo=$(printf '%s' "$row" | jq -r '.repository.nameWithOwner')
@@ -237,6 +290,14 @@ printf '%s' "$claimed" | jq -c '.[]' | while IFS= read -r row; do
       # 머지/닫힘 PR 은 위 MERGED/CLOSED 분기에서 정상 정리되므로 OPEN 만 가른다.
       if printf '%s' "$pr" | jq -e '[.labels[].name]|index("harvesting")' >/dev/null; then
         printf '{"event":"harvesting","repo":"%s","number":%s,"pr":%s}\n' "$repo" "$num" "$prnum"
+        continue
+      fi
+      # 반쯤 이동한 `verify-redispatch` 회수 (#394). 형상이 확정되면 `pr_open` 대신 이
+      # 이벤트를 내고 이 이슈는 여기까지다 — ② Maintain 은 라벨이 곧 되돌아갈 PR 을
+      # 보수 대상으로 삼지 않는다(harvesting 갈래와 같은 모양의 continue).
+      if half_moved_shape "$repo" "$num" "$prnum" "$(printf '%s' "$pr" | jq -c '[.labels[].name]')"; then
+        printf '{"event":"half_moved_redispatch","repo":"%s","number":%s,"pr":%s}\n' \
+          "$repo" "$num" "$prnum"
         continue
       fi
       failing=$(printf '%s' "$pr" | jq '[.statusCheckRollup[]?
