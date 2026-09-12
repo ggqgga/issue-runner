@@ -17,8 +17,11 @@
 #   · **추적 파일에 미커밋 변경이 있으면 덮지 않고 exit 3** + stderr. 판정은
 #     `git status --porcelain --untracked-files=no` 다 — `reset --hard` 는 추적 안 되는
 #     파일을 건드리지 않으므로 untracked 를 세면 잘못 막는다. 특히 `link-secrets` 레포는
-#     `.env`·`config/master.key` 심링크가 untracked 로 뜨므로, 그것까지 세면 정작 이 옵션이
-#     필요한 레포에서 **영구 exit 3** 이 된다.
+#     `.env`·`config/master.key` 심링크가 untracked 로 뜨므로, 그것까지 세면 정작 이 옵션이 필요한 레포에서
+#     **영구 exit 3** 이 된다. 같은 exit 3 을 두 경우에 더 쓴다 — 대상이 그 worktree 의
+#     **루트가 아니거나**(반쯤 만들어진 디렉토리는 메인 체크아웃 안이라 `git -C` 가 성공해
+#     버리고, 확인 없이 진행하면 `reset --hard` 가 **메인 체크아웃**을 되감는다) `git status`
+#     **조회 자체가 실패**하면(빈 결과와 실패를 섞지 않는다, PR#139) 덮지 않는다.
 #   · worktree 가 없으면 종전 생성 경로 그대로(원격 브랜치가 있으면 그 위에 만들므로 이미 동기).
 #   · `--branch <ref>` 로 head 브랜치를 지정할 수 있다(기본 `agent/issue-<N>`). verify-runner 의
 #     head 는 `agent/issue-*` 가 아닐 수 있어 그 자리를 산문으로 두면 이 옵션 없이는 못 옮긴다.
@@ -114,9 +117,24 @@ if [ -d "$wt" ]; then
       echo "sync: 원격 브랜치 없음 origin/$branch — 동기화하지 않는다" >&2
       exit 4
     fi
+    # 대상이 **정말 그 worktree 의 루트**인지 먼저 확인한다. 반쯤 만들어진(혹은 손으로 만든)
+    # `.claude/worktrees/issue-N` 디렉토리는 메인 체크아웃 **안**에 있어서 `git -C` 가 성공해
+    # 버린다 — 확인 없이 진행하면 `reset --hard` 가 **메인 체크아웃**을 되감는다.
+    top=$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null) || top=
+    wt_real=$(cd "$wt" 2>/dev/null && pwd -P) || wt_real=
+    top_real=$(cd "$top" 2>/dev/null && pwd -P 2>/dev/null) || top_real=
+    if [ -z "$top_real" ] || [ "$top_real" != "$wt_real" ]; then
+      echo "sync: $wt 가 worktree 루트가 아니다(깨진 디렉토리?) — 덮지 않는다" >&2
+      exit 3
+    fi
     # 추적 파일의 미커밋 변경만 센다(`reset --hard` 는 untracked 를 건드리지 않고,
     # link-secrets 심링크가 untracked 로 떠 영구 거부가 되는 것을 막는다).
-    if [ -n "$(git -C "$wt" status --porcelain --untracked-files=no)" ]; then
+    # **조회 실패와 "깨끗함" 을 섞지 않는다**(PR#139 규율) — 못 읽었으면 덮지 않는다.
+    if ! st=$(git -C "$wt" status --porcelain --untracked-files=no 2>/dev/null); then
+      echo "sync: worktree 상태를 못 읽었다 — 덮지 않는다: $wt" >&2
+      exit 3
+    fi
+    if [ -n "$st" ]; then
       echo "sync: worktree 에 미커밋 변경이 있어 덮지 않는다 — $wt" >&2
       exit 3
     fi

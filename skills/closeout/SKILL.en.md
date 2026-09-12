@@ -1035,6 +1035,12 @@ and that fact must be visible to a human.
   - **exit 65 (shape violation before issuance — no issue exists yet)** — `<LIVE_CHECKS>`
     was prose. Move the background/rationale into `## 변경 요약`, leave only `없음` or
     `- [ ]` lines in the items file, and **call it again**.
+    **Never end step 4 on exit 65** — if it still exits 65 on the second call, move the
+    prose into `## 변경 요약` and **issue it** with `--items-file 없음` (a `(승격만)`
+    ticket). "A merged PR always gets a promotion ticket" outranks the shape discipline —
+    withholding the ticket over a shape error returns us to the state where we cannot even
+    tell whether there is anything to promote (2026-08-16). In that case also report
+    `BLOCKED: 배포 대기 항목 형태 위반 — PR #<pr>` in ④ Report.
   - **exit 1 (no issue created)** — report
     `BLOCKED: 배포 대기 이슈 발행 실패 — PR #<pr>` in ④ Report. A merged PR that ends
     without a ticket makes the promotion scope invisible to humans.
@@ -1125,7 +1131,10 @@ structure/empty-state confirmation from real-data render confirmation in the res
     alone** — fail and held can both be true, and even on the fail branch a non-zero
     `held` means the issue does not close. A non-zero `unparsed` means the prompt emitted
     a line outside the grammar (it is counted as held, so that tick cannot be green) —
-    report it in one line in ④ Report.
+    report it in one line in ④ Report. **On a degrade tick where the smoke never ran, do
+    not make this call at all** — feeding a `스모크 skip: <reason>` line to the tally as a
+    result file parses as a line outside the grammar, is counted as `보류`, and leaves a
+    ticket that was never stepped sitting in "held". Degrade is owned by its own bullet below.
 - **Real-hardware items still open — do not close even on green (Chrome cannot step rung ③).**
   Decide **by the `[칸 ③]` prefix marker alone** — step 4 enforces that marker as shape, of
   the same grade as `없음` and `- [ ]`, so never invent a second predicate here. The
@@ -1188,9 +1197,9 @@ structure/empty-state confirmation from real-data render confirmation in the res
   re-smoke). Then remove the `needs-human` label from the deploy issue and close the
   deploy issue (the only remaining gate was verification and it passed, so closeout
   finalizes — the recommended option of the open decision).
-  **Unless the real-hardware exception above applies** — if even one rung-③ item
-  (a marked line, or a line held unstepped by the fail-closed branch above) is
-  still `- [ ]`, stop at the label cleanup, leave the issue open, and finish with the
+  **A non-zero `held` never reaches this branch** — `verdict` comes out `held` instead,
+  and the real-hardware bullet above owns it: stop at the label cleanup, leave the issue
+  open, and finish with the
   `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` comment (verification was not the only
   remaining gate — rung ③ is). Since #243 a step-4 issue
   never carries `needs-human` in the first place — this removal is harmless leftover

@@ -114,6 +114,17 @@ mkwt --sync --branch feature/x o/r 9
 { [ "$RC" = 0 ] && [ "$(git -C "$wt" rev-parse HEAD)" = "$FEAT" ]; } && ok \
   || bad "⑦ --branch 동기화 실패 rc=$RC head=$(git -C "$wt" rev-parse HEAD) 기대=$FEAT"
 
+# ⑧ worktree 루트가 아닌 디렉토리(반쯤 만들어진 것)는 **메인 체크아웃을 되감지 않는다**.
+#    `.claude/worktrees/issue-N` 은 메인 체크아웃 **안**이라 `git -C` 가 성공해 버린다 —
+#    루트 확인이 없으면 여기서 `reset --hard` 가 메인 체크아웃을 덮는다(가장 나쁜 회귀).
+mkdir -p "$tmp/proj/r/.claude/worktrees/issue-88"
+MAIN_BEFORE=$(git -C "$tmp/proj/r" rev-parse HEAD)
+mkwt --sync --branch agent/issue-9 o/r 88
+[ "$RC" = 3 ] && ok || bad "⑧ 가짜 worktree rc=$RC (기대 3)"
+[ "$(git -C "$tmp/proj/r" rev-parse HEAD)" = "$MAIN_BEFORE" ] && ok \
+  || bad "⑧ 메인 체크아웃 HEAD 가 움직였다 — reset --hard 가 메인을 덮었다"
+printf '%s\n' "$ERR" | grep -q 'worktree 루트가 아니다' && ok || bad "⑧ 사유가 stderr 에 없다"
+
 echo "── 계약(usage·실행비트) ──────────────────────────────────────────"
 
 # ⑧ 인자 부족 → 비0 (종전과 같이 exit 1)
