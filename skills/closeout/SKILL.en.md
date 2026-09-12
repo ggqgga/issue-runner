@@ -186,11 +186,13 @@ event:
 - `closed` — the epic was closed (rationale comment + `--reason completed`). Report it in
   ④ Report as `에픽 종료: #N(<repo short name>, leaf K)` (K = the length of `leaves`).
 - `note` — a line that **touched nothing** and is a normal state (an old epic with no
-  `Epic #N` lines · an epic carrying `deploy-wait`). **Do not report it** — the same line
-  every tick buries the real signals.
-- `warn` — the judgment was **deferred** (the leaf search hit its cap) or a read/write
-  failed. Copy `why` verbatim into ④ Report's warn lines. A deferral is not a failure, so
-  exit 0 is possible alongside it.
+  `Epic #N` lines · an epic carrying `deploy-wait` · leaves all closed but the **epic body
+  still has unchecked `- [ ]`** (`완료 기준 미체크 N개`) · a leaf's **deploy-wait issue is
+  still open** (`leaf #N 의 배포 대기 이슈 #M 열림`, #343 — an epic not yet in production is
+  not done). **Do not report it** — the same line every tick buries the real signals.
+- `warn` — the judgment was **deferred** (the leaf or deploy-wait search hit its cap) or a
+  read/write failed. Copy `why` verbatim into ④ Report's warn lines. A deferral is not a
+  failure, so exit 0 is possible alongside it.
 
 exit 1 means this tick had a read/write **failure** — leave it alone, the next tick retries
 (the `<!-- epic-sweep -->` marker in the rationale comment keeps it idempotent, so comments

@@ -16,8 +16,9 @@
 # 출력(JSON lines — resume-sweep.sh 관행):
 #   closed — 에픽을 닫았다. `leaves` 는 근거가 된 leaf 번호(오름차순).
 #   note   — **아무것도 안 건드린** 정보 줄. 조치할 것이 없는 정상 상태다
-#            (leaf 0 = 옛 에픽 · deploy-wait 에픽). warn 의 정의를 "루프가 교정 가능한
-#            불변식 위반" 으로 좁힌 #188 의 선을 그대로 따른다.
+#            (leaf 0 = 옛 에픽 · deploy-wait 에픽 · leaf 의 배포 대기 이슈 열림 · 완료 기준
+#            미체크 — 아래 "두 겹 가드"). warn 의 정의를 "루프가 교정 가능한 불변식 위반" 으로
+#            좁힌 #188 의 선을 그대로 따른다.
 #   warn   — 판정을 **보류**했거나(조회 상한) 실패했다(조회·쓰기). 어느 쪽이든 쓰기는 0 이거나
 #            중간에 멈췄고, 다음 틱이 다시 본다.
 #   `--dry-run` 이면 세 이벤트 모두에 `"dry_run":true` 가 붙는다(쓰기 0).
@@ -25,6 +26,28 @@
 # 종료코드: 0 정상 · 1 조회·쓰기 **실패**가 하나라도 있었다 · 64 스코프 없음(usage).
 #   **조회 상한 도달은 rc 를 올리지 않는다** — 실패가 아니라 결정론적 보류라서, rc 1 로
 #   치면 큰 에픽 하나가 매 틱 영구 실패로 보고된다(경보가 상시화되면 진짜 실패가 묻힌다).
+#
+# 두 겹 가드 (#343) — leaf 가 전부 CLOSED 여도 아래 둘 중 하나면 닫지 않는다(note · 쓰기 0):
+#   ⓐ **에픽 본문에 미체크 체크박스(`- [ ]`)가 있다** — 완료 기준을 사람이 적어 둔 에픽은
+#      leaf 만으로 끝나지 않는다(BoDAC #2: 완료 기준 5개 전부 `[ ]` 인데 leaf 로 언급된 옛
+#      스파이크 하나가 CLOSED 라 닫힐 뻔했다). 체크박스가 없는 에픽은 이 겹을 그냥 지난다.
+#      호출이 없는 판정이라 **먼저** 본다(다음 겹의 검색 1회를 아낀다).
+#   ⓑ **leaf 의 하류 배포 대기 이슈(`label:deploy-wait`, 열림)가 있다** — leaf 가 닫혔어도
+#      그 PR 이 프로덕션에 안 올라갔으면 에픽은 끝난 게 아니다(BoDAT #4964: leaf 3건 전부
+#      CLOSED, 배포 대기 3건 전부 열림). 에픽당 검색을 **한 번 더** 한다: `label:deploy-wait
+#      is:open` 에 leaf 번호를 `"#N" OR "#M" …` 로 실어(제목의 `(#leaf)`·본문의 `Closes 한
+#      이슈: #leaf` — closeout 4단계 형식 — 어느 쪽에 걸려도 된다). GitHub 검색은 AND/OR/NOT
+#      연산자를 **5개까지**만 받으므로 leaf 6건씩 묶어 나눠 묻는다(7 leaf = 2회).
+#      검색은 **후보를 좁힐 뿐** 판정이 아니다(leaf 검색과 `epic_of` 의 관계와 같다): GitHub
+#      는 `"#1"` 을 토큰 `1` 로 풀어 본문 어디의 `1` 이든 문다(실측: BoDAT 에서 `"#1" OR "#2"
+#      OR "#3"` 이 열린 배포 대기 12건 전부를 물어 왔다). 그래서 물어 온 이슈의 제목+본문에
+#      leaf 번호가 **단어 경계**(`#N` 앞뒤가 숫자 아님)로 실제로 있는 것만 배포 대기 이슈로
+#      친다 — 첫 (leaf, 이슈) 짝을 why 에 적는다(`leaf #N 의 배포 대기 이슈 #M 열림`).
+#      실패·파싱 실패는 warn + rc 1 · 상한은 warn + 보류 — leaf 검색과 같은 규약.
+#   종전 가드는 `deploy-wait` 를 **에픽 라벨**에서 찾았는데, 그 라벨은 에픽이 아니라 leaf 의
+#   하류 배포 대기 이슈에 붙는다 — 한 번도 발화하지 않았다(#328 dry-run 실측). 그 검사는
+#   무해해서 남긴다(라벨이 잘못 겹친 에픽 방어).
+#   `--dry-run` 도 두 겹의 note 를 그대로 낸다 — #328 이 dry-run 출력으로 판정한다.
 #
 # 상태 파일 없음 — SSOT 는 GitHub(이슈 상태·라벨·코멘트 마커). 멱등성은 에픽에 달린
 # `<!-- epic-sweep -->` 코멘트 마커가 보장한다: 마커가 이미 있으면 코멘트를 다시 달지 않고
@@ -189,6 +212,7 @@ rc=0
 sweep_epic() {  # sweep_epic <repo> <에픽 JSON 한 줄>
   local repo="$1" row="$2"
   local num labels sres stats total open_n leaves_json items_n total_count inc ctext cjson marker
+  local unchecked dw_terms dw_q dres dstats d_items d_total d_inc d_hit
 
   num=$(printf '%s' "$row" | jq -r '.number // "" | tostring' 2>/dev/null) || num=""
   if ! _json_int "$num"; then
@@ -271,6 +295,84 @@ EOF
     return 0   # 열린 leaf 가 있다 — 아무것도 안 한다(조용히)
   fi
 
+  # ── 두 겹 가드 ⓐ — 에픽 본문의 미체크 체크박스 (#343, 호출 없음) ──────────
+  # 마크다운 task list: 불릿(`-`·`*`·`+`) 또는 번호(`1.`·`1)`) 뒤 `[ ]`. 들여쓴 하위 항목도
+  # 센다. 코드펜스·백틱 인용 안의 `- [ ]` 는 걷어내지 않는다 — 방향이 "안 닫는다" 쪽이라
+  # 해가 없고, 사람이 그 인용을 지우면 풀린다(알려진 느슨함 ⑵ 와 같은 선).
+  # 필터 첫 줄의 `# epic-unchecked` 는 스위트가 이 한 호출만 실패시키는 표식(`# epic-labels` 와 같다).
+  if ! unchecked=$(printf '%s' "$row" | jq -r '# epic-unchecked (#343)
+        [(.body // "") | split("\n")[]
+          | select(test("^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+\\[ \\]"))] | length' 2>/dev/null) \
+     || ! _json_int "$unchecked"; then
+    emit_warn "$repo" "$num" "에픽 본문 파싱 실패 — 완료 기준 미체크 여부를 몰라 닫지 않는다"
+    rc=1
+    return 0
+  fi
+  if [ "$unchecked" -gt 0 ]; then
+    emit_note "$repo" "$num" "완료 기준 미체크 ${unchecked}개"
+    return 0
+  fi
+
+  # ── 두 겹 가드 ⓑ — leaf 의 배포 대기 이슈 (#343, 에픽당 검색 1회 이상) ────────
+  # leaf 번호를 6건씩 묶어 `"#N" OR "#M" …` 로 묻는다(OR 5개 = GitHub 검색 연산자 상한).
+  # 한 묶음이라도 실패·상한이면 그 자리에서 보류 — 나머지 묶음을 묻지 않는다(어차피 안 닫는다).
+  if ! dw_terms=$(printf '%s' "$leaves_json" | jq -r '
+        [ _nwise(6) | map("\"#" + tostring + "\"") | join(" OR ") ] | .[]' 2>/dev/null) \
+     || [ -z "$dw_terms" ]; then
+    emit_warn "$repo" "$num" "배포 대기 질의 생성 실패 — 닫지 않는다"
+    rc=1
+    return 0
+  fi
+  d_hit=""
+  while IFS= read -r dw_q; do
+    [ -n "$dw_q" ] || continue
+    if ! dres=$(gh api -X GET search/issues \
+          -f q="repo:$repo is:issue is:open label:deploy-wait in:title,body $dw_q" \
+          -f per_page="$EPIC_SEARCH_PER_PAGE" 2>/dev/null); then
+      emit_warn "$repo" "$num" "배포 대기 이슈 검색 실패 — 닫지 않는다(다음 틱 재시도)"
+      rc=1
+      return 0
+    fi
+    if ! printf '%s' "$dres" | jq -e 'type=="object" and (.items|type=="array")' >/dev/null 2>&1; then
+      emit_warn "$repo" "$num" "배포 대기 이슈 검색 응답 파싱 실패 — 닫지 않는다"
+      rc=1
+      return 0
+    fi
+    # 국소 대조 — leaf 번호가 제목·본문에 **단어 경계**로 있는 (leaf, 이슈) 짝 중 이슈 번호가
+    # 가장 작은 것 하나. 검색만 걸리고 대조에 안 걸린 후보는 판정 근거가 아니다(헤더 참고).
+    dstats=$(printf '%s' "$dres" | jq -r --argjson leaves "$leaves_json" '
+      [ .items[]? | . as $it
+        | (($it.title // "") + "\n" + ($it.body // "")) as $txt
+        | first($leaves[] | . as $n
+                | select($txt | test("(^|[^0-9])#" + ($n|tostring) + "([^0-9]|$)"))
+                | [$n, ($it.number // -1)]) ] as $pairs
+      | [ (.items | length), (.total_count // 0),
+          (if (.incomplete_results // false) then 1 else 0 end),
+          (if ($pairs | length) > 0 then ($pairs | sort_by(.[1]) | .[0] | map(tostring) | join(" ")) else "" end) ]
+      | @tsv' 2>/dev/null) || dstats=""
+    if [ -z "$dstats" ]; then
+      emit_warn "$repo" "$num" "배포 대기 이슈 집계 실패 — 닫지 않는다"
+      rc=1
+      return 0
+    fi
+    IFS=$'\t' read -r d_items d_total d_inc d_hit <<EOF
+$dstats
+EOF
+    if [ "${d_items:-0}" -ge "$EPIC_SEARCH_PER_PAGE" ] \
+       || [ "${d_total:-0}" -gt "${d_items:-0}" ] \
+       || [ "${d_inc:-0}" -ne 0 ]; then
+      emit_warn "$repo" "$num" "배포 대기 이슈 조회 상한($EPIC_SEARCH_PER_PAGE, total=$d_total) — 판정 보류"
+      return 0
+    fi
+    [ -z "$d_hit" ] || break
+  done <<EOF
+$dw_terms
+EOF
+  if [ -n "$d_hit" ]; then
+    emit_note "$repo" "$num" "leaf #${d_hit%% *} 의 배포 대기 이슈 #${d_hit#* } 열림"
+    return 0
+  fi
+
   # ── leaf ≥ 1 · 전부 CLOSED → 코멘트 + close ────────────────────────────
   # 근거 목록 — 빈 값으로 떨어뜨리지 않는다. 이 스크립트는 "왜 닫혔는지" 를 남기려고
   # 코멘트를 close **앞에** 다는데(아래), `leaf ` 뒤가 빈 코멘트를 남기고 닫으면 그 설계가
@@ -333,9 +435,10 @@ for repo in "${repos[@]}"; do
   [ -n "$repo" ] || continue
 
   # `labels` 는 `deploy-wait` 방어(§되돌리지 마라)에 필요하다 — 같은 호출에 실어 오므로
-  # gh 왕복은 늘지 않는다. `title` 은 이슈 #258 이 지정한 필드라 함께 받는다.
+  # gh 왕복은 늘지 않는다. `title` 은 이슈 #258 이 지정한 필드라 함께 받는다. `body` 는
+  # 두 겹 가드 ⓐ(완료 기준 미체크, #343)의 입력 — 빠지면 그 가드가 영영 0개로 읽혀 조용히 지난다.
   if ! elist=$(gh issue list --repo "$repo" --label epic --state open \
-        --limit "$EPIC_LIST_LIMIT" --json number,title,labels 2>/dev/null); then
+        --limit "$EPIC_LIST_LIMIT" --json number,title,labels,body 2>/dev/null); then
     emit_warn "$repo" 0 "열린 epic 이슈 목록 조회 실패 — 이 레포는 건너뛴다"
     rc=1
     continue
