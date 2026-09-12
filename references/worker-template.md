@@ -98,9 +98,11 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    "초록 요건의 예외로 찍은 커밋"이라는 표시이자, 6단계 요건을 어긴 게 아니라는 증거다.
    접두 없이 빨간 커밋을 남기지 마라(읽는 사람이 완료 커밋과 구분할 수 없다).
    **처분: WIP 커밋은 최종 PR 에 그대로 남긴다 — 정리하지 마라**(`rebase -i`·squash·
-   `commit --amend`·force-push 금지). 근거 둘: ⑴ 이 레포는 **squash 머지**라 PR 의 커밋이
-   main 에 한 커밋으로 접힌다(실측: PR #189 는 커밋 12개였는데 main 에는 `8936f67` 한 개로
-   들어왔다) — WIP 커밋은 애초에 main 히스토리에 남지 않으므로 정리해서 얻을 게 없다.
+   `commit --amend`·force-push 금지). 근거 둘: ⑴ 머지는 closeout 레인이 독점하고 **항상
+   `--squash` 로** 한다(`skills/closeout/SKILL.md` 2단계 — 대상 레포의 머지 설정과 무관하게
+   루프 자신의 **squash 머지**다)라 PR 의 커밋이 main 에 한 커밋으로 접힌다(실측: PR #189 는
+   커밋 12개였는데 main 에는 `8936f67` 한 개로 들어왔다) — WIP 커밋은 애초에 main 히스토리에
+   남지 않으므로 정리해서 얻을 게 없다.
    ⑵ 정리는 히스토리 재작성 + force-push 를 요구하는데, 그건 바로 위 8단계가 보장하려는
    "push 된 것은 존재한다"를 깨고, SHA 로 키가 걸린 로컬 CI 결과 캐시와 그 SHA 를 가리키는
    검증 레인 판정 코멘트를 한꺼번에 무효로 만든다.

@@ -103,10 +103,11 @@ Procedure:
    it apart from a completed commit).
    **Disposition: WIP commits are left in the final PR as-is — do not clean them up**
    (no `rebase -i`, no squash, no `commit --amend`, no force-push). Two reasons:
-   (1) this repo uses **squash merge**, so every commit in a PR collapses into a single
-   commit on main (measured: PR #189 had 12 commits and landed on main as the single
-   commit `8936f67`) — WIP commits never reach main's history, so cleaning them up buys
-   nothing. (2) Cleaning up requires rewriting history plus a force-push, which breaks
+   (1) merging is owned by the closeout lane, which **always merges with `--squash`**
+   (`skills/closeout/SKILL.md` stage 2 — the loop's own **squash merge**, regardless of the
+   target repo's merge settings), so every commit in a PR collapses into a single commit
+   on main (measured: PR #189 had 12 commits and landed on main as the single commit
+   `8936f67`) — WIP commits never reach main's history, so cleaning them up buys nothing. (2) Cleaning up requires rewriting history plus a force-push, which breaks
    the very guarantee step 8 above makes ("what is pushed exists") and at the same time
    invalidates the SHA-keyed local-CI result cache and the verify-lane verdict comments
    that point at those SHAs.
