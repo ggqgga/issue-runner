@@ -274,12 +274,21 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
   할 질문 한 줄" 을 다시 읽고, 그 답이 플랜(`Plans/*.md`)·이슈 본문·검증 사다리에서 나오면 **루프가
   답한다** — 답을 코멘트로 남기고(`재심: <답> <!-- policy-review: resumed --><!-- bodat:worker -->`)
   `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr|->` 로 재개(needs-human·hold:* 해제,
-  agent-ready 유지 → 이번 틱 ③ 후보). 답이 정말 사람 결정이면 `재심: 사람 몫 유지 — <이유 한 줄>
-  <!-- policy-review: kept --><!-- bodat:worker -->` 코멘트를 남기고
-  `$SCRIPTS/transition.sh policy-kept <repo> <issue> <pr|->` 로 **그때** `needs-human` 을
-  PR·이슈 양쪽에 붙인다(#244 — 루프가 `needs-human` 을 붙이는 유일한 자리다. `hold:policy`
-  는 사유로 남는다). 어느 쪽이든 마커가 남으므로
-  **같은 건은 두 번 묻지 않는다**(사람이 라벨을 뗄 때까지). ④ Report 에 `재심 N(재개 n·유지 m)`.
+  agent-ready 유지 → 이번 틱 ③ 후보). 답이 정말 사람 결정이면 **전이가 먼저다** —
+  `$SCRIPTS/transition.sh policy-kept <repo> <issue> <pr|->` 로 `needs-human` 을 PR·이슈
+  양쪽에 붙이고(#244 — 루프가 `needs-human` 을 붙이는 유일한 자리다. `hold:policy` 는
+  사유로 남는다), 그 전이가 **exit 0 `ok` 로 끝난 뒤에만** `재심: 사람 몫 유지 — <이유 한 줄>
+  <!-- policy-review: kept --><!-- bodat:worker -->` 코멘트를 남긴다.
+  **순서가 계약이다**(#244): 마커가 곧 "재심 끝" 이라, 마커를 먼저 올리면 전이가 죽어도
+  다음 틱부터 `reviewed` 로 접혀 `needs-human` 은 영영 안 붙고 그 건은 `hold:policy` 만 남은
+  채 **아무도 다시 묻지 않는다**(사람 결정이 사람대기 칸에 영영 안 뜨는 봉인).
+  전이가 **비0이면 마커 코멘트를 올리지 말고** ④ Report 에
+  `BLOCKED: 전이 실패 policy-kept #<이슈>(exit N)` 한 줄만 남겨라 — 마커가 없으니 다음 스윕이
+  같은 건을 `policy_review_due` 로 **다시 낸다**. `policy-kept` 는 붙이기만 하는 멱등 전이라
+  재호출이 곧 복구다. 전이 exit → 마커 처분:
+  `0`=붙었다→마커 남긴다 · `1`(readback 불일치)·`2`(gh 실패)·`64`(호출 형태 오류)=마커
+  남기지 않는다(다음 스윕이 재심을 다시 낸다). **마커가 남은 건만**
+  **두 번 묻지 않는다**(사람이 라벨을 뗄 때까지). ④ Report 에 `재심 N(재개 n·유지 m)`.
 - `waiting` — 아직 창 안이다. 조용히 넘긴다(보고 불필요).
 - exit 2 — 일부 레포의 목록 조회 실패(나머지 레포는 정상 처리됐다) 또는 계정 전체 탐색 실패.
   ④ Report warn 에 `resume-sweep 부분 실패(레포 조회)` 한 줄을 남긴다.
