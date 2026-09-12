@@ -131,7 +131,7 @@ no-op 로 통과한다). 이 라벨이 루프 현황(`loop-status.sh`)에서 "�
 **0. CI 상태 분기 (verify-eligible 의 `ci` 필드).**
 - `fail` → 결정적 CI 가 실패다. **단, 코드 회귀인지 먼저 확인한다** — 아래 `fail` 원인
   분류를 거쳐 코드 회귀면 검증하지 말고 **④ 재디스패치**(코드 반송), 사유 = `결정적 CI
-  실패`. 인프라 자가체크면 재디스패치하지 말고 **flake_retry**(라벨 유지 → 다음 틱 재집).
+  실패`. 인프라 자가체크면 재디스패치하지 말고 **flake_retry**(`verify-unpick` 으로 `flow:verify` 복귀 → 다음 틱 FIFO 재집 — ④ 와 같은 전이).
 - `revalidate` → rebase 등으로 현재 HEAD 의 로컬 CI 캐시가 비었다. worktree 를 PR
   head 로 동기화하고(아래 1단계 worktree 확보에 이어) `$SCRIPTS/run-local-ci.sh
   <repo> <issue>` 로 캐시를 채운다. 비0(통합 깨짐)이면 ④ 재디스패치(`결정적 CI 실패
