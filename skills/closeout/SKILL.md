@@ -30,23 +30,15 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
   (실증 #805 — stagnated 이후 Pick 을 건너뛴 틱이 새로 eligible 해진 PR 을 놓침).
   stagnated 는 순수 보고 라벨이다 — 어떤 단계도 건너뛰지 않는다.
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
-- `VERIFIER = codex:codex-rescue` — 1단계 계획 부합 검증자 서브에이전트 타입.
-  **출력 계약 (SSOT — 다른 모든 곳은 이 항목을 참조한다)**: 호출은 read-only(코드
-  변경 금지)·발견마다 BLOCKER/WARN/NIT 분류·발견 없으면 'CLEAN'·BLOCKER 는
-  하드게이트(해결 전 종료 금지). 검증자는 이 SKILL.md 를 읽지 않으므로 호출
-  프롬프트 문자열에 이 계약이 그대로 담겨야 한다 — 프롬프트가 유일한 전달 경로다.
-  **폴백**: 아래 둘 중 하나면 `general-purpose` 를 검증자로 쓴다 — (a) codex 플러그인
-  미설치(Agent 툴의 subagent_type 목록에 위 타입이 없거나, 호출이 unknown subagent
-  type 오류로 실패), (b) codex 가 stall/실패해 verdict(BLOCKER/WARN/NIT/CLEAN)를 못 냄
-  — 네트워크 차단·타임아웃·verdict 없는 응답 포함(실증 2026-06-24 #54: codex 가
-  sandbox 에서 gh 네트워크 차단으로 verdict 미산출). **같은 프롬프트가 아니다(#207).**
-  폴백은 `references/verifier-prompt-fallback.md` 로 호출한다 — 위 출력 계약(BLOCKER/
-  WARN/NIT/CLEAN 분류)은 동일하게 적용되지만, 프롬프트 본문은 네이티브 경로(내장
-  리뷰어, `references/verifier-prompt.md`)와 다르다: `general-purpose` 서브에이전트는
-  Agent 툴에 `--cd` 대응 인자가 없어 워크트리에 스코프되지 않는다(cwd = 세션 cwd)
-  — 그래서 "이 워크트리는 최신이다" 라는 네이티브 템플릿의 전제가 폴백에서는 거짓이고,
-  대신 diff·이슈 본문·lessons 를 프롬프트에 **실제로 동봉**한다(아래 ③-1 참조). 폴백
-  호출도 verdict 를 못 내면 BLOCKER 로 간주해 보류 종료한다 (게이트 fail-closed).
+- `VERIFIER = general-purpose` — 1단계 계획 부합 검증자 서브에이전트 타입. **codex 가 아니다**
+  (#375, 사용자 결정 2026-09-13 — codex 는 PR 당 2회이고 그 두 번은 verify-runner 몫이다. closeout 이
+  세 번째로 부르던 정확성·계획 부합 호출 두 번을 없앴다). **출력 계약 (SSOT — 다른 모든 곳은 이
+  항목을 참조한다)**: 호출은 read-only(코드 변경 금지)·발견마다 BLOCKER/WARN/NIT 분류·발견 없으면
+  'CLEAN'·BLOCKER 는 하드게이트(해결 전 종료 금지). 검증자는 이 SKILL.md 를 읽지 않으므로 호출
+  프롬프트 문자열에 이 계약이 그대로 담겨야 한다 — 프롬프트가 유일한 전달 경로이고, 그 프롬프트는
+  `references/verifier-prompt-fallback.md`(diff·이슈 본문·lessons 를 **동봉**하는 판 — `general-purpose`
+  는 Agent 툴에 `--cd` 대응 인자가 없어 워크트리에 스코프되지 않으므로 "이 워크트리는 최신이다" 전제를
+  줄 수 없다, #207)다. `references/verifier-prompt.md` 는 내장 리뷰어(codex) 전용이라 여기선 안 쓴다.
 - `VERIFIER_TIMEOUT_MIN = 10` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
   시각 + 이 값을 데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict
   미산출로 간주한다 — codex 외부 CLI 스톨이 틱을 무한정 묶는 것을 막는 방어선(#96).
@@ -498,56 +490,23 @@ exit 64 — 사유 없는 정지를 만들 수 없다). rebase/semantic conflict
 집은 PR 에 대해 아래 6단계를 순서대로 수행한다. 각 단계 끝에 마커 명령을 박아
 (① Reconcile 마커표) 다음 틱이 멱등 재개할 수 있게 한다.
 
-**1단계 — 계획 부합 검증 — 내장 리뷰어.** `<issue>` 는 PR 본문의 `Closes #N` / `Refs #N` 줄에서
-얻는다(`gh pr view <pr> --repo <repo> --json body` 로 파싱). **worktree 확보(fetch·reset, #207).**
-`$SCRIPTS/make-worktree.sh <repo> <N>` 로 `<worktree>` 확보(`<N>`=PR head `agent/issue-N` 파싱,
-3단계와 동일) 직후 `git -C <wt> fetch origin` 후 `git -C <wt> reset --hard origin/agent/issue-<N>`
-으로 worktree HEAD 를 PR 의 현재 head SHA 에 맞춘다(`make-worktree.sh` 는 기존 worktree 가
-있으면 그대로 반환해 rebase·force-push 전 SHA 가 체크아웃된 채일 수 있다 — revalidate 절
-(아래)이 같은 이유로 이 두 줄을 건다. 아래 계획 부합 호출의 프롬프트(`references/verifier-prompt.md`)가
-"이 워크트리는 검증 대상 PR 브랜치의 HEAD 로 체크아웃돼 있으므로 최신이다" 라고 전제하므로,
-이 동기화 없이는 그 전제가 거짓이 되어 옛 커밋이 검토되고 그 뒤 push 된 새 커밋은 아무도
-안 본 채 머지될 수 있다). 검증은 `$SCRIPTS/codex-review-gate.sh`(#134,
-Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에이전트 스폰·폴링·`TaskStop` 배선 없음:
-1. correctness: `codex-review-gate.sh --base origin/<default> --cd <worktree> --out <스크래치>/a` →
-   stdout 마지막 줄 `verdict=… p1= p2=`, 본문 `a/review.md`. `[P1]` = BLOCKER.
-2. 계획 부합: `codex-review-gate.sh --base origin/<default> --prompt "<지시>" --cd <worktree> --out <스크래치>/b`
-   (헬퍼가 `--base` 범위를 프롬프트 머리에 명시해 리뷰어가 커밋된 diff 를 실제로 본다 — 없으면 작업 트리만 본다) — 지시문은
-   `references/verifier-prompt.md` 의 placeholder 를 채운 것: `<PR>`·`<REPO>`·`<BASE>`=바로 위 호출의
-   `--base` 에 넘긴 것과 같은 origin 한정 ref(예: `origin/<default>` — 로컬 `<default>` 가 아니다.
-   둘이 갈리면 로컬이 뒤처진 상태에서 상충하는 두 범위 지시가 된다, #207)·
-   `<PLAN_REF>`=이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열)·`<ISSUE_BODY>`=`gh issue view <issue>
-   --repo <repo>` 출력(연결 이슈 없으면 빈 문자열)·`<LESSONS_OR_"없음">`=`$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑
-   **`.loop/lessons-verifier.md`**(검증 판정 사례집 — 과거 오판 패턴 주입; 없으면 `.loop/lessons.md` 폴백, 둘 다
-   없거나 비면 `없음`. `lessons.md` 는 **구현 워커**용이라 섞지 않는다 — 오판 방지 신호 희석). diff 는 프롬프트에
-   동봉하지 않는다 — 템플릿(`references/verifier-prompt.md`)이 "판정 근거는 위 `--base` 범위다, 이 워크트리에서
-   직접 조회해 읽어라(로컬 git 조회 허용·gh/git fetch 등 네트워크만 금지)" 라고 명시해 내장 리뷰어가 워크트리에서
-   직접 읽는다(#207 — "동봉이 유일한 SSOT·git 조회 금지"라던 옛 문구는 이 동봉-안-함 계약과 정면 충돌해 리뷰어가
-   아무것도 못 본 채 항목 0(=CLEAN)을 내는 fail-open 을 냈다). 지시문은 "이 변경이 계획/이슈 AC 를 충족하는가만
-   판정, 미충족·범위 이탈은 `[P1]`, 경미한 편차는 `[P2]` 로" 를 명시한다.
-   **응답 계약(구조 줄) — `--prompt` 호출 전용.** 헬퍼가 이 지시문 끝에 "리뷰 본문의 마지막 줄은
-   `<키>: reviewed|no-basis` 여야 한다"는 계약을 자동으로 붙이고, 판정을 **그 줄로만** 가른다(`reviewed` →
-   항목 집계대로 · `no-basis`/줄 없음/형식 깨짐 → `verdict=NONE` 미산출). 형식 문자열의 유일한 정의 자리는
-   `codex-review-gate.sh` 의 `STATUS_*` 상수다 — 템플릿·이 문서에 손으로 옮겨 적지 마라(요구 형식과 파서가
-   갈리면 SKILL↔템플릿 불일치가 파서 쪽에서 재발한다, #207). 그래서 프롬프트를 채울 때 계약문을 따로 쓸
-   필요가 없다. 산문("판정할 근거가 없다" 류)은 판정 입력이 **아니다** — 어형 열거로는 안 닫혀 세 라운드
-   연속 fail-open 을 냈다(#207 round2~4).
-헬퍼는 자체 타임아웃(`CODEX_GATE_TIMEOUT` 기본 900s = `VERIFIER_TIMEOUT_MIN` 과 동조)을 가진다. 두 호출 중 하나라도
-**exit 2(`verdict=NONE`) = 미산출**(codex 부재·모델 오류·타임아웃, 그리고 계획 부합 호출에서 리뷰어가
-응답 계약의 구조 줄을 안 냈거나 `no-basis` 로 답한 경우 — #207)이면 그때만 ## 상수의 `VERIFIER` 폴백(general-purpose)을
-쓴다. **폴백 프롬프트는 `references/verifier-prompt-fallback.md` 다 — 위 1·2 의 네이티브 템플릿
-(`references/verifier-prompt.md`)과 같은 파일이 아니다(#207).** `general-purpose` 서브에이전트는 Agent 툴에
-`--cd` 대응 인자가 없어 워크트리에 스코프되지 않는다 — cwd 는 이 세션(루프)의 cwd 이지 검증 대상 PR 의 워크트리가
-아니다. 그래서 네이티브 템플릿의 "이 워크트리는 최신이다" 전제를 폴백에 그대로 주면 거짓 전제가 된다(실측: 그
-전제를 준 폴백 호출이 엉뚱한 체크아웃을 "최신"이라 단언한 채 판정). `verifier-prompt-fallback.md` 는 그 전제
-대신 diff·이슈 본문·lessons 를 프롬프트에 **실제로 동봉**한다: `<DIFF>`=`gh pr diff <pr> --repo <repo>` 출력,
-`<ISSUE_BODY>`·`<PLAN_REF>`·`<LESSONS_OR_"없음">` 는 네이티브 호출과 같은 방식으로 채운다. 응답 계약(구조 줄)은
-`--prompt` 호출에서 `codex-review-gate.sh` 가 자동으로 붙이는 것이라 폴백엔 실리지 않는다 — 폴백은 ## 상수
-`VERIFIER` 의 출력 계약(BLOCKER/WARN/NIT/CLEAN 산문 분류)만 따른다. 스폰은 `run_in_background` + `VERIFIER_TIMEOUT_MIN`
-데드라인 + 초과 시 `TaskStop`. 폴백도 미산출이면 아래 BLOCKER 경로로 보류 종료한다(fail-closed — 절대 머지로
-진행하지 않는다, #96).
-헬퍼 stderr 의 모델 오류 원문(404·not supported·requires a newer version)은 "스톨"이 아니다 — 코멘트에 그대로 남긴다.
-- 판정 합산: 두 호출 중 하나라도 BLOCKER → BLOCKER. 둘 다 CLEAN/NIT/WARN → 통과(`[P3+]` = NIT 는 비차단, WARN 수는 합산).
+**1단계 — 계획 부합 검증 — `general-purpose` 한 번, codex 없음(#375).** `<issue>` 는 PR 본문의
+`Closes #N` / `Refs #N` 줄에서 얻는다(`gh pr view <pr> --repo <repo> --json body` 로 파싱). 정확성 리뷰는
+verify-runner 가 이미 codex 로 마쳤다(`머지 판정: ✅` 가 이 단계의 전제 — 그 코멘트의 `검증자 리뷰:` 에
+BLOCKER 0 또는 `자체 리뷰(codex 2회 소진)`). 여기서는 **계획 부합만** 본다: 이 변경이 이슈 AC/플랜을
+충족하는가, 범위 이탈은 없는가. 호출은 ## 상수 `VERIFIER`(general-purpose) 하나, 프롬프트는
+`references/verifier-prompt-fallback.md` 의 placeholder 를 채운 것 — `<DIFF>`=`gh pr diff <pr> --repo <repo>`
+출력, `<ISSUE_BODY>`=`gh issue view <issue> --repo <repo>` 출력(연결 이슈 없으면 빈 문자열),
+`<PLAN_REF>`=이슈 `## Plan` 또는 참조한 `Plans/*.md`(없으면 빈 문자열), `<LESSONS_OR_"없음">`=
+`$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑 **`.loop/lessons-verifier.md`**(검증 판정 사례집 — 과거 오판 패턴
+주입; 없으면 `.loop/lessons.md` 폴백, 둘 다 없거나 비면 `없음`. `lessons.md` 는 **구현 워커**용이라 섞지
+않는다). 지시문은 "계획/이슈 AC 충족 여부만 판정, 미충족·범위 이탈은 `[P1]`, 경미한 편차는 `[P2]`" 를
+명시한다. 스폰은 `run_in_background` + `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`. 데드라인
+초과·verdict 없는 응답은 **미산출**이다 — 같은 프롬프트로 **한 번만** 재시도하고, 그래도 미산출이면 아래
+ⓑ 로 보류 종료한다(fail-closed — 절대 머지로 진행하지 않는다, #96). 워크트리(`make-worktree.sh`)는 이
+단계에 필요 없다 — 3단계가 자기 몫으로 확보한다.
+`codex-review-gate.sh` 는 이 단계에서 부르지 않는다(bin/ci 가 이 문서에 그 호출이 0건임을 문다).
+- 판정: BLOCKER → BLOCKER. CLEAN/NIT/WARN → 통과(`[P3+]` = NIT 는 비차단).
   머신 코멘트 마커(필수): 아래 `gh pr comment` 로 남기는 마감 검증 코멘트는 **마지막 줄에
   `<!-- bodat:worker -->`** 를 포함한다 — closeout-eligible 이 머신 코멘트를 사람 리뷰와
   구분하는 신호다(#72). 빠지면 그 PR 이 재평가 때 미해결 사람 코멘트로 오인돼 탈락한다.
@@ -647,7 +606,7 @@ Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에
   BLOCKER 를 적을 **세 번째 채널**이 필요한데 두 채널이 이미 실패한 상황에서 셋째가
   성공한다는 근거가 없다 — 그래서 ④ Report 의 두 `BLOCKED:` 줄이 사람 신호다(위 (a)·(b)·(c)
   회수 절이 "되살리기까지 실패하면 두 `BLOCKED` 줄이 사람 신호" 로 세운 규율과 같다).
-- ⓑ **스펙·정책 선택이 남아 있다(검증자 미산출 포함) → 사람 보류.**
+- ⓑ **스펙·정책 선택이 남아 있다(검증자 미산출 포함 — 재시도 1회 뒤) → 사람 보류.**
   `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>
   <!-- bodat:worker -->"`
   + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`

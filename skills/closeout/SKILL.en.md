@@ -40,31 +40,19 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
   had newly become eligible). stagnated is a pure reporting label — no step is
   ever skipped.
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
-- `VERIFIER = codex:codex-rescue` — verifier subagent type for the step-1 plan-
-  conformance check.
-  **Output contract (SSOT — everywhere else refers to this entry)**: calls are
-  read-only (no code changes), classify each finding as BLOCKER/WARN/NIT, output
-  'CLEAN' if there are no findings, and BLOCKERs are a hard gate (no finishing
-  before they are resolved). The verifier does not read this SKILL.md, so the
-  call's prompt string must carry this contract verbatim — the prompt is the only
-  delivery path.
-  **Fallback**: use `general-purpose` as the verifier if either — (a) the codex
-  plugin is missing (the type above is absent from the Agent tool's
-  subagent_type list, or the call fails with an unknown subagent type error), or
-  (b) codex stalls/fails and produces no verdict (BLOCKER/WARN/NIT/CLEAN) —
-  including network block, timeout, or a verdict-less response (demonstrated
-  2026-06-24 #54: codex produced no verdict because gh network was blocked in
-  the sandbox). **Not the same prompt (#207).** The fallback is invoked with
-  `references/verifier-prompt-fallback.md` — the output contract above
-  (BLOCKER/WARN/NIT/CLEAN classification) still applies, but the prompt body
-  differs from the native path (`references/verifier-prompt.md`): a
-  `general-purpose` subagent has no Agent-tool equivalent of `--cd`, so it is
-  not scoped to a worktree — its cwd is the loop session's cwd, not the PR's
-  worktree. Giving it the native template's "this worktree is current" premise
-  would be false, so the fallback template instead embeds the diff, issue body,
-  and lessons directly in the prompt (see Step 1 below). If the fallback call
-  also produces no verdict, treat it as a BLOCKER and exit on hold
-  (gate fail-closed).
+- `VERIFIER = general-purpose` — verifier subagent type for the step-1 plan-conformance
+  check. **Not codex** (#375, user decision 2026-09-13 — codex is called at most twice per PR,
+  and both calls belong to verify-runner; the two extra closeout calls (correctness + plan
+  conformance) that made it a third are gone). **Output contract (SSOT — everywhere else
+  refers to this entry)**: calls are read-only (no code changes), classify each finding as
+  BLOCKER/WARN/NIT, output 'CLEAN' if there are no findings, and BLOCKERs are a hard gate (no
+  finishing before they are resolved). The verifier does not read this SKILL.md, so the call's
+  prompt string must carry this contract verbatim — the prompt is the only delivery path, and
+  that prompt is `references/verifier-prompt-fallback.md` (the variant that **embeds** the
+  diff, issue body and lessons — `general-purpose` has no `--cd` equivalent in the Agent tool,
+  so it is not scoped to the worktree and cannot be given the "this worktree is current"
+  premise, #207). `references/verifier-prompt.md` is for the built-in reviewer (codex) only
+  and is not used here.
 - `VERIFIER_TIMEOUT_MIN = 10` — wall-clock cap in minutes per `VERIFIER` (and
   fallback) spawn. Poll against a deadline of spawn time + this value; if the
   deadline is exceeded, cut it off with `TaskStop` and treat it as no verdict
@@ -567,64 +555,25 @@ were actually climbed and the failure output cited.
 For the picked PR, perform the 6 steps below in order. At the end of each step, plant
 the marker command (① Reconcile marker table) so the next tick can resume idempotently.
 
-**Step 1 — plan-conformance verification — built-in reviewer.** Get `<issue>` from the PR body's
-`Closes #N` / `Refs #N` line (parse via `gh pr view <pr> --repo <repo> --json body`). **Obtain the
-worktree (fetch·reset, #207).** Obtain `<worktree>` via `$SCRIPTS/make-worktree.sh <repo> <N>`
-(`<N>` parsed from the PR head `agent/issue-N`, same as step 3), then immediately
-`git -C <wt> fetch origin` followed by `git -C <wt> reset --hard origin/agent/issue-<N>` to align
-the worktree HEAD to the PR's current head SHA (`make-worktree.sh` returns an existing worktree
-as-is, so it may still have the pre-rebase/pre-force-push SHA checked out — the revalidate section
-below applies the same two commands for the same reason. The plan-conformance prompt below
-(`references/verifier-prompt.md`) asserts "this worktree is checked out at the HEAD of the PR
-branch under review, so it is current" — without this sync that assertion is false, and a stale
-commit gets reviewed while a newer pushed commit reaches merge unreviewed). Verification is
-**two synchronous calls** of `$SCRIPTS/codex-review-gate.sh` (#134, Plans/codex-native-review-gate.md) —
-no subagent spawn, polling, or `TaskStop` wiring:
-1. correctness: `codex-review-gate.sh --base origin/<default> --cd <worktree> --out <scratch>/a` →
-   last stdout line `verdict=… p1= p2=`, body in `a/review.md`. `[P1]` = BLOCKER.
-2. plan conformance: `codex-review-gate.sh --base origin/<default> --prompt "<instructions>" --cd <worktree> --out <scratch>/b`
-   (the helper prefixes the `--base` range to the prompt so the reviewer actually reads the committed diff — without it, only the working tree) —
-   the instructions are `references/verifier-prompt.md` with placeholders filled: `<PR>`·`<REPO>`·`<BASE>`=the same
-   origin-scoped ref passed to the `--base` flag right above (e.g. `origin/<default>` — not the bare local
-   `<default>`; if they diverge and local is stale, the reviewer gets two conflicting range instructions, #207)·
-   `<PLAN_REF>`=the issue's `## Plan` or the referenced `Plans/*.md` (empty string if none)·`<ISSUE_BODY>`=
-   `gh issue view <issue> --repo <repo>` output (empty string if no linked issue)·`<LESSONS_OR_"없음">`=the contents
-   of **`.loop/lessons-verifier.md`** (the verdict casebook — injects past misjudgment patterns; fall back to
-   `.loop/lessons.md`, `없음` if both are missing or empty. `lessons.md` is for the **implementing worker** — do not
-   mix it in, it dilutes the misjudgment-prevention signal) under the path from `$SCRIPTS/repo-dir.sh <repo>`.
-   The diff is not embedded in the prompt — the template (`references/verifier-prompt.md`) states "your judgment
-   basis is the `--base` range above; read it directly in this worktree (local git reads allowed, only
-   gh/git fetch network commands are forbidden)", so the built-in reviewer reads the worktree itself (#207 — the
-   old wording claiming "the embedded diff is the sole SSOT, no git reads" directly contradicted this
-   not-embedded contract, so the reviewer saw nothing and reported zero findings — a CLEAN fail-open). The
-   instructions state "judge only whether this change meets the plan / issue AC; unmet or out-of-scope = `[P1]`,
-   minor deviation = `[P2]`".
-   **Response contract (structural line) — `--prompt` calls only.** The helper appends a contract to the end of
-   these instructions ("the last line of the review body must be `<key>: reviewed|no-basis`") and decides **on that
-   line alone** (`reviewed` → by the finding counts · `no-basis`/line missing/format broken → `verdict=NONE`, no
-   verdict). The format string's single definition site is the `STATUS_*` constants in `codex-review-gate.sh` — do
-   not copy it into the template or this document (if the required format and the parser diverge, the very
-   SKILL↔template mismatch this issue fixed reappears on the parser side, #207). So you never write the contract
-   yourself when filling the prompt. Prose ("no basis to judge" wording) is **not** a decision input — enumerating
-   its inflections does not converge and produced three consecutive fail-opens (#207 rounds 2-4).
-The helper has its own timeout (`CODEX_GATE_TIMEOUT`, default 900s = in step with `VERIFIER_TIMEOUT_MIN`). If either
-call returns **exit 2 (`verdict=NONE`) = no verdict** (codex missing · model error · timeout — and, on the plan
-conformance call, the reviewer omitting the contract's structural line or answering `no-basis`, #207), only then use the
-`VERIFIER` fallback from ## Constants (general-purpose). **The fallback prompt is
-`references/verifier-prompt-fallback.md` — not the same file as the native templates above
-(`references/verifier-prompt.md`, #207).** A `general-purpose` subagent has no Agent-tool equivalent of `--cd`, so it
-is not scoped to a worktree — its cwd is the loop session's cwd, not the PR's worktree. Giving it the native
-template's "this worktree is current" premise would be a false premise (demonstrated: a fallback call given that
-premise asserted the wrong checkout was "current" while judging). `verifier-prompt-fallback.md` instead embeds the
-diff, issue body, and lessons **directly** in the prompt: `<DIFF>` = the output of `gh pr diff <pr> --repo <repo>`,
-`<ISSUE_BODY>`·`<PLAN_REF>`·`<LESSONS_OR_"없음">` are filled the same way as the native call. The response contract
-(structural line) is not carried into the fallback — that line is appended automatically by `codex-review-gate.sh`
-for `--prompt` calls only; the fallback instead follows the plain BLOCKER/WARN/NIT/CLEAN output contract from the
-`VERIFIER` entry above (see Constants). Spawn with `run_in_background` + the `VERIFIER_TIMEOUT_MIN` deadline + `TaskStop` on
-overrun. If the fallback also produces no verdict, exit on hold via the BLOCKER path below (fail-closed — never
-proceed to merge, #96). A model error in the
-helper's stderr (404 · not supported · requires a newer version) is not a stall — quote it verbatim in the comment.
-- Combining verdicts: BLOCKER from either call → BLOCKER. Both CLEAN/NIT/WARN → pass (`[P3+]` = NIT is non-blocking; WARN counts add up).
+**Step 1 — plan-conformance verification — one `general-purpose` call, no codex (#375).** Get
+`<issue>` from the PR body's `Closes #N` / `Refs #N` line (parse via `gh pr view <pr> --repo <repo>
+--json body`). Correctness review is already done — verify-runner ran codex (`머지 판정: ✅` is the
+premise of this step; its `검증자 리뷰:` comment carries BLOCKER 0 or `자체 리뷰(codex 2회 소진)`).
+Here we check **plan conformance only**: does the change satisfy the issue AC/plan, is anything
+out of scope. One call of the ## constant `VERIFIER` (general-purpose) with
+`references/verifier-prompt-fallback.md` filled in — `<DIFF>`=output of `gh pr diff <pr> --repo
+<repo>`, `<ISSUE_BODY>`=output of `gh issue view <issue> --repo <repo>` (empty string if no linked
+issue), `<PLAN_REF>`=the issue's `## Plan` or the referenced `Plans/*.md` (empty string if none),
+`<LESSONS_OR_"없음">`=**`.loop/lessons-verifier.md`** under the path resolved by `$SCRIPTS/repo-dir.sh
+<repo>` (verification casebook — injects past misjudgment patterns; fall back to `.loop/lessons.md`,
+and `없음` if both are missing or empty; `lessons.md` is for **implementation workers**, do not mix).
+The instructions state "judge only whether the plan/issue AC is met; unmet or out-of-scope is
+`[P1]`, minor deviation is `[P2]`". Spawn with `run_in_background` + a `VERIFIER_TIMEOUT_MIN` deadline
++ `TaskStop` on overrun. Deadline overrun or a verdict-less response is **no-verdict** — retry the
+same prompt **once**, and if still no verdict, end in hold via ⓑ below (fail-closed — never proceed to
+merge, #96). No worktree (`make-worktree.sh`) is needed in this step — step 3 obtains its own.
+`codex-review-gate.sh` is not called in this step (bin/ci asserts this document has zero such calls).
+- Verdict: BLOCKER → BLOCKER. CLEAN/NIT/WARN → pass (`[P3+]` = NIT is non-blocking).
   Machine-comment marker (required): the closeout-verification comment posted below via
   `gh pr comment` must include **a final line `<!-- bodat:worker -->`** — it is how
   closeout-eligible tells a machine comment from a human review (#72). Without it, on
@@ -735,7 +684,7 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
   there is no basis for expecting a third to succeed — so the two `BLOCKED:` lines in ④ Report are
   the human signal (the same discipline the (a)·(b)·(c) restore section set: "if the restore fails
   too, the two `BLOCKED` lines are the human signal").
-- ⓑ **A spec/policy call is still open (no-verdict included) → hold for a human.**
+- ⓑ **A spec/policy call is still open (no-verdict included — after the one retry) → hold for a human.**
   `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
   <!-- bodat:worker -->"`
   + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`

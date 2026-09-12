@@ -24,11 +24,14 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
   아니다 — 한 PR 이 종료 상태(passed·redispatched·held·flake_retry)에 닿으면 **다음
   틱을 기다리지 말고** ①② 로 되돌아 다음 후보를 이어간다(아래 ⑤ Drain). 이 노브가
   E2E 크롬 부하 상한이다 — 절대 올리지 마라(동시 실행 = 크롬 자기포화 = 타임아웃).
-- `VERIFY_ATTEMPTS_LIMIT = 3` — 같은 PR 검증이 N회 실패(재디스패치)하면 그 다음엔
-  재디스패치 대신 `hold:policy` 로 정지한다(무한 반송 서킷 브레이커 — 아래 ④ **held**,
-  `verify-held --reason policy`). 사람 호출(`needs-human`)은 그 정지의 재심이 "사람 몫
+- `CODEX_REVIEW_LIMIT = 2` — **같은 PR 에 codex 를 부르는 횟수 상한**(사용자 결정 2026-09-13,
+  #375 · Plans/review-round-cap-and-gate-signals.md). 카운트는 PR 본문 `<!-- verify-attempt: N -->`
+  주석(N = 지금까지의 codex BLOCKER 반송 수, issue-runner repair-count 동형). N < 2 면 ③-3 이
+  codex 를 부르고, **N = 2 면 codex 없이 ③-3′ 자체 리뷰로 판정해 완료**한다 — 리뷰어(codex)는
+  같은 diff 에 회차마다 다른 답을 내므로(같은 head 세 번 → P1 → P2 → CLEAN 실측) 세 번째부터는
+  게이트가 아니라 발산이다. 옛 상한(3회 초과 → `hold:policy`)은 폐기 —
+  **리뷰 반송은 사람 결정 사유가 아니다.** 사람 호출(`needs-human`)은 여전히 재심이 "사람 몫
   유지" 로 끝났을 때만 붙는다(#244 — issue-runner ① 의 `policy-kept` 가 유일한 생산자다).
-  카운트는 PR 본문 `<!-- verify-attempt: N -->` 주석에 누적(issue-runner repair-count 동형).
 - `STALE_FINISH_MIN = 30` — `finish-classify.sh` 시간버퍼(분). 재사용.
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
 - `VERIFIER = codex:codex-rescue` — diff correctness 검증자 서브에이전트 타입.
@@ -194,7 +197,9 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
   직렬 레인이라 이 느린 재확인을 감당한다(예전 per-test 재시도 하네스가 게이트에서
   하던 일을 여기서 루프 수준으로, 부하 없이).
 
-**3. codex correctness 리뷰 — 내장 리뷰어.** `$SCRIPTS/codex-review-gate.sh --base origin/<default>
+**3. codex correctness 리뷰 — 내장 리뷰어. 먼저 `<!-- verify-attempt: N -->` 을 읽는다(없으면 0).**
+**N ≥ `CODEX_REVIEW_LIMIT`(=2) 면 이 절을 건너뛰고 아래 3′ 로 간다 — codex 를 부르지 않는다.**
+N < 2 면 `$SCRIPTS/codex-review-gate.sh --base origin/<default>
 --cd <worktree> --out <스크래치>` 를 **동기 호출**한다(#134, Plans/codex-native-review-gate.md). 이 헬퍼가
 `codex exec review` 를 sol/medium 으로 돌려 stdout 마지막 줄에 `verdict=<BLOCKER|WARN|NIT|CLEAN|NONE> p1= p2= p3= model= secs=`
 를 내고 본문을 `<out>/review.md` 에 남긴다. 자체 타임아웃(`CODEX_GATE_TIMEOUT`, 기본 900s = `VERIFIER_TIMEOUT_MIN`
@@ -214,6 +219,17 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
   `gh pr comment <pr> --repo <repo> --body "검증자 리뷰: <CLEAN 또는 'BLOCKER 0 / WARN n건'> · <model>/<secs>s
 <review.md 본문>
 <!-- bodat:worker -->"`
+
+**3′. 3회차 자체 리뷰 — codex 없이 (N = 2).** codex 는 이 PR 에 이미 두 번 답했고 워커가 두 번 고쳤다.
+세 번째 판정은 `general-purpose` 서브에이전트(read-only)가 낸다 — 입력은 **직전 `재검증 실패:` 코멘트**
+(2회차 codex 의 P1 제목들)와 `git diff origin/<default>...HEAD`, 출력은 **지적별 `해소`/`미해소` + 한 줄 근거**.
+이 리뷰는 게이트가 아니다 — E2E(③-2)·결정적 CI(③-1)만 게이트다. 결과를 PR 코멘트로 남긴다:
+`gh pr comment <pr> --repo <repo> --body "검증자 리뷰: 자체 리뷰(codex 2회 소진) · 해소 n / 미해소 m
+<지적별 해소/미해소 + 근거>
+<!-- bodat:worker -->"`
+미해소가 남아도 ④ **passed** 로 간다(아래 `잔여:`) — 남은 지적은 closeout 6단계가 파생 이슈로 받는다.
+`검증자 리뷰:` 접두는 그대로다(closeout 2단계가 이 코멘트에서 `BLOCKER` 0 을 읽는다 — 자체 리뷰 코멘트는
+그 단어를 쓰지 않는다).
 
 **3-b. 보조 리뷰 (`AUX_REVIEWERS`, 비게이트).** ③-3 의 Codex 스폰과 **같은 시점**에, 같은 동봉
 diff·이슈 본문으로 `AUX_REVIEWERS` 두 타입을 각각 `run_in_background: true` 로 스폰한다(직렬 레인의
@@ -235,11 +251,13 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 
 ## ④ Classify — 판정과 인계
 
-**passed** — E2E pass(또는 해당 없음) + codex BLOCKER 0:
-1. (③-3 에서 `검증자 리뷰:` 코멘트 이미 남김)
+**passed** — E2E pass(또는 해당 없음) + (codex BLOCKER 0 **또는** ③-3′ 자체 리뷰 완료):
+1. (③-3 / 3′ 에서 `검증자 리뷰:` 코멘트 이미 남김)
 2. 최종 그린라이트:
    `gh pr comment <pr> --repo <repo> --body "머지 판정: ✅ 머지 가능 — 결정적 CI pass · E2E <pass 또는 '해당 없음'> · 검증자 <CLEAN 또는 'BLOCKER 0 / WARN n'> · 미해결 없음
 <!-- bodat:worker -->"`
+   3′ 경로면 검증자 칸을 `자체 리뷰(codex 2회 소진 · 3회차)` 로, 미해소가 있으면 `미해결 없음` 대신
+   `잔여: <지적 제목들>` 로 쓴다 — closeout 6단계가 그 줄을 파생 이슈 입력으로 읽는다(조용히 버리지 않는다).
 3. 라벨 인계: `$SCRIPTS/transition.sh verify-pass <repo> <issue|-> <pr>` — PR 과 원 이슈를
    한 호출로 옮긴다(전이 표 SSOT = `transition.sh` 상단 주석). **closeout 계약 무변경**
    (기존 `머지 판정: ✅` 마커 재사용 — `closeout-eligible.sh` 가 그걸로 집는다) + 이슈
@@ -249,10 +267,14 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
      라벨이 반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적이다(조용히 넘어가지 않는다).
 
 **redispatched** — E2E 진짜 실패 / codex BLOCKER(검증자 데드라인 초과 포함) / 결정적 CI 실패:
-1. `<!-- verify-attempt: N -->` 를 PR 본문에서 읽어(없으면 0) N+1 이 `VERIFY_ATTEMPTS_LIMIT`
-   **미만**이면 재디스패치, **이상**이면 아래 held 로.
+1. `<!-- verify-attempt: N -->` 를 PR 본문에서 읽는다(없으면 0). codex BLOCKER 반송은 N+1 ≤
+   `CODEX_REVIEW_LIMIT` 에서만 일어난다(N = 2 면 ③-3′ 가 codex 를 부르지 않았으니 codex BLOCKER 자체가
+   없다). E2E·결정적 CI 실패는 회차와 무관하게 반송한다 — 그건 게이트다.
 2. 재디스패치: 실패 사유 코멘트(멱등 마커) —
    `$SCRIPTS/bounce-comment.sh reverify-fail <repo> <pr> <issue> <N+1> "<사유>"`
+   **N+1 = 2(마지막 codex 반송)면 `<사유>` 끝에 `최종 회차: 다음 검증은 codex 없이 자체 리뷰로
+   완료된다` 를 붙인다** — 워커가 이 문구를 보면 9-b 사전 리뷰를 건너뛰지 않는다(worker-template).
+   문구는 인자로만 간다(스크립트·마커 형식 무변경).
    (문구를 손으로 옮겨 적지 않는다 — 콜론·어순이 변형되면 `bounce-state.sh` 반송
    안전망이 놓친다, #212. 생성되는 본문은
    `재검증 실패: #<issue> — <사유> (attempt N+1)\n<!-- bodat:worker -->`).
@@ -268,8 +290,8 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    코멘트를 읽고 고친 뒤 다시 `flow:verify` 로 넘긴다(worker-template 절차). **redispatched 종료.**
    (연결 이슈가 없으면 재디스패치 불가 → held 로 폴백.)
 
-**held** — 재디스패치 상한 초과(VERIFY_ATTEMPTS_LIMIT) · 연결 이슈 부재 · 또는 E2E 가
-실장비를 요구해 못 돈 경우:
+**held** — 연결 이슈 부재 · 또는 E2E 가 실장비를 요구해 못 돈 경우(**리뷰 반송 상한은 더 이상
+held 사유가 아니다** — N = 2 는 ③-3′ 가 완료로 흡수한다):
 `gh pr comment <pr> --repo <repo> --body "검증 보류: <사유> — 사람 확인 필요
 <!-- bodat:worker -->"` + `$SCRIPTS/transition.sh verify-held <repo> <issue|-> <pr> --reason <conflict|policy|ladder> [--note "<질문 한 줄>" — policy·conflict 필수]`
 (PR 의 `flow:verify` 제거 + PR 과 — 있으면 — 연결 이슈 **양쪽**에 `hold:<reason>` 부착.
@@ -277,8 +299,6 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 접두를 직접 본다). 연결 이슈가 없어도 PR 에 정지 신호가 남는다). **held 종료.**
 **`--reason` 은 필수다** — 빠지면 전이가 usage exit 64 로 거절한다(사유 없는
 정지를 만들 수 없게 하는 게이트). 이 문단의 사유 배정:
-- **재디스패치 상한 초과** → `policy`. 루프가 정한 한도에 걸린 것이라 한도·범위를
-  사람이 다시 정해야 한다.
 - **연결 이슈 부재** → `policy`. 어느 이슈에 붙일지가 사람 결정이다.
 - **E2E 가 실장비를 요구해 못 돈 경우** → 곧바로 held 로 가지 마라. 먼저
   `~/.claude/skills/issue-runner/references/live-verification-ladder.md`

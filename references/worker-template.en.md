@@ -265,6 +265,9 @@ Procedure:
    (**no codex-family types** — the verification gate is owned by verify-runner and a codex
    CLI stall must not enter the worker). **On a re-dispatch (bounce) skip 9-b** — the bounce
    comment already is a fresh-eyes review; leave the PR body's old `## Pre-review` as is.
+   **Exception: if the bounce reason contains `최종 회차` (final round), do NOT skip 9-b** (#375 —
+   the next verification completes without codex via self-review, so this pre-review is the last
+   fresh pair of eyes).
    - First produce `cd <WT_PATH> && git diff origin/<DEFAULT_BRANCH>...HEAD`. **If the output
      is empty or an error, do not spawn** — record `not run: no diff (<reason>)` and go to
      step 10.

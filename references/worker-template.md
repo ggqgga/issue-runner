@@ -235,7 +235,8 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    리뷰어를 Agent 툴로 중첩 스폰하라 — `subagent_type: "general-purpose"`(**codex 계열 타입 금지** —
    검증 게이트는 verify-runner 소유이고 codex CLI 스톨을 워커에 들이지 않는다). **재디스패치(반송)
    회차에서는 9-b 를 건너뛴다** — 반송 코멘트가 이미 새 눈의 리뷰이고, PR 본문의 옛 `## 사전 리뷰`
-   는 그대로 둔다.
+   는 그대로 둔다. **예외: 반송 사유에 `최종 회차` 가 있으면 9-b 를 건너뛰지 않는다**(#375 — 그
+   다음 검증은 codex 없이 자체 리뷰로 완료되므로 이 사전 리뷰가 마지막 새 눈이다).
    - 먼저 `cd <WT_PATH> && git diff origin/<DEFAULT_BRANCH>...HEAD` 를 뜬다. **출력이 비었거나
      에러면 스폰하지 말고** `미실행: diff 없음(<사유>)` 으로 기록하고 10단계로 간다.
    - 프롬프트에 **동봉**: 그 diff 출력 전체 + 3단계에서 읽은 이슈 본문. 리뷰어는 동봉 텍스트만

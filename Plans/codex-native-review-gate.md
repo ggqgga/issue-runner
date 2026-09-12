@@ -98,6 +98,17 @@ diff 를 실제로 동봉한다. `bin/ci` 가 SKILL 문서의 지목을 강제�
 감싼 정상 응답은 짝이 맞아 종전대로 판정이 살고, 격자(4b-2i)가 양방향을 전수 단언한다.
 - 라이브: issue-runner 자신의 머지 커밋 하나로 `--commit` 실행 → verdict 줄 + review.md 생성(#131 과 같은 P1 재현).
 
+**진행 — 계약 줄 폐기, 구조 신호로 (#375, 2026-09-13).** 위 세 회차(#207 → #283 → #279)가 옮겨 앉힌
+"모델이 정확히 이 한 줄을 쓴다" 조건은 프로덕션 크기 프롬프트에서 성립하지 않았다 — 실호출 0/8(09-11
+4건 · 09-13 4건: 정본 · 사람용 메모 제거 · 계약문 머리 배치 전부 NONE, 짧은 스모크만 1/1). 리뷰어는
+매번 판정을 냈고(BLOCKER 2 · WARN 1 · CLEAN 1) 버린 쪽은 게이트였다. 그래서 판정 입력을 모델 문장에서
+**codex 구조 신호**로 바꿨다: ⑴ 렌더된 발견 항목(`- [P<n>]`) ≥1 → 그대로 판정(계약 줄 무관) ⑵ 항목 0 이고
+정확히 `REVIEW_STATUS: no-basis` 줄 → NONE(선택 신호, 요구 안 함) ⑶ 항목 0 → `events.jsonl` 의
+`command_execution` 중 `command` 에 `git ` 또는 `--cd` 경로가 든 것 ≥1 이면 CLEAN, 아니면 NONE(안 읽은
+"문제 없음"). `reviewed` 값·"마지막 줄" 파서·모델 통제 구역(`cli_rendered`)·`RENDER_HEADER_*`·`LEGACY_UNABLE`
+은 삭제. 스모크의 회귀 창도 "항목이 렌더된 응답에서 판정" 으로. 곁들여 codex 호출 자체를 PR 당 2회로
+묶었다(verify-runner `CODEX_REVIEW_LIMIT = 2`, closeout 1단계는 general-purpose) — `Plans/review-round-cap-and-gate-signals.md`.
+
 ## 설치
 
 랩탑은 완료(config 2벌·CLI 0.153.4). 미니: codex 0.142.5(mise) + config 에 model 없음 → 업그레이드 + `model = "gpt-5.6-sol"` 추가 필요
