@@ -372,6 +372,9 @@
 set -uo pipefail
 
 SELF=$(basename "$0")
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/scope.sh
+. "$SCRIPT_DIR/lib/scope.sh"   # scope_lines · scope_file 기본값 — 판정은 한 자리 (#427)
 
 usage() {
   {
@@ -587,12 +590,13 @@ if [ "${#repos[@]}" -eq 0 ]; then
       exit 64
     fi
   else
-    repos_file="$PWD/.loop/repos"
+    repos_file="$scope_file"
     [ -f "$repos_file" ] || usage
   fi
+  # 주석·빈 줄 제거와 공백 처리는 `lib/scope.sh` 한 자리다 (#427 로 한 자리로).
+  # 파이프가 아니라 프로세스 치환으로 먹인다 — `cmd | while` 은 서브셸이라
+  # `repos+=(…)` 누적이 부모로 안 온다(bash 3.2).
   while IFS= read -r line; do
-    line=$(printf '%s' "$line" | tr -d ' \t')
-    case "$line" in ""|"#"*) continue ;; esac
     # owner/repo 형식이 아닌 줄은 조용히 버리지 않는다 — 오타 한 글자가 레포 하나를
     # 스코프에서 통째로 지우고도 아무 흔적이 없으면 "그 레포엔 아무것도 없다" 로 읽힌다.
     case "$line" in
@@ -600,7 +604,7 @@ if [ "${#repos[@]}" -eq 0 ]; then
       *) echo "$SELF: $repos_file 무시된 줄: $line" >&2; continue ;;
     esac
     repos+=("$line")
-  done < "$repos_file"
+  done < <(scope_lines "$repos_file")
 fi
 [ "${#repos[@]}" -gt 0 ] || usage
 
@@ -610,12 +614,10 @@ tmpdir=$(mktemp -d) && [ -n "$tmpdir" ] && [ -d "$tmpdir" ] || snapshot_abort "�
 trap 'rm -rf "$tmpdir"' EXIT
 
 # short_name <owner/repo> — repo 부분을 소문자로. issue-runner 만 `runner` 특례.
+# 규칙 자체는 `lib/loop.jq` 의 `short_repo` 한 자리다 (#426) — 이 함수는 그 술어를 셸에서
+# 부르는 얇은 껍데기다(레포 수만큼만 불린다 · jq 부재는 위에서 이미 abort 로 걸렀다).
 short_name() {
-  local r=${1##*/}
-  case "$r" in
-    issue-runner|Issue-Runner) echo runner ;;
-    *) printf '%s\n' "$r" | tr 'A-Z' 'a-z' ;;
-  esac
+  printf '%s' "$1" | jq -L "$SCRIPT_DIR/lib" -R -r 'include "loop"; short_repo'
 }
 
 # run_gh <gh 인자...> — 성공하면 GH_OUT, 실패하면 GH_ERR(한 줄 요약).
@@ -639,6 +641,8 @@ done
 
 # ── 레포 스냅샷 jq — 이슈/PR 목록 → 버킷·warn·표시문구가 든 JSON 한 덩어리 ──
 BUILD_JQ=$(cat <<'JQ'
+# 라벨·판정 술어는 `lib/loop.jq` 한 자리에서 온다 (#426) — `include` 는 필터의 첫 문장이다.
+include "loop";
 # 사다리(단계) 라벨 — `verifying`(#275) 은 verify-runner 가 집는 순간 `flow:verify` 를 떼고
 # 붙이는 점유 라벨이라 `flow:verify` 와 `flow:ready` **사이**다(#276). 세 목록 전부에 같은
 # 자리로 들어가야 한다 — 하나라도 빠지면 검증 중인 이슈가 `대기` 로 새거나(lad), 그 PR 이
@@ -690,7 +694,7 @@ def stage_labels_of($l): $l | map(select(. as $x | pr_stage_labels | index($x) !
 # `hold:*` 접미만 뽑는다 — 허용 목록(conflict·policy·ladder)으로 거르지 않는다.
 # 금지 사유(`hold:dup`·`hold:hardware`)는 라벨을 아예 안 만드는 것으로 막는 게 SSOT
 # (setup-labels.sh) 이고, 여기서 또 걸러 내면 실수로 붙은 라벨이 화면에서 사라진다.
-def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | sort;
+def holds_of($l): $l | map(select(is_hold_label) | ltrimstr("hold:")) | sort;
 # 정지 라벨 — 기계 정지(transition.sh 의 verify-held·closeout-blocked·runner-held)가 이슈와
 # PR **양쪽**에 붙이는 집합이다(#244 가 보존 대상으로 적어 둔 규약). 이슈·PR 양쪽에 같은
 # 함수를 쓴다 — 한쪽만 다른 식으로 세면 두 번째 계산기가 생긴다(blockers_of 주석과 같은 규율).
@@ -706,7 +710,8 @@ def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | so
 # 단계 미러(mirror_labels)와 **일부러 다른 함수**다: 단계는 "정확히 하나 이하" 인 사다리
 # 위치라 sort 후 완전 일치로 판정하는데, 정지는 그와 직교하는 플래그라 같은 배열에 섞으면
 # 정지 라벨 하나가 단계 일치 판정을 통째로 깨뜨린다.
-def stops_of($l): $l | map(select(. == "needs-human" or startswith("hold:"))) | sort;
+# 집합 정의(`needs-human` ∪ `hold:` 접두)는 `lib/loop.jq` 의 `stop_labels` 한 자리다 (#426).
+def stops_of($l): $l | stop_labels | sort;
 # 블로커 번호 (#248) — 규칙의 SSOT 는 `eligible-issues.sh`(body_blockers/label_blockers).
 # 거기의 `grep -oiE '^[[:space:]]*blocked[- ]by[[:space:]]+#[0-9]+'` 를 줄 단위로 옮긴 것이다:
 #   · `split("\n")` 로 먼저 줄을 가른다 — jq(Oniguruma)의 `^` 는 grep 과 달리 **문자열 시작**만
@@ -913,7 +918,7 @@ def prio_of($l):
 # 붙이게 된 뒤, `needs-human` 만 보면 홀드된 PR(단계 라벨은 홀드 전이가 떼 갔다)이 통째로
 # 무소속 warn 으로 쏟아진다. 판정 대상은 "아무도 안 들고 있는 PR" 이지 "멈춰 있는 PR" 이
 # 아니다 — 홀드는 사람/재개 스윕이 들고 있다.
-def stopped($l): has($l; "needs-human") or (($l | map(select(startswith("hold:"))) | length) > 0);
+def stopped($l): $l | any(is_stop_label);
 def orphan_base:
   select(((stage_labels_of(.ln) | length) == 0)
     and (stopped(.ln) | not)
@@ -1135,7 +1140,7 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
           #    그러니 PR 에만 맨몸으로 있다 = 사람이 머지 직전에 손으로 세운 브레이크이고,
           #    교정 갈래(resume-sweep ④)는 그것을 떼지 않는다(②갈래와 같은 규율). 여기서만
           #    울리면 "고쳐 준다" 고 말해 놓고 안 고치는 줄이 상시로 남는다(#190 의 warn 정의).
-          | select($b | any(startswith("hold:")))
+          | select($b | any(is_hold_label))
           | {kind: "hold_mirror_mismatch", repo_short: $rs, issue: $i.number, pr: $p.number,
              labels: $b,
              text: ("정지 미러 불일치 #\($i.number)(\($rs)) ↔ PR #\($p.number)(\($rs))"
@@ -1446,7 +1451,7 @@ for repo in "${repos[@]}"; do
       --argjson claimtimes "$3" \
       --argjson claimcapped "$4" \
       --arg repo "$repo" --arg rs "$short" --arg since "$since" \
-      "$BUILD_JQ" > "$5"
+      -L "$SCRIPT_DIR/lib" "$BUILD_JQ" > "$5"
   }
   build_fail() {
     exit_code=1

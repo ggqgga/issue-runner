@@ -37,18 +37,22 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
   게이트가 아니라 발산이다. 옛 상한(3회 초과 → `hold:policy`)은 폐기 —
   **리뷰 반송은 사람 결정 사유가 아니다.** 사람 호출(`needs-human`)은 여전히 재심이 "사람 몫
   유지" 로 끝났을 때만 붙는다(#244 — issue-runner ① 의 `policy-kept` 가 유일한 생산자다).
-- `STALE_FINISH_MIN = 30` — `finish-classify.sh` 시간버퍼(분). 재사용.
+- `STALE_FINISH_MIN` — `finish-classify.sh` 시간버퍼(분). 재사용. **값은 `scripts/lib/constants.sh`** (#427).
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
 - `VERIFIER = codex:codex-rescue` — diff correctness 검증자 서브에이전트 타입.
-  **출력 계약 (SSOT)**: read-only(코드 변경 금지)·발견마다 BLOCKER/WARN/NIT 분류·
-  발견 없으면 'CLEAN'·BLOCKER 는 게이트(미해결 시 통과 판정 금지). 검증자는 이
-  SKILL.md 를 안 읽으므로 호출 프롬프트(`references/verify-prompt.md`)에 계약이
-  담겨 있다. **폴백**: (a) codex 미설치(Agent 툴 subagent_type 목록에 없거나 unknown
+  **출력 계약은 issue-runner `SKILL.md` 의 `## 상수` 절 `VERIFIER` 항목이 SSOT 다**(#427 —
+  세 SKILL 이 각자 SSOT 를 자칭하던 것을 한 곳으로). 여기선 그 계약을 다시 적지 않는다:
+  read-only·BLOCKER/WARN/NIT·CLEAN·BLOCKER 는 게이트, 그대로 적용된다(이 레인에선 미해결
+  BLOCKER 가 있으면 통과 판정 금지). 검증자는 이 SKILL.md 를 안 읽으므로 호출
+  프롬프트(`references/verify-prompt.md`)에 계약 문안이 담겨 있다. **폴백**: (a) codex 미설치(Agent 툴 subagent_type 목록에 없거나 unknown
   타입 오류) 또는 (b) codex stall/실패로 verdict 미산출이면 `general-purpose` 로 같은
   프롬프트 재시도. 폴백도 verdict 를 못 내면 BLOCKER 로 간주(fail-closed).
-- `VERIFIER_TIMEOUT_MIN = 10` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
+- `VERIFIER_TIMEOUT_MIN` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
   시각 + 이 값을 데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict
   미산출로 간주한다 — codex 외부 CLI 스톨이 틱을 무한정 묶는 것을 막는 방어선(#96).
+  **값은 `scripts/lib/constants.sh` 의 `CODEX_GATE_TIMEOUT`(초)을 분으로 환산한 것**이다
+  (#427 — 종전 산문은 "900s = 10분" 이라 두 값이 어긋나 있었다. 게이트가 기다리는 시간보다
+  스폰 데드라인이 짧으면 정상 리뷰를 끊어 놓고 "미산출" 로 적게 된다).
 - `AUX_REVIEWERS = pr-review-toolkit:silent-failure-hunter, pr-review-toolkit:pr-test-analyzer`
   — **보조 리뷰어**(비게이트). Codex 와 같은 동봉 diff 를 받아 조용한 실패(삼킨 예외·근거 없는
   폴백)와 테스트 갭을 찾는다. 판정에 **들어가지 않는다**(BLOCKER 는 `VERIFIER` 만) — Codex 와
@@ -207,8 +211,8 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
 N < 2 면 `$SCRIPTS/codex-review-gate.sh --base origin/<default>
 --cd <worktree> --out <스크래치>` 를 **동기 호출**한다(#134, Plans/codex-native-review-gate.md). 이 헬퍼가
 `codex exec review` 를 sol/medium 으로 돌려 stdout 마지막 줄에 `verdict=<BLOCKER|WARN|NIT|CLEAN|NONE> p1= p2= p3= model= secs=`
-를 내고 본문을 `<out>/review.md` 에 남긴다. 자체 타임아웃(`CODEX_GATE_TIMEOUT`, 기본 900s = `VERIFIER_TIMEOUT_MIN`
-과 동조)이 있어 스폰·폴링·`TaskStop` 배선이 필요 없다 — 서브에이전트 없이 명령 하나. `[P0]`·`[P1]` 이 BLOCKER, `[P2]` 가 WARN, `[P3+]` 가 NIT(비차단).
+를 내고 본문을 `<out>/review.md` 에 남긴다. 자체 타임아웃(`CODEX_GATE_TIMEOUT` — 값은 `scripts/lib/constants.sh` 한 자리이고
+`VERIFIER_TIMEOUT_MIN` 이 그 값을 분으로 환산한 것이다, #427)이 있어 스폰·폴링·`TaskStop` 배선이 필요 없다 — 서브에이전트 없이 명령 하나. `[P0]`·`[P1]` 이 BLOCKER, `[P2]` 가 WARN, `[P3+]` 가 NIT(비차단).
 - **exit 2(`verdict=NONE`) = 리뷰 미산출**(codex 부재·모델 오류·타임아웃·본문 없음). 그때만 ## 상수의 `VERIFIER`
   폴백(general-purpose, `references/verify-prompt.md` 에 `gh pr diff`·이슈 본문·`.loop/lessons-verifier.md` 동봉,
   `run_in_background` + `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을 쓴다. 헬퍼의 stderr 가 모델 오류(404·

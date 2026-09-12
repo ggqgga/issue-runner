@@ -94,7 +94,8 @@ esac
 # 입력에서 갈린다**(GNU 는 빈 문자열을 "오늘 자정" 으로 받아 실패조차 안 한다, finish-classify.sh
 # 의 iso_to_epoch 주석). 형식 검사를 앞에 두어 두 구현의 차이 자체를 없앤다: 형상이 어긋나면
 # null → `fail` → exit 1(증명 실패)이지, 그럴듯한 값으로 새지 않는다.
-out=$(jq -r --arg head_at "$head_at" --arg bi "$bi" '
+out=$(jq -L "$SCRIPT_DIR/lib" -r --arg head_at "$head_at" --arg bi "$bi" '
+  include "loop";
   def iso:
     if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
     then fromdateiso8601 else null end;
@@ -105,9 +106,10 @@ out=$(jq -r --arg head_at "$head_at" --arg bi "$bi" '
   # 가 있어도 못 본다(#218 attempt 3 이 `bounce-state.sh` 에서 밟은 바로 그 함정: 존재
   # 검사가 먼저 참이 되어 뒤의 분기에 도달하지 못한다). 그래서 접두 `마감 검증` 전체에서
   # 마지막 인덱스를 잡고, **그것이 `✅` 일 때만** 완료 마커로 인정한다.
-  | ([ to_entries[] | select(.value.body | startswith("마감 검증")) | .key ] | last) as $si
+  # 접두 술어·마지막 인덱스 규율은 `lib/loop.jq` 한 자리다 (#426 로 한 자리로).
+  | last_index(.body | has_closeout_prefix) as $si
   | if $si == null then "verify"
-    elif ((.[$si].body | startswith("마감 검증: ✅")) | not) then "verify"   # MUT-A: (A) ⚠ 보류
+    elif ((.[$si].body | is_closeout_ok) | not) then "verify"   # MUT-A: (A) ⚠ 보류
     elif ($bi != "none" and $si < ($bi | tonumber)) then "verify"   # MUT-C: (C) 반송보다 앞
     else ((.[$si].createdAt) | iso) as $m
       | if $h == null or $m == null then "fail"

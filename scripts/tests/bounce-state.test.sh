@@ -25,6 +25,8 @@ SUT="$DIR/bounce-state.sh"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# SUT 사본·뮤턴트는 `$SCRIPT_DIR/lib/` 를 include 한다 — 같은 자리에 라이브러리를 둔다 (#426).
+cp -R "$DIR/lib" "$tmp/lib"
 
 pass=0
 fail=0

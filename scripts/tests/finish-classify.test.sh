@@ -928,6 +928,8 @@ row "G7 MERGEABLE·⚠ 최신"                       needs_human \
 
 ST=$(mktemp -d)
 ln -s "$DIR/finish-classify.sh"   "$ST/finish-classify.sh"
+# SUT 는 `$SCRIPT_DIR/lib/` 를 source·include 한다 — 스텁 SCRIPT_DIR 에도 라이브러리를 건다 (#427·#426).
+ln -s "$DIR/lib"                  "$ST/lib"
 ln -s "$DIR/progress-evidence.sh" "$ST/progress-evidence.sh"
 ln -s "$DIR/pr-comments.sh"       "$ST/pr-comments.sh"
 # 반송 마커 판별을 되묻는 자리(#308) — 심링크가 없으면 조회 실패(unknown)로 접혀
@@ -1344,6 +1346,7 @@ echo "  [#308 ⑴] bounce-state.sh 실호출 자리 — 스텁으로 조회 실�
 
 BT=$(mktemp -d)
 ln -s "$DIR/finish-classify.sh"   "$BT/finish-classify.sh"
+ln -s "$DIR/lib"                  "$BT/lib"
 ln -s "$DIR/progress-evidence.sh" "$BT/progress-evidence.sh"
 ln -s "$DIR/pr-comments.sh"       "$BT/pr-comments.sh"
 : > "$BT/empty.log"
@@ -1464,6 +1467,7 @@ echo "  [#206 attempt3] claimed_arg 실호출 자리 — 스텁 claim-at.sh 로"
 
 CT=$(mktemp -d)
 ln -s "$DIR/finish-classify.sh"   "$CT/finish-classify.sh"
+ln -s "$DIR/lib"                  "$CT/lib"
 ln -s "$DIR/progress-evidence.sh" "$CT/progress-evidence.sh"
 ln -s "$DIR/pr-comments.sh"       "$CT/pr-comments.sh"
 ln -s "$DIR/bounce-state.sh"      "$CT/bounce-state.sh"   # 반송 마커 판별(#308)

@@ -33,11 +33,8 @@ fi
 # 세션 레포 스코프 (#40): 실행 cwd 의 .loop/repos 가 있으면 그 목록(owner/repo,
 # 줄당 하나, # 주석·빈 줄 허용)의 레포만 점검한다. 없으면 계정 전체(기존 동작).
 # eligible-issues.sh 와 일관 적용 — 다른 세션 워커의 claim 에 불간섭.
-scope_file="$PWD/.loop/repos"
-in_scope() {
-  [ -f "$scope_file" ] || return 0
-  grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' | grep -qxF "$1"
-}
+# shellcheck source=scripts/lib/scope.sh
+. "$SCRIPT_DIR/lib/scope.sh"   # in_scope · scope_file 기본값 — 판정은 한 자리 (#427)
 
 # 머지 감지 레저 (아래 ②-보강 스윕이 소비). 아래 agent:claimed 루프는 issue 가 그
 # 라벨을 유지할 때만 머지를 본다 — closeout·verify-runner·미러가 머지 시점에
@@ -107,15 +104,20 @@ fi
 half_moved_shape() {  # half_moved_shape <repo> <이슈> <PR> <PR 라벨 JSON 배열>
   local repo="$1" issue="$2" prnum="$3" labels="$4"
   local comments last head_raw head_sha head_at claimed pe
-  printf '%s' "$labels" | jq -e '
-    [ .[]? | select((startswith("flow:") and . != "flow:agent-ready") or . == "verifying" or . == "harvesting") ] | length == 0' \
+  # 소유 라벨(`flow:*`(대기칸 제외)·`verifying`·`harvesting`)이 하나도 없는가 —
+  # 술어는 `lib/loop.jq` 의 `is_owner_label` 한 자리 (#426).
+  printf '%s' "$labels" | jq -L "$SCRIPT_DIR/lib" -e '
+    include "loop"; [ .[]? | select(is_owner_label) ] | length == 0' \
     >/dev/null 2>&1 || return 1
   # 코멘트는 `pr-comments.sh` 로 **페이지네이션 전량**(첫 100건 상한 회피, #171).
   comments=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$prnum" 2>/dev/null) || return 1
-  last=$(printf '%s' "$comments" | jq -r '
+  # 판정성 코멘트(판정 접두 ∪ 반송 접두) 중 마지막 것 — 술어는 `lib/loop.jq` 한 자리 (#426).
+  # `.[]?`·`.body // ""`·`last // ""` 세 방어는 그대로다: 형상이 어긋난 응답을 에러가
+  # 아니라 "매칭 없음" 으로 받아 아래 `case` 가 무접촉으로 떨어지게 하는 fail-shape 가드다.
+  last=$(printf '%s' "$comments" | jq -L "$SCRIPT_DIR/lib" -r '
+    include "loop";
     [ .[]? | .body // ""
-      | select(startswith("머지 판정") or startswith("Merge verdict")
-               or startswith("재검증 실패") or startswith("재디스패치")) ]
+      | select(has_verdict_prefix or is_bounce) ]
     | last // ""' 2>/dev/null) || return 1
   case "$last" in "재검증 실패"*) ;; *) return 1 ;; esac
   head_raw=$("$SCRIPT_DIR/pr-head-at.sh" --with-sha "$repo" "$prnum" 2>/dev/null) || return 1

@@ -39,6 +39,8 @@ ts() {  # ts <분 전> → RFC3339 UTC
 sut_dir="$tmp/scripts"
 mkdir -p "$sut_dir"
 cp "$DIR/reconcile.sh" "$sut_dir/reconcile.sh"
+# SUT 는 `$SCRIPT_DIR/lib/` 를 source·include 한다 — 사본 옆에 라이브러리도 나란히 둔다 (#427·#426).
+cp -R "$DIR/lib" "$sut_dir/lib"
 cat > "$sut_dir/gh-login.sh" <<'STUB'
 #!/bin/sh
 echo tester

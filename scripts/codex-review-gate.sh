@@ -29,13 +29,17 @@
 # 종료: 0 = 비차단(CLEAN/NIT/WARN) · 1 = BLOCKER · 2 = 리뷰 미산출(codex 부재·모델 오류·타임아웃·본문 없음 ·
 #       항목 0 인데 no-basis 줄이 있거나 명령 실행 기록이 0 —
 #       fail-closed, 호출자는 general-purpose 폴백) · 64 = usage.
-# 타임아웃: CODEX_GATE_TIMEOUT 초(기본 900). 모델 오류(404·not supported·requires a newer version)는 원문을
+# 타임아웃: CODEX_GATE_TIMEOUT 초(값은 `scripts/lib/constants.sh` — #427 로 한 자리로). 모델 오류(404·not supported·requires a newer version)는 원문을
 # stderr 에 남기고 `codex debug models` 안내. macOS bash 3.2 · 결정론 · 네트워크는 codex 호출뿐.
 set -u
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/constants.sh
+. "$SCRIPT_DIR/lib/constants.sh"   # 상수는 한 자리 (#427)
+
 MODEL="${CODEX_GATE_MODEL:-gpt-5.6-sol}"
 EFFORT="${CODEX_GATE_EFFORT:-medium}"
-TIMEOUT="${CODEX_GATE_TIMEOUT:-900}"
+TIMEOUT="$CODEX_GATE_TIMEOUT"
 OUT=""; CD=""; SCOPE=(); PROMPT=""
 
 # ── 리뷰어가 쓸 수 있는 구조 신호의 형식 — **여기가 유일한 정의 자리**. 프롬프트 힌트와

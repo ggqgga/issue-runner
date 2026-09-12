@@ -56,14 +56,16 @@
 #
 # env 오버라이드:
 #   PE_QUEUE_LOG  queue.log 경로(기본 ~/.claude/.local-ci/queue.log)
-#   STALL_MIN     커밋 신선도 임계(분, 기본 25) — **이 파일이 이 상수의 한 자리다**
-#   ISSUE_TIMEBOX_HOURS  claim 신선도 상한(시간, 기본 1) — `timebox-check.sh` 와 같은 값을 읽는다
-#                        (두 리더의 기본값이 갈리지 않게 bin/ci 가 문다)
+#   STALL_MIN     커밋 신선도 임계(분) — 값·근거는 `scripts/lib/constants.sh` (#427 로 한 자리로)
+#   ISSUE_TIMEBOX_HOURS  claim 신선도 상한(시간) — `timebox-check.sh` 와 **같은 상수 한 자리**를
+#                        읽는다(종전엔 두 파일이 각자 기본값을 들고 bin/ci 가 대조했다)
 # macOS bash 3.2 대상.
 set -uo pipefail
 
-STALL_MIN="${STALL_MIN:-25}"
-TIMEBOX_HOURS="${ISSUE_TIMEBOX_HOURS:-1}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/constants.sh
+. "$SCRIPT_DIR/lib/constants.sh"   # 상수는 한 자리 (#427)
+TIMEBOX_HOURS="$ISSUE_TIMEBOX_HOURS"
 QUEUE_LOG="${PE_QUEUE_LOG:-$HOME/.claude/.local-ci/queue.log}"
 
 usage() {

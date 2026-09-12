@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 
 echo "[1/5] bash 문법 검사 (bash -n)"
 fail=0
-for f in scripts/*.sh hooks/*.sh bin/ci; do
+for f in scripts/*.sh scripts/lib/*.sh hooks/*.sh bin/ci; do
   if ! bash -n "$f"; then
     echo "  ✗ $f"
     fail=1
@@ -22,7 +22,11 @@ done
 
 echo "[2/5] shellcheck (설치 시)"
 if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck -S warning scripts/*.sh hooks/*.sh bin/ci
+  # `scripts/lib/*.sh` 는 source 전용 라이브러리다 — 소비처의 `# shellcheck source=` 지시로
+  # 따라 들어가지만, 라이브러리 자체의 문법·경고도 여기서 직접 문다 (#427).
+  # `-x` = source 지시(`# shellcheck source=…`)를 따라 들어간다 — 없으면 라이브러리가
+  # 정의하는 변수(`scope_file`)가 소비처에서 SC2154 로 뜬다 (#427).
+  shellcheck -x -S warning scripts/*.sh scripts/lib/*.sh hooks/*.sh bin/ci
 else
   echo "  shellcheck 미설치 — skip"
 fi
@@ -31,7 +35,7 @@ echo "[lint] 인용 안 한 heredoc 본문의 미이스케이프 백틱·\$( 검
 # 구분자를 인용하지 않은 heredoc 은 본문의 백틱·$( 를 **바깥 셸이 전개**한다 — 스텁 주석에
 # 백틱을 쓰면 그 안이 실행되고 그 자리가 빈 문자열로 치환돼 주석이 조용히 지워진다.
 # bin/ci 자신도 검사 대상이다(그 결함이 실제로 여기 있었다).
-scripts/lint-heredoc.sh scripts/*.sh hooks/*.sh bin/ci \
+scripts/lint-heredoc.sh scripts/*.sh scripts/lib/*.sh hooks/*.sh bin/ci \
   || { echo "  ↑ 백틱은 \\\` 로, 명령치환은 \\\$( 로 이스케이프하거나 <<'DELIM' 로 인용하라"; exit 1; }
 
 echo "[3/5] repo-dir.sh 스모크 테스트"
@@ -169,6 +173,22 @@ echo "[closeout] 반송 마커 집합은 bounce-state.sh 한 자리 (#171 · #19
 dup=$(grep -l 'BOUNCE_MARKERS' scripts/*.sh | grep -v '^scripts/bounce-state.sh$' || true)
 [ -z "$dup" ] || { echo "  ✗ 반송 마커 집합 정의가 bounce-state.sh 밖에도 있다: $dup"; exit 1; }
 
+echo "[#426] 판정 술어는 scripts/lib/loop.jq 한 자리 — 인라인 사본 0"
+# 접두(`머지 판정`/`Merge verdict`/`검증자 리뷰`/`마감 검증`/반송)·센티널·정지 라벨 술어를
+# 스크립트가 자기 벌로 들면 한쪽만 고쳐져 열한 소비처의 판정이 갈린다 — #171·#196·#218·
+# #221·#271·#379 가 전부 그 계열이다. 판정선은 **코드에 있는 술어 표현**이다: 산문·주석의
+# 언급(`# … startswith("hold:") … 로 본다`)은 사본이 아니므로 `#` 로 시작하는 줄은 뺀다.
+# 예외로 남길 것이 생기면 여기에 이유와 함께 적어라(오늘은 없다 —
+# `gh api -q` 안의 필터는 gh 내장 jq 라 `-L` 모듈을 못 쓴다: `closeout-reconcile.sh` 의
+# `index("needs-human")` 하나가 그 경우이고, 그 자리는 `.labels` 형상 검사와 한 몸이라
+# 아래 목록의 어느 패턴에도 걸리지 않는다).
+# 만료 조건: 없음 — 이 가드가 곧 `scripts/lib/loop.jq` SSOT 의 강제자다.
+dup=$(grep -nE 'startswith\("머지 판정|startswith\("Merge verdict|startswith\("검증자 리뷰|startswith\("마감 검증|startswith\("재디스패치|startswith\("재검증 실패|contains\("<!-- bodat:worker|startswith\("hold:"\)|== "needs-human"' \
+  scripts/*.sh | grep -vE '^[^:]+:[0-9]+: *#' || true)
+[ -z "$dup" ] || { echo "  ✗ 인라인 판정 술어가 남아 있다 — scripts/lib/loop.jq 를 include 하라 (#426):"; printf '%s\n' "$dup"; exit 1; }
+grep -qF 'def is_verdict_ok' scripts/lib/loop.jq \
+  || { echo "  ✗ scripts/lib/loop.jq 에 판정 술어 정의가 없다 — 위 검사가 의미를 잃었다"; exit 1; }
+
 echo "[closeout·verify-runner] bounce-comment 헬퍼 실행비트·생성 본문 판정 스모크 (#212 · #221)"
 # 문구 생성 헬퍼가 실행 비트 없이 배포되면 조용히 exit 126 → 두 SKILL 이 부르는 반송
 # 코멘트가 전부 게시 실패로 degrade 한다(PR#173 교훈, bounce-state.sh 와 같은 함정).
@@ -239,6 +259,7 @@ done
 hrun() {  # $1 = items JSON(스크립트가 -q 로 받는 형상)
   tmp=$(mktemp -d); mkdir "$tmp/sc"
   cp scripts/closeout-reconcile.sh "$tmp/sc/closeout-reconcile.sh"
+  cp -R scripts/lib "$tmp/sc/lib"   # SUT 사본이 source 하는 라이브러리 (#427)
   cat > "$tmp/sc/gh" <<STUB
 #!/bin/sh
 case "\$*" in
@@ -853,6 +874,7 @@ grep -qF 'headRefName' scripts/closeout-reconcile.sh \
 crun() {  # $1=headRefName → out 은 stdout, capture 파일은 $tmp/capture
   tmp=$(mktemp -d); mkdir "$tmp/sc"
   cp scripts/closeout-reconcile.sh "$tmp/sc/closeout-reconcile.sh"
+  cp -R scripts/lib "$tmp/sc/lib"   # SUT 사본이 source 하는 라이브러리 (#427)
   cat > "$tmp/sc/cleanup-worktree.sh" <<CAP
 #!/bin/sh
 printf '%s\n' "\$*" >> "$tmp/capture"
@@ -899,6 +921,11 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   awk 'BEGIN{RS="";ok=0} /<LESSONS_OR_/ && /lessons(-verifier)?\.md/ {ok=1} END{exit ok?0:1}' "$f" \
     || { echo "  ✗ $f: 1단계 검증자에 lessons 주입(<LESSONS_OR_ ← lessons-verifier.md) 지시 없음"; exit 1; }
 done
+
+echo "[test] loop.jq 판정 술어 격자 — 한/영·마커 위치·빈 배열·null 본문 + 뮤테이션 1건 (#426)"
+# 열한 소비처가 같은 술어를 부르므로 술어가 조용히 넓어지면 전부 같은 방향으로 틀어진다.
+# 만료 조건: 없음(라이브러리 자체의 행동 테스트 — 이 파일이 그 SSOT 의 가드다).
+bash scripts/tests/loop-jq.test.sh
 
 echo "[test] finish-classify.sh 분류 픽스처 테스트 (#88)"
 bash scripts/tests/finish-classify.test.sh
@@ -999,7 +1026,10 @@ echo "[#206] 진행 증거 술어는 progress-evidence.sh 한 자리 (#200 → #
 # 한쪽만 고쳐져 두 소비자(timebox-check · finish-classify)가 다른 수를 센다 — 반송 마커
 # 집합을 bounce-state.sh 한 자리에 묶은 것과 같은 규율(PR#191 교훈).
 # 판정선은 **정의**다: 산문·주석의 언급(`STALL_MIN 이내` 등)은 사본이 아니므로 안 건다.
-dup=$(grep -lE '^STALL_MIN=|^queue_alive\(\)' scripts/*.sh | grep -v '^scripts/progress-evidence.sh$' || true)
+# (#427) `STALL_MIN` 의 값 정의는 `scripts/lib/constants.sh` 로 옮겼다 — 술어(`queue_alive`)는
+# 여전히 progress-evidence.sh 한 자리다. 두 파일 밖에 정의가 생기면 여기서 빨개진다.
+dup=$(grep -lE '^STALL_MIN=|^: "\$\{STALL_MIN:=|^queue_alive\(\)' scripts/*.sh scripts/lib/*.sh \
+  | grep -v -e '^scripts/progress-evidence.sh$' -e '^scripts/lib/constants.sh$' || true)
 [ -z "$dup" ] || { echo "  ✗ 진행 증거 술어 정의가 progress-evidence.sh 밖에도 있다: $dup"; exit 1; }
 # 소비자 둘이 `"$SCRIPT_DIR/progress-evidence.sh"` 로 직접 exec 하므로 실행 비트를 문다
 # (비트가 빠지면 조용히 exit 126 → 판정이 항상 빈 값이 되고, 그 degrade 가 timebox 는
@@ -1051,7 +1081,9 @@ grep -qF -e '--claimed-at' -- scripts/progress-evidence.sh \
   || { echo "  ✗ scripts/progress-evidence.sh 에 --claimed-at 입력 없음"; exit 1; }
 # claim 신선도 상한은 timebox 와 **같은 상수**다(두 자리가 같은 경계를 쓴다는 계약).
 # 기본값이 갈리면 스윕과 ① Reconcile 이 서로 다른 창에서 같은 워커를 살리고 죽인다.
-tb_defaults=$(grep -ho 'ISSUE_TIMEBOX_HOURS:-[0-9]*' scripts/*.sh | sort -u)
+# (#427) 기본값의 한 자리는 `scripts/lib/constants.sh` 의 `: "${ISSUE_TIMEBOX_HOURS:=1}"` 다.
+# 두 리더(timebox-check·progress-evidence)가 자기 기본값을 되살리면 이 검사가 2건을 본다.
+tb_defaults=$(grep -ho 'ISSUE_TIMEBOX_HOURS:[-=][0-9]*' scripts/*.sh scripts/lib/*.sh | sort -u)
 tb_n=$(printf '%s\n' "$tb_defaults" | grep -c . || true)
 [ "$tb_n" -ge 1 ] \
   || { echo "  ✗ ISSUE_TIMEBOX_HOURS 기본값을 읽는 자리가 없다 — 가드가 의미를 잃었다"; exit 1; }
@@ -1157,21 +1189,24 @@ for f in SKILL.md SKILL.en.md; do
       || { echo "  ✗ $f 에 $token 배선 없음"; exit 1; }
   done
 done
-# 값 드리프트 검사 — 스크립트 기본값과 프롬프트가 말하는 값이 갈리면 디스패처는 문서의 값을
-# 믿는데 실제 판정은 스크립트 값으로 난다. 존재만 grep 하면 이 어긋남을 못 잡는다.
-# 상수마다 **정의가 사는 파일**을 함께 적는다 — STALL_MIN 은 #206 에서 진행 증거 술어와
-# 함께 progress-evidence.sh 로 옮겨 갔고, 그 이사를 이 검사가 모르면 드리프트 검사가
-# 조용히 빨개지거나(여기) 엉뚱한 파일을 SSOT 로 믿는다.
-for pair in 'STALL_MIN:scripts/progress-evidence.sh' \
-            'MAX_TIMEBOX_GRACE:scripts/timebox-check.sh' \
-            'ISSUE_TIMEBOX_HOURS:scripts/timebox-check.sh'; do
-  name="${pair%%:*}"
-  src="${pair#*:}"
-  want=$(sed -n "s/^[A-Z_]*=\"\${$name:-\([0-9][0-9]*\)}\".*/\1/p" "$src" | head -1)
-  [ -n "$want" ] || { echo "  ✗ $src 에서 $name 기본값을 읽지 못함"; exit 1; }
+# 값 드리프트 검사 — 종전엔 "스크립트 기본값 == SKILL 이 적은 값" 을 대조했다. (#427) 이제
+# 값은 `scripts/lib/constants.sh` **한 자리**에만 있고 SKILL 은 이름과 뜻만 적으므로, 대조 대신
+# **값이 문서로 되살아나지 않았는지**를 문다 — 두 벌이 없으면 드리프트도 없다.
+#   ⑴ 상수 파일에 기본값이 있는가(SSOT 가 비면 소비처가 `set -u` 로 죽는다)
+#   ⑵ SKILL 이 그 이름을 부르고 상수 파일을 가리키는가(디스패처가 값을 찾아갈 경로)
+#   ⑶ SKILL 에 `이름 = 숫자` 가 되살아나지 않았는가(두 벌 복원 금지)
+# 만료 조건: `## 상수` 절이 값을 적지 않는 형태를 유지하는 한 이 검사가 그 형태의 강제자다.
+for name in STALL_MIN MAX_TIMEBOX_GRACE ISSUE_TIMEBOX_HOURS; do
+  want=$(sed -n "s/^: \"\${$name:=\([0-9][0-9]*\)}\".*/\1/p" scripts/lib/constants.sh | head -1)
+  [ -n "$want" ] || { echo "  ✗ scripts/lib/constants.sh 에서 $name 기본값을 읽지 못함"; exit 1; }
   for f in SKILL.md SKILL.en.md; do
-    grep -qF "\`$name = $want\`" "$f" \
-      || { echo "  ✗ $f 의 $name 값이 스크립트 기본값($want)과 다르다"; exit 1; }
+    grep -qF "$name" "$f" \
+      || { echo "  ✗ $f 에 $name 이름이 없다 — 디스패처가 그 경계를 모른다"; exit 1; }
+    grep -qF 'scripts/lib/constants.sh' "$f" \
+      || { echo "  ✗ $f 가 값의 자리(scripts/lib/constants.sh)를 가리키지 않는다 (#427)"; exit 1; }
+    if grep -qE "\`$name = [0-9]" "$f"; then
+      echo "  ✗ $f 가 $name 값을 다시 적었다 — 값은 scripts/lib/constants.sh 한 자리다 (#427)"; exit 1
+    fi
   done
 done
 
@@ -1723,8 +1758,9 @@ for lbl in agent-ready agent:claimed needs-human P0 P1 harvesting epic flow:ci f
 done
 # ⑶ (#364) hold:ladder 설명이 가리키는 창 상수명은 resume-sweep.sh 의 실제 정의와 같은
 #    철자여야 한다 — 상수를 개명하면 설명이 없는 이름을 가리킨다.
-grep -qE '^RESUME_AFTER_MIN=' scripts/resume-sweep.sh \
-  || { echo "  ✗ scripts/resume-sweep.sh: 창 상수 RESUME_AFTER_MIN 정의가 없다 — hold:ladder 설명이 가리키는 상수명 (#364)"; exit 1; }
+# (#427) 정의 자리는 `scripts/lib/constants.sh` 로 이사했다 — 철자 대조라는 취지는 그대로다.
+grep -qE '^: "\$\{RESUME_AFTER_MIN:=' scripts/lib/constants.sh \
+  || { echo "  ✗ scripts/lib/constants.sh: 창 상수 RESUME_AFTER_MIN 정의가 없다 — hold:ladder 설명이 가리키는 상수명 (#364)"; exit 1; }
 
 # [#308] 반송 마커 시각이 스테일 클록에 든다 — 판별은 bounce-state.sh 한 자리
 echo "[#308] 반송 마커 시각 = 스테일 클록의 네 번째 입력 (판별 한 자리·한/영 산문)"
