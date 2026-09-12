@@ -23,6 +23,27 @@
 #      상한 소진·임박 경계·빈 페이지 정지·페이지 조회 실패는 상수를 env 로 줄여(창 5×3=15) 문다.
 #   ⑦ 스캔 끝 요약 `blocked-summary: 막힘 N건 (사람대기 블로커 M건)` 의 N·M 이 정확하다.
 #
+# 에픽 finish-first 정렬 (#257) — Ⓔ 로 시작하는 절:
+#   Ⓔ① `Epic #N` 이 하나도 없는 입력은 **순서가 종전과 같다**(회귀 0) + 새 필드는 null/false.
+#   Ⓔ② 같은 P 안에서 시작한 에픽의 leaf 가 앞으로 온다(늦게 만들어졌어도).
+#   Ⓔ③ 에픽 축은 P 경계를 넘지 않는다 — P1 단발이 P2 에픽 leaf 보다 앞.
+#   Ⓔ④ 시작 판정 출처 (a) — 진행 라벨(agent:claimed·flow:verify·flow:ready·harvesting) row 의
+#       **검색 item body**. 그 row 들에 `gh issue view --json body` 를 부르지 않는다(호출 수 불변).
+#   Ⓔ⑤ 시작 판정 출처 (b) — 최근 닫힌 leaf. 키는 **same-repo**(`repo#N`)라 다른 레포는 안 센다.
+#   Ⓔ⑥ 산문 속 `… epic #N …` 은 안 잡히고, 앞 공백만 있는 줄 시작은 잡힌다.
+#   Ⓔ⑦ (b) 조회 실패 → 정확한 warn 한 줄 + 시작 집합을 통째로 비워 **정렬은 종전**.
+#   Ⓔ⑧ `loop-status.sh`(#260)·`epic-sweep.sh`(#313) 와 정규식이 갈리지 않는다 — 계산기는 셋이고
+#       인벤토리(`scripts/*.sh` 전수)까지 센다(넷째가 생기면 여기서 먼저 말한다).
+#   Ⓔ⑨ 여러 줄 본문 — `Epic #N` 이 둘째 줄 이후여도 잡히고, 줄이 둘이면 **첫 매치 하나만**,
+#       선행 0(`Epic #0700`)은 벗겨 `loop-status.sh` 의 `tonumber` 와 같은 값이 된다.
+#   Ⓔ⑩ 진행 라벨 목록이 이 파일 안 **두 자리**(시작 판정 · 후보 제외)에서 갈리지 않는다.
+#   Ⓔ⑪ (b) 창(100) 절단·창 크기 미상도 말한다 — 부분 힌트를 침묵으로 두지 않는다.
+#   Ⓔ⑫ **두 축의 교차** — 페이지(#277·#315)를 전부 모은 뒤 **한 번** 정렬한다. 2페이지에만 있는
+#       시작-에픽 leaf 가 1페이지 후보보다 앞이고, 2페이지의 진행 라벨 row 가 (a) 출처가 된다.
+#   Ⓔ⑬ 정렬 키 경계값 — 빈 본문 · `Epic` 줄 없음 · P 라벨 없음이 겹쳐도 안 죽고 종전 자리를 지킨다.
+#   Ⓔ⑭ 큰 본문 × 페이지 병합 — 합치는 경로가 **argv 를 안 탄다**(ARG_MAX). `body` 를 실은 뒤
+#       페이로드가 21배가 됐다 — `--argjson` 이면 기본 상수 구간에서 틱이 통째로 죽는다.
+#
 # 기대 줄은 **손으로 적는다** — SUT 의 jq 를 베껴 기대값을 만들면 공허하게 통과한다
 # (loop-status.test.sh·transition.test.sh 의 관행).
 # 스텁은 **원본 API 응답 픽스처**를 들고 SUT 가 넘긴 `-q` 를 직접 적용한다 — 필터를 스텁이
@@ -72,6 +93,20 @@ done
 # gh-login.sh 의 사용자 확인 (REST → GraphQL 폴백 순서)
 case "$args" in
   *"api user"*|*"api graphql"*) printf 'tester\n'; exit 0 ;;
+esac
+
+# 에픽 시작 집합 (b) 의 닫힌 leaf 검색 (#257) — 후보 검색과 **다른 토큰**으로 적는다
+# (`search` 를 세는 기존 칸이 이 호출까지 끌어가면 안 된다).
+case "$args" in
+  *"is:closed"*)
+    printf 'closed-scan\n' >> "$STUB_CALL_LOG"
+    if [ -f "$STUB_DIR/closed.fail" ]; then
+      cat "$STUB_DIR/closed.fail" >&2
+      exit 1
+    fi
+    [ -n "$jqf" ] || { echo "gh stub: 닫힌 leaf 검색은 -q 로 불러야 한다: $args" >&2; exit 1; }
+    jq -r "$jqf" "$STUB_DIR/closed.json" || exit 1
+    exit 0 ;;
 esac
 
 case "$args" in
@@ -133,15 +168,20 @@ mkfx() {  # mkfx <이름> <total_count> → 픽스처 디렉터리 경로(빈 it
   local fx="$tmp/fx.$1"
   mkdir -p "$fx"
   printf '{"total_count":%s,"items":[]}\n' "$2" > "$fx/search.json"
+  # (b) 닫힌 leaf 검색은 **매 틱 한 번** 불린다 — 기본은 빈 결과(시작 집합 없음)다.
+  printf '{"total_count":0,"items":[]}\n' > "$fx/closed.json"
   printf '%s' "$fx"
 }
 add_issue_to() {  # add_issue_to <fx> <검색파일> <num> <라벨 JSON 배열(문자열)> <제목> <본문> [생성시각]
   local fx="$1" file="$2" num="$3" labels="$4" title="$5" body="$6" created="${7:-2026-01-01T00:00:00Z}"
-  jq --argjson n "$num" --argjson l "$labels" --arg t "$title" --arg c "$created" \
+  # 실제 REST `search/issues` 의 item 은 `body` 를 포함한다(#257 실측) — 진행 라벨 row 의
+  # 에픽 판정이 그 필드를 쓰므로 스텁도 같은 형상이어야 한다. 페이지를 이어 받아도(#277)
+  # 같다: 2페이지 이후 item 에도 본문이 실려야 (a) 가 그 장의 leaf 를 본다.
+  jq --argjson n "$num" --argjson l "$labels" --arg t "$title" --arg c "$created" --arg b "$body" \
     '.items += [{repository_url: "https://api.github.com/repos/owner/repo",
                  number: $n, title: $t,
                  labels: [$l[] | {name: .}],
-                 created_at: $c}]' "$fx/$file" > "$fx/s.tmp"
+                 created_at: $c, body: $b}]' "$fx/$file" > "$fx/s.tmp"
   mv "$fx/s.tmp" "$fx/$file"
   jq -n --arg b "$body" '{body: $b}' > "$fx/body.$num.json"
 }
@@ -165,11 +205,39 @@ bulk_issues() {  # bulk_issues <fx> <검색파일> <시작번호> <개수> — �
   i="$from"; end=$((from + n))
   while [ "$i" -lt "$end" ]; do printf '{"body":""}\n' > "$fx/body.$i.json"; i=$((i + 1)); done
 }
+bulk_big_issues() {  # bulk_big_issues <fx> <검색파일> <시작번호> <개수> <본문바이트>
+  # 본문이 큰 후보를 한 번에. ARG_MAX 격자(Ⓔ⑭) 전용 — 페이지 병합 페이로드를 키운다.
+  local fx="$1" file="$2" from="$3" n="$4" sz="$5" i end
+  jq --argjson f "$from" --argjson n "$n" --argjson sz "$sz" \
+    '.items += [range($f; $f + $n) | {
+        repository_url: "https://api.github.com/repos/owner/repo",
+        number: ., title: "big \(.)",
+        labels: [{name: "agent-ready"}],
+        created_at: "2026-03-01T00:00:00Z",
+        body: ("x" * $sz)}]' "$fx/$file" > "$fx/b.tmp"
+  mv "$fx/b.tmp" "$fx/$file"
+  i="$from"; end=$((from + n))
+  while [ "$i" -lt "$end" ]; do printf '{"body":""}\n' > "$fx/body.$i.json"; i=$((i + 1)); done
+}
 add_blocker() {  # add_blocker <fx> <num> <state> <라벨 JSON 배열(문자열)>
   jq -n --arg s "$3" --argjson l "$4" '{state: $s, labels: [$l[] | {name: .}]}' > "$1/blocker.$2.json"
 }
 add_blocker_fail() {  # add_blocker_fail <fx> <num> <에러문>
   printf '%s\n' "$3" > "$1/blocker.$2.fail"
+}
+add_closed_leaf() {  # add_closed_leaf <fx> <owner/repo> <본문>
+  # total_count 는 실응답처럼 items 수를 따라간다(창 절단 픽스처는 set_closed_total 로 따로 세운다).
+  jq --arg r "https://api.github.com/repos/$2" --arg b "$3" \
+    '.items += [{repository_url: $r, body: $b}] | .total_count = (.items | length)' \
+    "$1/closed.json" > "$1/c.tmp"
+  mv "$1/c.tmp" "$1/closed.json"
+}
+set_closed_total() {  # set_closed_total <fx> <total_count(JSON — 숫자 또는 null)>
+  jq --argjson t "$2" '.total_count = $t' "$1/closed.json" > "$1/c.tmp"
+  mv "$1/c.tmp" "$1/closed.json"
+}
+set_closed_fail() {  # set_closed_fail <fx> <에러문>
+  printf '%s\n' "$2" > "$1/closed.fail"
 }
 
 OUT=""; ERR=""; LOG=""; RC=0
@@ -204,7 +272,9 @@ cat > "$tmp/want.a" <<'WANT'
     "number": 10,
     "title": "블로커 없음",
     "priority": 1,
-    "createdAt": "2026-01-01T00:00:00Z"
+    "createdAt": "2026-01-01T00:00:00Z",
+    "epic": null,
+    "epic_started": false
   }
 ]
 WANT
@@ -468,6 +538,307 @@ ck "⑨-e 페이지 조회 실패 → exit 1" "$RC" "1"
 ck "⑨-e 부분 후보 목록을 stdout 으로 내지 않는다" "$(cat "$OUT")" ""
 has_line "⑨-e 실패를 말한다" "$ERR" \
   "eligible-issues: 검색 page=2 조회 실패 — 부분 후보 목록을 정상으로 쓰지 않는다(이번 틱 중단): gh: HTTP 502 Bad Gateway"
+
+# ══ 에픽 finish-first 정렬 (#257) ═════════════════════════════════════════
+# 기대 순서는 **손으로** 적는다 — SUT 의 sort_by 를 베끼면 공허하게 통과한다.
+
+# ── Ⓔ① `Epic #N` 이 하나도 없으면 순서가 종전과 같다(회귀 0) ──────────────
+# 종전 규칙만으로 손계산: P1(#41) → P2 는 오래된 순(#42 01-02, #40 01-03).
+fx=$(mkfx e1 34)
+add_issue "$fx" 40 '["agent-ready","P2"]' '에픽 없음 A' '본문만 있다' '2026-01-03T00:00:00Z'
+add_issue "$fx" 41 '["agent-ready","P1"]' '에픽 없음 B' '본문만 있다' '2026-01-05T00:00:00Z'
+add_issue "$fx" 42 '["agent-ready","P2"]' '에픽 없음 C' '본문만 있다' '2026-01-02T00:00:00Z'
+run_sut "$fx"
+ck "Ⓔ① exit 0" "$RC" "0"
+ck "Ⓔ① 순서는 종전과 동일(P → 오래된 순)" "$(jq -c '[.[].number]' "$OUT")" '[41,42,40]'
+ck "Ⓔ① 새 필드는 맨 뒤에 붙고 기존 필드는 이름·순서 불변" \
+  "$(jq -c '.[0] | keys_unsorted' "$OUT")" \
+  '["repo","number","title","priority","createdAt","epic","epic_started"]'
+ck "Ⓔ① epic 은 null" "$(jq -c '[.[].epic]' "$OUT")" '[null,null,null]'
+ck "Ⓔ① epic_started 는 false" "$(jq -c '[.[].epic_started]' "$OUT")" '[false,false,false]'
+ck "Ⓔ① 닫힌 leaf 검색 1회(추가 gh 호출은 이것뿐)" "$(count_of "$LOG" 'closed-scan')" "1"
+ck "Ⓔ① 후보 검색은 여전히 1회" "$(count_of "$LOG" 'search')" "1"
+no_line "Ⓔ① 조회 성공이면 warn 없음" "$ERR" "warn: 에픽 시작 집합 조회 실패"
+
+# ── Ⓔ② 같은 P 안에서 시작한 에픽의 leaf 가 앞 ────────────────────────────
+# #51 은 #50 보다 8일 늦게 만들어졌지만 에픽 #700 이 이미 시작됐다(닫힌 leaf).
+fx=$(mkfx e2 34)
+add_issue "$fx" 50 '["agent-ready","P2"]' '에픽 없는 P2' '본문만 있다' '2026-01-01T00:00:00Z'
+add_issue "$fx" 51 '["agent-ready","P2"]' '시작한 에픽의 P2 leaf' \
+  'Epic #700
+
+배경 설명' '2026-01-09T00:00:00Z'
+add_closed_leaf "$fx" owner/repo 'Epic #700
+닫힌 leaf'
+run_sut "$fx"
+ck "Ⓔ② exit 0" "$RC" "0"
+ck "Ⓔ② 시작한 에픽의 leaf 가 앞" "$(jq -c '[.[].number]' "$OUT")" '[51,50]'
+ck "Ⓔ② epic 번호를 싣는다" "$(jq -c '[.[] | {n:.number, e:.epic, s:.epic_started}]' "$OUT")" \
+  '[{"n":51,"e":700,"s":true},{"n":50,"e":null,"s":false}]'
+
+# ── Ⓔ③ 에픽 축은 P 경계를 넘지 않는다 ────────────────────────────────────
+fx=$(mkfx e3 34)
+add_issue "$fx" 60 '["agent-ready","P1"]' 'P1 단발(에픽 없음)' '본문만 있다' '2026-01-09T00:00:00Z'
+add_issue "$fx" 61 '["agent-ready","P2"]' 'P2 시작-에픽 leaf' 'Epic #700' '2026-01-01T00:00:00Z'
+add_closed_leaf "$fx" owner/repo 'Epic #700'
+run_sut "$fx"
+ck "Ⓔ③ exit 0" "$RC" "0"
+ck "Ⓔ③ P 가 먼저다 — P1 단발이 P2 에픽 leaf 보다 앞" "$(jq -c '[.[].number]' "$OUT")" '[60,61]'
+ck "Ⓔ③ P2 leaf 는 시작 판정을 받았다(순서만 P 에 졌다)" \
+  "$(jq -c '[.[] | select(.number == 61) | .epic_started]' "$OUT")" '[true]'
+
+# ── Ⓔ④ 출처 (a) 만으로 — 진행 라벨 row 의 검색 item body ─────────────────
+# 진행 라벨 네 가지가 모두 시작 판정을 낸다. 그 row 들엔 `gh issue view --json body` 를
+# 부르지 않는다(추가 호출 0 — 그게 이 출처를 고른 이유다).
+fx=$(mkfx e4 34)
+add_issue "$fx" 30 '["agent-ready","agent:claimed"]' '구현중 leaf' 'Epic #700'
+add_issue "$fx" 31 '["agent-ready","flow:verify"]'   '검증중 leaf' 'Epic #701'
+add_issue "$fx" 32 '["agent-ready","flow:ready"]'    '마감대기 leaf' 'Epic #702'
+add_issue "$fx" 33 '["agent-ready","harvesting"]'    '마감중 leaf' 'Epic #703'
+add_issue "$fx" 34 '["agent-ready","P2"]' '에픽 없음' '본문만 있다'      '2026-01-01T00:00:00Z'
+add_issue "$fx" 35 '["agent-ready","P2"]' 'claimed 에픽 leaf' 'Epic #700' '2026-01-05T00:00:00Z'
+add_issue "$fx" 36 '["agent-ready","P2"]' 'verify 에픽 leaf'  'Epic #701' '2026-01-06T00:00:00Z'
+add_issue "$fx" 37 '["agent-ready","P2"]' 'ready 에픽 leaf'   'Epic #702' '2026-01-07T00:00:00Z'
+add_issue "$fx" 38 '["agent-ready","P2"]' 'harvest 에픽 leaf' 'Epic #703' '2026-01-08T00:00:00Z'
+run_sut "$fx"
+ck "Ⓔ④ exit 0" "$RC" "0"
+ck "Ⓔ④ 진행 라벨 네 가지가 모두 시작 판정을 낸다" "$(jq -c '[.[].number]' "$OUT")" '[35,36,37,38,34]'
+ck "Ⓔ④ agent:claimed row 본문 조회 0회" "$(count_of "$LOG" 'body 30')" "0"
+ck "Ⓔ④ flow:verify row 본문 조회 0회"   "$(count_of "$LOG" 'body 31')" "0"
+ck "Ⓔ④ flow:ready row 본문 조회 0회"    "$(count_of "$LOG" 'body 32')" "0"
+ck "Ⓔ④ harvesting row 본문 조회 0회"    "$(count_of "$LOG" 'body 33')" "0"
+ck "Ⓔ④ 닫힌 leaf 검색은 (a) 와 무관하게 1회" "$(count_of "$LOG" 'closed-scan')" "1"
+
+# ── Ⓔ⑤ 출처 (b) 만으로 · 키는 same-repo ──────────────────────────────────
+# 닫힌 leaf 는 owner/repo 의 #800 과 other/repo 의 #801 둘. #801 은 **다른 레포**라
+# owner/repo#72 를 시작시키지 않는다(같은 번호를 가진 남의 에픽에 묻어가지 않는다).
+fx=$(mkfx e5 34)
+add_issue "$fx" 70 '["agent-ready","P2"]' '같은 레포 에픽 leaf' 'Epic #800' '2026-01-09T00:00:00Z'
+add_issue "$fx" 71 '["agent-ready","P2"]' '에픽 없음'           '본문만 있다' '2026-01-01T00:00:00Z'
+add_issue "$fx" 72 '["agent-ready","P2"]' '다른 레포 에픽 번호' 'Epic #801' '2026-01-08T00:00:00Z'
+add_closed_leaf "$fx" owner/repo 'Epic #800'
+add_closed_leaf "$fx" other/repo 'Epic #801'
+run_sut "$fx"
+ck "Ⓔ⑤ exit 0" "$RC" "0"
+ck "Ⓔ⑤ 같은 레포 에픽만 시작 — #72 는 종전 자리" "$(jq -c '[.[].number]' "$OUT")" '[70,71,72]'
+ck "Ⓔ⑤ 다른 레포 닫힌 leaf 는 시작 판정을 못 준다" \
+  "$(jq -c '[.[] | select(.number == 72) | {e:.epic, s:.epic_started}]' "$OUT")" \
+  '[{"e":801,"s":false}]'
+
+# ── Ⓔ⑥ 산문 속 `epic #N` 은 안 잡히고, 앞 공백 줄 시작은 잡힌다 ──────────
+fx=$(mkfx e6 34)
+add_issue "$fx" 80 '["agent-ready","P2"]' '산문 언급' \
+  '이 건은 epic #700 의 꼬리다 — 줄 시작이 아니다.' '2026-01-09T00:00:00Z'
+add_issue "$fx" 81 '["agent-ready","P2"]' '에픽 없음' '본문만 있다' '2026-01-01T00:00:00Z'
+add_issue "$fx" 82 '["agent-ready","P2"]' '앞 공백 줄 시작' \
+  '   epic #700' '2026-01-10T00:00:00Z'
+add_closed_leaf "$fx" owner/repo 'Epic #700'
+run_sut "$fx"
+ck "Ⓔ⑥ exit 0" "$RC" "0"
+ck "Ⓔ⑥ 산문은 안 잡히고 앞 공백 줄 시작만 앞으로" "$(jq -c '[.[].number]' "$OUT")" '[82,81,80]'
+ck "Ⓔ⑥ 산문 언급 이슈의 epic 은 null" \
+  "$(jq -c '[.[] | select(.number == 80) | .epic]' "$OUT")" '[null]'
+ck "Ⓔ⑥ 앞 공백·소문자도 같은 에픽으로 읽는다" \
+  "$(jq -c '[.[] | select(.number == 82) | {e:.epic, s:.epic_started}]' "$OUT")" \
+  '[{"e":700,"s":true}]'
+
+# ── Ⓔ⑦ (b) 조회 실패 → warn + 정렬은 종전 ────────────────────────────────
+# (a) 에 기여자(#90, agent:claimed · Epic #700)가 있어도 시작 집합을 **통째로** 비운다 —
+# 절반만 되비친 순서는 아무도 재현할 수 없다. 조용한 성공으로 위장하지 않는다.
+fx=$(mkfx e7 34)
+add_issue "$fx" 90 '["agent-ready","agent:claimed"]' '구현중 leaf' 'Epic #700'
+add_issue "$fx" 91 '["agent-ready","P2"]' '에픽 leaf' 'Epic #700' '2026-01-09T00:00:00Z'
+add_issue "$fx" 92 '["agent-ready","P2"]' '에픽 없음' '본문만 있다' '2026-01-01T00:00:00Z'
+set_closed_fail "$fx" 'gh: HTTP 503 Service Unavailable'
+run_sut "$fx"
+ck "Ⓔ⑦ 실패해도 exit 0(계속 진행)" "$RC" "0"
+has_line "Ⓔ⑦ 침묵하지 않는다 — warn 한 줄" "$ERR" \
+  "warn: 에픽 시작 집합 조회 실패 — finish-first 없이 정렬"
+ck "Ⓔ⑦ 정렬은 종전(오래된 순)" "$(jq -c '[.[].number]' "$OUT")" '[92,91]'
+ck "Ⓔ⑦ epic 파싱 자체는 살아 있다(시작 판정만 꺼진다)" \
+  "$(jq -c '[.[] | select(.number == 91) | {e:.epic, s:.epic_started}]' "$OUT")" \
+  '[{"e":700,"s":false}]'
+no_line "Ⓔ⑦ 빈 큐로 위장하지 않는다" "$OUT" "[]"
+
+# ── Ⓔ⑧ 두 번째 계산기 금지 — `loop-status.sh` 의 `epic_of` 와 **같은 판정** ────────
+# 이 레포는 같은 규칙이 두 파일에 갈라져 사람 눈에 안 보이는 두 번째 계산기가 생기는
+# 형상을 이미 겪었다(#197). 두 정규식을 원문에서 뽑아 **이름 붙은 그룹 표기만 벗기고**
+# 문자 그대로 맞댄다 — 한쪽의 앵커·문자 클래스·대소문자 무시가 바뀌면 여기서 빨개진다.
+# (끝 앵커 `$` 채택 여부는 #259 범위다 — 여기서는 "둘이 같다"만 잰다.)
+ei_rx=$(grep -oE "\^\[\[:space:\]\]\*epic\[\[:space:\]\]\+#\[0-9\]\+" "$DIR/eligible-issues.sh" | head -n 1)
+ls_rx=$(grep -oE "\^\[\[:space:\]\]\*epic\[\[:space:\]\]\+#\(\?<n>\[0-9\]\+\)" "$DIR/loop-status.sh" | head -n 1)
+# jq 쪽의 `(?<n>…)` 는 **캡처 이름**일 뿐 판정에 관여하지 않는다 — 표기만 벗긴다.
+ls_norm=$(printf '%s' "$ls_rx" | sed 's/(?<n>//; s/)$//')
+ck "Ⓔ⑧ eligible 쪽 정규식을 실제로 찾았다" "$ei_rx" '^[[:space:]]*epic[[:space:]]+#[0-9]+'
+ck "Ⓔ⑧ loop-status 쪽 정규식을 실제로 찾았다" "$ls_rx" '^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)'
+ck "Ⓔ⑧ 두 파일의 에픽 판정이 갈리지 않는다" "$ei_rx" "$ls_norm"
+# 대소문자 무시도 양쪽 다여야 한다(한쪽만 `-i`/`"i"` 가 빠지면 `Epic`/`epic` 이 갈린다).
+ck "Ⓔ⑧ eligible 은 grep -oiE(대소문자 무시)" \
+  "$(grep -c -- "grep -oiE '\^\[\[:space:\]\]\*epic" "$DIR/eligible-issues.sh")" "1"
+ck "Ⓔ⑧ loop-status 는 capture(...; \"i\")" \
+  "$(grep -c -- 'capture("\^\[\[:space:\]\]\*epic\[\[:space:\]\]+#(?<n>\[0-9\]+)"; "i")' "$DIR/loop-status.sh")" "1"
+# 머지로 계산기가 **셋**이 됐다 (#313 이 `epic-sweep.sh` 를 더했다) — 인벤토리를 파일 목록으로
+# 떠서 전수로 맞댄다. 새 파일이 같은 줄을 또 파싱하면 여기서 개수가 어긋나 빨개진다.
+es_rx=$(grep -oE "\^\[\[:space:\]\]\*epic\[\[:space:\]\]\+#\(\?<n>\[0-9\]\+\)" "$DIR/epic-sweep.sh" | head -n 1)
+es_norm=$(printf '%s' "$es_rx" | sed 's/(?<n>//; s/)$//')
+ck "Ⓔ⑧ epic-sweep 쪽 정규식을 실제로 찾았다" "$es_rx" '^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)'
+ck "Ⓔ⑧ 세 파일의 에픽 판정이 갈리지 않는다" "$es_norm" "$ei_rx"
+ck "Ⓔ⑧ epic-sweep 도 capture(...; \"i\")" \
+  "$(grep -c -- 'capture("\^\[\[:space:\]\]\*epic\[\[:space:\]\]+#(?<n>\[0-9\]+)"; "i")' "$DIR/epic-sweep.sh")" "1"
+# 인벤토리 자체를 센다 — `Epic #N` 을 파싱하는 스크립트가 넷째로 늘면 이 줄이 먼저 말한다.
+epic_parsers=$(grep -lE "\^\[\[:space:\]\]\*epic\[\[:space:\]\]\+#" "$DIR"/*.sh | sed "s|.*/||" | sort | tr '\n' ' ')
+ck "Ⓔ⑧ 에픽 판정을 가진 스크립트는 이 셋뿐" "$epic_parsers" "eligible-issues.sh epic-sweep.sh loop-status.sh "
+
+# ── Ⓔ⑨ 여러 줄 본문 · 첫 매치 하나만 · 선행 0 ────────────────────────────
+# ⑴ `Epic #N` 이 본문 첫 줄이 아니어도 잡힌다(실제 이슈 본문의 정상형).
+# ⑵ `Epic #` 줄이 둘이면 **첫 것만** — 둘째까지 집으면 `--argjson` 이 죽어 큐가 멈춘다.
+# ⑶ `Epic #0700` 의 선행 0 은 벗긴다 — `loop-status.sh` 는 `tonumber` 라 이미 700 이고,
+#    안 벗기면 `--argjson` 이 `0700` 을 못 읽어 스크립트가 그 자리에서 죽는다.
+fx=$(mkfx e9 34)
+add_issue "$fx" 100 '["agent-ready","P2"]' '둘째 줄의 에픽 · 줄 둘' \
+  '배경 한 줄
+Epic #700
+Epic #701' '2026-01-09T00:00:00Z'
+add_issue "$fx" 101 '["agent-ready","P2"]' '에픽 없음' '본문만 있다' '2026-01-01T00:00:00Z'
+add_issue "$fx" 102 '["agent-ready","P2"]' '선행 0' 'Epic #0700' '2026-01-10T00:00:00Z'
+add_closed_leaf "$fx" owner/repo 'Epic #700'
+run_sut "$fx"
+ck "Ⓔ⑨ exit 0(선행 0·복수 줄이 큐를 죽이지 않는다)" "$RC" "0"
+ck "Ⓔ⑨ 둘째 줄의 에픽도 잡고, 첫 매치 하나만 쓴다" \
+  "$(jq -c '[.[] | select(.number == 100) | {e:.epic, s:.epic_started}]' "$OUT")" \
+  '[{"e":700,"s":true}]'
+ck "Ⓔ⑨ 선행 0 은 벗긴다(loop-status 의 tonumber 와 같은 값)" \
+  "$(jq -c '[.[] | select(.number == 102) | {e:.epic, s:.epic_started}]' "$OUT")" \
+  '[{"e":700,"s":true}]'
+ck "Ⓔ⑨ 시작한 둘이 앞, 그 안에서는 오래된 순" "$(jq -c '[.[].number]' "$OUT")" '[100,102,101]'
+
+# ── Ⓔ⑩ 진행 라벨 목록이 이 파일 안 두 자리에서 갈리지 않는다 ──────────────
+# 시작 판정(`any(. == …)`)과 후보 제외(`case ",$labels," in … continue`)는 같은 집합이어야
+# 한다. 제외 쪽에만 새 진행 라벨이 들어가면 그 레인의 leaf 는 후보에서도 빠지고 시작
+# 판정도 못 줘서 finish-first 가 조용히 한 출처를 잃는다(빨개지는 곳이 없던 자리다).
+# `needs-human` 은 **의도된 차이** — 진행이 아니라 사람 대기라 시작 집합에 안 든다.
+a_line=$(grep -n 'any(\. ==' "$DIR/eligible-issues.sh" | head -n 1)
+a_labels=$(printf '%s' "$a_line" | grep -oE '"[^"]+"' | tr -d '"' | sort -u)
+loop_labels=$(grep -E '^[[:space:]]*case ",\$labels," in .*continue' "$DIR/eligible-issues.sh" \
+  | grep -oE '\*",[^,"]+,"\*' | sed 's/^\*",//; s/,"\*$//' | sort -u)
+loop_prog=$(printf '%s\n' "$loop_labels" | grep -v '^needs-human$' | grep -v '^$' | sort -u)
+ck "Ⓔ⑩ 시작 판정 쪽 진행 라벨 4개를 실제로 찾았다" \
+  "$(printf '%s\n' "$a_labels" | grep -c .)" "4"
+ck "Ⓔ⑩ 후보 제외 쪽에서도 같은 4개를 찾았다" \
+  "$(printf '%s\n' "$loop_prog" | grep -c .)" "4"
+ck "Ⓔ⑩ 두 자리의 진행 라벨 집합이 같다" \
+  "$(printf '%s' "$a_labels" | tr '\n' ' ')" "$(printf '%s' "$loop_prog" | tr '\n' ' ')"
+
+# ── Ⓔ⑪ (b) 창 절단·창 크기 미상도 말한다 ─────────────────────────────────
+# 이 검색은 한 장(per_page 100)뿐이다 — 닫힌 leaf 가 창을 넘으면 시작 집합이 **부분**이
+# 되고, 그 사실이 침묵하면 "정렬이 왜 이렇지" 를 아무도 되짚을 수 없다.
+TRUNC_101='warn: 에픽 시작 집합 부분 조회 — 최근 14일 닫힌 leaf 101건 > 창 100, finish-first 힌트가 부분적이다'
+fx=$(mkfx e11a 34)
+add_issue "$fx" 110 '["agent-ready","P2"]' '에픽 leaf' 'Epic #700' '2026-01-09T00:00:00Z'
+add_issue "$fx" 111 '["agent-ready","P2"]' '에픽 없음' '본문만 있다' '2026-01-01T00:00:00Z'
+add_closed_leaf "$fx" owner/repo 'Epic #700'
+set_closed_total "$fx" 101
+run_sut "$fx"
+ck "Ⓔ⑪ 절단이어도 exit 0" "$RC" "0"
+has_line "Ⓔ⑪ 101 → 절단 warn" "$ERR" "$TRUNC_101"
+ck "Ⓔ⑪ 절단이어도 받아 온 만큼은 시작 판정에 쓴다" "$(jq -c '[.[].number]' "$OUT")" '[110,111]'
+fx=$(mkfx e11b 34)
+add_issue "$fx" 112 '["agent-ready","P2"]' '에픽 없음' '본문만 있다' '2026-01-01T00:00:00Z'
+set_closed_total "$fx" 100
+run_sut "$fx"
+no_line "Ⓔ⑪ 100 → 침묵(경계는 >)" "$ERR" "에픽 시작 집합 부분 조회"
+fx=$(mkfx e11c 34)
+add_issue "$fx" 113 '["agent-ready","P2"]' '에픽 없음' '본문만 있다' '2026-01-01T00:00:00Z'
+set_closed_total "$fx" null
+run_sut "$fx"
+ck "Ⓔ⑪ 미상이어도 exit 0" "$RC" "0"
+has_line "Ⓔ⑪ total_count 미상 → 침묵이 아니라 warn" "$ERR" \
+  "warn: 에픽 시작 집합 창 크기 미상 — total_count 를 못 읽었다(닫힌 leaf 절단 여부 판정 불가)"
+no_line "Ⓔ⑪ 미상은 조회 실패가 아니다" "$ERR" "에픽 시작 집합 조회 실패"
+
+# ── Ⓔ⑫ 두 축의 교차 — 페이지를 **전부 모은 뒤 한 번** 정렬한다 (#257 × #277) ──
+# 이 칸이 이번 머지 해소의 심장이다. 페이지네이션(#315)과 finish-first(#257)는 같은 함수를
+# 고치는데, 정렬이 **페이지별로** 돌면 전역 순서가 아니라 "1페이지 안에서의 순서 + 2페이지
+# 안에서의 순서" 가 되어 'Epic 먼저' 가 거짓이 된다 — 그 형상에선 아래 두 단언이 갈린다:
+#   · 2페이지에만 있는 시작-에픽 leaf(#210)가 1페이지의 에픽 없는 후보들보다 **앞**에 온다.
+#   · 2페이지의 진행 라벨 row(#211)가 1페이지 후보(#202)에 **시작 판정을 준다**((a) 출처가
+#     1페이지에 갇히면 #202 는 종전 자리로 떨어진다).
+# 창은 env 로 5 × 3 페이지로 줄인다(총 7건 = 1페이지 5 + 2페이지 2).
+fx=$(mkfx e12 7)
+mkpage "$fx" 2 7
+add_issue "$fx" 200 '["agent-ready","P2"]' '에픽 없음 (1p)' '본문만 있다' '2026-01-01T00:00:00Z'
+add_issue "$fx" 201 '["agent-ready","P2"]' '에픽 없음 (1p)' '본문만 있다' '2026-01-02T00:00:00Z'
+add_issue "$fx" 202 '["agent-ready","P2"]' '2페이지 row 가 시작시킨 leaf (1p)' 'Epic #701' '2026-01-08T00:00:00Z'
+add_issue "$fx" 203 '["agent-ready","P2"]' '에픽 없음 (1p)' '본문만 있다' '2026-01-03T00:00:00Z'
+add_issue "$fx" 204 '["agent-ready","P2"]' '에픽 없음 (1p)' '본문만 있다' '2026-01-04T00:00:00Z'
+add_issue_to "$fx" search.p2.json 210 '["agent-ready","P2"]' '닫힌 leaf 가 시작시킨 leaf (2p)' \
+  'Epic #700' '2026-01-09T00:00:00Z'
+add_issue_to "$fx" search.p2.json 211 '["agent-ready","flow:verify"]' '2페이지의 진행 라벨 row' \
+  'Epic #701' '2026-01-05T00:00:00Z'
+add_closed_leaf "$fx" owner/repo 'Epic #700'
+run_sut_small "$fx"
+ck "Ⓔ⑫ exit 0" "$RC" "0"
+ck "Ⓔ⑫ 2페이지를 이어 받았다" "$(count_of "$LOG" 'search page=2')" "1"
+ck "Ⓔ⑫ page=3 은 안 부른다(2페이지로 total 7 을 덮었다)" "$(count_of "$LOG" 'search page=3')" "0"
+# 손계산: 전부 P2 → 시작한 에픽 먼저(202 01-08 · 210 01-09) → 나머지는 오래된 순.
+ck "Ⓔ⑫ 전역 정렬 — 페이지를 모은 뒤 한 번 정렬한다" \
+  "$(jq -c '[.[].number]' "$OUT")" '[202,210,200,201,203,204]'
+# 페이지별로 따로 정렬해 이어 붙였다면 1페이지 6건이 먼저 오고 210 이 꼴찌다.
+ck "Ⓔ⑫ 페이지별 정렬 순서가 아니다" \
+  "$(jq -c '[.[].number] == [202,200,201,203,204,210]' "$OUT")" 'false'
+ck "Ⓔ⑫ (a) 출처가 2페이지 row 에서도 나온다 — #202 가 시작 판정을 받았다" \
+  "$(jq -c '[.[] | select(.number == 202) | {e:.epic, s:.epic_started}]' "$OUT")" \
+  '[{"e":701,"s":true}]'
+ck "Ⓔ⑫ 2페이지 진행 라벨 row 본문 조회 0회(추가 호출 없음)" "$(count_of "$LOG" 'body 211')" "0"
+ck "Ⓔ⑫ 진행 라벨 row 는 후보에서 빠진다" \
+  "$(jq -c '[.[].number] | index(211)' "$OUT")" 'null'
+
+# ── Ⓔ⑬ 정렬 키의 경계값 — 빈 본문 · `Epic` 줄 없음 · P 라벨 없음 ──────────
+# `gh issue view --json body -q '.body // ""'` 는 본문이 비면 **빈 문자열**을 준다. 그 값이
+# `epic_of` 에 들어가면 grep 이 한 줄도 못 물어 파이프가 비는데, 이 스크립트는
+# `set -euo pipefail` 아래라 그 자리에 가드가 없으면 큐 전체가 멈춘다. P 라벨 없음(prio=3)
+# 까지 같은 픽스처에서 함께 문다 — 세 경계가 겹치는 행이 실제 재고에 가장 흔하다.
+fx=$(mkfx e13 3)
+add_issue "$fx" 220 '["agent-ready"]'      'P 없음 · 빈 본문'   '' '2026-01-02T00:00:00Z'
+add_issue "$fx" 221 '["agent-ready","P2"]' 'P2 · 빈 본문'       '' '2026-01-01T00:00:00Z'
+add_issue "$fx" 222 '["agent-ready"]'      'P 없음 · 시작 에픽' 'Epic #700' '2026-01-05T00:00:00Z'
+add_closed_leaf "$fx" owner/repo 'Epic #700'
+run_sut "$fx"
+ck "Ⓔ⑬ 빈 본문에서도 exit 0(파이프라인이 안 죽는다)" "$RC" "0"
+# 손계산: P2(221) → P 없음(prio 3) 안에서 시작한 에픽(222) → 나머지(220).
+ck "Ⓔ⑬ P 없음 칸 안에서도 finish-first 가 돈다" "$(jq -c '[.[].number]' "$OUT")" '[221,222,220]'
+ck "Ⓔ⑬ 빈 본문은 epic null · epic_started false" \
+  "$(jq -c '[.[] | select(.number == 220 or .number == 221) | {e:.epic, s:.epic_started}]' "$OUT")" \
+  '[{"e":null,"s":false},{"e":null,"s":false}]'
+ck "Ⓔ⑬ P 라벨이 없으면 priority 는 종전대로 3" \
+  "$(jq -c '[.[] | {n:.number, p:.priority}]' "$OUT")" \
+  '[{"n":221,"p":2},{"n":222,"p":3},{"n":220,"p":3}]'
+no_line "Ⓔ⑬ 빈 본문이 warn 을 만들지 않는다" "$ERR" "warn:"
+
+# ── Ⓔ⑭ 큰 본문 × 페이지 병합 — 합치는 경로가 argv 를 타면 안 된다 (#257 × #277) ──
+# 이 PR 이 검색 투영에 `body` 를 되돌려 얹어(시작 집합 (a) 의 출처) 페이지 병합 페이로드가
+# **21배**가 됐다(실측: 한 페이지 50건 = body 없이 6941 bytes → 있으면 152441 bytes).
+# `--argjson` 으로 합치면 그 누적이 통째로 커맨드라인 인자가 되어 ARG_MAX(1048576)에 걸리고,
+# `set -e` 아래라 **디스패치 틱 전체가 죽는다**. 실측 여유는 28% 뿐이었다 —
+# 기본 상수(50×5=250)의 마지막 병합이 상한의 78% 를 쓰고, 건당 본문 평균이 4020 bytes 를
+# 넘으면 터진다(오늘 라이브 평균 3133 bytes). 같은 실패를 `loop-status.sh:601-604` 가
+# 이미 문서로 남겼다(그쪽은 `--slurpfile` 로 막았다).
+#
+# 격자는 창 5 × 3페이지에 본문 150KB × 10건을 실어 **어느 박스에서도** 확실히 상한을 넘긴다
+# (한 병합의 두 인자 합 ≈ 1.5MB > 1.04MB). argv 경로면 여기서 `Argument list too long`.
+# 건수는 적게(페이지당 2건), 본문은 크게(300KB) — 병합 한 번의 두 인자 합 ≈ 1.2MB 로
+# 상한을 확실히 넘기면서 스텁 호출 수는 4건뿐이라 스위트가 안 느려진다.
+fx=$(mkfx e14 10)
+mkpage "$fx" 2 10
+bulk_big_issues "$fx" search.json    300 2 300000
+bulk_big_issues "$fx" search.p2.json 305 2 300000
+run_sut_small "$fx"
+ck "Ⓔ⑭ 1.2MB 페이지 병합에서도 exit 0(argv 경로면 Argument list too long)" "$RC" "0"
+ck "Ⓔ⑭ 두 페이지 후보가 하나도 안 없어진다" "$(jq 'length' "$OUT")" "4"
+ck "Ⓔ⑭ 2페이지 후보가 실제로 있다" \
+  "$(jq -c '[.[].number] | map(select(. >= 305)) | sort' "$OUT")" '[305,306]'
+ck "Ⓔ⑭ 2페이지를 이어 받았다" "$(count_of "$LOG" 'search page=2')" "1"
+no_line "Ⓔ⑭ 큰 본문이 진단을 만들지 않는다" "$ERR" "warn:"
 
 echo "eligible-issues.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]
