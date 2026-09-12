@@ -8,12 +8,13 @@ repo="${1:?usage: setup-labels.sh <owner/repo>}"
 # 원칙: 사람이 **지금 봐야 하는 것**은 난색 고채도 · 루프가 도는 중이라 **안 봐도 되는 것**은
 # 한색 · 분류/메타는 저채도 회색조. 티어별 소속:
 #   A 사람 차례 = needs-human · hold:conflict · hold:policy
-#   B 루프 진행 = agent-ready · agent:claimed · flow:ci · flow:verify · flow:ready
+#   B 루프 진행 = agent-ready · agent:claimed · flow:ci · flow:verify · verifying(#275) · flow:ready
 #                · harvesting · hold:ladder · deploy-wait(#243 — "사람 정지 아님" 으로
 #                재정의된 뒤 A 에서 이리로 옮겼다. 사람이 볼 일이 없다는 점에서 hold:ladder
 #                와 같은 처지: 루프(deploy-cycle)가 스스로 집어가는 레인이라 목록을 훑는
 #                사람이 "내 차례" 로 읽으면 안 된다)
-#   C 분류/메타 = flow:codex · spinoff · epic · dup · loop-dashboard (+ block-issue.sh 의 blocked-by:*)
+#   C 분류/메타 = flow:codex · spinoff · epic · dup · loop-dashboard · full-cycle
+#                (+ block-issue.sh 의 blocked-by:*)
 # 색은 어떤 스크립트도 읽지 않는 **순수 표시값**이지만, 목록을 훑는 사람이 "지금 내 차례인가"
 # 를 색만으로 가르는 축이라 임의로 바꾸면 축이 무너진다 — 옛 팔레트가 정확히 거꾸로였다
 # (사람이 봐야 할 유일한 라벨 needs-human 이 가장 조용한 연라벤더, 루프가 알아서 집어가
@@ -23,8 +24,12 @@ gh label create "agent-ready"   --repo "$repo" --color 1F6FEB --force \
   --description "에이전트가 집어가도 되는 이슈 (스펙 완결 후 마지막에 부착)"
 gh label create "agent:claimed" --repo "$repo" --color 054A91 --force \
   --description "디스패처가 점유 중 — 수동 부착/제거 금지"
+# `needs-human` 은 **사람 호출** 축이다(#244) — 기계가 멈춘 정지는 `hold:<사유>` 하나만 붙고,
+# 루프가 이 라벨을 붙이는 자리는 `hold:policy` 재심 "사람 몫 유지" 판정(`transition.sh
+# policy-kept`) 한 곳뿐이다. 옛 설명(루프의 한계 → 사람 판단)은 기계 정지에도 이 라벨을 겹쳐
+# 붙이던 시절의 뜻이라 "루프 손대지 마" 로 읽혔다.
 gh label create "needs-human" --repo "$repo" --color D73A49 --force \
-  --description "루프가 한계 도달 — 사람 판단 필요"
+  --description "사람이 직접 세운 정지(기계 정지는 hold:*). 루프는 hold:policy 재심이 사람 몫 유지로 끝난 때만 대신 붙인다"
 # P 는 **주제(에픽) 단위**로 정하고 leaf 가 상속한다(#259) — leaf 마다 따로 매기지 않는다.
 # 정의의 SSOT 는 skills/loop-issues/SKILL.md 체크리스트 6 이고, 여기 설명은 그 요약이다
 # (라벨 목록만 보는 사람이 "보통/낮음" 으로 읽고 leaf 마다 임의로 매기던 것이 이 이슈의 원인).
@@ -46,6 +51,10 @@ gh label create "flow:ci" --repo "$repo" --color ADD8FF \
   --description "워커가 이 PR 의 로컬 CI 를 (재)실행 중" --force
 gh label create "flow:verify" --repo "$repo" --color 79C0FF \
   --description "결정적 CI 통과 — verify-runner 검증(E2E·codex) 대기·진행 중" --force
+# verify-runner 점유(#275) — 집는 순간 flow:verify 를 이것으로 바꾼다(harvesting 동형, PR+이슈).
+# 색은 flow:verify 계열(B 티어 한색) — 루프가 도는 중이라 사람이 볼 일이 없다.
+gh label create verifying --repo "$repo" --color 58A6FF \
+  --description "verify-runner 검증 진행 중 (E2E·codex) — closeout 제외" --force
 gh label create "flow:codex" --repo "$repo" --color D8DEE4 \
   --description "(레거시) 워커 인라인 검증 단계 — verify-runner 도입 후 flow:verify 로 대체" --force
 gh label create "flow:ready" --repo "$repo" --color 2DA44E \
@@ -60,26 +69,39 @@ gh label create "flow:ready" --repo "$repo" --color 2DA44E \
 # 모순이었다(설명은 "사람 정지 아님" 인데 색은 "사람 차례" 티어). 새 색 17A2B8 은 팔레트
 # 안에서 아직 안 쓴 청록 계열 — flow:verify(79C0FF)·hold:ladder(B6E3FF) 같은 파랑 계열과도
 # 구별돼, 목록에서 "루프가 도는 중" 을 한눈에 다른 파랑들과 헷갈리지 않게 읽을 수 있다.
+# `spinoff` 는 **출처** 축이다 — 상태가 아니다. flow:*·hold:* 사이에 놓여 상태처럼 읽히던
+# 것을 설명으로 못박는다(플랜 4단계). 읽는 곳은 loop-status 의 `파생` 집계 하나뿐, 게이트 0곳.
 gh label create "spinoff" --repo "$repo" --color D0D7DE \
-  --description "closeout 6단계 파생 이슈 (부모 PR/이슈에서 갈라짐)" --force
+  --description "출처 표시(상태 아님) — closeout 6단계가 부모 PR/이슈에서 갈라 낸 파생 이슈" --force
 gh label create "deploy-wait" --repo "$repo" --color 17A2B8 \
   --description "closeout 4단계·full-cycle §7 배포 대기 이슈 — deploy-cycle 레인 (사람 정지 아님)" --force
+# 레인 소유 표시(플랜 4단계) — 사람 세션 스킬 full-cycle 이 들고 있는 산출물(구현 이슈·PR·
+# 배포 대기)에 붙는다. 상태가 아니라 "누구 레인인가" 라 `agent-ready` 와 **배타**다(루프가
+# 집지 않는다). 지금까지 여기 없어서 issue-runner·BodaT 엔 손으로 생겨 있었고, 새로 옵트인
+# 하는 레포에선 `--add-label full-cycle` 이 편집 전체를 실패시켰다(`transition.sh` 의 "레포에
+# 없는 라벨은 remove 도 편집을 실패시킨다" 와 같은 계열). 색 AFB8C1 은 두 레포에 이미 손으로
+# 있던 값 그대로(C 티어 회색조 — 분류/메타).
+gh label create "full-cycle" --repo "$repo" --color AFB8C1 \
+  --description "레인 소유 — 사람 세션 full-cycle 사이클이 들고 있는 산출물(구현 이슈·PR·배포 대기). agent-ready 와 배타" --force
 # 루프 현황 고정 이슈(#163) — loop-status.sh --post 가 이 라벨로 찾아 본문을 덮어쓴다(레포당 1개).
 gh label create "loop-dashboard" --repo "$repo" --color 656D76 --force \
   --description "루프 현황 고정 이슈 — 세 루프가 매 틱 본문을 덮어쓴다(직접 편집 금지)"
 
-# 사람 대기 사유 (#147) — `needs-human` 은 사유 없는 쓰레기통이었다. 전이(verify-held·
-# closeout-blocked)가 `needs-human` 과 함께 `hold:<사유>` 를 붙여 목록 조회 한 번에
-# 분류가 보이게 한다(코멘트 마커가 아니라 라벨 — 상태 = 라벨의 존재).
+# 기계 정지 사유 (#147) — `needs-human` 은 사유 없는 쓰레기통이었다. 전이(verify-held·
+# closeout-blocked·runner-held)가 `hold:<사유>` **만** 붙여(#244 — `needs-human` 을 겹치지
+# 않는다) 목록 조회 한 번에 분류가 보이게 한다(코멘트 마커가 아니라 라벨 — 상태 = 라벨의 존재).
 # `hold:dup`·`hold:hardware` 는 일부러 만들지 않는다 — dup 은 closeout-dup 이 닫고
 # hardware 는 사다리를 오른다(#147). 라벨 부재로 금지를 강제한다.
 gh label create "hold:conflict" --repo "$repo" --color D93F0B \
   --description "사람 대기 사유 — rebase/semantic conflict, 사람 판단" --force
+# `hold:policy` 는 재심 1회를 **루프가** 답한다(#155 — 디스패처 ① 재심, resume-sweep ③ 이
+# 이벤트를 낸다). 사람 몫이 되는 것은 그 재심이 "유지" 로 끝나 `needs-human` 이 겹쳐 붙은
+# 뒤뿐이다 — 설명이 "사람 대기" 로만 적혀 있으면 재심 전 정지까지 사람 몫으로 읽힌다.
 gh label create "hold:policy" --repo "$repo" --color E4A11B \
-  --description "사람 대기 사유 — 스펙·정책 결정 필요" --force
+  --description "기계 정지 — 스펙·정책 결정 필요. 재심 1회는 루프가 답한다(#155), 유지 판정 뒤에만 사람 몫" --force
 # `hold:ladder` 만 B 티어(한색·조용한 쪽)인 이유: 이건 루프가 창이 지나면 **스스로 푸는**
-# 정지(재개 스윕 대상)라 사람이 볼 일이 없다. 반대로 `hold:conflict`·`hold:policy` 는
-# 사람이 손대야만 풀리므로 A 티어(난색 고채도)다.
+# 정지(재개 스윕 대상)라 사람이 볼 일이 없다. 반대로 `hold:conflict` 는 사람이 손대야만
+# 풀리고, `hold:policy` 는 재심(#155) 뒤 사람 차례가 되는 경로라 둘 다 A 티어(난색 고채도)다.
 gh label create "hold:ladder" --repo "$repo" --color B6E3FF \
   --description "사람 대기 사유 — 검증 사다리 ①~③ 전부 실패(출력 인용 필수), 재개 스윕 대상" --force
 

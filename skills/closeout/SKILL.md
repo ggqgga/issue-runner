@@ -222,8 +222,8 @@ PR 은 워커·verify·closeout 코멘트가 겹겹이 쌓여 100건이 먼 숫�
 
 **대상**: `me=$(gh api user -q .login)` 후 `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc`(FIFO)로 열린 PR 을 모으고,
-head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify` 미부착**이고 **`needs-human`
-미부착**이며 **`hold:` 접두 미부착**인 PR 마다 판정한다. 두 라벨은 **다른 정지**다(#244) —
+head 가 `agent/issue-*` 이고 **`harvesting` 미부착**이며 **`flow:verify` 미부착**·**`verifying` 미부착**이고
+**`needs-human` 미부착**이며 **`hold:` 접두 미부착**인 PR 마다 판정한다. 두 라벨은 **다른 정지**다(#244) —
 `needs-human` 은 사람이 직접 세운 정지고, `hold:<사유>` 는 기계 정지(verify-held·closeout-blocked·
 디스패처 runner-held 보수 상한) 그 자체다. 전이는 기계 정지에 사유 라벨 **하나만** 붙이므로
 `needs-human` 만 보면 홀드된 PR(셋 다 없고 `hold:*` 만 남은 PR)이 **매 틱 다시 대상이 되어**
@@ -233,13 +233,16 @@ hold-note 를 되붙이고, `stale_reverify` 갈래에선 `closeout-redispatch` 
 `needs-human`) 또는 재개 스윕이(`hold:ladder`·재심을 통과한 `hold:policy`) 한다. 판별은
 **접두**라 사유가 늘어도(`hold:<새사유>`) 안 깨지고 `holding`·`on-hold`·`area:hold` 는 걸리지
 않는다 — `closeout-eligible.sh` 의 같은 필터와 같은 규칙이다(과잉 제외는 머지 가능한 PR 을
-조용히 큐에서 지우는 방향이라 원래 결함보다 나쁘다). **`flow:verify` PR 은 verify-runner 가 검증 중(소유)이라 여기서 절대 집지
-않는다** — 이걸 빠뜨리면 finish-classify 가 `🔄`(verify-runner 가 아직 ✅ 안 찍음)를
-`stale_reverify` 로 오분류해 재디스패치하고, verify-runner 의 검증과 충돌한다(양쪽이
-같은 PR 을 물어뜯음). 이 배제는 1) CONFLICTING 갈래에도 그대로 적용된다 — 대상 필터가
-먼저다(#206). 검증 단계의 완결 유실 회수는 verify-runner 의 매 틱 재집(flow:verify
-라벨 잔존)이 소유한다 — closeout ①-b 는 **검증 이후**(✅+flow:ready 인데 closeout 머지가
-죽은 경우)와 CONFLICTING 입양만 맡는다.
+조용히 큐에서 지우는 방향이라 원래 결함보다 나쁘다). **`flow:verify`(검증대기)·`verifying`(검증 중 —
+verify-runner 가 집는 순간 `verify-pick` 으로 `flow:verify` 를 떼고 붙이는 점유 라벨, `harvesting`
+동형, #275) PR 은 verify-runner 소유라 여기서 절대 집지 않는다** — 이걸 빠뜨리면 finish-classify 가
+`🔄`(verify-runner 가 아직 ✅ 안 찍음)를 `stale_reverify` 로 오분류해 재디스패치하고, verify-runner
+의 검증과 충돌한다(양쪽이 같은 PR 을 물어뜯음). `verifying` 은 특히 **지금 E2E·codex 가 도는 중**이라
+입양·재디스패치 어느 쪽도 그 검증을 통째로 무효화한다. 이 배제는 1) CONFLICTING 갈래에도 그대로
+적용된다 — 대상 필터가 먼저다(#206). 검증 단계의 완결 유실 회수는 verify-runner 의 매 틱 재집
+(`verifying` 고아 우선 → `flow:verify` FIFO)이 소유한다 — closeout ①-b 는 **검증 이후**(✅+flow:ready
+인데 closeout 머지가 죽은 경우)와 CONFLICTING 입양만 맡는다. 같은 네 라벨 필터가
+`closeout-eligible.sh` 에도 있다 — 한쪽만 고치면 스윕과 후보 게이트가 갈린다.
 
 **1) 반송 마커 게이트 먼저 — 갈래를 가르기 전에, CONFLICTING·MERGEABLE 공통**(#218):
 mergeable 값을 보기 **전에** `$SCRIPTS/bounce-state.sh <repo> <pr>` 를 한 번 돌려라.
@@ -362,7 +365,7 @@ finish-classify 를 건너뛰는 CONFLICTING 갈래는 반송 마커를 볼 자�
 **그 좁힘이 남긴 정체 (#206).** `bounced` 를 **무조건** 무접촉으로 두면 새 정체 계급이
 생긴다 — ⑴ PR 반송 → ⑵ 교체 워커가 붙어 고치고 커밋 → ⑶ 그 워커가 ✅ 직전에 죽어
 `handoff-verify` 미호출(단계 라벨 없음) → ⑷ 그 사이 main 이 움직여 CONFLICTING. 이
-PR 은 closeout ①-b(반송 마커가 최신)·verify-runner(`flow:verify` 없음)·issue-runner ②
+PR 은 closeout ①-b(반송 마커가 최신)·verify-runner(`flow:verify`·`verifying` 없음)·issue-runner ②
 (CI green·미해결 코멘트 없음) **세 레인 모두**에서 빠져 사람이 눈으로 찾을 때까지
 영구 정체한다. 정체는 손상보다 낫지만(그래서 `ok` 만 입양하는 판별식은 그대로 둔다),
 **감지 가능**하게 만들지 않으면 안전망이 조용한 누락으로 바뀐다. 그래서 `bounced` 를
@@ -982,7 +985,7 @@ verify-runner 소유라는 이 절 자신의 계약의 귀결이다). **전이 �
 다음 후보를 집는다). 집으면 즉시
 `$SCRIPTS/transition.sh closeout-pick <repo> - <pr>` 로 점유를 선언하라(이슈 번호는 ③-1
 에서야 파싱되므로 여기선 `-`). 전이가 `harvesting` 을 붙이고 워커·verify-runner 단계
-라벨(`flow:ready`·`flow:codex`·`flow:ci`·`flow:verify`)을 함께 뗀다 — `harvesting` 이 있어야
+라벨(`flow:ready`·`flow:codex`·`flow:ci`·`flow:verify`·`verifying`)을 함께 뗀다 — `harvesting` 이 있어야
 issue-runner ② Maintain·verify-runner 가 이 PR 을 건드리지 않고(verify-eligible 도
 harvesting 을 제외한다), PR 리스트에서 `harvesting` 하나만 남아 "마감 중"이 명확해진다.
 후보가 0이면 ③ 파이프라인을 건너뛰고 ④ Report 에 clean no-op 으로 보고한다.

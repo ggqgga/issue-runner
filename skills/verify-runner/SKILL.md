@@ -48,10 +48,18 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
   타입이 없으면(플러그인 미설치) 건너뛰고 코멘트에 `보조 리뷰: 미설치` 를 적는다. 데드라인은
   `VERIFIER_TIMEOUT_MIN` 과 같다 — 넘기면 `TaskStop` 하고 `보조 리뷰: 타임아웃` 으로 적는다.
 - 절대 금지: PR 머지(closeout 독점) · main/release 직접 push · `harvesting` PR 접촉
-  (closeout 소유) · issue-runner 워크트리/브랜치를 검증 목적 밖으로 조작 · `flow:verify`
-  가 아닌 PR 에 손대기. **허용**: 검증 대상 PR 의 `flow:*` 라벨 교체(flow:verify→
-  flow:ready), 재디스패치 시 연결 이슈 `agent-ready` 재부착·`agent:claimed` 제거
-  (검증 실패 반송 — worker-template 이 이 반송을 받아 고친다), 아래 **표면 교정 직접 수정**.
+  (closeout 소유) · issue-runner 워크트리/브랜치를 검증 목적 밖으로 조작 · `flow:verify`·
+  `verifying` 가 아닌 PR 에 손대기. **허용**: 검증 대상 PR 의 `flow:*`·`verifying` 라벨
+  이동(전부 `transition.sh` 전이로 — verify-pick: flow:verify→verifying · verify-pass:
+  verifying→flow:ready · verify-unpick: verifying→flow:verify), 재디스패치 시 연결 이슈
+  `agent-ready` 재부착·`agent:claimed` 제거(검증 실패 반송 — worker-template 이 이 반송을
+  받아 고친다), 아래 **표면 교정 직접 수정**.
+- `verifying`(#275) = **이 루프의 점유 라벨**(closeout 의 `harvesting` 과 같은 자리 — PR 과
+  연결 이슈 양쪽). ② Pick 이 집는 순간 `flow:verify` 를 이것으로 바꾸고, ④ 의 모든 종료
+  상태가 뗀다(passed·redispatched·held 는 출구 전이가, flake_retry 는 `verify-unpick` 이).
+  그래서 "`verifying` = 지금 이 순간 검증이 돌고 있다" 가 항상 참이고, 재시도 대기는
+  검증대기(`flow:verify`)다. 이슈 사다리: `agent:claimed` → `flow:verify` → `verifying` →
+  `flow:ready` → `harvesting`.
 
 ## ⓪ 표면 교정 직접 수정 (WARN/NIT 중 표면만)
 
@@ -87,27 +95,43 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
 ## ① Reconcile
 
 `$SCRIPTS/verify-eligible.sh` 를 실행한다(세션 cwd 의 `.loop/repos` 스코프를 자동
-적용). 출력은 `flow:verify` + `agent/issue-*` + `¬harvesting` PR 을 FIFO(오래된 순)로,
-각 줄 `{repo,pr,issue,head,ci}` (ci=pass|revalidate|fail). 이게 이 루프의 큐다.
+적용). 출력은 (`verifying` 또는 `flow:verify`) + `agent/issue-*` + `¬harvesting` PR 을
+**`verifying` 먼저, 그 다음 `flow:verify` FIFO(오래된 순)** 로, 각 줄
+`{repo,pr,issue,head,ci,orphan}` (ci=pass|revalidate|fail · orphan=true|false). 이게 이 루프의 큐다.
 
-- **드롭 회수는 구조로 자동**이다: 이번 틱에 못 끝낸 PR 은 `flow:verify` 라벨이
-  남아 다음 틱 verify-eligible 에 다시 잡힌다. 별도 스윕이 필요 없다(closeout ①-b 가
-  하던 완결 유실 회수 중 **검증 단계** 몫을 이 재집이 흡수).
+- **드롭 회수는 구조로 자동**이다 — 두 갈래:
+  - `flow:verify`(검증대기) 는 아직 안 집은 것이거나 flake_retry 가 `verify-unpick` 으로
+    되돌린 것 — 다음 틱 verify-eligible 에 FIFO 로 다시 잡힌다.
+  - `verifying`(점유) 이 틱 시작에 남아 있으면 **무조건 이전 틱이 죽은 것**이다(이 루프는
+    단일·직렬이고 모든 정상 종료가 이 라벨을 뗀다). verify-eligible 이 그걸 **먼저**
+    내보내 그대로 다시 집되(재개), 그 줄의 `orphan:true` 를 읽어 ④ Report 에
+    `고아 재집 #<pr>` 한 줄을 남긴다(사망 증거 — 다음 사람이 왜 두 번 돌았는지 안다).
+  별도 스윕이 필요 없다(closeout ①-b 가 하던 완결 유실 회수 중 **검증 단계** 몫을 이
+  재집이 흡수).
 - 이 스캔은 `gh api` 조회뿐이라 비용 0 — 조용한 틱에도 매 틱 돈다.
 
 ## ② Pick — 한 번에 1 PR (MAX_VERIFY=1)
 
-verify-eligible 출력의 **첫 후보 1개만** 집는다(FIFO·직렬). `flow:verify` 자체가
-소유 플래그라(issue-runner·closeout 이 이 라벨 PR 을 안 건드림) 별도 점유 선언은
-불필요하다 — 단일 루프·동시성 1 이라 레이스가 없다. 후보가 0이면 ③ 을 건너뛰고
-④ Report 에 clean no-op.
+verify-eligible 출력의 **첫 후보 1개만** 집는다(고아 우선·그 뒤 FIFO·직렬). 집은 **직후**
+점유를 선언한다(closeout ② 의 `closeout-pick` 과 같은 꼴):
+`$SCRIPTS/transition.sh verify-pick <repo> <issue|-> <pr>` — PR 과 연결 이슈 양쪽에서
+`flow:verify` 를 떼고 `verifying` 을 붙인다(멱등 — 고아 재집은 이미 `verifying` 이라
+no-op 로 통과한다). 이 라벨이 루프 현황(`loop-status.sh`)에서 "검증대기" 와 "검증 중
+(수십 분)" 을 가르는 근거가 된다(대시보드 렌더는 후속 이슈 — 현행 대시보드는 아직 이
+라벨을 모른다). 단일 루프·동시성 1 이라 레이스는 없다 — 점유 라벨은 경합 방지가 아니라
+**가시성과 사망 증거**(① 의 고아 판정) 용이다.
+- **exit 1(readback 불일치)·2(gh 실패)면 이 PR 을 집지 마라** — ④ Report 에
+  `BLOCKED: 전이 실패 verify-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올리고
+  다음 후보로 간다(라벨이 반쯤 이동한 상태를 다음 틱이 잡게 — ① 이 `verifying` 이든
+  `flow:verify` 든 다시 낸다).
+후보가 0이면 ③ 을 건너뛰고 ④ Report 에 clean no-op.
 
 ## ③ Verify — 집은 PR 을 검증한다
 
 **0. CI 상태 분기 (verify-eligible 의 `ci` 필드).**
 - `fail` → 결정적 CI 가 실패다. **단, 코드 회귀인지 먼저 확인한다** — 아래 `fail` 원인
   분류를 거쳐 코드 회귀면 검증하지 말고 **④ 재디스패치**(코드 반송), 사유 = `결정적 CI
-  실패`. 인프라 자가체크면 재디스패치하지 말고 **flake_retry**(라벨 유지 → 다음 틱 재집).
+  실패`. 인프라 자가체크면 재디스패치하지 말고 **flake_retry**(`verify-unpick` 으로 `flow:verify` 복귀 → 다음 틱 FIFO 재집 — ④ 와 같은 전이).
 - `revalidate` → rebase 등으로 현재 HEAD 의 로컬 CI 캐시가 비었다. worktree 를 PR
   head 로 동기화하고(아래 1단계 worktree 확보에 이어) `$SCRIPTS/run-local-ci.sh
   <repo> <issue>` 로 캐시를 채운다. 비0(통합 깨짐)이면 ④ 재디스패치(`결정적 CI 실패
@@ -135,9 +159,10 @@ verify-eligible 출력의 **첫 후보 1개만** 집는다(FIFO·직렬). `flow:
 같은 지점에서 죽을 확률은 없다.
 
 처리: 사유를 **한 번만** PR 코멘트로 남기고(같은 마커가 이미 있으면 재발행 금지 —
-/loop 스팸 방지) `flow:verify` 를 **그대로 둔 채** flake_retry 로 ④ Report 에 올린다.
-해소가 이 루프 권한 밖이면(젬 범프·툴 설정 변경 등) 그 사실과 해소 방법을 사람이 읽을
-코멘트에 명시하라 — 라벨이 남아 있으므로 해소 즉시 다음 틱이 자동으로 재집는다.
+/loop 스팸 방지) flake_retry 로 ④ Report 에 올린다(④ 의 flake_retry 가 `verify-unpick`
+으로 `verifying` 을 떼고 `flow:verify` 로 되돌린다). 해소가 이 루프 권한 밖이면(젬
+범프·툴 설정 변경 등) 그 사실과 해소 방법을 사람이 읽을 코멘트에 명시하라 — `flow:verify`
+가 남아 있으므로 해소 즉시 다음 틱이 자동으로 재집는다.
 
 **1. worktree 확보·동기화.** `$SCRIPTS/make-worktree.sh <repo> <issue>` 로 worktree
 경로를 얻고(마지막 줄), **PR 의 현재 head 로 강제 동기화**한다(기존 worktree 는 옛 SHA
@@ -266,22 +291,27 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 **exit 1·2 면 종료 상태를 바꾸지 말고** ④ Report 에
 `BLOCKED: 전이 실패 verify-held PR #<pr>(<repo_short>) — <stderr 한 줄>`.
 
-**flake_retry** — 검증을 아예 못 돌린 일시 장애(worktree fetch 실패·make-worktree 오류
-등, 판정 아님): `flow:verify` 를 **그대로 두고** ④ Report 에 warn 으로 올린다 → 다음
-틱이 재집는다(드롭 없음). 판정(pass/fail)이 선 경우엔 이 상태로 빠지지 마라.
+**flake_retry** — 검증을 아예 못 돌린 일시 장애(worktree fetch 실패·make-worktree 오류·
+E2E 인프라 흔들림 등, 판정 아님): 점유를 풀고 검증대기로 되돌린다 —
+`$SCRIPTS/transition.sh verify-unpick <repo> <issue|-> <pr>` (verify-pick 의 정확한 역:
+PR·이슈 양쪽 `verifying` 제거 + `flow:verify` 재부착, 멱등). 그러고 ④ Report 에 warn 으로
+올린다 → 다음 틱이 `flow:verify` FIFO 로 재집는다(드롭 없음). **exit 1·2 면** ④ Report 에
+`BLOCKED: 전이 실패 verify-unpick PR #<pr>(<repo_short>) — <stderr 한 줄>` — `verifying`
+이 남아도 ① 이 고아로 먼저 재집으니 드롭은 아니고, 대신 `고아 재집` 이 "사망" 이 아니라
+"unpick 실패" 였음을 이 줄이 말해 준다. 판정(pass/fail)이 선 경우엔 이 상태로 빠지지 마라.
 
 ## ⑤ Drain — 다음 후보로 즉시 이어가기
 
 ③④ 가 집은 PR 을 종료 상태(passed·redispatched·held·flake_retry)에 닿게 한 **직후**,
 결과를 ④ Report 용으로 누적하고 **다음 틱을 기다리지 말고 ①② 로 되돌아간다**:
 - ② Pick 이 **새 후보를 집으면**(이번 PR 은 passed→flow:ready 로, redispatched/held→
-  flow:verify 제거로 이미 큐에서 빠졌다. flake_retry 만 flow:verify 가 남는데 —
-  같은 PR 재선정 방지 위해 이 틱 드레인에서는 **이번 틱에 이미 처리한 PR 번호를
+  `verifying` 제거로 이미 큐에서 빠졌다. flake_retry 만 flow:verify 가 남는데(unpick
+  결과) — 같은 PR 재선정 방지 위해 이 틱 드레인에서는 **이번 틱에 이미 처리한 PR 번호를
   건너뛴다**) 그 PR 로 ③ 을 이어간다.
 - ② Pick 후보가 **0이면**(또는 남은 게 이번 틱 처리분뿐이면) 드레인을 멈추고 ④ Report.
 
 무한루프 방지: 각 반복은 큐를 최소 1 줄인다(passed→flow:ready 소멸·redispatched/held→
-flow:verify 소멸). 같은 PR 이 두 번 집히면(flake_retry 반복 등) 그 PR 을 skip 하고
+`verifying` 소멸 — 출구 전이가 뗀다). 같은 PR 이 두 번 집히면(flake_retry 반복 등) 그 PR 을 skip 하고
 ④ Report 에 `BLOCKED: 재선정 루프 — #<pr>` 로 보고해 드레인을 끊는다. 한 틱 드레인은
 최대 verify-eligible 스냅샷 길이만큼만 돈다.
 
@@ -293,6 +323,8 @@ flow:verify 소멸). 같은 PR 이 두 번 집히면(flake_retry 반복 등) 그
 `검증통과: PR #4790(bodat)←#4780 · 재디스패치: PR #4792(bodat)←#4783 (사유 8자 이내)`.
 `←` 뒤는 연결 이슈(없으면 생략). 레포 짧은 이름 규칙은 `loop-status.sh` 와 같다
 (`owner/repo` 의 repo 를 소문자로 — bodat·bodac, `issue-runner` 만 `runner` 특례).
+① 에서 `orphan:true` 로 집은 PR 마다 `고아 재집 #<pr>(<repo_short>)` 한 줄을 남긴다 —
+이전 틱이 `verifying` 을 떼지 못하고 죽었다는 증거다(정상 틱엔 이 줄이 없다).
 warn(flake_retry·동봉 실패·전이 실패 등)이 있으면 경로·사유를 아래 나열. 모든 카운트 0이면
 "조용함" 한 줄. 조용해도 ①② 는 다음 틱에도 그대로 수행한다(새 flow:verify PR 을 놓치지 않게).
 
@@ -312,12 +344,14 @@ warn(flake_retry·동봉 실패·전이 실패 등)이 있으면 경로·사유�
 
 - 역할 분담: issue-runner = 생산(구현+결정적CI+PR, `flow:verify` 로 넘김·검증 안 함),
   verify-runner = 검증(E2E+codex 직렬, `머지 판정: ✅` 로 넘김·머지 안 함), closeout =
-  마감(머지 독점). 세 루프는 라벨 소유로 충돌을 막는다 — `flow:verify`=verify-runner,
-  `harvesting`=closeout. issue-runner 는 둘 다 안 건드리고 in-flight 로도 안 센다.
+  마감(머지 독점). 세 루프는 라벨 소유로 충돌을 막는다 — `flow:verify`·`verifying`=
+  verify-runner, `harvesting`=closeout(closeout-eligible 은 앞 둘을 제외한다). issue-runner
+  는 셋 다 안 건드리고 in-flight 로도 안 센다.
 - 컷오버 불변식: verify-runner 가 살아있어야(이 루프가 돌아야) 워커의 `flow:verify`
   PR 이 검증돼 `머지 판정: ✅` 로 흐른다. 이 루프가 죽으면 flow:verify PR 이 검증 없이
   적체하지만(closeout 이 안 집음·issue-runner 도 안 집음) **드롭·오분류는 없다** —
-  라벨이 남아 루프 재기동 시 그대로 재집힌다.
+  라벨(`flow:verify` 또는 검증 도중 죽었으면 `verifying`)이 남아 루프 재기동 시 그대로
+  재집힌다.
 - 운용: issue-runner·closeout 와 별도의 `/loop` 세션(예 `/loop 10m /verify-runner`).
 - 의존: 결정적 헬퍼는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)의
   `verify-eligible.sh`·`closeout-ci-pass.sh`·`run-local-ci.sh`·`make-worktree.sh`·
