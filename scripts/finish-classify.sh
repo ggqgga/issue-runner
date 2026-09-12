@@ -57,6 +57,12 @@
 # 낡은 🔄 만 남아 살아있는 워커를 사망(stale_reverify)으로 오판한다(#110, 실증
 # BodaT PR #2237). head 커밋 시각(FC_HEAD_AT)을 스테일 클록의 max 에 합류시켜 방어한다.
 #
+# **최신 반송 마커 시각도 같은 클록에 든다(#308).** 반송 전이는 `agent:claimed` 를 떼므로
+# 반송 직후 디스패처가 다시 붙이기 전 창에서는 진행 증거 세 축이 전부 "old/none" 이다 —
+# 그 창의 CONFLICTING PR 이 `stale_reverify` 로 떨어져 **사인이 틀린 멱등 마커**
+# (`완결 유실(검증 전 사망)`)를 원장에 남겼다. 마커 판별은 `bounce-state.sh` 한 자리를
+# 되물어 얻는다(로직 두 벌 금지) — 아래 `bounce_epoch_after` 주석 참조.
+#
 # 최신 `머지 판정:`/`검증자 리뷰:` 판정은 코멘트 배열의 **마지막 매칭**을 쓴다
 # (재리뷰·재판정 대비). 한/영 병행 워커라 영문 접두(Merge verdict/Verifier review)도 본다.
 #
@@ -399,11 +405,93 @@ max_epoch() {
   if [ "$a" -ge "$b" ]; then echo "$a"; else echo "$b"; fi
 }
 
+# ── 반송 마커 시각 = 스테일 클록의 네 번째 입력 (#308) ────────────────────
+# 왜 필요한가: `verify-redispatch`·`closeout-redispatch` 는 반송하면서 이슈의
+# `agent:claimed` 를 **뗀다**. 그래서 **반송 직후 디스패처가 다시 붙이기 전 창**에서는
+# 진행 증거 세 축이 전부 "old/none" 으로 읽힌다 — head 커밋은 E2E 대기 탓에 30분 이상
+# 전이고, CI 큐 티켓은 이미 빠졌고, claim 은 `none` 이다. 그 창에 main 이 움직여
+# CONFLICTING 이 되면 closeout ①-b 예외 갈래가 `stale_reverify` 를 내고, `재디스패치:
+# #N — 완결 유실(검증 전 사망)` 이라는 **사인이 틀린 멱등 마커**가 PR 원장에 남는다
+# (워커는 안 죽었다 — 방금 반송돼 교체 대기 중일 뿐). #218 이 MERGEABLE 쪽에서 막은
+# 바로 그 "사실과 다른 멱등 마커" 가 CONFLICTING 쪽에서 되살아난 것이다.
+#
+# 반송 마커 자체가 "그 시각에 누군가 이 PR 에 손을 댔다" 는 워커 레인 활동이므로,
+# head 커밋 시각을 합류시킨 #110 과 **같은 방식**으로 스테일 클록에 합류시킨다.
+#
+# **마커 판별은 `bounce-state.sh` 한 자리다.** 그 파일의 매칭 규칙(마커 집합 +
+# 위치·꼬리 술어)은 #171·#196·#212·#221·#251 이 다섯 회차에 걸쳐 깎은 것이라 여기에
+# 베끼면 두 번째 계산기가 다른 수를 센다(그 파일의 마커 집합 주석이 명시적으로 금지하고,
+# `bin/ci` 가 집합 정의의 사본이 scripts/ 안에 또 있는지 매번 검사한다).
+# 그래서 **코멘트 한 건짜리 배열을 그 스크립트에 먹여** 판별만 되묻는다 — 한 건 배열은
+# 반송 마커면 `bounced`(뒤따르는 판정 코멘트가 없으므로), 아니면 `ok` 다. 코멘트 출처는
+# 이 파일이 이미 읽어 둔 `$comments`(= `pr-comments.sh` **페이지네이션 전량**)이라
+# `--json comments` 첫 100건 상한(#173)을 다시 밟지 않는다.
+#
+# **훑는 범위**: 배열의 **최신부터** 거꾸로 보다가 `floor`(이미 계산된 스테일 클록) 이하
+# 시각에 닿으면 멈춘다. `max(floor, x)` 는 `x <= floor` 면 `floor` 이므로 결과가 바뀌지
+# 않는다 — 전수 훑기와 **판정이 동일**하고, 정상 PR 의 gh 호출/프로세스만 아낀다.
+#
+# **못 얻는 경로는 전부 안전한 쪽(`unknown` → 호출자가 `now` 로 접어 `active`)이다**
+# (#206 회차1·2 가 세운 규율, PR#139/#168: 빈 결과와 실패를 가르고 사유를 별도 값으로).
+#   ⑴ 조회 실패 — `bounce-state.sh` 가 비0 종료·예상 밖 출력(부재·실행 비트 누락 126/127
+#      포함)이거나 임시파일을 못 만듦 → `unknown`
+#   ⑵ 반송 마커가 아예 없는 정상 PR — 훑기가 끝까지 돌고 빈 값 → **클록 불변**(기존
+#      갈래 그대로). 이게 "기존 예외 갈래가 통째로 죽지 않는다" 를 지키는 자리다.
+#   ⑶ 마커는 찾았는데 `createdAt` 이 비었거나 형식 불량(파싱 실패) → `unknown`
+#      (마커가 언제인지 모르면 신선한지도 모른다 — 되돌릴 수 없는 재디스패치를 열지 않는다).
+bounce_epoch_after() {  # bounce_epoch_after <floor_epoch> → stdout <epoch>|''|unknown
+  local floor="${1:-0}" tmp out='' idx at ep bs rc listing tab
+  [ -n "$floor" ] || floor=0
+  tmp=$(mktemp 2>/dev/null) || { printf 'unknown'; return 0; }
+  tab=$(printf '\t')
+  # `<index>\t<createdAt>` 을 **최신부터** 한 줄씩. 중간 산출을 변수로 끊어 아래 루프의
+  # 입력 heredoc 이 명령치환을 품지 않게 한다(`bin/ci` 의 인용 안 한 heredoc 린트 #119).
+  # jq 실패는 빈 문자열 → 루프가 한 번도 안 돌고 `''`(= 클록 불변)이다. 이 경로에 오려면
+  # `$comments` 가 애초에 파싱 불가여야 하는데, 그러면 위 `last_matching` 도 전부 빈 값이라
+  # 판정은 이미 `active` 로 끝난다(여기까지 오지 않는다).
+  listing=$(printf '%s' "$comments" \
+    | jq -r 'to_entries | reverse | .[] | "\(.key)\t\(.value.createdAt // "")"' 2>/dev/null)
+  while IFS="$tab" read -r idx at; do
+    [ -n "$idx" ] || continue
+    ep=$(iso_to_epoch "${at:-}") || ep=''
+    # floor 이하로 내려왔으면 더 볼 필요가 없다(max 가 안 바뀐다). 시각을 못 읽은
+    # 코멘트는 이 비교를 건너뛰고 아래 판별로 간다 — 조용히 멈추면 그 뒤의 마커를 놓친다.
+    if [ -n "$ep" ] && [ "$ep" -le "$floor" ] 2>/dev/null; then break; fi
+    printf '%s' "$comments" | jq --argjson i "$idx" '[.[$i]]' > "$tmp" 2>/dev/null \
+      || { out=unknown; break; }
+    rc=0
+    bs=$(BOUNCE_COMMENTS_FILE="$tmp" "$SCRIPT_DIR/bounce-state.sh" "$repo" "$pr" 2>/dev/null) || rc=$?
+    if [ "$rc" != 0 ]; then out=unknown; break; fi
+    case "$bs" in
+      ok) continue ;;                                  # 마커 아님 — 더 옛 코멘트로
+      bounced|held) if [ -n "$ep" ]; then out="$ep"; else out=unknown; fi; break ;;
+      *) out=unknown; break ;;                         # 형상 밖 출력 = 판정 불가
+    esac
+  done <<EOF
+$listing
+EOF
+  rm -f "$tmp"
+  printf '%s' "$out"
+}
+
+# 스테일 클록에 반송 마커 시각을 합류시킨다(#308). 판정 불가(`unknown`)는 **가장 신선한
+# 활동**(=`now`)으로 접는다 → age 0 → `active`(무접촉). 이 파일의 규율 그대로다: 되돌릴
+# 수 없는 쪽(재디스패치·머지)을 증명 없이 열지 않는다.
+join_bounce_epoch() {  # join_bounce_epoch <ref_epoch> → stdout <epoch>
+  local ref="${1:-0}" be
+  [ -n "$ref" ] || ref=0
+  be=$(bounce_epoch_after "$ref")
+  [ "$be" = unknown ] && be="$now"
+  max_epoch "$ref" "$be"
+}
+
 if [ -z "$verifier_body" ]; then
   # 검증자 부재 → 10단계 후 11단계 전 사망 가능. 🔄 판정 코멘트 vs head 커밋 중
   # 더 최신 쪽으로 경과를 잰다(#110 — attempt N+1 워커가 커밋만 하고 아직
   # 판정을 안 찍은 창을 살아있음으로 인정).
   ref_epoch_nv=$(max_epoch "$verdict_epoch" "$head_epoch")
+  # 반송 마커 시각도 같은 클록에 든다(#308) — 반송 직후 라벨 공백 창은 `active`.
+  ref_epoch_nv=$(join_bounce_epoch "$ref_epoch_nv")
   age=$((now - ${ref_epoch_nv:-$now}))
   if [ "$age" -gt "$stale_sec" ]; then emit_stale stale_reverify; else echo active; fi
   exit 0
@@ -418,6 +506,8 @@ fi
 verifier_epoch=$(iso_to_epoch "$verifier_at")
 ref_epoch=$(max_epoch "$verifier_epoch" "$verdict_epoch")
 ref_epoch=$(max_epoch "$ref_epoch" "$head_epoch")
+# 반송 마커 시각도 같은 클록에 든다(#308) — 반송 직후 라벨 공백 창은 `active`.
+ref_epoch=$(join_bounce_epoch "$ref_epoch")
 age=$((now - ${ref_epoch:-$now}))
 if is_clean "$verifier_body"; then
   # 검증자 CLEAN — 최종 판정만 유실. 시간버퍼 초과면 인라인 대리 판정.

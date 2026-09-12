@@ -927,6 +927,9 @@ ST=$(mktemp -d)
 ln -s "$DIR/finish-classify.sh"   "$ST/finish-classify.sh"
 ln -s "$DIR/progress-evidence.sh" "$ST/progress-evidence.sh"
 ln -s "$DIR/pr-comments.sh"       "$ST/pr-comments.sh"
+# 반송 마커 판별을 되묻는 자리(#308) — 심링크가 없으면 조회 실패(unknown)로 접혀
+# 아래 행들이 전부 active 로 뒤집힌다(그 fail-closed 자체는 J 절이 따로 문다).
+ln -s "$DIR/bounce-state.sh"      "$ST/bounce-state.sh"
 
 # write_head_stub <exit코드> <stdout 한 줄(빈 문자열이면 무출력)>
 write_head_stub() {
@@ -1090,8 +1093,247 @@ row "I9 CONFLICTING·반송최근(11:20)·claim 50분전(반송 이전·타임�
 row "I10 CONFLICTING·반송최근(11:20)·claim 100분전(반송 이전·타임박스 밖)" redispatch \
   CONFLICTING "$GT/bounced_recent.json" "" none "$GT/empty.log" "" 30 "$G_CLAIM_100M"
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# #308 — 최신 반송 마커 시각도 **스테일 클록**에 든다
+#
+# 창: `verify-redispatch`·`closeout-redispatch` 는 반송하면서 이슈의 `agent:claimed` 를
+# **뗀다**. 그래서 반송 직후 디스패처가 다시 붙이기 전 구간에서는 진행 증거 세 축이
+# 전부 old/none 이다 — head 커밋은 E2E 대기 탓에 30분 이상 전(①), 큐 티켓은 이미
+# 빠졌고(②), claim 은 `none`(③). 그 창에 main 이 움직여 CONFLICTING 이 되면 ①-b
+# 예외 갈래가 `stale_reverify` 를 내고 `재디스패치: #N — 완결 유실(검증 전 사망)` 이라는
+# **사인이 틀린 멱등 마커**가 원장에 남는다(#218 이 MERGEABLE 쪽에서 막은 그 사고의
+# CONFLICTING 판). 워커는 안 죽었다 — 방금 반송돼 교체 대기 중일 뿐이다.
+#
+# 아래 행들은 **커밋·CI·claim 증거를 전부 없앤 채**(head 120분 전 + 빈 queue.log +
+# claim none) 반송 마커 시각 하나만 움직인다 — 그래야 격자가 이 축을 실제로 문다
+# (B5/B6·I1~I8 과 같은 규율).
+# ══════════════════════════════════════════════════════════════════════════════
+echo "  [#308] 반송 마커 시각이 스테일 클록에 합류한다"
+
+# fc_row <이름> <want> <comments-file> <head_at> <head_sha> <queue.log> [버퍼] [claim]
+# — route_1b 를 거치지 않고 **분류기 출력 자체**를 문다(이슈 Test plan 의 두 케이스가
+#   `active`/`stale_reverify` 라는 분류값으로 적혀 있다). 라우팅 축은 J-R1/J-R2 가 문다.
+fc_row() {
+  local name="$1" want="$2" got
+  shift 2
+  got=$(run_fc "$@")
+  if [ "$got" = "$want" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "  ✗ [#308] $name — want=$want got=$got"
+  fi
+}
+
+# J1↔J2 는 **반송 마커 시각 하나만** 다르다(이슈 Test plan 의 두 케이스).
+cat > "$GT/b308_fresh.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: #308 — E2E 1건 실패\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:55:00Z"}
+]
+J
+cat > "$GT/b308_old.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: #308 — E2E 1건 실패\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:25:00Z"}
+]
+J
+fc_row "J1 반송 마커 신선(5분 전)+커밋 old+큐 none+claim none→active" active \
+  "$GT/b308_fresh.json" "$G_OLD" "$G_SHA" "$GT/empty.log" 30 none
+# **기존 예외 갈래가 통째로 죽지 않는다**(PR#225 교훈 — 새 입력을 더할 때 옛 분기가
+# 도달 불가가 되는 쪽이 원래 버그보다 나쁘다). 마커가 버퍼 밖이면 종전대로 회수한다.
+fc_row "J2 반송 마커 old(35분 전)+같은 조건→stale_reverify(예외 갈래 유지)" stale_reverify \
+  "$GT/b308_old.json" "$G_OLD" "$G_SHA" "$GT/empty.log" 30 none
+
+# 경계 — 정확히 버퍼(30분)면 `-gt` 가 거짓이라 `active`, 1초만 더 오래되면 회수다.
+# 경계를 양쪽에서 못박아야 비교 연산자가 `-ge` 로 밀리거나 사라지는 회귀가 잡힌다.
+cat > "$GT/b308_edge_in.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: #308 — E2E 1건 실패\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:30:00Z"}
+]
+J
+cat > "$GT/b308_edge_out.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: #308 — E2E 1건 실패\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:29:59Z"}
+]
+J
+fc_row "J3 반송 마커 정확히 30분 전(경계=안쪽)→active" active \
+  "$GT/b308_edge_in.json" "$G_OLD" "$G_SHA" "$GT/empty.log" 30 none
+fc_row "J4 반송 마커 30분 1초 전(경계 밖)→stale_reverify" stale_reverify \
+  "$GT/b308_edge_out.json" "$G_OLD" "$G_SHA" "$GT/empty.log" 30 none
+
+# ── ⑵ 반송 마커가 **아예 없는** 정상 PR — 클록 불변(새 입력이 빈 값으로 접힌다) ──
+cat > "$GT/b308_nobounce.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"}
+]
+J
+fc_row "J5 ⑵ 반송 마커 없음(정상 PR)→stale_reverify(클록 불변)" stale_reverify \
+  "$GT/b308_nobounce.json" "$G_OLD" "$G_SHA" "$GT/empty.log" 30 none
+
+# ── ⑶ 마커는 찾았는데 **시각을 못 얻음** — 신선한지 모르면 열지 않는다 ──────────
+# (파싱 불가 값과 빈 값 두 갈래. 둘 다 `unknown` → `now` 로 접혀 `active`.)
+cat > "$GT/b308_badat.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: #308 — E2E 1건 실패\n<!-- bodat:worker -->","createdAt":"not-a-real-timestamp"}
+]
+J
+cat > "$GT/b308_emptyat.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: #308 — E2E 1건 실패\n<!-- bodat:worker -->","createdAt":""}
+]
+J
+fc_row "J6 ⑶ 마커 시각 파싱 실패→active(증명 실패는 열지 않는다)" active \
+  "$GT/b308_badat.json" "$G_OLD" "$G_SHA" "$GT/empty.log" 30 none
+fc_row "J7 ⑶ 마커 시각 빈 값→active" active \
+  "$GT/b308_emptyat.json" "$G_OLD" "$G_SHA" "$GT/empty.log" 30 none
+
+# ── ⑴ 코멘트 입력 자체를 못 읽음 → 빈 코멘트(=판정 코멘트 없음) → active ────────
+fc_row "J8 ⑴ 코멘트 입력 부재→active" active \
+  "$GT/does-not-exist.json" "$G_OLD" "$G_SHA" "$GT/empty.log" 30 none
+
+# ── 훑는 순서 — 최신부터 거꾸로, 마커 아닌 코멘트는 **건너뛴다** ────────────────
+# J9 마커 뒤에 더 최신 비마커 코멘트가 있어도 마커를 찾아낸다(단순히 "마지막 코멘트"만
+#    보는 구현이면 빨개진다).
+cat > "$GT/b308_fresh_then_chat.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: #308 — E2E 1건 실패\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:55:00Z"},
+  {"body":"참고: 이 PR 의 로그를 확인했습니다.\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:58:00Z"}
+]
+J
+fc_row "J9 마커 뒤 비마커 최신 코멘트 — 거꾸로 훑어 마커를 찾는다→active" active \
+  "$GT/b308_fresh_then_chat.json" "$G_OLD" "$G_SHA" "$GT/empty.log" 30 none
+# J10 **반증** — 비마커 코멘트는 클록에 **안 든다**. 새 입력이 "아무 코멘트나 = 활동"
+#     으로 넓어졌다면 이 행이 active 로 뒤집힌다(그러면 완결 유실 회수가 통째로 죽는다).
+cat > "$GT/b308_old_then_chat.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: #308 — E2E 1건 실패\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:25:00Z"},
+  {"body":"참고: 이 PR 의 로그를 확인했습니다.\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:58:00Z"}
+]
+J
+fc_row "J10 비마커 최신 코멘트는 클록에 안 든다→stale_reverify" stale_reverify \
+  "$GT/b308_old_then_chat.json" "$G_OLD" "$G_SHA" "$GT/empty.log" 30 none
+
+# ── 머지 방향에서도 같은 보호(stale_inline 갈래) ────────────────────────────────
+cat > "$GT/b308_clean_fresh.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:31:00Z"},
+  {"body":"재검증 실패: #308 — E2E 1건 실패\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:55:00Z"}
+]
+J
+cat > "$GT/b308_clean_old.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:31:00Z"},
+  {"body":"재검증 실패: #308 — E2E 1건 실패\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:25:00Z"}
+]
+J
+fc_row "J11 검증자 CLEAN+🔄·반송 마커 신선→active(인라인 대리 판정도 안 연다)" active \
+  "$GT/b308_clean_fresh.json" "$G_OLD" "$G_SHA" "$GT/empty.log" 30 none
+fc_row "J12 같은 형상·반송 마커 old→stale_inline(무회귀)" stale_inline \
+  "$GT/b308_clean_old.json" "$G_OLD" "$G_SHA" "$GT/empty.log" 30 none
+
+# ── 라우팅 축 — ①-b 가 실제로 사인이 틀린 마커를 안 남기는가 ────────────────────
+row "J-R1 CONFLICTING·반송 마커 신선·증거 전무→무접촉(사인 틀린 멱등 마커 없음)" untouched \
+  CONFLICTING "$GT/b308_fresh.json" "$G_OLD" "$G_SHA" "$GT/empty.log" "" 30 none
+row "J-R2 CONFLICTING·반송 마커 old·증거 전무→재디스패치(무회귀)" redispatch \
+  CONFLICTING "$GT/b308_old.json" "$G_OLD" "$G_SHA" "$GT/empty.log" "" 30 none
+
 chmod 644 "$GT/unreadable.log" 2>/dev/null || true
 rm -rf "$GT"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# #308 ⑴ — 반송 마커 판별의 **실호출 자리**(`bounce-state.sh`)를 스텁으로 문다
+#
+# 위 J 절은 전부 실제 `bounce-state.sh` 를 탄다 — 그 경로만 무는 테스트는 배선이 끊기거나
+# 헬퍼가 실패할 때 무슨 일이 나는지 못 본다(#206 회차2 가 `pr-head-at.sh` 에서 정확히 그
+# 사각지대를 맞았다). 여기서는 `SCRIPT_DIR`(= `dirname $0`)을 임시 디렉터리로 옮기고
+# 그 옆에 스텁 `bounce-state.sh` 를 둬서 **판별기의 결말만** 갈아끼운다.
+#
+# 무는 것 둘:
+#   ⓐ 조회 실패·형상 밖 출력·헬퍼 부재 → 전부 `active`(fail-closed — 마커가 언제인지
+#      증명 못 했으면 되돌릴 수 없는 재디스패치를 열지 않는다)
+#   ⓑ 그 폴딩이 **일괄적이지 않다** — 스텁이 `ok`(마커 아님)를 내면 클록은 그대로고
+#      종전 회수가 살아 있다. ⓐ 만 있으면 "전부 active" 구현도 초록이다.
+# ══════════════════════════════════════════════════════════════════════════════
+echo "  [#308 ⑴] bounce-state.sh 실호출 자리 — 스텁으로 조회 실패·형상 밖 출력"
+
+BT=$(mktemp -d)
+ln -s "$DIR/finish-classify.sh"   "$BT/finish-classify.sh"
+ln -s "$DIR/progress-evidence.sh" "$BT/progress-evidence.sh"
+ln -s "$DIR/pr-comments.sh"       "$BT/pr-comments.sh"
+: > "$BT/empty.log"
+# 반송 마커가 **신선**(11:55)한 픽스처 — 스텁이 `bounced` 를 내면 active, `ok` 를 내면
+# 클록이 🔄(10:30)에 머물러 stale_reverify 다. 두 행의 차이는 오직 스텁 출력이다.
+cat > "$BT/fresh.json" <<'J'
+[
+  {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},
+  {"body":"재검증 실패: #308 — E2E 1건 실패\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:55:00Z"}
+]
+J
+
+# write_bounce_stub <exit코드> <stdout 한 줄(빈 문자열이면 무출력)>
+write_bounce_stub() {
+  cat > "$BT/bounce-state.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BT/args"
+cat "\$BOUNCE_COMMENTS_FILE" >> "$BT/input.json"
+[ -n '$2' ] && printf '%s\n' '$2'
+exit $1
+EOF
+  chmod +x "$BT/bounce-state.sh"
+}
+
+# run_bs <stub-rc> <stub-stdout> — 커밋·CI·claim 증거는 전부 없앤다(마커 축만 남긴다).
+run_bs() {
+  write_bounce_stub "$1" "$2"
+  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 STALL_MIN=25 ISSUE_TIMEBOX_HOURS=1 \
+    FC_COMMENTS_FILE="$BT/fresh.json" FC_HEAD_AT="2026-07-05T10:00:00Z" FC_HEAD_SHA=none \
+    FC_QUEUE_LOG="$BT/empty.log" FC_CLAIMED_AT=none \
+    "$BT/finish-classify.sh" owner/repo 1 2>/dev/null
+}
+
+check_bs() {  # check_bs <name> <expected> <actual>
+  if [ "$3" = "$2" ]; then pass=$((pass + 1)); else
+    fail=$((fail + 1)); echo "  ✗ [#308 ⑴] $1 — 기대=$2 실제=$3"; fi
+}
+
+: > "$BT/args"; : > "$BT/input.json"
+check_bs "J13 스텁 bounced(마커 신선)→active" active "$(run_bs 0 bounced)"
+# 인자 계약 — `<repo> <pr>` 로 불렀는지. 배선이 끊기면 여기서 빨개진다.
+if grep -qx 'owner/repo 1' "$BT/args"; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [#308 ⑴] bounce-state.sh 인자 계약 — 실제=[$(cat "$BT/args")]"; fi
+# **한 자리 재사용 계약** — 판별은 로직을 베끼지 않고 `bounce-state.sh` 에 되묻는다.
+# 되묻는 입력은 **코멘트 한 건짜리 배열**이어야 한다(그래야 그 한 건이 마커인지만 답한다).
+if [ "$(jq -s 'map(length) | unique | .[0]' "$BT/input.json" 2>/dev/null)" = 1 ] \
+   && [ "$(jq -s 'map(length) | unique | length' "$BT/input.json" 2>/dev/null)" = 1 ]; then
+  pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [#308 ⑴] 되묻는 입력이 한 건짜리 배열이 아니다 — [$(cat "$BT/input.json")]"; fi
+
+# ⓑ 폴딩이 일괄적이지 않다 — 같은 픽스처·같은 종료코드인데 스텁 출력만 `ok` 면 회수한다.
+check_bs "J14 스텁 ok(마커 아님)→stale_reverify(클록 불변)" stale_reverify "$(run_bs 0 ok)"
+# ⓐ 조회 실패·형상 밖 출력·무출력 → 전부 active.
+check_bs "J15 스텁 exit 1(조회 실패)→active" active "$(run_bs 1 "")"
+check_bs "J16 스텁 형상 밖 출력→active" active "$(run_bs 0 garbage)"
+check_bs "J17 스텁 exit 0·무출력→active" active "$(run_bs 0 "")"
+# 헬퍼 **부재**(exit 127)·실행 비트 누락(126)도 같은 갈래다.
+rm -f "$BT/bounce-state.sh"
+got=$(FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN=30 STALL_MIN=25 ISSUE_TIMEBOX_HOURS=1 \
+  FC_COMMENTS_FILE="$BT/fresh.json" FC_HEAD_AT="2026-07-05T10:00:00Z" FC_HEAD_SHA=none \
+  FC_QUEUE_LOG="$BT/empty.log" FC_CLAIMED_AT=none \
+  "$BT/finish-classify.sh" owner/repo 1 2>/dev/null)
+check_bs "J18 bounce-state.sh 부재(exit 127)→active" active "$got"
+
+rm -rf "$BT"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # #206 attempt3 — claim 축의 **두 자리**를 따로 문다
@@ -1148,6 +1390,7 @@ CT=$(mktemp -d)
 ln -s "$DIR/finish-classify.sh"   "$CT/finish-classify.sh"
 ln -s "$DIR/progress-evidence.sh" "$CT/progress-evidence.sh"
 ln -s "$DIR/pr-comments.sh"       "$CT/pr-comments.sh"
+ln -s "$DIR/bounce-state.sh"      "$CT/bounce-state.sh"   # 반송 마커 판별(#308)
 cat > "$CT/bounced.json" <<'J'
 [
   {"body":"머지 판정: 🔄 진행 중\n<!-- bodat:worker -->","createdAt":"2026-07-05T10:30:00Z"},

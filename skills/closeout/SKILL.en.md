@@ -293,6 +293,16 @@ working right now, so the worker lane owns it — #218 attempt 4).
     or `stale_inline` → **Re-dispatch** (the same action as the `stale_reverify` row of the
     2) table — the `closeout-redispatch` transition plus the idempotency marker). This is the
     shape where the bounce-round worker pushed its fix and then died just before ✅.
+  - **The bounce marker's timestamp is part of the stale clock too (#308)** — the bounce
+    transition strips `agent:claimed`, so in the **label gap right after a bounce, before the
+    dispatcher re-attaches it**, all three progress-evidence axes read old/none. In that window
+    `finish-classify.sh` returns `active`, so this branch never opens (marker detection is asked
+    back to `bounce-state.sh`, the single place — never a second copy of the marker set).
+  - Why that window was **harmless** (and why it was still fixed): `closeout-redispatch` works
+    off a readback, so it is a no-op on an issue already at `agent-ready`, and the idempotency
+    marker rule blocks a re-post — the worker never died. What remains is **one line in the
+    ledger**. The ledger is the only place the next tick and a human read the *cause of death*,
+    and a live bounce round labelled `완결 유실(검증 전 사망)` reads as a dead one.
   - **`stale_inline` is re-dispatched too, never adopted (merged).** A `검증자 리뷰: CLEAN`
     left on a bounced PR may be from the round **before** the bounce, so adopting it would
     merge code that was just rejected (exactly the direction #196 closed). Leaving it
@@ -550,6 +560,23 @@ no verdict) is `policy`; `ladder` only when the rungs of
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
 were actually climbed and the failure output cited.
 
+**The stderr `blocked:` line from `$SCRIPTS/closeout-eligible.sh` is moved into ④ Report**
+(same shape as issue-runner's `eligible-issues.sh` `blocked:` hand-off rule, #379). The
+`✅ 이후 미해결 코멘트 N건` line (literally "N unresolved comments after ✅") means "a human review
+remains after the boundary the verifier acknowledged (the ✅'s `코멘트 스냅샷 N`, or the ✅ itself
+when absent), so it was not picked up, fail-closed" (the literal's "after ✅" refers to that boundary) — the loop does not resolve this on its own (a machine judging a
+human comment "resolved" would be fail-open) — the only way it clears is **verify-runner
+re-verifying and stamping a new ✅** (the confirmation step right before that ✅ is what
+absorbs the human comments — see verify-runner ④). A human reply does not clear it (a reply
+is itself an unmarked comment too); what a human needs to do is not leave a reply but send
+the PR back to `flow:verify` (or re-pick it into `verifying`). Until then, the same line
+repeating every tick is expected (never drop it silently). The counting boundary is the
+`코멘트 스냅샷 N` snapshot token in the ✅ body when present (that N is the moment verify-runner
+read the comments, so comments that slipped in between the read and the ✅ are caught too,
+#384); for an older ✅ without the snapshot token it is that ✅'s index. Why not `warn`: warn is reserved for
+invariant violations the loop can correct (`loop-status.sh` definition) — this is a legitimate
+non-pick, so it belongs to the `막힘` (blocked) bucket.
+
 ## ③ Pipeline — steps 1–6
 
 For the picked PR, perform the 6 steps below in order. At the end of each step, plant
@@ -577,7 +604,9 @@ merge, #96). No worktree (`make-worktree.sh`) is needed in this step — step 3 
   Machine-comment marker (required): the closeout-verification comment posted below via
   `gh pr comment` must include **a final line `<!-- bodat:worker -->`** — it is how
   closeout-eligible tells a machine comment from a human review (#72). Without it, on
-  re-evaluation the PR is mistaken for an unresolved human comment and drops out.
+  re-evaluation, the PR is mistaken for an unresolved human comment and drops out only when
+  this comment comes after the latest `머지 판정: ✅` (a comment before that ✅ is treated as
+  already seen by verify-runner, #379).
 - **Duplicate — the loop closes it itself (never handed to a human).** If the verifier
   judges that the fix the issue asked for is **already on `origin/main`**, or that this PR
   duplicates another, treat it as neither BLOCKER nor CLEAN. Confirm the evidence commit
@@ -1288,6 +1317,11 @@ tick where every count is 0** — the snapshot is the only window onto what is i
 - On exit 64 (no scope — an account-wide session with no `.loop/repos`), call it once more
   naming the repos touched this tick with `--repo <owner/repo>`; if there are none, leave one
   warn line `loop-status: 스코프 없음(.loop/repos 부재)`.
+- The stderr `blocked: PR #<pr>(<repo>) — ✅ 이후 미해결 코멘트 <n>건(마커 없음 = 사람 리뷰
+  대기)` line from `$SCRIPTS/closeout-eligible.sh` (see ② Pick; literally "N unresolved
+  comments after ✅, no marker = awaiting human review") is pasted verbatim as a `막힘`
+  (blocked) item, one line — not as a warn. It is normal for it to repeat every tick until
+  verify-runner re-verifies and stamps a new ✅ (a human reply does not clear it — see ② Pick).
 
 State the 7 exit states — for **each** PR processed (per-PR when the drain handled several):
 - **success** — ran steps 1–6, merged the PR, and issued follow-ups (including adopt/rebase recoveries).

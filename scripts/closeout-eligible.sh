@@ -88,9 +88,39 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   comments=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$pr" 2>/dev/null) || continue
   [ -n "$comments" ] || continue
 
-  printf '%s' "$comments" \
-    | jq -e '[.[].body] | map(select(startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))) | length > 0' \
-    >/dev/null || continue
+  # 긍정 게이트는 ✅ 의 **마지막 매칭 인덱스**를 낸다(없으면 빈 값 → 탈락). 이 인덱스는
+  # 아래 미해결 코멘트 판정의 경계로 그대로 쓰인다(#379) — ✅ 술어를 한 벌만 두려는 것이다
+  # (같은 startswith 를 두 jq 에 베끼면 한쪽만 고쳐질 때 게이트와 경계가 갈린다). 선후는
+  # createdAt 이 아니라 배열 인덱스다(`bounce-state.sh` 와 같은 규율 — 동초 선후 문제).
+  vi=$(printf '%s' "$comments" | jq -r '[ to_entries[]
+    | select(.value.body | startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))
+    | .key ] | last // empty')
+  [ -n "$vi" ] || continue
+
+  # ✅ 본문의 `코멘트 스냅샷 N` 토큰 — verify-runner 가 사람 코멘트를 **읽은 시점**의
+  # 전체 코멘트 수다(#384 Codex 2회차). ④ 의 확인 단계는 읽고 **나서** ✅ 를 게시하므로,
+  # 그 사이(수 초)에 끼어든 사람 코멘트는 ✅ 보다 **앞** 인덱스에 앉는다 — 아래 경계가
+  # ✅ 인덱스였을 때 그건 "검증자가 이미 확인한 것" 으로 넘어갔다(경합 창). N 을 경계로
+  # 쓰면 인덱스 N..vi-1 이 다시 잡혀 창이 닫힌다(✅ 자신은 마커가 있어 어차피 안 세어진다).
+  #
+  # 스냅샷 토큰이 없는 **옛 ✅**(토큰 도입 이전·확인 단계 이전에 찍힌 것)은 종전 경계
+  # `vi+1` 을 그대로 쓴다 — 소급하지 않기로 한 사용자 결정(#379)이고, 실측상 노출도
+  # 없다(issue-runner 열린 ✅ PR 6건 전부 ✅ 이전 무마커 코멘트 0건). 판정은 여전히
+  # 결정론·인덱스 기반이다(시각 비교 아님).
+  #
+  # 추출 실패는 전부 빈 값으로 떨어뜨려 `vi+1` 로 접는다(토큰 부재 · 본문 null · jq 오류
+  # — 셋 다 "옛 ✅ 와 같이 다뤄라"). 이 폴백은 fail-open 이 아니다: 옛 경계와 같아질 뿐
+  # ✅ **뒤**의 사람 코멘트는 하나도 놓치지 않는다.
+  cut=$(printf '%s' "$comments" | jq -r --argjson vi "$vi" \
+    '.[$vi].body | capture("코멘트 스냅샷 (?<n>[0-9]+)").n // empty' 2>/dev/null)
+  case "$cut" in ''|*[!0-9]*) cut=$((vi + 1)) ;; esac
+  # 경계는 스냅샷 토큰이 있어도 **절대 `vi+1` 을 넘지 않는다**(= min(N, vi+1)). N ≤ vi 는
+  # 정상 경로에선 구조적으로 보장되지만(읽고 나서 게시하므로 ✅ 인덱스는 N 이상),
+  # verify-runner 가 수를 잘못 적거나 ✅ 이후 코멘트가 **삭제**돼 배열이 줄면 깨진다.
+  # 그때 경계가 ✅ 뒤로 밀리면 ✅ 이후의 사람 리뷰를 건너뛰는 fail-open 이 된다 — 이
+  # 스크립트가 지키는 방향(증명 못 하면 통과 아님)의 정반대라 상한을 박아 둔다. 스냅샷 토큰가
+  # 하는 일은 경계를 **앞으로** 당기는 것뿐이고, 뒤로 미는 힘은 주지 않는다.
+  [ "$cut" -le "$vi" ] || cut=$((vi + 1))
 
   # 결정론 재사용 — finish-classify.sh 의 head-SHA 대조 판정을 그대로 쓴다(#171 개발계획
   # 2항: 로직 두 벌 금지). ✅ 존재만으로 후보 삼지 않는다 — 반송(재디스패치) 뒤 새
@@ -152,11 +182,43 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 제약일 뿐(마커가 "머지 판정: ✅" 앞에 오면 startswith 가 깨진다) 이 필터의
   # 요구사항이 아니다. 마지막-줄을 jq 로 강제하면 마커 오배치가 사람 코멘트로
   # 오인돼 #72 false-positive 가 재발하므로 그렇게 바꾸지 마라.
-  unresolved=$(printf '%s' "$comments" | jq '[.[].body
+  # **세는 범위는 최신 `머지 판정: ✅` 이후뿐이다**(#379). ✅ 이전의 무마커 코멘트는
+  # verify-runner 가 **보고 나서** ✅ 를 찍은 것이라 이미 해소된 사실이다 — 그걸 다시
+  # 세는 건 같은 사실을 두 번 세는 것이고, 재심·리베이스를 여러 번 거친 PR 일수록
+  # 무마커 보고가 쌓여 **더 잘 걸리는 역방향**이었다(실측 #5106: 워커 리베이스 보고 2건
+  # + 사람 세션 재심 1건이 "미해결 사람 리뷰 3건" 으로 집계돼 조용히 큐에서 사라졌다).
+  # 경계 `$vi` 는 위 긍정 게이트가 낸 ✅ 의 마지막 매칭 인덱스다(그 자리 주석 참조 —
+  # 술어는 거기 한 벌뿐). `$comments` 는 이 회전 안에서 불변이라 그대로 재사용한다.
+  # 실제로 쓰는 경계값은 `$cut` 이다 — ✅ 본문에 `코멘트 스냅샷 N` 토큰가 있으면 N,
+  # 없으면 `vi+1`(위 스냅샷 토큰 주석). 스냅샷 토큰이 있는 ✅ 에선 verify-runner 의
+  # 읽기~게시 사이에 낀 사람 코멘트(인덱스 N..vi-1)까지 잡힌다 = 경합 창 폐쇄(#384).
+  #
+  # fail-open 이 아니다: ✅ **뒤**의 사람 코멘트는 종전 그대로 후보를 막는다. 좁힌 것은
+  # "언제부터 세는가" 뿐이고, 판정 이후 들어온 진짜 새 리뷰는 하나도 놓치지 않는다.
+  #
+  # 탈락은 stderr 한 줄로 **드러낸다** — `continue` 만 하면 큐에서 조용히 사라져
+  # 아무도 눈치 못 챈다(조용한 큐 사망 금지, SKILL #206 원칙). 접두는 `warn:` 이 아니라
+  # `blocked:` 다 — warn 은 **루프가 교정 가능한** 불변식 위반에만 쓴다(`loop-status.sh`
+  # 정의 · #188: 조치 불가능한 warn 은 신호를 죽인다). 이 탈락은 사람이 답하거나
+  # verify-runner 가 새 ✅ 를 찍어야 풀리는 **정당한 미집계**라 `eligible-issues.sh` 의
+  # `blocked:` 줄과 같은 부류이고, ④ Report 가 그대로 한 줄로 옮긴다.
+  unresolved=$(printf '%s' "$comments" | jq --argjson cut "$cut" '[ to_entries[]
+    | select(.key >= $cut)
+    | .value.body
     | select((contains("<!-- bodat:worker -->")
               or startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
     | length')
-  [ "${unresolved:-0}" -gt 0 ] && continue
+  # 계산 자체가 실패해 빈 값이면 "0건" 으로 접지 않는다 — 판정 실패는 통과가 아니다
+  # (fail-closed, 위 ✅ 갈래와 같은 방향). 종전 `${unresolved:-0}` 는 이 실패를 조용히
+  # 통과시키는 구멍이었다(#384 보조 리뷰). jq 의 stderr 는 그대로 흘려 원인이 보이게 둔다.
+  if [ -z "$unresolved" ]; then
+    echo "blocked: PR #$pr($repo) — 미해결 코멘트 판정 실패(jq 빈 출력) — fail-closed" >&2
+    continue
+  fi
+  if [ "$unresolved" -gt 0 ]; then
+    echo "blocked: PR #$pr($repo) — ✅ 이후 미해결 코멘트 ${unresolved}건(마커 없음 = 사람 리뷰 대기)" >&2
+    continue
+  fi
 
   # ci-pass exit code 분기 (#70): 0=캐시 pass(revalidate:false)·2=로컬 CI HEAD 미실행
   # (rebase 등 — revalidate:true 로 머지 도크가 재검증)·그 외=종전대로 탈락(fail/조회불가).

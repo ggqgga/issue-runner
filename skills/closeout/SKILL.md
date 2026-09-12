@@ -258,6 +258,14 @@ mergeable 값을 보기 **전에** `$SCRIPTS/bounce-state.sh <repo> <pr>` 를 �
     `stale_reverify` 또는 `stale_inline` 이면 **재디스패치**한다(2) 표의 `stale_reverify`
     행과 같은 조치 — `closeout-redispatch` 전이 + 멱등 마커). 반송 회차 워커가 커밋까지
     하고 ✅ 직전에 죽은 형상이다.
+  - **반송 마커 시각도 스테일 클록에 든다(#308)** — 반송 전이가 `agent:claimed` 를 떼므로
+    **반송 직후 디스패처가 다시 붙이기 전 라벨 공백 창**에서는 진행 증거 세 축이 전부
+    old/none 이다. 그 창에서는 `finish-classify.sh` 가 `active` 를 내므로 이 갈래가 열리지
+    않는다(마커 판별은 `bounce-state.sh` 한 자리를 되물어 얻는다 — 마커 집합 두 벌 금지).
+  - 그 창이 **무해했던 이유**(그런데도 고친 이유): `closeout-redispatch` 는 readback 기준이라
+    이미 `agent-ready` 인 이슈엔 no-op 이고 멱등 마커 규칙이 재발행을 막아 워커는 안 죽었다 —
+    남는 손해는 **원장 한 줄**이다. 원장은 다음 틱·사람이 **사인**을 읽는 유일한 자리라,
+    살아 있는 반송 회차에 `완결 유실(검증 전 사망)` 이 적히면 사람이 죽은 것으로 오독한다.
   - **`stale_inline` 도 입양(머지)하지 않고 재디스패치로 보낸다.** 반송된 PR 에 남아
     있는 `검증자 리뷰: CLEAN` 은 **반송 이전 회차**의 것일 수 있어, 입양하면 방금 반려된
     코드를 머지한다(#196 이 막은 바로 그 방향). 그렇다고 무접촉으로 두면 이 절이 없애려는
@@ -485,6 +493,19 @@ exit 64 — 사유 없는 정지를 만들 수 없다). rebase/semantic conflict
 (`~/.claude/skills/issue-runner/references/live-verification-ladder.md`)
 의 칸을 실제로 올라가 실패 출력을 인용한 경우만 `ladder` 다.
 
+**`$SCRIPTS/closeout-eligible.sh` 의 stderr `blocked:` 줄은 ④ Report 로 옮긴다**(issue-runner
+`eligible-issues.sh` 의 `blocked:` 이관 규칙과 같은 꼴, #379). `✅ 이후 미해결 코멘트 N건` 은
+"검증자가 확인한 경계(✅ 의 `코멘트 스냅샷 N`, 없으면 ✅ 자리) **뒤에** 사람 리뷰가 남아 있어
+fail-closed 로 안 집었다"는 뜻이고(리터럴의 "✅ 이후" 는 이 경계를 가리킨다), 루프가 스스로 풀지
+않는다(사람 코멘트를 기계가 '해결됨'으로 판정하면 fail-open) — 풀리는 길은 verify-runner 가
+재검증해 새 ✅ 를 찍는 것(그 ✅ 직전 확인 단계가 사람 코멘트를 소화한다 — verify-runner ④
+참조)뿐이다. 사람 답글은 풀지 않는다(그 답글도 무마커 코멘트다). 즉 사람이 할 일은 답을
+남기는 게 아니라 PR 을 `flow:verify` 로 되돌리는(또는 `verifying` 재집) 것이다. 그 전엔
+매 틱 같은 줄이 반복되는 것이 정상이다(조용한 탈락 금지, #379). 세는 경계는 ✅ 본문의
+`코멘트 스냅샷 N`(있으면 그 N — verify-runner 가 코멘트를 읽은 시점이라 읽기~게시 사이에
+낀 코멘트도 잡힌다, #384) 또는 스냅샷 토큰 없는 옛 ✅ 면 그 ✅ 의 인덱스다. `warn` 이 아닌 이유: warn 은 루프가 교정
+가능한 불변식 위반에만 쓴다(`loop-status.sh` 정의) — 이건 정당한 미집계라 `막힘` 부류다.
+
 ## ③ 파이프라인 — 1~6단계
 
 집은 PR 에 대해 아래 6단계를 순서대로 수행한다. 각 단계 끝에 마커 명령을 박아
@@ -509,7 +530,9 @@ BLOCKER 0 또는 `자체 리뷰(codex 2회 소진)`). 여기서는 **계획 부�
 - 판정: BLOCKER → BLOCKER. CLEAN/NIT/WARN → 통과(`[P3+]` = NIT 는 비차단).
   머신 코멘트 마커(필수): 아래 `gh pr comment` 로 남기는 마감 검증 코멘트는 **마지막 줄에
   `<!-- bodat:worker -->`** 를 포함한다 — closeout-eligible 이 머신 코멘트를 사람 리뷰와
-  구분하는 신호다(#72). 빠지면 그 PR 이 재평가 때 미해결 사람 코멘트로 오인돼 탈락한다.
+  구분하는 신호다(#72). 빠지면 그 PR 이 재평가 때, 이 코멘트가 최신 `머지 판정: ✅` 이후에
+  있는 경우에만 미해결 사람 코멘트로 오인돼 탈락한다(✅ 이전 코멘트는 verify-runner 가 이미
+  본 것으로 친다, #379).
 - **중복 — 루프가 직접 닫는다 (사람에게 넘기지 않는다).** 검증자가 "이슈가 요구한 수정이
   **이미 `origin/main` 에 있다**" 또는 "이 PR 은 다른 PR 과 중복" 으로 판정하면 —
   BLOCKER 로도 CLEAN 으로도 취급하지 마라. 근거 커밋을 확인한 뒤(`git log origin/<default>`
@@ -1106,6 +1129,10 @@ approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스�
 - exit 64(스코프 없음 — 계정 전체 세션이라 `.loop/repos` 가 없음)면 이 틱에 만진 레포들을
   `--repo <owner/repo>` 로 명시해 한 번 더 부르고, 그래도 없으면
   `loop-status: 스코프 없음(.loop/repos 부재)` 한 줄을 warn 으로 남긴다.
+- `$SCRIPTS/closeout-eligible.sh` 의 stderr `blocked: PR #<pr>(<repo>) — ✅ 이후 미해결 코멘트
+  <n>건(마커 없음 = 사람 리뷰 대기)` (② Pick 참조) 는 한 줄 그대로 `막힘` 항목으로 옮겨 적는다
+  (warn 아님) — verify-runner 가 재검증해 새 ✅ 를 찍기 전까진 매 틱 반복되는 것이 정상이다
+  (사람 답글은 풀지 않는다 — ② Pick 참조).
 
 종료 상태 7종 — 처리한 PR **각각**에 대해 명시한다(드레인으로 여러 개면 PR 별로):
 - **success** — 1~6단계를 다 돌아 PR 을 머지하고 후속까지 발행함(입양·rebase 회수분 포함).
