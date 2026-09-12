@@ -275,6 +275,18 @@ case "${1:-} ${2:-}" in
     fi
     edit_labels "$STUB_PR_LABELS" "$@"
     exit 0 ;;
+  "pr comment")
+    # (#345 PR 축) 승격 코멘트는 **PR 에** 남는다 — `api …/issues/<pr>/comments` 가 미러 픽스처의
+    # PR 에 대해 $STUB_PR_COMMENTS 를 답하므로 거기 쌓아야 다음 틱(③-b)이 그 hold-note 를 읽는다.
+    [ -z "${STUB_PR_COMMENT_FAIL:-}" ] || exit 1
+    body=""
+    while [ $# -gt 0 ]; do
+      [ "$1" = "--body" ] && { body="$2"; break; }
+      shift
+    done
+    jq --arg b "$body" '. + [{body: $b}]' "$STUB_PR_COMMENTS" > "$STUB_PR_COMMENTS.tmp" \
+      && mv "$STUB_PR_COMMENTS.tmp" "$STUB_PR_COMMENTS"
+    exit 0 ;;
   "pr view")
     # (#395) ③-b PR 단독 재심이 읽는 **PR 코멘트**. 라벨 조회(readback)와 인자로 갈린다.
     case "$*" in
@@ -386,7 +398,7 @@ setup() {
   rm -f "$tmp"/mirror.comments.*       # (#397) 기본: 재시도 마커 0개
   : > "$tmp/linked.state"              # (#421) 기본: 참조 이슈 상태 픽스처 없음 = 스텁이 OPEN 으로 답한다
   MRL=3
-  STUB_PR_COMMENTS_FAIL=""
+  STUB_PR_COMMENTS_FAIL=""; STUB_PR_COMMENT_FAIL=""
   : > "$tmp/gh.log"
   # unset 하면 export 속성이 날아가 이후 대입이 스텁에 안 전달된다 — 빈 값으로 되돌린다.
   STUB_LADDER_FAIL=""; STUB_CONFLICT_FAIL=""; STUB_HUMAN_FAIL=""; STUB_LABEL_EDIT_FAIL=""; STUB_COMMENT_FAIL=""
@@ -430,7 +442,7 @@ export STUB_MIRROR_ONE="$tmp/mirror.one"
 export STUB_MIRROR_LIST_FAIL="" STUB_MIRROR_EDIT_FAIL="" STUB_MIRROR_READBACK=""
 export STUB_MIRROR_RACE="" STUB_MIRROR_EDITED="$tmp/mirror.edited"
 export STUB_MIRROR_EVENTS="$tmp/mirror.events" STUB_MIRROR_EVENTS_FAIL=""
-export STUB_PR_COMMENTS="$tmp/pr.comments.json" STUB_PR_COMMENTS_FAIL=""
+export STUB_PR_COMMENTS="$tmp/pr.comments.json" STUB_PR_COMMENTS_FAIL="" STUB_PR_COMMENT_FAIL=""
 export STUB_MIRROR_COMMENTS="$tmp/mirror.comments"
 export STUB_LINKED_STATE="$tmp/linked.state"
 WORKDIR="$tmp/work"
@@ -2540,6 +2552,115 @@ run_sut "$mut"
 check "conflict ⓖ: 제외를 지우면 사람 인수 문구가 사라진다" "$(if printf '%s' "$out" | grep -q '사람 인수(full-cycle)'; then echo no; else echo ok; fi)"
 run
 check "conflict ⓖ: 대조군 — 원본은 같은 픽스처에서 사람 인수 note" "$(saysl '사람 인수(full-cycle)')"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# (#345 반송 ①) PR 축 `hold:conflict` — 연결된 **열린** 이슈가 없는 PR 의 충돌 홀드
+# ──────────────────────────────────────────────────────────────────────────────
+# `closeout-blocked - <pr> --reason conflict` 는 PR 에만 `hold:conflict` 를 남긴다. ①-c 는 이슈
+# 목록에서 출발하고 ④ 정지 미러는 짝 없는 PR 을 건너뛰며 ③-b 는 `hold:policy` 만 봐서, 그 PR 은
+# 어느 갈래에도 안 잡혀 무기한 정지였다. 이 축에는 재개의 **소비자가 없다**(#421 — PR 단독
+# `flow:agent-ready` 를 집는 스크립트가 없다) — 그래서 재개가 아니라 창 뒤 `hold:policy` 승격이고,
+# 그 다음은 기존 ③-b(PR 단독 재심)가 같은 PR 을 집어 사람 몫으로 귀결시킨다.
+# 격자: 축(연결 이슈 없음 / 열림 / 전부 닫힘) × 창 × 사람 표식(full-cycle · needs-human) × 쓰기 실패.
+pr_conflict_rows() {  # pr_conflict_rows <closes JSON> <분전> [라벨csv]
+  jq -n --argjson c "$1" --arg u "$(ts "$2")" --arg l "${3:-hold:conflict}" \
+    '[{number:702, headRefName:"fix/사람이-연-브랜치",
+       labels: ($l|split(",")|map({name:.})), closingIssuesReferences:$c, updatedAt:$u}]' \
+    > "$tmp/mirror.prs.json"
+}
+pr_lab() { jq -r '.[] | select(.number == 702) | [.labels[].name] | join(",")' "$tmp/mirror.prs.json"; }
+haspr()   { case ",$(pr_lab)," in *",$1,"*) echo ok ;; *) echo no ;; esac; }
+lackspr() { case ",$(pr_lab)," in *",$1,"*) echo no ;; *) echo ok ;; esac; }
+pc_note='[{"body":"사람 확인(conflict): 충돌 #5114·client.rb — 워커 재개 범위: origin/main 위로 rebase\n<!-- hold-note: conflict --><!-- bodat:worker -->"}]'
+
+# ⓐ PR 단독(closes 0) + 창 경과 → escalated(pr 축) · hold:policy 부착 · hold:conflict 해제 · 질문 코멘트
+setup "" 200 0
+pr_conflict_rows '[]' 200
+pr_comments "$pc_note"
+run
+check "PR축 conflict ⓐ: escalated"                       "$(has_ev escalated)"
+check "PR축 conflict ⓐ: pr 필드로 축이 갈린다(number null)" "$(ev_is escalated '.pr == 702 and .number == null and .reason == "conflict"')"
+check "PR축 conflict ⓐ: attempt/limit 0/0(재개 소비자 없음)" "$(ev_is escalated '.attempt == 0 and .limit == 0')"
+check "PR축 conflict ⓐ: PR hold:policy 부착"              "$(haspr hold:policy)"
+check "PR축 conflict ⓐ: PR hold:conflict 해제"            "$(lackspr hold:conflict)"
+check "PR축 conflict ⓐ: PR 에 hold-note: policy 질문"      "$(jq -e '.[-1].body | test("사람 확인\\(policy\\):") and test("<!-- hold-note: policy -->") and test("<!-- bodat:worker -->$")' "$tmp/pr.comments.json" >/dev/null 2>&1 && echo ok || echo no)"
+check "PR축 conflict ⓐ: 질문 코멘트가 라벨 편집보다 먼저(#157)" \
+  "$([ "$(grep -n 'pr comment 702' "$tmp/gh.log" | head -1 | cut -d: -f1)" -lt "$(grep -n 'pr edit 702' "$tmp/gh.log" | head -1 | cut -d: -f1)" ] 2>/dev/null && echo ok || echo no)"
+check "PR축 conflict ⓐ: 이슈 편집 0(이슈 축을 건드리지 않는다)" "$(none 'issue edit')"
+check "PR축 conflict ⓐ: resumed 없음(재개가 아니다)"       "$(no_ev resumed)"
+check "PR축 conflict ⓐ: warn 없음"                        "$(no_ev warn)"
+# 다음 틱 — 승격된 PR 을 ③-b 가 **같은 축**에서 집어 사람 몫으로 잇는다(체인이 닫힌다).
+run
+check "PR축 conflict ⓐ': 다음 틱 ③-b 가 policy_review_due(pr) 를 낸다" "$(ev_is policy_review_due '.pr == 702 and .number == null')"
+check "PR축 conflict ⓐ': 승격을 두 번 하지 않는다"          "$(no_ev escalated)"
+
+# ⓑ 연결 이슈가 **열려** 있으면 이슈 축(①-c) 소관 — PR 축은 손대지 않는다(중복 금지)
+setup "" 200 0
+pr_conflict_rows '[{"number":333}]' 200
+pr_comments "$pc_note"
+run
+check "PR축 conflict ⓑ: 열린 연결 이슈 — escalated 없음" "$(no_ev escalated)"
+check "PR축 conflict ⓑ: PR 무편집"                     "$([ "$(counts 'pr edit')" = 0 ] && [ "$(counts 'pr comment')" = 0 ] && echo ok || echo no)"
+
+# ⓒ 참조가 **전부 닫힌** PR — 이슈 축은 열린 목록이라 못 본다(#421 과 같은 칸) → PR 축이 승격
+setup "" 200 0
+pr_conflict_rows '[{"number":333},{"number":334}]' 200
+pr_comments "$pc_note"
+printf '333 CLOSED\n334 CLOSED\n' > "$tmp/linked.state"
+run
+check "PR축 conflict ⓒ: 참조 전부 닫힘 — escalated(pr 축)" "$(ev_is escalated '.pr == 702 and .number == null')"
+check "PR축 conflict ⓒ: 참조 상태를 실제로 물었다"        "$(grep -q 'issue view 333 .*json state' "$tmp/gh.log" && echo ok || echo no)"
+# 참조 상태 조회 실패는 "닫혔다" 로 접지 않는다 — 축을 확정 못 하면 쓰지 않는다.
+setup "" 200 0
+pr_conflict_rows '[{"number":333}]' 200
+pr_comments "$pc_note"
+printf '333 __FAIL__\n' > "$tmp/linked.state"
+run
+check "PR축 conflict ⓒ': 참조 상태 조회 실패 — escalated 없음 · warn" "$([ "$(no_ev escalated)" = ok ] && [ "$(has_ev warn)" = ok ] && [ "$(counts 'pr edit')" = 0 ] && echo ok || echo no)"
+
+# ⓓ 창 안 — waiting(pr 축)만, 무쓰기(코멘트 조회조차 안 한다)
+setup "" 10 0
+pr_conflict_rows '[]' 10
+pr_comments "$pc_note"
+run
+check "PR축 conflict ⓓ: 창 안 waiting(pr 필드)" "$(ev_is waiting '.pr == 702 and .number == null')"
+check "PR축 conflict ⓓ: 창 안 무쓰기"           "$([ "$(counts 'pr edit')" = 0 ] && [ "$(counts 'pr comment')" = 0 ] && echo ok || echo no)"
+
+# ⓔ 사람 인수(full-cycle) — 절대 승격하지 않는다(note, warn 아님)
+setup "" 200 0
+pr_conflict_rows '[]' 200 "hold:conflict,full-cycle"
+pr_comments "$pc_note"
+run
+check "PR축 conflict ⓔ: full-cycle — 사람 인수 note"     "$(saysl '사람 인수(full-cycle)')"
+check "PR축 conflict ⓔ: full-cycle — escalated 없음 · 무편집 · warn 아님" "$([ "$(no_ev escalated)" = ok ] && [ "$(counts 'pr edit')" = 0 ] && [ "$(no_ev warn)" = ok ] && echo ok || echo no)"
+
+# ⓕ 사람이 세운 needs-human 동존 — ③-b 와 같은 낱말, 같은 처분(note)
+setup "" 200 0
+pr_conflict_rows '[]' 200 "hold:conflict,needs-human"
+pr_comments "$pc_note"
+run
+check "PR축 conflict ⓕ: needs-human 동존 — note · 무편집" "$([ "$(saysl '사람이 세운 needs-human 동존')" = ok ] && [ "$(counts 'pr edit')" = 0 ] && [ "$(no_ev warn)" = ok ] && echo ok || echo no)"
+
+# ⓖ 질문 코멘트 실패 → 라벨은 그대로(질문 없는 hold:policy 를 만들지 않는다 — #157 순서 계약)
+setup "" 200 0
+pr_conflict_rows '[]' 200
+pr_comments "$pc_note"
+STUB_PR_COMMENT_FAIL=1 run
+STUB_PR_COMMENT_FAIL=""
+check "PR축 conflict ⓖ: 코멘트 실패 — 라벨 무편집 · hold:conflict 유지 · warn" \
+  "$([ "$(counts 'pr edit')" = 0 ] && [ "$(haspr hold:conflict)" = ok ] && [ "$(has_ev warn)" = ok ] && [ "$(no_ev escalated)" = ok ] && echo ok || echo no)"
+
+# ⓗ 뮤테이션 방증 — PR 축 호출을 지운 사본은 ⓐ 픽스처에서 **아무 것도 안 한다**(= 반송이 짚은
+# "무기한 정지" 형상). 원본은 같은 픽스처에서 승격한다(위 ⓐ 가 대조군).
+mut="$sut_dir/resume-sweep.mut-prconflict.sh"
+sed '/^      sweep_pr_conflict "\$repo" "\$prow"$/d' "$sut_dir/resume-sweep.sh" > "$mut"
+check "PR축 conflict ⓗ: 뮤테이션 사본이 원본과 다르다" "$(cmp -s "$mut" "$sut_dir/resume-sweep.sh" && echo no || echo ok)"
+setup "" 200 0
+pr_conflict_rows '[]' 200
+pr_comments "$pc_note"
+run_sut "$mut"
+check "PR축 conflict ⓗ: PR 축이 없으면 PR 단독 hold:conflict 가 무기한 남는다" \
+  "$([ "$(no_ev escalated)" = ok ] && [ "$(haspr hold:conflict)" = ok ] && [ "$(counts 'pr edit')" = 0 ] && echo ok || echo no)"
 
 # ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
 # 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는

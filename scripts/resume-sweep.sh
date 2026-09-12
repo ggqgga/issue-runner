@@ -22,7 +22,9 @@
 #               두 갈래를 이 필드로 가른다(라벨은 이미 떨어진 뒤라 이벤트만이 근거다).
 #   escalated — 재개 상한 초과 → hold:policy 로 승격. 사람 호출(needs-human)이 되는 것은
 #               그 뒤 재심(③)이 "사람 몫 유지" 로 끝났을 때뿐이다(#244 — 디스패처가 판정).
-#               reason 필드는 resumed 와 같다.
+#               reason 필드는 resumed 와 같다. **PR 축**도 낸다(#345 반송 — ①-d): 연결된 열린
+#               이슈가 없는 PR 의 `hold:conflict` 는 재개 소비자가 없어(#421) 창 뒤 곧장 승격
+#               이다 — `number`=null · `pr`=그 PR · `attempt`/`limit`=`0/0`(재개 0회·상한 0).
 #   policy_review_due — `hold:policy` 재심 1회 대상(#155). **두 축**이 낸다(#395):
 #               **열린** 연결 이슈가 있으면 종전대로 **이슈 축**(`number`=이슈 · `pr`=null),
 #               참조가 없거나 **전부 닫힌** PR 단독 홀드면 PR 축(`number`=null · `pr`=그 PR).
@@ -30,7 +32,8 @@
 #               참조만 남은 PR 은 이슈 축이 열린 이슈 목록이라 못 본다 — #421).
 #               PR 축의 처분은 재개가 아니라 `policy-kept` 하나다(#421 — 소비자 없는
 #               `flow:agent-ready` 를 만들지 않는다. 전문은 SKILL ① 의 같은 이벤트 불릿).
-#   waiting   — 아직 창(RESUME_AFTER_MIN) 안. minutes = 마지막 갱신 후 경과 분.
+#   waiting   — 아직 창(RESUME_AFTER_MIN) 안. minutes = 마지막 갱신 후 경과 분. PR 축(①-d)의
+#               것은 `number`=null · `pr`=그 PR 로 축을 가른다.
 #   warn      — **아무것도 안 건드린** 채 넘긴 사유(사유 라벨 부재 · 경합 · 첫 쓰기 실패).
 #   warn_after_edit — 쓰기가 **이미 반영된 뒤** 후속 단계가 실패했다(라벨·PR 미러·readback).
 #               warn 과 섞으면 "손대지 않았다" 가 거짓이 되어, 보고를 읽는 쪽이 GitHub 상태를
@@ -54,6 +57,9 @@
 # `policy` 로 보내고 `hold:conflict` 를 "루프가 1회 재개해도 되는 건" 으로 좁혔으므로, 이
 # 스윕이 그 1회(`CONFLICT_RESUME_LIMIT`)를 ladder 와 같은 골격으로 되돌린다(#345). 사람이
 # 인수한 건은 `full-cycle`(ⓑ)로 표시되고 그것은 **절대** 재개하지 않는다.
+# 단 **연결된 열린 이슈가 없는 PR** 의 `hold:conflict`(`closeout-blocked - <pr>` · 홀드 뒤 참조
+# 이슈 닫힘)는 재개할 워커를 태울 이슈가 없어 그 1회가 원리적으로 불가하다 — ①-d 가 창 뒤
+# `hold:policy` 로 승격해 ③-b(PR 단독 재심)에 넘긴다(sweep_pr_conflict 주석).
 # `needs-human` 은 **사람이 직접 세운 정지**다(#244) — 루프가 사람의 손을 떼는 일은 없어야
 # 하므로, 맨 `needs-human` 은 물론이고 `hold:ladder`·`hold:conflict` 옆에 함께 붙은 것도 무편집이다.
 #
@@ -810,6 +816,112 @@ sweep_pr_policy() {  # sweep_pr_policy <repo> <열린 PR row-json>
     "$repo" "$(_emit_num "$prnum")" "$pmin"
 }
 
+# ── ①-d PR 축 `hold:conflict` — 연결된 **열린** 이슈가 없는 PR 의 충돌 홀드 (#345 반송) ─────
+# `closeout-blocked - <pr> --reason conflict`(연결 이슈 없는 PR 의 정식 호출 형태)는 PR 에만
+# `hold:conflict` 를 남긴다. ①-c 는 **이슈** 목록에서 출발하고, ④ 정지 미러는 짝(이슈)이 없는
+# PR 을 건너뛰며, ③-b 는 `hold:policy` 만 본다 — 그래서 그 PR 은 어느 갈래에도 안 잡혀 무기한
+# 정지였다. 참조 이슈가 홀드 **뒤에** 전부 닫힌 PR 도 같은 형상이다(이슈 축은 열린 목록만 본다,
+# #421 과 같은 칸). 생산자 전수: `verify-held`·`closeout-blocked` 의 `<issue>=-` 호출 · 홀드 뒤
+# 참조 이슈 닫힘 · 사람 손편집 — 세 모양이 다 여기 한 갈래로 온다(축은 **PR 라벨**이지 생산자가
+# 아니다).
+#
+# 왜 재개가 아니라 **승격**인가: 이 축에는 재개의 소비자가 없다(#421 — ③-b 주석과 같은 사실).
+# 이슈 축의 재개는 `hold:conflict` 를 떼면 그 이슈가 ③ `eligible-issues.sh` 후보로 돌아와 재개
+# 워커가 홀드 노트를 받아 rebase 한다. PR 단독은 떼 봐야 `flow:agent-ready` 만 남고 그것을 집는
+# 스크립트가 없다 — "워커 한 회차 더"(ⓐ) 가 **원리적으로 불가**하니 상한은 0 이고, 남는 답은
+# 이슈 축이 상한 초과에 하는 것과 같은 `hold:policy` 승격이다. 그 뒤는 기존 ③-b(PR 단독
+# `hold:policy` 재심)가 **같은 PR 을 같은 축에서** 집어 `policy_review_due(pr)` → 디스패처
+# `policy-kept` → `needs-human` 으로 사람에게 닿는다(체인이 닫힌다 — 무기한 정지 없음).
+# 그래서 승격 코멘트는 `<!-- hold-note: policy -->` 질문이다(없으면 ③-b 가 `no-note` warn 만 낸다).
+# 창은 이슈 축과 같은 `RESUME_AFTER_MIN` 이다 — 그 창이 곧 사람이 `full-cycle` 로 인수(ⓑ)할
+# 시간이고, 인수됐으면(PR 라벨 `full-cycle`) 이슈 축과 같은 절대 제외다.
+#
+# 순서는 **질문 코멘트 → 라벨 편집 → readback** 이다(#157 — transition.sh 의 세 홀드 전이와 같은
+# 이유): 라벨을 먼저 바꾸고 코멘트가 실패하면 "질문 없는 hold:policy" 가 남아 ③-b 가 매 틱
+# `no-note` warn 만 내고 아무도 재시도하지 않는다. 코멘트가 먼저면 실패 시 상태가 그대로라
+# 다음 틱이 같은 승격을 통째로 다시 건다(중복 코멘트 감수 — 안 남는 쪽보다 낫다).
+sweep_pr_conflict() {  # sweep_pr_conflict <repo> <열린 PR row-json>
+  local repo="$1" row="$2" tsv prnum pupd labels closes lstate pmin pcur other back
+  tsv=$(printf '%s' "$row" | jq -r '
+    [(.number|tostring), (.updatedAt // ""),
+     ([.labels[]?.name] | join(",")),
+     ([((.closingIssuesReferences // [])[].number | tostring)] | join(" "))] | @tsv' 2>/dev/null) || tsv=""
+  if [ -z "$tsv" ]; then
+    emit_warn "$repo" 0 "열린 PR 행 파싱 실패 — PR 축 충돌 홀드 판정 못 해 건드리지 않는다"
+    return 0
+  fi
+  prnum=$(printf '%s' "$tsv" | cut -f1)
+  pupd=$(printf '%s' "$tsv" | cut -f2)
+  labels=$(printf '%s' "$tsv" | cut -f3)
+  closes=$(printf '%s' "$tsv" | cut -f4)
+
+  has_label "$labels" "hold:conflict" || return 0   # 대다수 PR — 조회도 하지 않는다
+  # 축 판정은 ③-b 와 **같은 술어**(linked_open_state) — 열린 참조가 하나라도 있으면 ①-c(이슈 축)
+  # 소관이라 여기서는 손대지 않는다(중복 편집 금지). 조회 실패는 "닫혔다" 로 접지 않는다.
+  if [ -n "$closes" ]; then
+    if ! lstate=$(linked_open_state "$repo" "$closes"); then
+      emit_warn "$repo" 0 "PR #$prnum 연결 이슈 상태 조회 실패 — 어느 축 소관인지 확정 못 해 충돌 홀드를 건드리지 않는다"
+      return 0
+    fi
+    [ "$lstate" = closed ] || return 0
+  fi
+  pmin=$(policy_window_min "$pupd") \
+    || { emit_warn "$repo" 0 "PR #$prnum updatedAt 해석 불가($pupd) — 창 판정 못 해 건드리지 않는다"; return 0; }
+  if [ "$pmin" -lt "$RESUME_AFTER_MIN" ]; then
+    # 이슈 축 `waiting` 과 같은 계약(있음/없음 구분 신호) — `pr` 필드가 축을 가른다.
+    printf '{"event":"waiting","repo":"%s","number":null,"pr":%s,"minutes":%s}\n' "$repo" "$(_emit_num "$prnum")" "$pmin"
+    return 0
+  fi
+  # ── 편집 직전 재조회(경합 가드) — 판정은 전부 **재조회 결과**로 한다(#229 와 같은 규율) ──
+  if ! pcur=$(read_pr_labels "$repo" "$prnum"); then
+    emit_warn "$repo" 0 "PR #$prnum 재조회 실패(라벨) — 경합 판별 불가라 충돌 홀드를 건드리지 않는다"
+    return 0
+  fi
+  has_label "$pcur" "hold:conflict" || return 0   # 사람이 방금 풀었다 — 대상이 아니다
+  # 사람 인수(full-cycle) — 이슈 축 conflict 갈래와 같은 절대 제외(#345). 문구도 같다.
+  if has_label "$pcur" "full-cycle"; then
+    emit_note "$repo" 0 "PR #$prnum 사람 인수(full-cycle) — 충돌 재개 안 함, 정상 상태라 warn 아님"
+    return 0
+  fi
+  # `needs-human` 동존은 사람이 직접 세운 정지(#244) — ③-b 와 같은 낱말, 같은 처분(note).
+  if has_label "$pcur" "needs-human"; then
+    emit_note "$repo" 0 "PR #$prnum 사람이 세운 needs-human 동존 — 충돌 재개 안 함, 정상 상태라 warn 아님"
+    return 0
+  fi
+  # 다른 hold:* 동존 — 이슈 축과 같은 이유로 손대지 않는다(다른 사유가 조용히 사라진다).
+  for other in hold:policy hold:ladder; do
+    if has_label "$pcur" "$other"; then
+      emit_warn "$repo" 0 "PR #$prnum hold:conflict 외 hold:* 동존 — 충돌 승격 안 함"
+      return 0
+    fi
+  done
+  # ── 승격: 질문 코멘트 → 라벨 → readback (#157 순서, 위 주석) ────────────────────────
+  # 마커는 넣지 않는다 — 이슈 축 승격과 같다(재개 횟수 카운터가 스스로 부풀지 않게).
+  if ! gh pr comment "$prnum" --repo "$repo" \
+       --body "사람 확인(policy): 충돌 재개 소비자 없음 — 연결된 열린 이슈가 없어 재개 워커를 태울 수 없다(PR 단독 hold:conflict). 사람 세션이 full-cycle 로 인수(ⓑ)할지, 이슈를 열어 재발행할지 답하라 <!-- hold-note: policy --><!-- bodat:worker -->" \
+       >/dev/null 2>&1; then
+    emit_warn "$repo" 0 "PR #$prnum 승격 질문 코멘트 실패 — 질문 없는 hold:policy 를 만들지 않으려 라벨을 그대로 둔다(다음 틱 재시도)"
+    return 0
+  fi
+  if ! gh pr edit "$prnum" --repo "$repo" \
+       --add-label "hold:policy" --remove-label "hold:conflict" >/dev/null 2>&1; then
+    emit_warn "$repo" 0 "PR #$prnum 승격 실패(라벨 편집) — 질문은 남았다(다음 틱 재시도, 중복 감수)"
+    return 0
+  fi
+  if ! back=$(read_pr_labels "$repo" "$prnum"); then
+    emit_warn_after_edit "$repo" 0 "PR #$prnum 승격 readback 조회 실패 — 라벨 반영 여부 미상, 사람 확인 필요"
+    return 0
+  fi
+  if ! has_label "$back" "hold:policy" || has_label "$back" "hold:conflict"; then
+    emit_warn_after_edit "$repo" 0 "PR #$prnum 승격 readback 불일치(hold:policy 부착·hold:conflict 해제 기대) — 사람 확인 필요"
+    return 0
+  fi
+  # `attempt`/`limit` 는 `0/0` — 이 축엔 재개가 없으니 소진한 횟수도 상한도 0 이다(위 주석).
+  # `number` 는 null, `pr` 이 채워진다 — `policy_review_due` 와 같은 축 표기(#395).
+  printf '{"event":"escalated","repo":"%s","number":null,"pr":%s,"attempt":0,"limit":0,"reason":"conflict"}\n' \
+    "$repo" "$(_emit_num "$prnum")"
+}
+
 sweep_hold_mirror() {  # sweep_hold_mirror <repo> <PR row-json>
   local repo="$1" row="$2" tsv prnum issue closes stops cn st st2 istate ilabels lab removed back
   local at_off at_on
@@ -1520,14 +1632,19 @@ while IFS= read -r repo; do
   #    같은 목록을 **③-b(PR 단독 hold:policy 재심, #395)** 도 쓴다 — 축이 같아서(열린 PR)
   #    한 조회를 나눠 쓰고, 두 갈래는 서로 배타적이다(③-b 는 연결 이슈가 **없는** PR 만,
   #    ④ 는 짝이 **증명된** PR 만 건드린다).
+  #    ①-d(PR 축 `hold:conflict`, #345 반송)도 같은 목록이다 — 연결된 열린 이슈가 없는 PR 의 충돌
+  #    홀드를 창 뒤 `hold:policy` 로 승격해 ③-b 에 넘긴다(재개 소비자가 없는 축 — 함수 주석).
+  #    순서: 승격(①-d)이 ③-b 보다 **앞**이면 같은 틱에 재심까지 흐를 것 같지만 ③-b 는 목록
+  #    스냅샷(row)의 라벨을 보므로 승격된 PR 은 다음 틱에 집힌다 — 창 하나를 더 두는 것이 의도다.
   if fetch_open_prs "$repo" "$tmp/prs.open"; then
     while IFS= read -r prow <&3; do
       [ -n "$prow" ] || continue
+      sweep_pr_conflict "$repo" "$prow"
       sweep_pr_policy "$repo" "$prow"
       sweep_hold_mirror "$repo" "$prow"
     done 3< "$tmp/prs.open"
   else
-    echo "resume-sweep: $repo 열린 PR 목록 조회 실패 — 정지 미러 정리·PR 단독 재심을 건너뛴다" >&2
+    echo "resume-sweep: $repo 열린 PR 목록 조회 실패 — 정지 미러 정리·PR 단독 재심·PR 축 충돌 홀드를 건너뛴다" >&2
     rc=2
   fi
 done < "$repos_file"
