@@ -677,14 +677,20 @@ def bucket_ko($k):
   {"deploy_wait":"배포대기","human_wait":"사람대기","held":"보류","harvesting":"마감중",
    "ready":"마감대기","verify":"검증대기","claimed":"구현중","waiting":"대기","blocked":"막힘",
    "outside":"루프 밖"}[$k];
-# 에픽 번호 (#260) — 본문 **줄 시작**의 `epic\s+#N`(대소문자 무시)의 **첫 매치**만.
+# 에픽 번호 (#260) — 본문의 **전용 줄**(줄 시작의 `epic\s+#N` 뒤가 줄 끝까지 공백뿐,
+# 대소문자 무시)의 **첫 매치**만.
 # `blockers_of` 와 같은 스타일(줄 단위로 가른 뒤 capture — jq 의 `^` 는 문자열 시작만
 # 앵커하므로 split 없이 걸면 본문 첫 줄만 검사된다)이지만, 블로커는 여러 개를 모아
 # dedupe 하는 반면 에픽은 **한 이슈 = 최대 한 에픽**이라 첫 매치 하나만 취한다(산문 속
 # `… epic #N …`은 애초에 매치가 안 남 — capture 는 비매치 줄에서 결과를 안 낸다).
+# 끝 앵커(`[[:space:]]*$`)는 #327 에서 `epic-sweep.sh` 의 `JQ_EPIC_OF` 와 **같은 커밋에서**
+# 넣었다 — 줄 시작은 전용 줄 모양이나 뒤에 산문이 이어지는 `Epic #100 의 후속 논의` 류를
+# leaf 로 세면 `에픽 leaf 전부 종료` warn 이 옛 에픽을 가리키고 스윕이 그걸 **잘못 닫는다**
+# (전용 줄 규약 #259). 줄 끝 공백만 허용하고 CRLF 본문의 `\r` 도 `[[:space:]]` 라 통과한다.
+# **두 파일의 이 문자열은 한 글자도 달라선 안 된다** — epic-sweep.test.sh ⑪ 이 대조한다.
 def epic_of($body):
   ([($body // "") | split("\n")[]
-      | capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)"; "i") | .n]
+      | capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)[[:space:]]*$"; "i") | .n]
    | if length > 0 then (.[0] | tonumber) else null end);
 # 라벨 목록 → P0/P1/P2 중 첫 매치(eligible-issues.sh 의 우선순위 판정과 같은 순서).
 def prio_of($l):
