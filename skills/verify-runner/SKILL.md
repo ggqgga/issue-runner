@@ -195,7 +195,8 @@ diff·이슈 본문으로 `AUX_REVIEWERS` 두 타입을 각각 `run_in_backgroun
 벽시계를 늘리지 않게 Codex 와 병렬). 프롬프트 계약은 `references/verify-prompt.md` 와 같은 뼈대
 — 동봉 텍스트만 근거·gh/git 실행 금지·read-only·한국어 — 에 역할만 바꾼다: silent-failure-hunter
 는 "이 diff 가 예외를 삼키거나·조용히 폴백하거나·실패를 로그 없이 넘기는 지점", pr-test-analyzer
-는 "이 diff 의 동작 중 테스트가 안 덮는 것". 발견마다 한 줄(파일:줄 — 무엇). 발견 없으면 'CLEAN'.
+는 "이 diff 의 동작 중 테스트가 안 덮는 것" **과** "과잉인 테스트"(소스·문서 문구 단언·구조 되적기·지적
+1건에 회귀 여럿 — 레포 CLAUDE.md 테스트 규율). 발견마다 한 줄(파일:줄 — 무엇). 발견 없으면 'CLEAN'.
 결과는 판정에 쓰지 않고 ③-3 의 `검증자 리뷰:` 코멘트 **끝에** 덧붙인다:
 `보조 리뷰(pr-review-toolkit): 조용한 실패 n건 · 테스트 갭 n건` + 발견 한 줄씩(CLEAN 이면 0건).
 Codex 가 BLOCKER 로 재디스패치할 때도 이 줄은 붙인다 — 워커가 함께 읽고 고친다.

@@ -178,8 +178,28 @@
 #                      "사람이 뗐다" 를 증명) — 경보는 부재만으로 참인 사실을 말하고 교정은
 #                      증명을 요구한다. 이 비대칭의 근거는 `resume-sweep.sh` 의 ④ 머리 주석.
 #   · 좌초형(#117)   — 이슈에 사다리 라벨은 있는데 `agent-ready` 가 없음(디스패치 자격 상실).
-#   · 목록 절단      — 열린 이슈·닫힌 이슈(#260)·열린 PR·닫힌 PR 중 어느 목록이 `--limit 200` 상한에 닿음.
+#   · 목록 절단      — 열린 이슈·열린 PR·닫힌 PR 중 어느 목록이 `--limit 200` 상한에 닿음,
+#                      **또는** 에픽 닫힌 leaf 조회가 `EPIC_CLOSED_LIMIT` 에 닿음 (#292).
 #                      창 안의 실패·파생이 조용히 잘렸을 수 있다는 신호(수를 믿지 말 것).
+#                      `닫힌 이슈`(최근 200건) 목록은 **여기서 뺐다** (#292) — 그 목록의
+#                      유일한 소비자였던 에픽 leaf 카운트가 검색 스코프 조회로 옮겨 갔고,
+#                      남은 쓰임(색인 지연 보완·조용한 실패 교차확인)은 최근 것만 있으면
+#                      되는 성질이라 상한 도달이 정상이다. bodat 은 매 틱 그 상한에 닿아
+#                      (창 약 6일) 교정 불가능한 상시 소음을 냈다 — #190 의 warn 정의와
+#                      어긋나고 진짜 절단 신호를 가린다.
+#   · 에픽 닫힌 leaf 조회 실패 (#292) — 아래 에픽 절의 검색 스코프 조회가 실패했다(쿼터·
+#                      네트워크·응답 형식·**조용한 빈 결과**). 그 레포의 에픽 줄은 비율 대신
+#                      `종료 미상` 이 된다. 빈 결과(닫힌 leaf 가 정말 0건)와 실패를 가르는
+#                      것이 이 warn 의 존재 이유다 — 실패를 0건으로 접으면 `0/N` 이 되어
+#                      이 이슈가 고치려던 증상이 새 경로에서 그대로 재현된다.
+#                      **탐지 범위(실측한 한계):** ⑴ 종료코드 실패와 ⑶ 배열 아닌 응답은
+#                      무조건 잡는다. ⑵ 조용한 빈 결과(빈 출력 + exit 0)는 **core API 창
+#                      (최근 닫힌 200건)에 `Epic #N` 줄이 하나라도 있을 때만** 잡는다 —
+#                      판정 입력이 그 목록이기 때문이다. 그 창에 Epic 줄이 하나도 없는
+#                      레포에서 검색이 조용히 접히면 `0/N` 으로 남는다. 이 사각은 PR #320
+#                      본문 `## 사전 리뷰` 에 재현과 함께 적어 뒀다(닫는 방향: 0행일 때만
+#                      Epic 필터 없는 대조 검색 1회를 더 쳐서 "검색 자체가 접혔는가" 를
+#                      Epic 줄 존재와 무관하게 가른다).
 #   · 연결 이슈 종료 — 열린 PR 인데 연결 이슈가 CLOSED. `Refs` 부분착지면 정상 — 사실만 한 줄.
 #                      (연결 이슈의 OPEN 여부는 이미 받은 열린 이슈 목록의 멤버십으로 본다 —
 #                       이슈마다 `gh issue view` 를 치지 않는다. 목록 상한 200 밖의 열린
@@ -209,6 +229,13 @@
 #   는 그대로. 0건인 칸은 생략(`· `로 안 이어 붙인다). P 분포도 **열린** leaf 만(닫힌 leaf 의
 #   P 는 과거라 못 고치니 뺀다 — 위 warn 정의와 같은 이유), P 라벨 없는 leaf 는 세지 않는다.
 #   leaf 0 인 에픽은 비율 대신 `#<에픽> leaf 없음(Epic 줄 미부착)` 한 줄.
+#   **닫힌 leaf 조회가 실패했으면** 비율도 `leaf 없음` 도 찍지 않고 `#<에픽> 종료 미상(닫힌
+#   leaf 조회 실패)` 한 줄이다 (#292) — 둘 다 "그렇다고 확인했다" 는 주장인데 실패한 조회는
+#   그 주장을 못 한다. 버킷·P 분포는 그대로 붙는다(그건 **열린** 이슈 목록에서 오므로 이
+#   실패와 무관하다). 이때 `에픽 leaf 전부 종료` warn 은 **그대로 뜬다** — 그 판정은 "열린
+#   leaf 0 + 닫힌 leaf ≥1" 이고 조회 실패는 닫힌 leaf 를 **적게만** 셀 수 있어 거짓 양성이
+#   아니라 거짓 음성 방향이다(뜨면 참이다). 같은 에픽에 `종료 미상` 과 `전부 종료` 가 함께
+#   보이는 건 모순이 아니라 "개수는 못 셌지만 열린 leaf 는 없다" 는 두 사실이다.
 #   warn 2종(불변식 위반 — 위 ★warn 정의★ 와 같은 자리에 판정이 산다):
 #     · 에픽 leaf 전부 종료 — leaf ≥1 전부 닫힘인데 에픽 이슈가 열려 있다(에픽 스윕 대상).
 #     · 에픽 내 P 혼재     — 열린 leaf 의 P 라벨이 둘 이상 갈린다(닫힌 leaf 는 위와 같이 제외).
@@ -219,7 +246,21 @@
 #   붙이면 "에픽 밖으로 샌다" 는 관측 자체가 성립하지 않는 레포까지 서식이 바뀐다). 이
 #   게이트가 없으면 에픽을 안 쓰는 레포까지 `파생` 줄 서식이 바뀌어 이 이슈의 무회귀
 #   기준(`Epic #N` 이 하나도 없는 픽스처는 에픽 절 추가 외엔 출력이 한 글자도 안 바뀐다)을 깬다.
-#   추가 gh 호출 0 — 닫힌 이슈 목록(아래 gh 호출 예산)에서 이미 받은 본문으로만 판정한다.
+#
+#   ★닫힌 leaf 의 창★ (#292) 닫힌 leaf 는 **에픽 leaf 로 좁힌 조회**에서 온다 —
+#   `gh issue list --state closed --search '"Epic #" in:body' --limit $EPIC_CLOSED_LIMIT`
+#   (레포당 1회 · **열린 에픽이 1건 이상일 때만**. 0건이면 조회 자체를 안 한다).
+#   종전(#260)엔 "가장 최근 닫힌 200건" 에서 골랐는데 bodat 실측으로 그 창이 약 6일이라
+#   (2026-09-11: 200건 = 09-05 ~ 09-11) 6일보다 오래 산 에픽은 leaf 가 창 밖에서 닫혀
+#   `종료/전체` 가 조용히 작아지고, leaf 가 전부 창 밖이면 `leaf 없음(Epic 줄 미부착)` 이라는
+#   사실과 다른 줄이 나오면서 `에픽 leaf 전부 종료` warn 이 **안 떴다**(그 warn 이 존재하는
+#   이유가 정확히 오래 산 에픽을 잡는 것이다). 실측 대조(2026-09-12, ggqgga/BodaT):
+#   최근 200건에 든 `Epic #N` 닫힌 leaf 6건 → 새 조회 15건.
+#   그 결과는 종전의 `--state closed --limit 200`(core API) 목록과 **합집합**으로 쓴다 —
+#   후자는 ⓐ 검색 색인 지연(방금 닫힌 leaf) 보완 ⓑ 조용한 실패 교차확인의 판정 입력이다.
+#   합집합이라 새 조회는 leaf 를 더할 뿐 빼지 못한다(최악이어도 종전 수치로 degrade).
+#   leaf 재확인은 종전 그대로 `epic_of` 하나가 한다 — 검색 `in:body` 는 산문 매치도 주므로
+#   (bodat 실측 118행 중 실제 `Epic #N` 줄은 15행) 검색은 후보를 좁히고 판정은 안 한다.
 #
 # ★조회 실패 처리★ 이슈/PR 목록 조회가 실패한 레포는 블록 대신
 #   `파이프라인 <short> — 조회 실패: <사유>` 한 줄만 찍고 다음 레포로 계속하며, 최종 exit 는
@@ -228,6 +269,12 @@
 #   질문 코멘트 조회(#157)가 실패하면 그 이슈만 `질문 없음` 표시를 **생략**하고 warn
 #   `질문 유무 미확인` 을 올린다 — 실패를 "질문 없음" 으로 접으면 없는 결함을 사람에게
 #   들이민다. stderr 로만 말하지 않는 이유: 세 루프는 ④ Report 에 **stdout 만** 붙인다.
+#   에픽 닫힌 leaf 조회(#292)가 실패하면 레포를 실패로 만들지 않고 그 레포의 에픽 줄만
+#   `종료 미상` 으로 degrade 하고 warn `에픽 닫힌 leaf 조회 실패` 를 올린다 — 같은 규율이다
+#   (실패를 "닫힌 leaf 0건" 으로 접으면 `0/N` 이라는 **거짓 수치**가 되고, 그건 이 조회가
+#   없애려던 증상 그 자체다). 판정은 종료코드만이 아니라 ⑴ 종료코드 ⑵ 응답이 배열인가
+#   ⑶ core API 목록과의 교차확인(검색 0행인데 최근 닫힌 목록엔 `Epic #N` 줄이 있다 =
+#   **조용한 빈 결과**) 세 갈래를 전부 본다.
 #
 # ★환경 변수★ `HANDOFF_GRACE_MIN` — 인계 전 창(분, 기본 90, 0 이상 정수). 형식이 틀리면
 #   환경 실패로 죽는다(jq 에 그대로 넘겨 레포별 "집계 실패" 로 위장되지 않게). `0` 은 허용 —
@@ -239,14 +286,19 @@
 #   #177). **고유 이슈 수**를 센다(#181 — 한 이슈에 무소속 PR 이 여럿이어도 상한은 한 번만
 #   깎인다). 넘는 후보는 조회하지 않고 `경과 미상 — 조회 상한` 으로 남는다(조회했지만
 #   실패한 `경과 미상 — 확인 필요` 와는 다른 문구). 형식 오류는 같은 환경 실패.
+#   `EPIC_CLOSED_LIMIT` — 에픽 닫힌 leaf 조회의 행 상한(기본 1000, **1 이상** 정수, #292).
+#   상한에 닿으면 warn `목록 상한 <N> 도달 — 창 절단 가능(에픽 닫힌 leaf)`. 다른 상한과 달리
+#   `0` 을 금지하는 이유: `0` 은 "안 본다" 가 아니라 조회가 0행을 돌려주는 값이라, 이 이슈가
+#   고치려던 `닫힌 leaf 0건` 을 환경변수로 되살린다. 형식 오류는 같은 환경 실패.
 #
 # ★환경 실패 처리★ 레포와 무관한 실패(창 시각 계산 불가·jq 부재·집계/렌더/직렬화 jq 실패)는
 #   **stdout 에도** `파이프라인 — 스냅샷 실패: <사유>` 한 줄을 남기고 exit 1 한다. 세 루프는
 #   이 출력을 ④ Report 에 그대로 붙이므로, stderr 로만 말하면 사유가 사라지고 exit 1 이
 #   "레포 하나 조회 실패"(부분 실패)와 구분되지 않는다.
 #
-# gh 호출 예산: 레포당 열린 이슈 목록 1 + 닫힌 이슈 목록 1(#260) + PR 목록(open/closed) 2 +
-# release 확인 1 + 기본 브랜치 1 + compare 1 = 최대 7. 블로커 판정(#248)·에픽 leaf 판정(#260)은
+# gh 호출 예산: 레포당 열린 이슈 목록 1 + 닫힌 이슈 목록 1(#260) + 에픽 닫힌 leaf 1(#292,
+# **열린 에픽이 있을 때만**) + PR 목록(open/closed) 2 + release 확인 1 + 기본 브랜치 1 +
+# compare 1 = 최대 8(에픽 없는 레포는 7). 블로커 판정(#248)·에픽 leaf 판정(#260)은
 # 이 예산을 **한 호출도 늘리지 않는다** — 이슈 목록 `--json` 에 `body` 필드를 더하고(같은
 # 한 번의 호출) 블로커 상태·에픽 소속은 이미 받은 열린/닫힌 이슈 목록의 본문·멤버십으로만
 # 본다. 블로커·leaf 마다 `gh issue view` 를 치면 N+1 이라 이 기능의 요점이 깨진다.
@@ -256,8 +308,21 @@
 # ②(#177) 무소속 warn 중 **사망 의심 꼬리표가 붙는 후보**에 한해 이슈 타임라인
 # (`gh api .../timeline --paginate`)을 1건씩 더 쓴다 — 그 시각은 목록 API 에 없다. 대상은
 # "인계 창을 넘긴 무소속 PR" 이라 정상적으로는 0건이고, 상한은 `CLAIM_TIME_MAX`(기본 20).
-# 그 밖의 이슈·PR **개별** `gh view` 는 여전히 금지(N+1). `gh search` / `gh issue list
-# --search` 도 금지 — 인덱스 지연 + 부정 라벨 오파싱(#21, eligible-issues.sh 주석 참조).
+# ③(#292) 에픽 닫힌 leaf 조회 — 아래 단서가 붙은 **유일한 검색 사용처**다.
+# 그 밖의 이슈·PR **개별** `gh view` 는 여전히 금지(N+1).
+# `gh search` / `gh issue list --search` 는 **원칙 금지** — 인덱스 지연 + 부정 라벨 오파싱
+# (#21, eligible-issues.sh 주석 참조). 예외는 에픽 닫힌 leaf 하나뿐이고(#292), 그 예외가
+# 성립하는 이유를 여기 적어 둔다(다음에 같은 예외를 요청받으면 이 셋을 다 만족하는지 봐라):
+#   ⑴ 대안이 없다 — "최근 N건" 창으로는 오래 산 에픽의 leaf 를 원리적으로 못 본다.
+#   ⑵ 인덱스 지연이 무해하다 — 결과를 core API 목록과 **합집합**으로 쓰므로 방금 닫힌
+#      leaf 는 후자가 덮고, 검색은 더할 뿐 빼지 못한다. `epic-sweep.sh` 와 달리 여기서는
+#      이 수치로 이슈를 **닫지 않는다**(보고만 한다 — 오판의 대가가 다르다).
+#   ⑶ 라벨 오파싱이 없다 — 쿼리에 `label:`/`is:` 를 안 쓴다. 상태는 `--state closed`
+#      **플래그**로 준다(#236: `gh` 가 쿼리 문자열의 `is:` 를 오파싱한 실측 전례).
+# 쿼터: `gh issue list --search` 는 GraphQL 경로라 REST **search** 버킷(30/분)을 한 점도
+# 쓰지 않는다(2026-09-12 실측 — REST search 프로브 사이에 이 조회를 3회 끼워도
+# `X-Ratelimit-Used` 는 프로브분만 올랐다). `gh api search/issues`(에픽마다 1회)를 골랐다면
+# 열린 에픽 9건 × 세 루프 = 분당 27회로 그 버킷이 바닥났을 것이다.
 # 라벨 필터는 전부 jq 로 한다. 목록은 `--limit 200` 상한 — `--since` 를 크게 잡으면
 # (예 30d) 닫힌 PR 이 상한에 잘려 "실패" 가 조용히 누락될 수 있다.
 set -uo pipefail
@@ -452,6 +517,16 @@ case "$claim_time_max" in
 esac
 CLAIM_TIME_MAX=$claim_time_max
 
+# ── 에픽 닫힌 leaf 조회 상한 — EPIC_CLOSED_LIMIT (#292) ────────────────────
+# 에픽 leaf 를 찾는 **검색 스코프** 조회(`--search '"Epic #" in:body'`)의 행 상한.
+# 1 이상만 — `0` 은 다른 상한과 달리 "안 본다" 가 아니라 **조회가 0행을 돌려준다**,
+# 즉 `닫힌 leaf 0건` 이 되어 이 이슈가 고치려던 증상을 환경변수로 되살린다.
+epic_closed_limit=${EPIC_CLOSED_LIMIT:-1000}
+case "$epic_closed_limit" in
+  ""|*[!0-9]*|0) snapshot_abort "EPIC_CLOSED_LIMIT 형식 오류: $epic_closed_limit (1 이상 정수만)" ;;
+esac
+EPIC_CLOSED_LIMIT=$epic_closed_limit
+
 now_epoch=$(date -u +%s 2>/dev/null)
 case "$now_epoch" in
   ""|*[!0-9]*) snapshot_abort "현재 시각 계산 실패 (date -u +%s)" ;;
@@ -598,14 +673,20 @@ def bucket_ko($k):
   {"deploy_wait":"배포대기","human_wait":"사람대기","held":"보류","harvesting":"마감중",
    "ready":"마감대기","verify":"검증대기","claimed":"구현중","waiting":"대기","blocked":"막힘",
    "outside":"루프 밖"}[$k];
-# 에픽 번호 (#260) — 본문 **줄 시작**의 `epic\s+#N`(대소문자 무시)의 **첫 매치**만.
+# 에픽 번호 (#260) — 본문의 **전용 줄**(줄 시작의 `epic\s+#N` 뒤가 줄 끝까지 공백뿐,
+# 대소문자 무시)의 **첫 매치**만.
 # `blockers_of` 와 같은 스타일(줄 단위로 가른 뒤 capture — jq 의 `^` 는 문자열 시작만
 # 앵커하므로 split 없이 걸면 본문 첫 줄만 검사된다)이지만, 블로커는 여러 개를 모아
 # dedupe 하는 반면 에픽은 **한 이슈 = 최대 한 에픽**이라 첫 매치 하나만 취한다(산문 속
 # `… epic #N …`은 애초에 매치가 안 남 — capture 는 비매치 줄에서 결과를 안 낸다).
+# 끝 앵커(`[[:space:]]*$`)는 #327 에서 `epic-sweep.sh` 의 `JQ_EPIC_OF` 와 **같은 커밋에서**
+# 넣었다 — 줄 시작은 전용 줄 모양이나 뒤에 산문이 이어지는 `Epic #100 의 후속 논의` 류를
+# leaf 로 세면 `에픽 leaf 전부 종료` warn 이 옛 에픽을 가리키고 스윕이 그걸 **잘못 닫는다**
+# (전용 줄 규약 #259). 줄 끝 공백만 허용하고 CRLF 본문의 `\r` 도 `[[:space:]]` 라 통과한다.
+# **두 파일의 이 문자열은 한 글자도 달라선 안 된다** — epic-sweep.test.sh ⑪ 이 대조한다.
 def epic_of($body):
   ([($body // "") | split("\n")[]
-      | capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)"; "i") | .n]
+      | capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)[[:space:]]*$"; "i") | .n]
    | if length > 0 then (.[0] | tonumber) else null end);
 # 라벨 목록 → P0/P1/P2 중 첫 매치(eligible-issues.sh 의 우선순위 판정과 같은 순서).
 def prio_of($l):
@@ -619,7 +700,29 @@ def prio_of($l):
 # 목록(#260, 에픽 leaf 판정용)도 같은 이유로 파일 경유.
 ($issues_in[0]) as $issues
 | ($closed_issues_in[0]) as $closed_issues
-| ($closed_issues | map({number, epic: epic_of(.body)})) as $cls
+| ($epic_closed_in[0]) as $epic_closed
+# ── 에픽 닫힌 leaf 의 출처 (#292) ──────────────────────────────────────────
+# 두 목록의 **합집합**(번호로 dedupe)을 닫힌 leaf 후보로 쓴다.
+#   ⑴ `$epic_closed` — 검색 스코프 조회(`--search '"Epic #" in:body'`). 창이 "최근 N건"
+#      이 아니라 에픽 leaf 라 오래 산 에픽도 센다. 이것이 이 이슈의 본체다.
+#   ⑵ `$closed_issues` — 종전의 `--state closed --limit 200`(core API). 남겨 두는 이유는
+#      둘이다: ⓐ 검색 **색인 지연** — 방금 닫힌 leaf 는 아직 색인 전이라 ⑴ 에 안 나오는데
+#      ⑵ 에는 있다(가장 최근 것만 담는 목록이라 정확히 상보적이다) · ⓑ 아래 조용한 실패
+#      교차확인의 **판정 입력**(core API — 검색이 빈 출력 + exit 0 으로 접혔는지는 검색으로
+#      확인할 수 없다). 합집합이라 새 조회는 leaf 를 **더할 뿐 빼지 못한다** — 최악의 경우
+#      (검색이 통째로 실패) 수치가 종전과 같아지고, 그 사실은 warn 으로 드러난다.
+| (($closed_issues + $epic_closed) | map({number, epic: epic_of(.body)})
+   | group_by(.number) | map(.[0])) as $cls
+# 조용한 실패 교차확인 — `gh` 의 검색 2차 레이트리밋은 **빈 출력 + exit 0** 으로 오고
+# `rate_limit` 은 그때도 초록이라 종료코드로는 안 걸린다. core API 목록(⑵)에 `Epic #N`
+# 줄이 하나라도 있는데 검색이 0행이면 그건 "닫힌 leaf 가 없다" 가 아니라 검색이 접힌 것이다.
+# 이 갈래를 안 막으면 조회 실패가 `0/N` 으로 위장해 이 이슈가 고치려던 증상이 새 경로에서
+# 그대로 재현된다(빈 결과와 실패를 가르는 것이 요점 — PR#139/#168).
+| (if $epicstate == "ok" and ($epic_closed | length) == 0
+      and (($closed_issues | map(select(epic_of(.body) != null)) | length) > 0)
+   then "failed" else $epicstate end) as $epicstate_eff
+| (if $epicstate_eff != $epicstate
+   then "검색 0행인데 최근 닫힌 목록엔 Epic 줄이 있다(조용한 실패)" else $epicerr end) as $epicerr_eff
 | ($issues | map({
     number, title, createdAt,
     ln: [.labels[].name],
@@ -675,15 +778,17 @@ def prio_of($l):
      | join(" · "));
   def epic_prio_segment($pc):
     (["P0","P1","P2"] | map(select(($pc[.] // 0) > 0) | "\(.) \($pc[.])") | join(" "));
+  # 닫힌 leaf 조회가 **실패**했으면 비율을 찍지 않는다 (#292) — `0/3` 도 `leaf 없음(Epic
+  # 줄 미부착)` 도 둘 다 "그렇다고 확인했다" 는 주장인데, 실패한 조회는 그 주장을 못 한다.
+  # 버킷·P 분포는 그대로 찍는다(그건 **열린** 이슈 목록에서 오므로 이 실패와 무관하다).
   def epic_label($e):
-    if $e.total == 0 then "#\($e.number) leaf 없음(Epic 줄 미부착)"
-    else
-      ("#\($e.number) \($e.closed)/\($e.total)") as $head
-      | epic_bucket_segment($e.buckets) as $bs
-      | epic_prio_segment($e.priorities) as $ps
-      | $head + (if $bs == "" then "" else " · " + $bs end)
-             + (if $ps == "" then "" else " · " + $ps end)
-    end;
+    (if $e.closed_unknown then "#\($e.number) 종료 미상(닫힌 leaf 조회 실패)"
+     elif $e.total == 0 then "#\($e.number) leaf 없음(Epic 줄 미부착)"
+     else "#\($e.number) \($e.closed)/\($e.total)" end) as $head
+    | epic_bucket_segment($e.buckets) as $bs
+    | epic_prio_segment($e.priorities) as $ps
+    | $head + (if $bs == "" then "" else " · " + $bs end)
+           + (if $ps == "" then "" else " · " + $ps end);
   ($iss | map(select(has(.ln; "epic")))
    | sort_by(-.number)
    | map(. as $e
@@ -691,6 +796,7 @@ def prio_of($l):
        | ($cls | map(select(.epic == $e.number))) as $cl
        | {number: $e.number, repo_short: $rs, title: $e.title,
           total: (($ol | length) + ($cl | length)), closed: ($cl | length),
+          closed_unknown: ($epicstate_eff == "failed"),
           buckets: bucket_counts($ol), priorities: priority_counts($ol)}
        | . + {label: epic_label(.)})) as $epics
 # 파생 병기 게이트(#260) — "그 레포에 열린 에픽 라벨 이슈가 있는가" 가 아니라 "이슈 본문
@@ -959,14 +1065,30 @@ def orphan_base:
                       + (["P0","P1","P2"]
                          | map(select(($e.priorities[.] // 0) > 0) | "\(.) \($e.priorities[.])")
                          | join(" · ")))}))
-      # 목록 상한 도달 — 창 안의 실패·파생이 잘렸을 수 있다
+      # 목록 상한 도달 — 창 안의 실패·파생이 잘렸을 수 있다.
+      # `닫힌 이슈`(최근 200건)는 여기서 **뺐다** (#292): 그 목록의 유일한 소비자였던 에픽
+      # leaf 카운트가 검색 스코프 조회로 옮겨 갔고, 남은 쓰임(색인 지연 보완·조용한 실패
+      # 교차확인)은 "최근 것만 있으면 되는" 성질이라 상한에 닿는 게 정상이다. bodat 은 그
+      # 상한에 **매 틱** 닿아(창 약 6일) 교정할 방법이 없는 상시 소음을 냈다 — #190 이 정한
+      # warn 의 뜻("교정 가능한 불변식 위반")과 어긋나고 진짜 절단 신호를 가린다.
+      # 대신 **새 조회의 상한**을 기준으로 다시 정의한다(바로 아래).
       + ([{n: ($issues | length), what: "이슈"},
-          {n: ($closed_issues | length), what: "닫힌 이슈"},
           {n: ($prs_open | length), what: "열린 PR"},
           {n: ($prs_closed | length), what: "닫힌 PR"}]
          | map(select(.n >= 200))
          | map({kind: "list_truncated", repo_short: $rs, list: .what,
                 text: "목록 상한 200 도달 — 창 절단 가능(\(.what))"}))
+      # 에픽 닫힌 leaf 조회가 상한에 닿음 (#292) — 종전 `닫힌 이슈` 절단 warn 의 새 자리다.
+      + (if $epicstate_eff == "capped"
+         then [{kind: "list_truncated", repo_short: $rs, list: "에픽 닫힌 leaf",
+                text: "목록 상한 \($epiclimit) 도달 — 창 절단 가능(에픽 닫힌 leaf)"}]
+         else [] end)
+      # 에픽 닫힌 leaf 조회 실패 (#292) — 빈 결과로 접지 않는다. 이 warn 이 없으면 실패가
+      # `0/N`·`leaf 없음` 으로 위장해 사람이 "닫힌 leaf 가 없다" 고 읽는다.
+      + (if $epicstate_eff == "failed"
+         then [{kind: "epic_closed_unavailable", repo_short: $rs,
+                text: "에픽 닫힌 leaf 조회 실패(\($rs)) — 종료/전체 미상: \($epicerr_eff)"}]
+         else [] end)
       # 열린 PR 인데 연결 이슈가 CLOSED
       + ($po | map(select(. as $p | $p.issue != null and (($onums | index($p.issue)) == null)))
         | map({kind: "closed_issue_open_pr", repo_short: $rs, pr: .number, issue: .issue,
@@ -1051,6 +1173,17 @@ for repo in "${repos[@]}"; do
   fail_reason=""
   prs_open_json=""
   prs_closed_json=""
+  # 에픽 닫힌 leaf 조회 상태 (#292) — `skipped`(열린 에픽 0건이라 조회 자체를 안 했다) ·
+  # `ok` · `capped`(상한 도달) · `failed`. **빈 결과와 실패를 가르는 것이 이 변수의 존재
+  # 이유다**(PR#139/#168): 실패를 `[]` 로 접으면 "닫힌 leaf 0건" 이 되어 에픽 줄이 `0/N`
+  # 으로 찍히는데, 그게 바로 이 이슈가 고치려던 증상이다.
+  epic_closed_state="skipped"
+  epic_closed_err=""
+  # 레포마다 반드시 비운다 — 쓰기 실패를 흘리면 **직전 레포의** 에픽 leaf 목록으로 집계해
+  # 부분 실패가 "성공(남의 데이터)" 으로 접힌다(아래 repo.pre.json mv 와 같은 규율).
+  if ! printf '[]\n' > "$tmpdir/issues_epic_closed.json"; then
+    fail_reason="에픽 닫힌 leaf — 임시 파일 쓰기 실패($tmpdir/issues_epic_closed.json)"
+  fi
 
   # `body` 는 블로커 줄(`Blocked by #N`)을 읽으려고 더한 필드다 (#248) — **같은 한 번의
   # 호출**이라 gh 예산이 늘지 않는다(개별 `gh issue view` 를 치면 N+1).
@@ -1077,6 +1210,78 @@ for repo in "${repos[@]}"; do
       fi
     else
       fail_reason="닫힌 이슈 목록 — $GH_ERR"
+    fi
+  fi
+
+  # ── 에픽 닫힌 leaf — **검색 스코프** 조회 (#292) ──────────────────────────
+  # 위 `--state closed --limit 200` 은 "가장 최근 닫힌 200건" 이라 bodat 실측에서 창이 약
+  # 6일이었다(2026-09-11). 6일보다 오래 산 에픽은 leaf 가 창 밖에서 닫혀 `종료/전체` 가
+  # 조용히 작아지고(`0/3`), leaf 가 **전부** 창 밖이면 `leaf 없음(Epic 줄 미부착)` 이라는
+  # 사실과 다른 줄이 나오며 `에픽 leaf 전부 종료` warn 이 안 뜬다. 그래서 창을 "최근 N건"
+  # 이 아니라 **에픽 leaf 로** 좁힌다. 실측(2026-09-12, ggqgga/BodaT): 최근 200건에서
+  # `Epic #N` 줄을 가진 닫힌 이슈는 6건, 이 조회로는 15건 — 두 배 반이다.
+  #
+  # 방식 (나)를 골랐다(이슈 개발 계획 1항). 근거는 **쿼터 실측**이다 — 방식 (가)는 열린
+  # 에픽 1건당 `search/issues` 1회인데 그건 REST **search** 버킷(30/분)을 깎고, 열린 에픽
+  # 9건 × 세 루프면 분당 27회로 그 버킷이 사실상 바닥난다. `gh issue list --search` 는
+  # GraphQL 경로라 search 버킷을 **한 점도** 쓰지 않는다(측정: REST search 프로브 사이에
+  # 이 조회를 3회 끼워도 `X-Ratelimit-Used` 가 프로브분만 올랐다 — 5→6). 대신 GraphQL
+  # 5000/시간에서 100행당 1점을 쓴다(bodat 118행 = 2점).
+  # 주의: `gh api rate_limit` 의 `.resources.search` 는 이 계정에서 REST 검색을 실제로
+  # 쓴 뒤에도 `used:0` 을 돌려줬다 — 소모 측정은 그 엔드포인트가 아니라 응답 헤더
+  # `X-Ratelimit-Used`/`X-Ratelimit-Resource` 로 했다(교훈: rate_limit 은 초록이어도 믿지 마라).
+  #
+  # `is:closed` 를 쿼리 문자열에 쓰지 않고 `--state closed` 플래그로 주는 이유: `gh` 의
+  # 검색 쿼리 파서가 `is:` 를 오파싱한 실측 전례가 있다 (#236 — resume-sweep.sh).
+  # `"Epic #" in:body` 는 산문 매치도 돌려준다(bodat 실측 118행 중 `Epic #N` 줄을 실제로
+  # 가진 것은 15행뿐) — 그래서 leaf 재확인은 아래 jq 의 `epic_of` 가 종전 그대로 한다
+  # (`epic-sweep.sh` 와 같은 구조: 검색은 후보를 좁히고, 판정은 `epic_of` 하나가 한다).
+  #
+  # **열린 에픽이 0건이면 이 조회를 아예 안 한다**(gh 호출 0). 에픽 절이 없는 레포에서
+  # 틱 비용을 늘리지 않는다 — 방식 (가)의 "N=0 이면 0회" 성질을 O(1) 로 유지한 것이다.
+  # 게이트 술어는 BUILD_JQ 의 `map(select(has(.ln; "epic")))` 와 같은 것(라벨 `epic` 보유)
+  # 이고, 읽기 실패는 **조회하는 쪽**으로 떨어뜨린다(한 호출을 더 쓸지언정 창을 안 좁히는
+  # 쪽으로는 새지 않게).
+  if [ -z "$fail_reason" ]; then
+    if ! has_open_epic=$(jq -r '[.[] | select([.labels[]?.name] | index("epic"))] | length > 0' \
+        "$tmpdir/issues.json" 2>/dev/null); then
+      has_open_epic=true
+      echo "$SELF: $short 열린 에픽 유무 판정 실패(jq) — 에픽 닫힌 leaf 조회를 그대로 건다" >&2
+    fi
+    if [ "$has_open_epic" = "true" ]; then
+      if run_gh gh issue list --repo "$repo" --state closed --search '"Epic #" in:body' \
+          --limit "$EPIC_CLOSED_LIMIT" --json number,body,closedAt,labels; then
+        # 성공 종료코드만으론 부족하다 — `gh` 의 검색 2차 레이트리밋은 **빈 출력 + exit 0**
+        # 으로 온다(이 레포 실측 전례). 그래서 ⑴ 배열인지 ⑵ 몇 행인지를 따로 본다.
+        epic_rows=$(printf '%s\n' "$GH_OUT" | jq -r 'if type == "array" then length else "x" end' 2>/dev/null) \
+          || epic_rows="x"
+        case "$epic_rows" in
+          ""|*[!0-9]*)
+            epic_closed_state="failed"
+            epic_closed_err="응답이 배열이 아님" ;;
+          *)
+            if ! printf '%s\n' "$GH_OUT" > "$tmpdir/issues_epic_closed.json"; then
+              epic_closed_state="failed"
+              epic_closed_err="임시 파일 쓰기 실패"
+            elif [ "$epic_rows" -ge "$EPIC_CLOSED_LIMIT" ]; then
+              epic_closed_state="capped"
+            else
+              epic_closed_state="ok"
+            fi ;;
+        esac
+      else
+        epic_closed_state="failed"
+        epic_closed_err="$GH_ERR"
+      fi
+      # 빈 결과 ↔ 조용한 실패 교차확인은 **BUILD_JQ 안에서** 한다 — 여기서 하려면
+      # `epic_of` 정규식을 셸에 한 벌 더 적어야 하고(복제본 금지 — 두 계산기가 갈린다),
+      # 판정 입력(최근 닫힌 200건 = core API 결과)은 어차피 jq 가 이미 들고 있다.
+      if [ "$epic_closed_state" = "failed" ]; then
+        echo "$SELF: $short 에픽 닫힌 leaf 조회 실패: $epic_closed_err" >&2
+        if ! printf '[]\n' > "$tmpdir/issues_epic_closed.json"; then
+          fail_reason="에픽 닫힌 leaf — 임시 파일 쓰기 실패($tmpdir/issues_epic_closed.json)"
+        fi
+      fi
     fi
   fi
 
@@ -1125,6 +1330,10 @@ for repo in "${repos[@]}"; do
     jq -n \
       --slurpfile issues_in "$tmpdir/issues.json" \
       --slurpfile closed_issues_in "$tmpdir/issues_closed.json" \
+      --slurpfile epic_closed_in "$tmpdir/issues_epic_closed.json" \
+      --arg epicstate "$epic_closed_state" \
+      --arg epicerr "$epic_closed_err" \
+      --argjson epiclimit "$EPIC_CLOSED_LIMIT" \
       --argjson prs_open "$prs_open_json" \
       --argjson prs_closed "$prs_closed_json" \
       --argjson cutoff "$cutoff" \
