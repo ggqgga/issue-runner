@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # claim-issue.sh 픽스처 테스트 — 네트워크 무접속(gh 를 PATH 스텁으로 가로챈다).
 # #281: claim 이 이슈에 `agent:claimed` 를 붙이는 그 자리에서 같은 레포의 열린
-# `agent/issue-<N>` PR 에 구현중 칸을 미러(`flow:claimed` 부착·`flow:agent-ready` 제거)한다.
+# `agent/issue-<N>` PR 에 issue-runner 칸을 미러(`flow:claimed` 부착·`flow:agent-ready` 제거)한다.
 # 미러는 best-effort — PR 이 없으면 무동작, PR 편집 실패는 claim 을 되돌리지 않고 stderr 한 줄.
 # (잠금·경합·스테일 인수는 bin/ci 의 #108 스모크가 문다 — 여기서는 미러만 본다.)
 # bats 미도입 레포라 transition.test.sh 와 같은 순수 bash assert + 상태 있는 스텁 관행을 따른다.

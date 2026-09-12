@@ -220,7 +220,7 @@ sorted() { printf '%s\n' $1 | sort | tr '\n' ' ' | sed 's/ *$//'; }
 # `verifying`(#275) 도 픽스처에 넣는다 — verify-runner 가 집은 뒤의 **모든 출구**(verify-pass·
 # verify-redispatch·verify-held·closeout-pick·closeout-blocked·closeout-redispatch·closeout-dup)가
 # 이 점유 라벨을 떼야 한다. 하나라도 빠지면 "단계 라벨 중복" 이 남아 다음 틱이 고아로 재집는다.
-# PR 미러 두 칸(#281) — `flow:agent-ready`(반송 대기)·`flow:claimed`(구현중)도 픽스처에 넣는다.
+# PR 미러 두 칸(#281) — `flow:agent-ready`(반송 대기)·`flow:claimed`(issue-runner)도 픽스처에 넣는다.
 # 반송 두 전이는 PR 에 `flow:agent-ready` 를 **더하고**, 사다리를 오르는 네 전이(handoff-verify·
 # verify-pick·closeout-pick·closeout-dup)는 둘 다 **뗀다**. 이슈 쪽은 이 둘을 모른다(PR 전용
 # 이름) — 이슈 픽스처에 심어 두면 "이슈 쪽에서 절대 안 건드린다" 도 함께 실증된다.

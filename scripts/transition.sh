@@ -31,10 +31,10 @@
 #         † `--reason <conflict|policy|ladder>` 필수 · ‡ `--note "<근거>"` 필수
 #
 #   · PR 은 이슈 사다리를 **전 칸** 미러한다(#281) — 이슈 `agent-ready`(대기) ↔ PR `flow:agent-ready`,
-#     이슈 `agent:claimed`(구현중) ↔ PR `flow:claimed`, 그 뒤 칸은 같은 이름. 이름을 달리 한 이유:
+#     이슈 `agent:claimed`(issue-runner) ↔ PR `flow:claimed`, 그 뒤 칸은 같은 이름. 이름을 달리 한 이유:
 #     이슈의 `agent-ready` 는 사다리 내내 남는 **자격** 라벨이라 같은 이름을 PR 의 **단계** 로 쓰면
 #     뜻이 갈린다. 반송 두 전이가 PR 에 `flow:agent-ready` 를 붙이고(대기 칸), claim(claim-issue.sh)이
-#     그것을 `flow:claimed` 로 바꾸며(구현중), 워커가 처음 여는 PR 도 `--label flow:claimed` 로 태어난다.
+#     그것을 `flow:claimed` 로 바꾸며(issue-runner), 워커가 처음 여는 PR 도 `--label flow:claimed` 로 태어난다.
 #     그래서 열린 agent PR 은 항상 어느 칸의 라벨을 하나 달고 있다(라벨 없는 열린 agent PR = 사고).
 #     `⊘wk` 를 handoff-verify 에도 두는 건 사람이 claim 을 안 거치고 직접 인계하는 경우의 방어이고,
 #     verify-pick·closeout-pick·closeout-dup 의 것은 방어적 제거다(정상 흐름에선 이미 없다).
