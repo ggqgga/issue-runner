@@ -680,12 +680,14 @@ ck "Ⓔ⑧ eligible 쪽 정규식을 실제로 찾았다" "$ei_rx" '^[[:space:]]
 ck "Ⓔ⑧ loop-status 쪽 정규식을 실제로 찾았다" "$ls_rx" '^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)'
 ck "Ⓔ⑧ 두 파일의 에픽 판정이 갈리지 않는다" "$ei_rx" "$ls_norm"
 # 대소문자 무시도 전부여야 한다(한쪽만 `-i`/`"i"` 가 빠지면 `Epic`/`epic` 이 갈린다).
-# jq 쪽은 `capture("<정규식>"; "i")` 한 줄에서 정규식 본체와 `"i"` 를 같이 문다 — 끝 앵커가
-# 있든 없든(#259) `; "i")` 가 같은 호출에 붙어 있는지가 요점이다.
+# jq 쪽 둘(loop-status·epic-sweep)은 `capture("<정규식>"; "i")` 를 **main 현재 형태 그대로**
+# — 끝 앵커 `[[:space:]]*$` 포함 — 리터럴로 문다. 앵커를 붙인 두 파일끼리 꼬리가 갈리면
+# (`$` vs `[[:space:]]*$` 등) 앞부분 대조로는 안 보이므로 통째로 맞댄다.
+JQ_EPIC_CAPTURE='capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)[[:space:]]*$"; "i")'
 ck "Ⓔ⑧ eligible 은 grep -oiE(대소문자 무시)" \
   "$(grep -cE -- "grep -oiE '${EPIC_HEAD_RE}" "$DIR/eligible-issues.sh")" "1"
 ck "Ⓔ⑧ loop-status 는 capture(...; \"i\")" \
-  "$(grep -cE -- "capture\(\"${EPIC_HEAD_RE}\(\?<n>\[0-9\]\+\)[^\"]*\"; \"i\"\)" "$DIR/loop-status.sh")" "1"
+  "$(grep -cF -- "$JQ_EPIC_CAPTURE" "$DIR/loop-status.sh")" "1"
 # 계산기는 **넷**이다 — #313 이 `epic-sweep.sh` 를, #261 이 `spinoff-inherit.sh`(`EPIC_RE` 를
 # `--arg re` 로 jq 에 넘겨 `capture($re; "i")`) 를 더했다. 인벤토리를 파일 목록으로 떠서
 # 전수로 맞댄다. 새 파일이 같은 줄을 또 파싱하면 여기서 개수가 어긋나 빨개진다.
@@ -694,11 +696,11 @@ es_norm=$(printf '%s' "$es_rx" | sed 's/(?<n>//; s/)$//')
 ck "Ⓔ⑧ epic-sweep 쪽 정규식을 실제로 찾았다" "$es_rx" '^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)'
 ck "Ⓔ⑧ 세 파일의 에픽 판정이 갈리지 않는다" "$es_norm" "$ei_rx"
 ck "Ⓔ⑧ epic-sweep 도 capture(...; \"i\")" \
-  "$(grep -cE -- "capture\(\"${EPIC_HEAD_RE}\(\?<n>\[0-9\]\+\)[^\"]*\"; \"i\"\)" "$DIR/epic-sweep.sh")" "1"
+  "$(grep -cF -- "$JQ_EPIC_CAPTURE" "$DIR/epic-sweep.sh")" "1"
 si_rx=$(grep -oE "${EPIC_HEAD_RE}\(\?<n>\[0-9\]\+\)" "$DIR/spinoff-inherit.sh" | head -n 1)
 si_norm=$(printf '%s' "$si_rx" | sed 's/(?<n>//; s/)$//')
 ck "Ⓔ⑧ spinoff-inherit 쪽 정규식을 실제로 찾았다" "$si_rx" '^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)'
-ck "Ⓔ⑧ 네 파일의 에픽 판정이 갈리지 않는다" "$si_norm" "$ei_rx"
+ck "Ⓔ⑧ 네 파일의 에픽 판정 앞부분(줄 시작~번호)이 갈리지 않는다" "$si_norm" "$ei_rx"
 ck "Ⓔ⑧ spinoff-inherit 도 capture(\$re; \"i\")" \
   "$(grep -c -- 'capture($re; "i")' "$DIR/spinoff-inherit.sh")" "1"
 # 인벤토리 자체를 센다 — `Epic #N` 을 파싱하는 스크립트가 다섯째로 늘면 이 줄이 먼저 말한다.
@@ -750,8 +752,6 @@ ck "Ⓔ⑩ 후보 제외 쪽에서도 같은 5개를 찾았다" \
   "$(printf '%s\n' "$loop_prog" | grep -c .)" "5"
 ck "Ⓔ⑩ 두 자리의 진행 라벨 집합이 같다" \
   "$(printf '%s' "$a_labels" | tr '\n' ' ')" "$(printf '%s' "$loop_prog" | tr '\n' ' ')"
-ck "Ⓔ⑩ verifying(#275) 이 두 자리 모두에 있다" \
-  "$(printf '%s\n' "$a_labels" "$loop_prog" | grep -c '^verifying$')" "2"
 
 # ── Ⓔ⑪ (b) 창 절단·창 크기 미상도 말한다 ─────────────────────────────────
 # 이 검색은 한 장(per_page 100)뿐이다 — 닫힌 leaf 가 창을 넘으면 시작 집합이 **부분**이

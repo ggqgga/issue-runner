@@ -203,11 +203,12 @@ blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
 # ★파싱 규칙은 `scripts/loop-status.sh` 의 `epic_of`(#260)·`scripts/epic-sweep.sh`(#313)·
 #   `scripts/spinoff-inherit.sh` 의 `EPIC_RE`(#261) 와 **같은 판정**이어야 한다(넷 다):
 #   줄 시작(앞 공백 허용)의 `epic\s+#N`, 대소문자 무시, 이슈당 **첫 매치 하나만**.
-#   저쪽은 jq `capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)"; "i")` 를 줄 단위로 걸고,
-#   여기는 같은 문자열을 `grep -oiE` 로 건다(문자 클래스·앵커·대소문자 무시가 동일).
-#   **끝 앵커(`[[:space:]]*$`)** 는 `loop-status`·`epic-sweep` 이 붙였고 여기와 `spinoff-inherit`
+#   `loop-status`·`epic-sweep` 은 jq `capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)[[:space:]]*$"; "i")`
+#   를 줄 단위로 걸고, `spinoff-inherit` 은 같은 앞부분(`EPIC_RE`, 끝 앵커 없음)을 `capture($re; "i")`
+#   로, 여기는 같은 앞부분을 `grep -oiE` 로 건다(줄 시작 앵커·문자 클래스·대소문자 무시가 동일).
+#   **끝 앵커(`[[:space:]]*$`)** 는 `loop-status`·`epic-sweep` 에만 있고 여기와 `spinoff-inherit`
 #   는 아직 없다 — `Epic #12 (읽기 모델)` 같은 꼬리표를 허용하는 현행 판정이고, 채택 여부는
-#   #259 범위라 여기서 바꾸지 않는다(Ⓔ⑧ 은 줄 시작~번호까지의 앞부분만 맞댄다).
+#   #259 범위라 여기서 바꾸지 않는다(Ⓔ⑧ 은 넷의 앞부분을 맞대고, 앵커 붙은 둘은 통째로 맞댄다).
 #   블로커 파싱(`^…blocked[- ]by…`)과 같은 자리·같은 방식이다(둘 다 `-o` 로 매치 구간만).
 #   마지막 `sed` 는 **선행 0 제거**다(`Epic #007` → `7`). 두 이유가 겹친다: ⑴ 아래
 #   `--argjson epic` 이 `007` 을 유효 JSON 으로 못 읽어 jq 가 죽고, 그 대입은 `set -e` 아래라
