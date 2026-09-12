@@ -19,8 +19,8 @@
 
 | # | 상태 (PR / 이슈 / 마지막 판정) | 소유 | 진입 전이 | 게이트 | 정상 출구 | 회수 |
 |---|---|---|---|---|---|---|
-| S0 | — / `agent-ready` / — | issue-runner ③ Dispatch | (사람·loop-issues·closeout 파생 발행) | `eligible-issues.sh`: open + agent-ready + ¬agent:claimed + ¬needs-human + ¬hold:* + 블로커 전부 CLOSED. 정렬 P0 먼저 · 나머지 생성순(#401) | `claim-issue.sh`(create-only ref 잠금) → S1 | — |
-| S1 | (없음 또는 `flow:ci`·`flow:codex`) / `agent:claimed` / (없음 또는 `🔄`) | 워커(issue-runner ① Reconcile 이 감시) | claim-issue | `reconcile.sh`(working/stale) · `timebox-check.sh` → `progress-evidence.sh`(커밋 `STALL_MIN` 이내 · head SHA 의 CI 티켓 살아 있음) | `handoff-verify` → S2 · 워커 사망 → `runner-held`/재디스패치(S0) | issue-runner ① — 진행 증거 없으면 재디스패치 |
+| S0 | (없음 · 반송 뒤면 `flow:agent-ready`) / `agent-ready` / — | issue-runner ③ Dispatch | (사람·loop-issues·closeout 파생 발행) | `eligible-issues.sh`: open + agent-ready + ¬agent:claimed + ¬needs-human + ¬hold:* + 블로커 전부 CLOSED. 정렬 P0 먼저 · 나머지 생성순(#401) | `claim-issue.sh`(create-only ref 잠금) → S1 | — |
+| S1 | `flow:claimed`(+`flow:ci`·`flow:codex`) / `agent:claimed` / (없음 또는 `🔄`) | 워커(issue-runner ① Reconcile 이 감시) | claim-issue | `reconcile.sh`(working/stale) · `timebox-check.sh` → `progress-evidence.sh`(커밋 `STALL_MIN` 이내 · head SHA 의 CI 티켓 살아 있음) | `handoff-verify` → S2 · 워커 사망 → `runner-held`/재디스패치(S0) | issue-runner ① — 진행 증거 없으면 재디스패치 |
 | S2 | `flow:verify` / `flow:verify` / `🔄` | verify-runner | `handoff-verify`(worker-template 최종 단계) | `verify-eligible.sh`: open + head `agent/issue-*` + flow:verify ∪ verifying + ¬harvesting + ¬needs-human + ¬hold:*. `verifying` 고아 먼저, 그다음 FIFO. `ci` 필드(pass·revalidate·fail) | `verify-pick` → S3 | verify-runner 자신(FIFO 로 다시 집는다) |
 | S3 | `verifying` / `verifying` / `🔄` | verify-runner ③ Verify(지금 검증 중) | `verify-pick` | `verify-eligible.sh` 가 `orphan:true` 로 **먼저** 낸다 — 틱 시작에 남은 `verifying` 은 정의상 이전 틱의 사망 | `verify-pass` → S4 · `verify-redispatch` → S0(반송 마커 `재검증 실패:`) · `verify-held` → H · `verify-unpick`(flake) → S2 | verify-runner ②(고아 재집) |
 | S4 | `flow:ready` / `flow:ready` / `✅`(head 이후·`코멘트 스냅샷 N`) | closeout | `verify-pass` | `closeout-eligible.sh`: `✅` 마지막 인덱스 + `finish-classify.sh`=done_verdict(✅ 가 head 커밋 이후임을 증명) + `bounce-state.sh`=ok + 스냅샷 경계 이후 무마커 코멘트 0 + `closeout-ci-pass.sh` + MERGEABLE + ¬harvesting·¬verifying·¬flow:verify·¬needs-human·¬hold:* | `closeout-pick` → S5 | closeout ①-b 스윕(아래 계급 표) |
@@ -28,7 +28,10 @@
 | E | 종료 — 머지됨 / CLOSED, 또는 `dup` / CLOSED | — | 머지 · `closeout-dup`(`release-labels.sh` 가 닫힌 이슈의 agent-ready 회수) | — | 배포 대기 이슈(`deploy-wait`) → deploy-cycle 레인(루프 밖) | — |
 
 `agent-ready` 는 사다리 전체에서 유지되는 **자격** 라벨이다 — 위 표의 어느 remove 칸에도 없고, 반송 두 전이만
-다시 add 한다. `flow:ci`·`flow:codex` 는 PR 에만 있는 워커 내부 단계라 이슈 미러가 없다.
+다시 add 한다. `flow:ci`·`flow:codex` 는 PR 에만 있는 워커 내부 단계라 이슈 미러가 없다. 반대로 `flow:claimed`·
+`flow:agent-ready` 는 이슈 칸(`agent:claimed`·`agent-ready`)의 **PR 쪽 미러**다(#281) — 열린 agent PR 이 어느 칸에도
+안 보이는 창을 없앤다. `claim-issue.sh` 가 열린 PR 에 `flow:claimed` 를, 반송 두 전이가 `flow:agent-ready` 를 붙이고,
+`handoff-verify`·`verify-pick`·`closeout-pick`·`closeout-dup` 이 둘을 뗀다(`transition.sh` `WORKER_MIRROR`).
 
 ## 정지와 반송
 
@@ -38,7 +41,7 @@
 | H:policy | `hold:policy` + `<!-- hold-note: policy -->` 질문 코멘트 | 기계 정지 — 재심 1회는 issue-runner ①(#155) | `*-held/blocked --reason policy` · `runner-held` | 재심이 풀면 반송(S0) · "사람 몫 유지" 면 `policy-kept` → H:human | resume-sweep 이 `policy_review_due` 이벤트를 낸다 — **이슈만 스캔** → 연결 이슈 없는 PR 은 **미정(#395)** |
 | H:conflict | `hold:conflict` | 사람 | `*-held/blocked --reason conflict` | 사람이 라벨을 뗀다(메모리 `hold-conflict-default-answer`: 소규모면 ⓐ 라벨 둘 떼서 재디스패치, 2차 충돌·보안이면 ⓑ full-cycle 인수) | — |
 | H:human | `needs-human` | 사람 | `policy-kept` 만 루프가 붙인다 — 그 외는 사람이 직접 | 사람이 뗀다 | — (세 게이트 전부 제외) |
-| B | 반송 마커(`재검증 실패:` · `재디스패치:`)가 마지막 판정보다 뒤 / 이슈 `agent-ready` | 워커 레인 (S0 과 같다) | `verify-redispatch` · `closeout-redispatch` — 둘 다 `needs-human`·`hold:*` 를 뗀다(반송 = 사람 대기 해제) | 새 워커가 같은 브랜치에서 고쳐 `handoff-verify` → 새 `✅` | `bounce-state.sh`(마커 인덱스가 판정 뒤면 `bounced` — closeout-eligible 이 옛 ✅ 로 집지 않는다) |
+| B | 반송 마커(`재검증 실패:` · `재디스패치:`)가 마지막 판정보다 뒤 · PR `flow:agent-ready` / 이슈 `agent-ready` | 워커 레인 (S0 과 같다) | `verify-redispatch` · `closeout-redispatch` — 둘 다 `needs-human`·`hold:*` 를 뗀다(반송 = 사람 대기 해제) | 새 워커가 같은 브랜치에서 고쳐 `handoff-verify` → 새 `✅` | `bounce-state.sh`(마커 인덱스가 판정 뒤면 `bounced` — closeout-eligible 이 옛 ✅ 로 집지 않는다) |
 
 ## closeout ①-b 스윕이 회수하는 계급 (`finish-classify.sh` × `bounce-state.sh`)
 

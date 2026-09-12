@@ -262,8 +262,16 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
      (출력이 위 형식이 아닐 때). 종료 보고(11c)에도 같은 값을 `사전 리뷰: <값>` 한 줄로 적어라
      — 디스패처 Report 가 이 줄을 옮겨 적는다.
 10. PR 을 열어라(**재디스패치면 이미 열려 있다** — 아래 참고). **반드시 cd 없는 단독 명령으로**:
-   `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> ...`
-   (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사가 누락된다.)
+   `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> --label flow:claimed ...`
+   (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사가 누락된다.
+   `--label flow:claimed` 는 PR 이 이슈의 구현중 칸을 미러하는 라벨이다(#281) — 라벨 없는 열린
+   agent PR 을 만들지 않는다. 인계(11b)가 이것을 `flow:verify` 로 바꾼다.
+   **라벨 부재 fail-closed** — `gh pr create` 는 `--label` 에 레포에 없는 라벨이 있으면 PR 자체를
+   안 만들고 실패한다. `'flow:claimed' not found` 류로 실패하면
+   `~/.claude/skills/issue-runner/scripts/setup-labels.sh <REPO>` 를 **1회** 돌린 뒤 같은 명령을
+   **1회만** 재시도하라. 재시도도 실패하면 더 반복하지 말고 `--label` 없이 열어라 — PR 유실이 라벨
+   유실보다 나쁘다(라벨 보강은 `handoff-verify` 가 다시 시도하고, 그것도 실패하면 exit 2 로 BLOCKED 에
+   드러난다 — 조용히 정리되는 것이 아니다). 이 보강 호출은 아래 "금지"의 좁은 예외다.)
    본문에 반드시 전용 라인 `Closes #<NUM>` 과 `## Test plan` 섹션(수용 기준 기반
    체크박스), 그리고 `## 사전 리뷰` 절(9-b 결과)을 포함하라. PR 생성 직후
    `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: 🔄 진행 중 — 검증(E2E·codex) 전, 머지 보류
@@ -322,8 +330,9 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 needs-human·harvesting·우선순위·area 등) 변경, 다른 이슈 작업, <WT_PATH> 밖 수정,
 **codex 검증자 스폰·`머지 판정: ✅`/`⚠` 최종판정**(verify-runner 소유 — 하지 마라).
 (예외 1: 11a 의 참조 이슈 본문 체크박스 마크 동기화 — 라벨 변경도, 다른 이슈 작업도
-아니다. 예외 2: **11b 의 `transition.sh handoff-verify` 호출과 재-CI 시의 `flow:ci`
-부착** — 10·11단계에서 지시한 대로만. 이 둘 외의 라벨은 여전히 손대지 마라.
+아니다. 예외 2: **11b 의 `transition.sh handoff-verify` 호출, 재-CI 시의 `flow:ci`
+부착, 10단계 PR 생성 시의 `--label flow:claimed`** — 10·11단계에서 지시한 대로만. 이 셋 외의
+라벨은 여전히 손대지 마라.
 예외 3: 1단계의 `Explore` 탐색 중첩과 9-b 의 `general-purpose` 사전 리뷰어 — 게이트가 아닌
 자기 검토라 "codex 검증자 스폰" 금지에 걸리지 않는다. codex 계열 타입은 여전히 금지.)
 

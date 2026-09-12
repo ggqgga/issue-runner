@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # usage: claim-issue.sh <owner/repo> <issue-number>
 # 검색 인덱스 지연 방어: claim 직전에 직접 API로 라벨 재확인(이중 디스패치 방지),
-# claim 직후 재조회로 부착 확인.
+# claim 직후 재조회로 부착 확인. 그 뒤 열린 `agent/issue-<N>` PR 이 있으면 구현중 칸을
+# PR 에도 미러한다(`flow:claimed` 부착·`flow:agent-ready` 제거, best-effort — #281, 맨 아래).
 #
 # 라벨/assignee 부착은 **멱등**이라 그 자체로는 잠금이 못 된다 — 두 루프 세션이
 # 사전 재확인을 함께 통과하면 둘 다 "성공"해 같은 이슈를 집는다(#108). GitHub 에서
@@ -170,6 +171,28 @@ gh issue edit "$num" --repo "$repo" --add-label "agent:claimed" --add-assignee "
 post=$(gh issue view "$num" --repo "$repo" --json labels)
 printf '%s' "$post" | jq -e '.labels | map(.name) | index("agent:claimed")' >/dev/null \
   || { echo "claim 실패: 라벨 미부착 $repo#$num" >&2; exit 1; }
+
+# ── PR 미러 (#281) — 이슈가 구현중 칸(agent:claimed)에 들어선 그 자리에서, 같은 레포의 열린
+# `agent/issue-<N>` PR 이 있으면(반송 재디스패치) 그 PR 도 같은 칸으로 옮긴다: `flow:claimed`
+# 부착 · `flow:agent-ready`(반송이 붙인 대기 칸) 제거. PR 이 없으면(첫 디스패치) 아무것도 안 한다 —
+# 첫 PR 은 워커가 `gh pr create --label flow:claimed` 로 연다.
+# **best-effort** 다: claim 자체(잠금·라벨·assignee)는 위에서 이미 끝났고, PR 라벨은 그 미러일
+# 뿐이라 조회·편집 실패가 claim 을 되돌리면 안 된다(되돌리면 살아있는 워커의 이슈를 놓는 꼴).
+# 실패는 stderr 한 줄로 남기고 진행한다 — 다음 전이(handoff-verify 의 ⊘wk)가 정리한다.
+# head 브랜치 정확 일치(`--head`)로 찾는다 — `agent/issue-5` 가 `agent/issue-50` 을 물지 않는다.
+# 조회 실패와 "PR 없음" 을 섞지 않는다: 조회 실패면 편집을 시도하지 않고 그 사실을 남긴다.
+pr_json=""
+if pr_json=$(gh pr list --repo "$repo" --head "agent/issue-$num" --state open --json number 2>&1); then
+  pr_num=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null || true)
+  if printf '%s' "$pr_num" | grep -qE '^[0-9]+$'; then
+    if ! mirror_out=$(gh pr edit "$pr_num" --repo "$repo" \
+                       --add-label "flow:claimed" --remove-label "flow:agent-ready" 2>&1); then
+      echo "note: $repo#$num PR #$pr_num 미러 실패(best-effort — flow:claimed 부착·flow:agent-ready 제거 안 됨, 다음 전이가 정리) — $(printf '%s\n' "$mirror_out" | grep -v '^$' | tail -1)" >&2
+    fi
+  fi
+else
+  echo "note: $repo#$num PR 조회 실패(best-effort — 열린 agent/issue-$num PR 이 있어도 flow:claimed 미러 안 됨, 다음 전이가 정리) — $(printf '%s\n' "$pr_json" | grep -v '^$' | tail -1)" >&2
+fi
 
 # stale blocked-by 라벨 청소(#85 should): 이 이슈가 eligible 게이트를 통과해 claim 됐다는
 # 것은 남아 있는 blocked-by:<N> 중 CLOSED 인 블로커의 라벨이 이제 무의미하다는 뜻이다.
