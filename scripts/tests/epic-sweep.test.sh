@@ -23,10 +23,11 @@
 #   ⑪ 도구(jq) 실패는 fail-closed — 라벨을 못 읽으면 deploy-wait 가드가 "없다" 로 새면 안 되고,
 #      leaf 번호 목록을 못 만들면 근거 빈 코멘트로 닫으면 안 된다(데이터로는 못 닿는 경로라
 #      표식 붙은 그 한 호출만 jq 스텁으로 실패시킨다 — resume-sweep.test.sh 와 같은 수법).
-#   ⑫ (#343) leaf 전부 CLOSED 여도 두 겹을 더 본다 — ⓐ leaf 의 하류 **배포 대기 이슈**
-#      (`label:deploy-wait is:open`, leaf 번호 언급)가 열려 있으면 note·쓰기 0 ⓑ 에픽 본문에
-#      미체크 체크박스(`- [ ]`)가 있으면 note·쓰기 0. 조회 실패는 warn + rc 1(fail-closed),
-#      상한은 warn + 보류. `--dry-run` 도 같은 note 를 낸다(#328 이 dry-run 출력으로 판정한다).
+#   ⑫ (#343) leaf 전부 CLOSED 여도 두 겹을 더 본다(SUT 헤더 "두 겹 가드" 의 ⓐⓑ 순) — ⓐ 에픽
+#      본문에 미체크 체크박스(`- [ ]`)가 있으면 note·쓰기 0(호출 없음, 먼저) ⓑ leaf 의 하류
+#      **배포 대기 이슈**(`label:deploy-wait is:open`, leaf 번호를 단어 경계로 언급)가 열려 있으면
+#      note·쓰기 0. 조회 실패는 warn + rc 1(fail-closed), 상한은 warn + 보류. `--dry-run` 도
+#      같은 note 를 낸다(#328 이 dry-run 출력으로 판정한다).
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
