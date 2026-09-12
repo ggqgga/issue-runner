@@ -598,7 +598,13 @@ down — an existence test in front makes later branches unreachable).
   labels, this exit ② Picks **without ever reading the direction** — and "the boundary is computed
   per source" just above **already computes** the issue-side boundary, so the cost is one
   condition. If only the issue side has a boundary, carry on with the judgment below using it
-  (read it as `h` present). **If `H` is present,
+  (read it as `h` present) — below, that shape is called the **issue-only boundary**.
+  **But an index never crosses arrays (#334 attempt 2 P1)**: reading the issue-side boundary as
+  "`h` present" goes only as far as the *entry* decision (there was a hold); do not feed the issue
+  array's index into the **two PR-array index comparisons** further down — resolution test ⑴'s
+  `f > max(h, r)` and the idempotency branch's `r > h`. Each of those two spots carries its own
+  issue-only-boundary rule (⑴: no resolution candidate · idempotency: strict `createdAt`).
+  **If `H` is present,
   leave it (the hold stands)** — a human attached labels without a comment, and this is the
   **only exit in this section that reaches ② Pick without ever reading a label**, so the axis
   resolution test ⑵ closes is closed here too. No other gate covers it: the ①-b sweep's target
@@ -616,6 +622,23 @@ it is a resolution candidate. Why the comparison base is `max(hold boundary, red
 and not the hold boundary alone: a ✅ **earlier** than the marker is a verdict on pre-bounce code,
 so counting it as a resolution the moment it clears the hold boundary reopens the same hole
 through the side door.
+**This comparison is made within the PR array only (#334 attempt 2 P1).** Both terms of
+`max(hold boundary, redispatch marker)` are the **PR array's** boundary and marker — in 1)'s
+**issue-only boundary** shape (zero boundary in the PR array, one in the issue array), putting the
+issue array's boundary index here compares unrelated numbers: a stale `머지 판정: ✅` on code
+**before** the hold at PR index 5 versus an issue boundary at index 2 reads as "the ✅ landed after
+the hold", and that code reaches ② Pick — exactly the mis-merge this section exists to stop. So in
+the issue-only boundary shape, when the PR array has **no redispatch marker either**, there is no
+same-array baseline to compare against → **no resolution candidate** (conservative — the opening
+branch never opens without proof). That shape passes the start and idempotency branches and goes
+down to 2)·3), judging direction only, from the **issue-side** decision comment (2)'s decision
+lookup is per-source anyway and never crosses arrays). **Release path**: on correction, 3) posts
+the redispatch marker on the PR, so from the next tick the PR array has a baseline `r`, and once a
+new completion verdict lands after it this ⑴ releases (`f > r`, same array); on rejection, 3)'s
+rejection row leaves `✅ 기각 승계` and goes to ② Pick (a path that does not pass through ⑴ — the
+human explicitly said merge as-is); on ambiguity, `closeout-blocked` re-posts `<!-- hold-note: ` on
+**both** the PR and the issue, restoring the normal shape (a boundary on both sides). When the PR
+array **does** have a marker `r`, that `r` is the same-array baseline and `f > r` is judged normally.
 
 **Resolution test ⑵ — resolution also requires label absence (conjunction, BLOCKER ②).** Even
 when the index condition above holds, **if `needs-human`·`hold:*` is still present on either the
@@ -660,7 +683,9 @@ destination**:
 | any other exit code / non-ISO8601 output | an undefined outcome | the **same cell** as exit 1 (BLOCKED) |
 
 If the time obtained is **later** than the `createdAt` of the comment at `max(hold boundary,
-redispatch marker)`, that is evidence somebody **started**, not that they **finished**. But the
+redispatch marker)`, that is evidence somebody **started**, not that they **finished** (this
+comparison is time against time to begin with, so it never crosses arrays — in the issue-only
+boundary shape with no `r`, use the `createdAt` of the issue-side boundary comment). But the
 destination depends on **who** started — with a redispatch marker present it is the worker this
 section sent back; with none, it is a commit that never went through a bounce (a human fixed or
 rebased it) and this section knows nothing about its provenance. This is **the same predicate** the
@@ -722,6 +747,15 @@ in ④ Report every tick where a human sees it — it is not a silent stall.
 #198 bounce3/P1 + 10:11/P1 axis② · #334 BLOCKER).** If the **re-dispatch marker index > hold
 boundary** (a bounce for this hold already went out), do not leave it alone on the strength of the
 marker — **read the linked issue's current labels** once.
+Both are **PR-array** indices. In the **issue-only boundary** shape (zero boundary in the PR array)
+there is no same-array `h`, so split on **`createdAt`** instead of index (#334 attempt 2 P1): it is
+`r > h` only when the marker's `createdAt` is **strictly later** than the issue-side boundary's
+`createdAt`. **Same second or earlier reads as `r ≤ h`** and goes to 2) (treated as a new hold this
+section has not judged yet — fail-closed). This is the only place a timestamp is used across arrays,
+and the justification is asymmetry: it is not the opening branch (⑴) but a split between two
+fail-closed branches, so the cost of a same-second misread is one extra 2) → correction → marker
+re-post, while the cost of the opposite misread (reading a new hold as older than the stale marker)
+is the *transition re-call* below stripping that hold's `hold:*`.
 
 **★ Why this branch does not ask "did the transition land?" — that question cannot be answered by
 labels (#334 BLOCKER).** In the shape where this section calls `closeout-redispatch`, that
@@ -956,6 +990,7 @@ review and regression:
 | **Decision + labels still on** | the decision is there but `hold:policy` remains on the issue (`D` true · `H` true) | 2)ⓑ false → **hold stands · untouched** · do not call the transition again |
 | **New commit after release** | the head commit postdates the boundary (`c` true), no `r`, `A` false | **not `active` but the 3) ambiguous path** (`closeout-blocked --reason policy`) — grid row 10. This round **updated** #174's absorbed fixture "`active` (#171 wins)" (see the footnote below) |
 | **Lookup failure** | `pr-comments.sh` exits non-zero | **`BLOCKED: 코멘트 조회 실패` · state unchanged · untouched** — grid row 22. This round **updated** the absorbed item's "hold stands" into a form that *touches no label* (see the footnote below) |
+| **Issue-only boundary + stale ✅** | zero boundary/marker in the PR array, `<!-- hold-note: ` in the issue array (index 2), a `머지 판정: ✅` on the PR from **before** the hold (index 5), no `H` | ⑴ **no resolution candidate** (no cross-array index comparison) → 2)·3) judge direction from the issue-side decision — grid row 28 |
 
 **Footnote — this round updated two fixture lines of #174's absorbed item (issue #334's body was
 edited to match).** ⑴ *"new commit after release → `active` (#171 wins)"* → **the 3) ambiguous
@@ -981,10 +1016,13 @@ pre-review (zero boundary + labels only · the self-loop of a bounce-less new co
 `r ≤ h`), **axis⑦** = the 2026-09-12 verifier BLOCKER + WARNs (the downstream-lane predicate
 constant-true because of `agent-ready`, so a failed transition reads as "landed" · the **signal
 inversion** of counting removal-target cells · a comment lookup failure pinning a human gate · the
-zero-boundary decision taken from the PR array alone). **For axis⑦ rows that column is this PR's
-previous commit (`d82c6e7`)**; for axis①~⑥ rows it is closed PR #203 (head `683cdde2`) **at the
-10:11 bounce**. Two baselines are mixed, so each row names its own in parentheses. Only the `want`
-column is the current contract.
+zero-boundary decision taken from the PR array alone), **axis⑧** = the 2026-09-12 attempt-2
+verifier P1 (in the issue-only boundary shape, the PR array's completion-verdict index was compared
+**across arrays** against the issue array's boundary index — a stale ✅ reads as "later" and
+mis-merges). **For axis⑦ rows that column is this PR's previous commit (`d82c6e7`)**, **for axis⑧
+rows it is the attempt-1 commit (`fbdcfba`)**; for axis①~⑥ rows it is closed PR #203 (head
+`683cdde2`) **at the 10:11 bounce**. Three baselines are mixed, so each row names its own in
+parentheses. Only the `want` column is the current contract.
 
 `h`=hold boundary · `r`=redispatch marker · `f`=completion-verdict comment (`머지 판정: ✅` ·
 `마감 검증: ✅`) · `c`=head commit is later · **`A`**=the issue currently carries a **downstream
@@ -1028,6 +1066,8 @@ non-destructive side wins and the cell is untouched.
 | 25 | **zero boundary in the PR array but `<!-- hold-note: ` in the issue array** (only `closeout-blocked`'s PR comment failed), no `H` | ② Pick | **`d82c6e7`: the zero-boundary test read the PR array only → ② Pick without ever reading the direction** | **read `h` as present from the issue-side boundary** and carry on (no ② Pick) | ✅ axis⑦ |
 | 26 | `h`, `r > h`, no `c`, no `f`, **`A` false ∧ `R` true** (the issue's only label is `agent-ready` = the transition's target state) | ② Pick | `active`, untouched (**because it read "the transition landed"**) | `active`, untouched (**because the eligibility predicate is true, so the next dispatch tick picks it up** — whether the transition landed is not asked) | — (same decision, **different ground**) |
 | 27 | `h`, `r > h`, no `c`, no `f`, **a human removed `agent-ready` from the OPEN issue by hand** (`A` false ∧ `R` false) | ② Pick | re-call the transition (the old predicate was false in this one cell too) | same — **re-call only the transition** | — |
+| 28 | **issue-only boundary** (zero boundary/marker in the PR array, `<!-- hold-note: ` at issue index 2) ∧ an `f` on the PR from **before** the hold (`머지 판정: ✅`, index 5) ∧ no `H` ∧ `D` present | ② Pick | **`fbdcfba`: ⑴ read PR index 5 > issue index 2 as a resolution → ② Pick** (pre-hold code mis-merged) | **⑴ no resolution candidate** (no same-array baseline) → 2)·3) judge direction from the issue-side decision | ✅ axis⑧ |
+| 29 | **issue-only boundary** ∧ an `r` on the PR (last tick's correction bounce) ∧ the issue-side boundary's `createdAt` is **later than or equal to** `r`'s (a new hold) ∧ `H` present | ② Pick | **`fbdcfba`: no `h` in the PR array, so `r > h` is undefined** — entering the idempotency branch on the marker's existence gives `A` false ∧ `R` false → the transition re-call strips the new hold's `hold:*` | **read as `r ≤ h` → 2)** → ⓑ false (labels present) → **hold stands · untouched** | ✅ axis⑧ |
 
 ## ② Pick — 1 PR at a time (MAX_CLOSEOUT=1, concurrency 1)
 

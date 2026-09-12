@@ -1474,6 +1474,39 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   fi
 done
 
+echo "[closeout] ①-c 인덱스는 배열을 넘지 않는다 — 이슈측 단독 경계는 해소 후보 없음 (반증형, #334 attempt 2 P1)"
+# attempt 2 P1: "이슈 쪽에만 경계가 있으면 그 경계로 아래 판정을 이어간다" 직후의 해소 판정 ⑴ 이
+# **PR 배열**의 완결 판정 인덱스를 `max(보류 경계, 재디스패치 마커)` 와 비교하는데, 그 경계가
+# 이슈 배열에서 온 경우 서로 다른 배열의 인덱스 비교가 된다 — 낡은 PR ✅(인덱스 5)가 이슈 보류
+# (인덱스 2)보다 "뒤" 로 읽혀 보류 이전 코드가 ② Pick 된다. 처방(택일 ⓐ, 보수적): ⑴ 의 두 항은
+# PR 배열의 것만 쓰고, PR 배열에 경계도 마커도 없으면 **해소 후보를 내지 않는다**. 멱등 분기의
+# `r > h` 도 같은 배열 안에서만 — 이슈측 단독 경계 형상에서는 인덱스 대신 `createdAt` 엄격 비교로
+# 가르고 동초·이전은 새 보류(2))로 읽는다. 넷을 문다: (a) ⑴ 문단이 '배열 안에서만' 을 못박음
+# (b) ⑴ 문단이 '해소 후보를 내지 않는다' 출구를 가짐 (c) 멱등 분기가 이슈측 단독 경계에서
+# createdAt **엄격** 비교를 씀 (d) 격자에 축⑧ 행(교차 인덱스 오독 칸)이 있음.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  sec=$(ic_sec "$f"); step1=$(ic_step "$f" 1 2 <<<"$sec")
+  [ -n "$step1" ] || { echo "  ✗ $f 의 ①-c 1) 절을 못 찾음"; exit 1; }
+  case "$f" in
+    *.en.md) p1s='**Resolution test ⑴'; p1e='**Resolution test ⑵'; within='within the PR array only'; norc='no resolution candidate'
+             solew='issue-only boundary'; strictw='strictly later'; idemw='**If it was already bounced, do not bounce it again' ;;
+    *)       p1s='**해소 판정 ⑴'; p1e='**해소 판정 ⑵'; within='PR 배열 안에서만'; norc='해소 후보를 내지 않는다'
+             solew='이슈측 단독 경계'; strictw='엄격히 늦을 때만'; idemw='**이미 반송됐으면 다시 반송하지 않는다' ;;
+  esac
+  para=$(awk -v a="$p1s" -v b="$p1e" 'index($0,a)==1{on=1} on && index($0,b)==1{exit} on' <<<"$step1")
+  [ -n "$para" ] || { echo "  ✗ $f ①-c 해소 판정 ⑴ 문단을 못 찾음"; exit 1; }
+  grep -qF "$within" <<<"$para" \
+    || { echo "  ✗ $f ①-c 해소 판정 ⑴ 이 비교를 '$within' 으로 못박지 않음 — 이슈 배열 인덱스와 교차 비교가 열려 있다(#334 attempt 2 P1)"; exit 1; }
+  grep -qF "$norc" <<<"$para" \
+    || { echo "  ✗ $f ①-c 해소 판정 ⑴ 에 '$norc' 출구 없음 — PR 배열에 기준이 없을 때 낡은 ✅ 가 해소로 읽힌다(#334 attempt 2 P1)"; exit 1; }
+  grep -qF "$solew" <<<"$para" \
+    || { echo "  ✗ $f ①-c 해소 판정 ⑴ 이 '$solew' 형상을 지명하지 않음(#334 attempt 2 P1)"; exit 1; }
+  idem=$(awk -v a="$idemw" 'index($0,a)==1{on=1} on' <<<"$step1" | awk 'NR>1 && /^\*\*2\)/{exit} {print}')
+  [ -n "$idem" ] || { echo "  ✗ $f ①-c 멱등 분기 문단을 못 찾음"; exit 1; }
+  grep -qF 'createdAt' <<<"$idem" && grep -qF "$strictw" <<<"$idem" \
+    || { echo "  ✗ $f ①-c 멱등 분기가 이슈측 단독 경계에서 createdAt '$strictw' 규칙을 안 씀 — PR 배열에 h 가 없을 때 r > h 가 미정의다(#334 attempt 2 P1)"; exit 1; }
+done
+
 echo "[closeout] ①-c 전이 실패도 마커 실패와 같은 BLOCKED 재시도 칸 (반증형, #198 10:11-P1 축②)"
 # 10:11 BLOCKER ②: '마커 posting 성공 + 전이 실패' 조합에서 마커는 이미 서 있으므로 다음 틱의
 # 멱등 분기가 '이미 재디스패치됨' 으로 읽고 무접촉한다 — 이슈는 agent-ready 를 못 돌려받아
@@ -1742,7 +1775,7 @@ echo "[closeout] ①-c 전수 격자 — main 대조 want 열 + 뒤집힌 칸 �
 # 절차라 스크립트 테스트가 닿지 않으므로, 격자 자체를 문서 안에 두고 (a) want 열, (b) main
 # 열, (c) 여섯 축의 뒤집힌 칸 표식이 전부 있는지를 본다. 축 표식이 하나라도 빠지면 그 축은
 # 격자에 전수로 못박히지 않은 것이다(축④=검증자 BLOCKER①, 축⑤=검증자 BLOCKER②,
-# 축⑥=사전 리뷰가 찾은 해제 경로 없는 칸 3종).
+# 축⑥=사전 리뷰가 찾은 해제 경로 없는 칸 3종, 축⑧=attempt 2 P1 배열 교차 인덱스 오독).
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   sec=$(ic_sec "$f")
   grid=$(grep -E '\| *`?want`? *\|' <<<"$sec") || grid=''
@@ -1750,8 +1783,8 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qF 'origin/main' <<<"$sec" \
     || { echo "  ✗ $f ①-c 격자에 origin/main 대조 열 없음(#198, PR#296 교훈)"; exit 1; }
   case "$f" in
-    *.en.md) axes='axis① axis② axis③ axis④ axis⑤ axis⑥ axis⑦' ;;
-    *)       axes='축① 축② 축③ 축④ 축⑤ 축⑥ 축⑦' ;;
+    *.en.md) axes='axis① axis② axis③ axis④ axis⑤ axis⑥ axis⑦ axis⑧' ;;
+    *)       axes='축① 축② 축③ 축④ 축⑤ 축⑥ 축⑦ 축⑧' ;;
   esac
   # 축 표식은 **격자 행 안**에서만 센다 — 절 본문 산문에도 '축②' 같은 참조가 있어 절 전체를
   # 훑으면 격자에서 표식이 지워져도 통과한다(뒤집힌 칸이 전수로 안 못박힌다).
@@ -1761,8 +1794,8 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
       || { echo "  ✗ $f ①-c 격자 행에 뒤집힌 칸 표식 '$axis' 없음(#198/#334)"; exit 1; }
   done
   rows=$(awk '/^\| *[0-9]+ *\|/' <<<"$sec" | wc -l | tr -d ' ')
-  [ "$rows" -ge 27 ] \
-    || { echo "  ✗ $f ①-c 격자 행이 $rows 개뿐 — 전수가 아니다(27행 이상 요구, #198/#334)"; exit 1; }
+  [ "$rows" -ge 29 ] \
+    || { echo "  ✗ $f ①-c 격자 행이 $rows 개뿐 — 전수가 아니다(29행 이상 요구, #198/#334)"; exit 1; }
 done
 
 echo "[closeout] ci-gate --repo 분기 스모크 (positive + fail-closed)"
