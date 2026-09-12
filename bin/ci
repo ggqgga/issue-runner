@@ -1752,4 +1752,3 @@ grep -qF '라벨 공백 창' skills/closeout/SKILL.md \
 grep -qF 'label gap' skills/closeout/SKILL.en.md \
   || { echo "  ✗ skills/closeout/SKILL.en.md 에 반송 직후 'label gap' 미러 없음"; exit 1; }
 
-echo "CI pass"

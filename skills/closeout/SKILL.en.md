@@ -1030,8 +1030,9 @@ keeps accruing items loses its closing moment and becomes an issue that never en
 decision, 2026-08-13). Even as the count grows, keep **one PR = one ticket = a container with
 a clear closing moment**.
 
-**Step 5 — post-deploy handling (Chrome smoke).** For a deploy issue a human has
-reported deployed, without any new detection mechanism (no polling/timing), actively run
+**Step 5 — post-deploy handling (Chrome smoke).** For a deploy issue **reported deployed**
+(it does not ask who reported it — in the new model the deploy-cycle lane leaves that
+report), without any new detection mechanism (no polling/timing), actively run
 a Chrome smoke to judge it. Parse `## 검증 URL` (`<VERIFY_URL>`) and
 `## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body, fill
 `references/smoke-prompt.en.md`'s placeholders
@@ -1120,7 +1121,7 @@ structure/empty-state confirmation from real-data render confirmation in the res
   promotion-model repo).
 - **Degrade — no silent skip.** If the chrome-devtools MCP is absent from the session
   (headless/cron — interactive-auth MCP may be missing) or `<VERIFY_URL>` is blank or
-  unreachable, skip the smoke and fall back to the existing human-report path, but leave
+  unreachable, skip the smoke and fall back to the deploy-cycle lane's human-report path, but leave
   a `스모크 skip: <reason>` comment on the deploy issue (no hiding the gap).
   But **"unreachable" is the last word, not the first** (#153): some addresses open only
   outside Chrome, so before writing the skip, walk the retry ladder in smoke-prompt —
