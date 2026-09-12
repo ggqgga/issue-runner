@@ -29,7 +29,7 @@ gh label create "agent:claimed" --repo "$repo" --color 054A91 --force \
 # policy-kept`) 한 곳뿐이다. 옛 설명(루프의 한계 → 사람 판단)은 기계 정지에도 이 라벨을 겹쳐
 # 붙이던 시절의 뜻이라 "루프 손대지 마" 로 읽혔다.
 gh label create "needs-human" --repo "$repo" --color D73A49 --force \
-  --description "사람이 직접 세운 정지(기계 정지는 hold:*) — 재심 유지 판정 시에만 루프가 붙인다"
+  --description "사람이 직접 세운 정지(기계 정지는 hold:*). 루프는 hold:policy 재심이 사람 몫 유지로 끝난 때만 대신 붙인다"
 # P 는 **주제(에픽) 단위**로 정하고 leaf 가 상속한다(#259) — leaf 마다 따로 매기지 않는다.
 # 정의의 SSOT 는 skills/loop-issues/SKILL.md 체크리스트 6 이고, 여기 설명은 그 요약이다
 # (라벨 목록만 보는 사람이 "보통/낮음" 으로 읽고 leaf 마다 임의로 매기던 것이 이 이슈의 원인).

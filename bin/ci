@@ -2940,7 +2940,8 @@ done
 rs_head=$(sed -n '1,/^set -/p' scripts/resume-sweep.sh)
 printf '%s\n' "$rs_head" | grep -F 'hold:policy' | grep -F '재심' | grep -qF '#155' \
   || { echo "  ✗ scripts/resume-sweep.sh 머리 주석에 'hold:policy … 재심 … #155' 줄이 없다 (#245)"; exit 1; }
-if printf '%s\n' "$rs_head" | grep -nE 'hold:policy.*사람이 결정해야|그 둘은 무편집'; then
+#    ④ 미러 문단의 옛 꼴("`hold:policy`·`hold:conflict` 는 정의상 사람이 푸는데")도 같은 되돌림이다.
+if printf '%s\n' "$rs_head" | grep -nE 'hold:policy.*사람이 결정해야|그 둘은 무편집|hold:policy.*정의상.*사람이 푸'; then
   echo "  ✗ scripts/resume-sweep.sh 머리 주석이 hold:policy 를 사람 결정으로 되돌렸다 (#155 재심 1회는 루프 몫, #245)"; exit 1
 fi
 # ⑺ README 라벨 표(한/영)에 full-cycle 행 — 스크립트가 만드는 라벨은 표에도 있어야 한다.
