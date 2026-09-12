@@ -501,7 +501,8 @@ skip 하고 ④ Report 에
 PR·이슈 양쪽의 `harvesting`·`flow:*` 정리를 전이 표가 보장한다(스테일 단계 라벨 잔재 방지).
 `closeout-blocked` 는 **`--reason <conflict|policy|ladder> [--note "<질문 한 줄>" — policy·conflict 필수]` 가 필수**다(없으면 usage
 exit 64 — 사유 없는 정지를 만들 수 없다). rebase/semantic conflict 는
-`conflict`, 그 외 루프가 못 정하는 스펙·정책·검증 미산출은 `policy`, 사다리
+`conflict`(단 보안 경계·대범위 충돌은 `policy` — 2단계 CONFLICTING 항목의 판정, #344;
+`conflict` 의 `--note` 는 질문이 아니라 워커 재개 범위 한 줄이다), 그 외 루프가 못 정하는 스펙·정책·검증 미산출은 `policy`, 사다리
 (`~/.claude/skills/issue-runner/references/live-verification-ladder.md`)
 의 칸을 실제로 올라가 실패 출력을 인용한 경우만 `ladder` 다.
 
@@ -728,14 +729,41 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   branch). **conflict 가 나면 rebase 보수 에이전트를 동기 스폰**한다(worker-template
   `~/.claude/skills/issue-runner/references/worker-template.md` 를 읽어 placeholder 를
   채우되 "절차" 지시를 "이 worktree(`<WT_PATH>`)에서 `origin/<BASE>` 위로 rebase,
-  conflict 를 원안 의도대로 해소, `git push --force-with-lease`, **merge 커밋 금지**" 로
-  교체하고 push 규율·금지는 유지) → 에이전트 종료 후 `$SCRIPTS/run-local-ci.sh <repo>
+  conflict 를 원안 의도대로 해소, `git push --force-with-lease`, **merge 커밋 금지**.
+  **못 풀면 `git rebase --abort` 후 종료 보고에 ⑴ 충돌 파일 목록(경로 전부) ⑵ 왜 rebase
+  범위를 넘는지 — 필요한 추가 작업(예: 새 분기에 가드 + 무는 테스트 1건)을 적어라**" 로
+  교체하고 push 규율·금지는 유지. 에이전트의 범위는 종전대로 "리베이스와 그 결과로
+  깨지는 테스트 정합만" — 기능 추가는 워커 회차의 일이고, 그 종료 보고 두 항목이 아래
+  홀드 사유 판정의 입력이다) → 에이전트 종료 후 `$SCRIPTS/run-local-ci.sh <repo>
   <N>` 로 rebased HEAD 캐시를 재생성한다. 비0(새 base 통합 깨짐)이면 머지하지 말고
   **위임 fail-closed**: `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`
   로 연결 이슈를 `agent-ready` 로 되돌려(또는 spinoff) 넘기고 blocked 종료.
   0이면 위 exit 0 머지 게이트로 합류해 정상 squash 머지한다. 에이전트가 conflict 를 **못 풀면**(rebase abort·반복 실패) semantic
-  conflict 는 사람 판단이므로 `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason conflict --note "<질문 한 줄>"`
-  로 넘기고 blocked 종료한다(무인 강제 해소 금지 — 이 경로만 사유가 `conflict` 다). 두 전이 모두 **exit 1(readback
+  conflict 는 closeout 이 직접 풀지 않는다(무인 강제 해소 금지) — 대신 **홀드 사유를
+  가른다**(#344, 사람 결정 2026-09-12: 소규모·보안 경계 밖 충돌의 기본 답은 ⓐ 워커 한
+  회차 — BoDAT #5103 2건·#185 셋 다 그 답이었다). 판정은 LLM 몫이라 여기 두고, 재개
+  자체는 후속 resume-sweep(`hold:conflict` 1회 자동 재개)이 한다:
+  - **`--reason policy`** (사람 몫 — 자동 재개 대상 아님) — 둘 중 하나면:
+    ⓐ **보안 경계** — 충돌 파일이 인증·권한·세션·비밀(credential/secret)·외부 입력
+    검증·트러스트 바운더리 경로에 걸친다. 레포 `CLAUDE.md` 가 보안 경계 경로를 지정하면
+    그것을 쓰고, 없으면 파일 경로·이름에 `auth`·`session`·`secret`·`credential`·
+    `permission`·`policy` 가 들어가거나 에이전트가 해소 중 그런 코드를 건드려야 한다고
+    보고한 경우. ⓑ **대범위** — 충돌 파일이 **4개 이상**이거나 PR 고유 커밋이
+    **6개 이상**(`git rev-list --count origin/<BASE>..HEAD`).
+    `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`
+    — `--note` 는 종전대로 사람이 답해야 할 질문 한 줄이되 어느 기준(보안 경계 / 범위)에
+    걸렸는지 명시한다(예: `보안 경계 — lib/auth/session.rb 충돌, 세션 만료 분기 어느 쪽?`).
+  - **`--reason conflict`** (루프가 1회 자동 재개할 건) — 그 외 전부. `--note` 는 질문이
+    아니라 **재개 워커가 받을 범위 한 줄**(워커 재개 범위 문형)로 쓴다 — 후속 디스패처가
+    이 노트를 재개 워커 프롬프트에 그대로 인라인하므로 워커가 무엇을 해야 하는지는 이
+    한 줄이 유일한 지시다. 문형:
+    `충돌 <상대 PR #M>·<파일 목록> — 워커 재개 범위: origin/<BASE> 위로 rebase 해 원안 의도대로 해소 + <에이전트가 보고한 추가 작업>`
+    (예: `충돌 #5114·client.rb, client_test.rb — 워커 재개 범위: origin/main 위로 rebase 해 원안 의도대로 해소 + proxy_push 분기 before_send: guard + 무는 테스트 1건`).
+    `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason conflict --note "<워커 재개 범위 한 줄>"`
+    에이전트 종료 보고에 충돌 파일 목록이 없으면(판정 입력 부재 — 노트를 채울 수 없다)
+    "그 외" 가 아니라 **`policy` 로 fail-closed** 한다(노트: `판정 입력 부재 — 에이전트가
+    충돌 파일 목록을 보고하지 않음, 워커 재개인가 사람인가?`).
+  어느 갈래든 blocked 종료한다(이 경로만 사유가 `conflict` 다). 두 전이(redispatch·blocked) 모두 **exit 1(readback
   불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
   `BLOCKED: 전이 실패 <전이> PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
 

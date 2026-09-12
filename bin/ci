@@ -1520,9 +1520,10 @@ done
 for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   if grep -nE 'transition\.sh (verify-held|closeout-blocked|runner-held) [^\n]*' "$f" | grep -v -- '--reason' | grep -q .; then
     echo "  ✗ $f: --reason 없는 verify-held/closeout-blocked/runner-held 호출"; exit 1; fi
-  # policy·conflict 사유엔 질문 한 줄(--note)이 없으면 사람 몫이 아니다(#155).
+  # policy·conflict 사유엔 --note 한 줄이 필수(#155) — policy 는 사람이 답할 질문, conflict 는
+  # 재개 워커가 받을 범위(#344, closeout ③ CONFLICTING 항목). 어느 쪽이든 없으면 빨강.
   if grep -nE 'transition\.sh [a-z-]+ <repo>[^\n]*--reason (policy|conflict)' "$f" | grep -v -- '--note' | grep -q .; then
-    echo "  ✗ : --note 없는 --reason policy|conflict 호출 — 사람이 답해야 할 질문 한 줄을 적으라"; exit 1; fi
+    echo "  ✗ $f: --note 없는 --reason policy|conflict 호출 — policy 는 질문 한 줄, conflict 는 워커 재개 범위 한 줄(#344)을 적으라"; exit 1; fi
   # 맨 needs-human 산문 작성 금지(#151) — 사유 없는 사람 대기는 loop-status 가 warn 하고 재개 스윕이 거부한다.
   # #214 의 예외(4단계 배포 티켓 발행 직후 라벨 보강이 needs-human 을 deploy-wait 와 함께
   # 되살리는 줄)는 #243 으로 **소비자가 사라져** 걷어냈다 — 그 보강은 이제 deploy-wait 하나만

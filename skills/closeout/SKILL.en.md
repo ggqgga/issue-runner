@@ -568,7 +568,9 @@ never a hand-run `gh issue edit`**. The transition table guarantees the `harvest
 cleanup on both the PR and the issue (prevents stale stage-label residue).
 `closeout-blocked` **requires `--reason <conflict|policy|ladder> [--note "<질문 한 줄>" — policy·conflict 필수]`** (without it the
 transition refuses with usage exit 64 — no reasonless stop can be created). A
-rebase/semantic conflict is `conflict`; anything else the loop cannot decide (spec·policy·
+rebase/semantic conflict is `conflict` (except a security-boundary or large-scope conflict,
+which is `policy` — the step-2 CONFLICTING item's judgment, #344; `conflict`'s `--note` is
+not a question but the one-line worker resume scope); anything else the loop cannot decide (spec·policy·
 no verdict) is `policy`; `ladder` only when the rungs of
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
 were actually climbed and the failure output cited.
@@ -829,15 +831,49 @@ dirty guard stays — if dirty, warn and hold; best-effort).
   (read worker-template `~/.claude/skills/issue-runner/references/worker-template.md`, fill
   placeholders, replace the "Procedure" with "in this worktree (`<WT_PATH>`), rebase onto
   `origin/<BASE>`, resolve conflicts per the original intent, `git push --force-with-lease`,
-  **no merge commit**", keeping push discipline and prohibitions) → after the agent exits,
+  **no merge commit**. **If you cannot resolve it, `git rebase --abort` and put in your exit
+  report ⑴ the list of conflicting files (every path) ⑵ why it exceeds rebase scope — the
+  additional work needed (e.g. a guard on the new branch + one test that bites)**", keeping
+  push discipline and prohibitions. The agent's scope stays "the rebase and only the test
+  alignment it breaks" — feature work belongs to a worker round, and those two exit-report
+  items are the input to the hold-reason judgment below) → after the agent exits,
   run `$SCRIPTS/run-local-ci.sh <repo> <N>` to regenerate the rebased-HEAD cache. If nonzero
   (integration with the new base is broken), do not merge — **delegate fail-closed**:
   `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` returns the linked issue
   to `agent-ready` (or spinoff), blocked exit. If 0,
   join the exit-0 merge gate above and squash-merge normally. If the agent **cannot resolve**
-  the conflict (rebase abort / repeated failure), a semantic conflict is a human call:
-  `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason conflict --note "<질문 한 줄>"`,
-  blocked exit (no unattended forced resolution — this path alone uses `conflict`). For both transitions: **on exit 1 (readback mismatch) or
+  the conflict (rebase abort / repeated failure), closeout does not resolve the semantic
+  conflict itself (no unattended forced resolution) — instead it **splits the hold reason**
+  (#344, human decision 2026-09-12: for a small conflict outside the security boundary the
+  default answer is ⓐ one worker round — BoDAT #5103 ×2 and #185 all got that answer). The
+  judgment is LLM work so it lives here; the resume itself is done by the follow-up
+  resume-sweep (`hold:conflict` auto-resumed once):
+  - **`--reason policy`** (human's call — not auto-resumed) — if either holds:
+    ⓐ **security boundary** — a conflicting file touches auth·authorization·session·
+    secrets (credential/secret)·external-input validation·trust-boundary paths. If the repo's
+    `CLAUDE.md` names security-boundary paths use those; otherwise a file path/name containing
+    `auth`·`session`·`secret`·`credential`·`permission`·`policy`, or the agent reported it would
+    have to touch such code to resolve. ⓑ **large scope** — **4 or more** conflicting files, or
+    **6 or more** PR-only commits (`git rev-list --count origin/<BASE>..HEAD`).
+    `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`
+    — `--note` stays a one-line question a human must answer, but it names which criterion
+    (security boundary / scope) tripped (e.g. `security boundary — lib/auth/session.rb
+    conflicts, which side of the session-expiry branch?`).
+  - **`--reason conflict`** (the loop auto-resumes it once) — everything else. `--note` is
+    not a question but **the one-line scope the resumed worker receives** (the worker resume
+    scope form) — the follow-up dispatcher inlines this note verbatim into the resumed
+    worker's prompt, so this one line is the worker's only instruction. The form is a
+    machine contract and stays in Korean verbatim (the Korean SKILL is the SSOT; the
+    English gloss below is for reading only). Form:
+    `충돌 <상대 PR #M>·<파일 목록> — 워커 재개 범위: origin/<BASE> 위로 rebase 해 원안 의도대로 해소 + <에이전트가 보고한 추가 작업>`
+    (i.e. `conflict <other PR #M>·<file list> — worker resume scope: rebase onto origin/<BASE> resolving per the original intent + <additional work the agent reported>`;
+    e.g. `충돌 #5114·client.rb, client_test.rb — 워커 재개 범위: origin/main 위로 rebase 해 원안 의도대로 해소 + proxy_push 분기 before_send: guard + 무는 테스트 1건`).
+    `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason conflict --note "<워커 재개 범위 한 줄>"`
+    If the agent's exit report has no conflicting-file list (judgment input missing — the
+    note cannot be filled), this is not "everything else" but **fail-closed to `policy`**
+    (note: `판정 입력 부재 — 에이전트가 충돌 파일 목록을 보고하지 않음, 워커 재개인가 사람인가?`).
+  Either branch is a blocked exit (this path alone uses `conflict`). For both transitions
+  (redispatch·blocked): **on exit 1 (readback mismatch) or
   2 (gh failure), do NOT change that PR's terminal state** — report
   `BLOCKED: transition failed <transition> PR #<pr>(<repo_short>) — <one stderr line>` in
   ④ Report instead.
