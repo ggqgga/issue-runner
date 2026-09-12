@@ -326,6 +326,7 @@ hm_old=$(ts 120)      # 진행 증거 없음(커밋 120분·claim 타임박스 �
 hm_new=$(ts 5)        # claim 5분 전 = 살아 있는 회차
 hm_open='[{"number":8,"state":"OPEN","mergedAt":null,"statusCheckRollup":[],"labels":[]}]'
 hm_open_verify='[{"number":8,"state":"OPEN","mergedAt":null,"statusCheckRollup":[],"labels":[{"name":"flow:verify"}]}]'
+hm_open_ready='[{"number":8,"state":"OPEN","mergedAt":null,"statusCheckRollup":[],"labels":[{"name":"flow:agent-ready"}]}]'
 hm_bounced='[{"body":"머지 판정: 🔄 진행 중","createdAt":"2026-01-01T00:00:00Z"},
              {"body":"재검증 실패: #42 — E2E 3건 빨강 <!-- bodat:worker -->","createdAt":"2026-01-02T00:00:00Z"}]'
 hm_verdict='[{"body":"재검증 실패: #42 — E2E 3건 빨강","createdAt":"2026-01-01T00:00:00Z"},
@@ -343,6 +344,10 @@ check "⑭ 반쯤 이동 형상: pr_open 은 안 낸다(② Maintain 제외)" \
   "$([ "$(event_has pr_open)" = no ] && echo ok || echo no)"
 check "⑭ 반쯤 이동 형상: 정리(worktree·라벨) 미실행 — 이벤트만" \
   "$([ "$(destroyed)" = no ] && echo ok || echo no)"
+
+hm_run "$hm_bounced" "abc123 $hm_old" "$hm_old" "$hm_open_ready"
+check "⑭ PR 에 flow:agent-ready 만 남음(#281 뒤 반송 전이의 실제 잔여 형상): 이벤트 발행" \
+  "$([ "$(event_has half_moved_redispatch)" = yes ] && echo ok || echo no)"
 
 hm_run "$hm_bounced" "abc123 $hm_old" "$hm_old" "$hm_open_verify"
 check "⑭ 단계 라벨(flow:verify) 있음: 이벤트 없음 · pr_open(종전 동작)" \

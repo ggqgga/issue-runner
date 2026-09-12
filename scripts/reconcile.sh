@@ -92,7 +92,10 @@ fi
 #
 # 세 술어 모두 참이어야 한다 — 하나라도 **증명하지 못하면 형상이 아닌 것으로 본다**(return 1
 # → 종전대로 `pr_open`). 여기서 fail-open 하면 살아 있는 워커의 회차가 재디스패치된다.
-#   ⑴ PR 에 단계 라벨이 하나도 없다(`flow:*`·`verifying`·`harvesting`)
+#   ⑴ PR 에 단계 라벨이 없다 — `flow:agent-ready` 는 **예외**다: #281 뒤 반송 두 전이는 PR 에
+#      먼저 `flow:agent-ready`(대기 칸 미러)를 붙이고 나서 이슈를 편집하므로, 이슈 편집이
+#      실패한 반쯤 이동 형상의 PR 에는 정확히 그 라벨 하나가 남는다. 그 외 `flow:*`·
+#      `verifying`·`harvesting` 이 하나라도 있으면 다른 칸이다.
 #   ⑵ PR 의 **마지막 판정성 코멘트**가 `재검증 실패`(= verify 채널의 반송)다.
 #      마커 **집합**의 SSOT 는 `bounce-state.sh` 지만, 그 헬퍼가 답하는 질문은 "반송됐나"
 #      (`bounced`)이고 여기서 묻는 것은 **"어느 채널이 마지막으로 반송했나"** 다 — 채널을
@@ -105,7 +108,7 @@ half_moved_shape() {  # half_moved_shape <repo> <이슈> <PR> <PR 라벨 JSON �
   local repo="$1" issue="$2" prnum="$3" labels="$4"
   local comments last head_raw head_sha head_at claimed pe
   printf '%s' "$labels" | jq -e '
-    [ .[]? | select(startswith("flow:") or . == "verifying" or . == "harvesting") ] | length == 0' \
+    [ .[]? | select((startswith("flow:") and . != "flow:agent-ready") or . == "verifying" or . == "harvesting") ] | length == 0' \
     >/dev/null 2>&1 || return 1
   # 코멘트는 `pr-comments.sh` 로 **페이지네이션 전량**(첫 100건 상한 회피, #171).
   comments=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$prnum" 2>/dev/null) || return 1
