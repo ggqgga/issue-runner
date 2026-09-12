@@ -1738,7 +1738,7 @@ echo "[test] verify·closeout 레인 판별 — head 이름 + full-cycle 라벨 
 bash scripts/tests/lane-gate.test.sh
 
 echo "[test] eligible-issues.sh 막힘 stderr 보고·블로커 상태 표기·검색 창 warn·stdout 불변 (#247)"
-echo "       + 에픽 finish-first 정렬·Epic #N 파싱·시작 집합 두 출처·loop-status 정규식 동기 (#257)"
+echo "       + 정렬 P0 먼저·같은 P 는 FIFO(#401)·Epic #N 파싱·loop-status 정규식 동기 (#257 → #401)"
 bash scripts/tests/eligible-issues.test.sh
 
 echo "[test] bounce-state.sh 반송 판정 — ①-b 입양 안전망·해제 경로 격자 (#196 · #218)"
