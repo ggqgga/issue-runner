@@ -999,61 +999,66 @@ the ①② attempt results ride along so ⑦ does not repeat the same rungs.
 if it is tests-only or a one-line comment, being merged means it entered the promotion scope,
 and that fact must be visible to a human.
 
-- **Issuance command (required form — do not substitute prose).**
+- **Issuance command (required form — do not substitute prose).** The whole issuance
+  procedure — the title shape · the body sections · the labels · the missing-label
+  three-rung ladder · the label readback right after issuance · the PR marker — is
+  **a single call to `$SCRIPTS/deploy-wait-issue.sh`** (#446). Never assemble
+  `gh issue create` by hand here: the 8/8 miss behind this fix was the command sitting
+  mid-prose.
 
   ```
-  gh issue create --repo <repo> --title "배포 대기: PR #<pr> — <summary>[ (승격만)]" \
-    --body-file <body-file> --label deploy-wait [--label P1]
+  $SCRIPTS/deploy-wait-issue.sh <repo> <pr> --sha <merge sha> \
+    --title "<one-line summary>" --summary-file <change-summary file> --items-file <items file|없음> \
+    [--verify-url <production base URL>] [--deploy-cmd <deploy entrypoint>] \
+    [--parent-issue <parent issue#>] [--hardware]
   ```
+
+  **The title regex (`배포 대기: PR #<M>`), the section names (`## 검증 URL` ·
+  `## 라이브/하드웨어 검증 항목`), `없음` and `(승격만)` are a parsing contract read by
+  deploy-cycle and deploy-bodat**, and its SSOT is now that script's header comment, not
+  this prose (to change a literal, fix those consumers first). What it does: enforces the
+  item shape (zero checkboxes and not `없음` either → exit 65 **before** issuing) → appends
+  ` (승격만)` to the title when there are zero checkboxes → creates the issue with
+  `--label deploy-wait` (plus the P inherited via `--parent-issue`, plus `needs:hardware`
+  only when `--hardware` is given **and the label actually exists in the repo**) → on a
+  missing label calls `setup-labels.sh` once and retries once → and if that still fails
+  **creates the issue with no `--label` at all** so the ticket is never lost
+  (`loop-status.sh` still counts it as deploy-waiting via the `배포 대기:` title fallback)
+  → reads the labels back and tops them up → leaves the marker `배포 대기: #<number>` on
+  the PR. stdout is the issue number, one line. Omit `--verify-url` when the production
+  base URL is unknown (step 5 then falls back to "URL unreachable").
+  - **exit 0** → the marker is in place: **exit as approval-required**.
+  - **exit 65 (shape violation before issuance — no issue exists yet)** — `<LIVE_CHECKS>`
+    was prose. Move the background/rationale into `## 변경 요약`, leave only `없음` or
+    `- [ ]` lines in the items file, and **call it again**.
+  - **exit 1 (no issue created)** — report
+    `BLOCKED: 배포 대기 이슈 발행 실패 — PR #<pr>` in ④ Report. A merged PR that ends
+    without a ticket makes the promotion scope invisible to humans.
+  - **exit 2 (the issue exists — its number is on stdout)** — labels or the marker went
+    wrong, and that state is not normal (deploy-cycle cannot find it by the lane mark).
+    Report `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` in ④ Report and
+    demand the **three-step human recovery** (skipping the second step leaves the ticket
+    label-less forever — `setup-labels.sh` only creates the label *definition*, it does not
+    attach it to an existing issue): ⑴ rerun `$SCRIPTS/setup-labels.sh <repo>`
+    ⑵ `gh issue edit <number> --repo <repo> --add-label deploy-wait` to attach it **to that
+    issue** ⑶ `gh issue view <number> --repo <repo> --json labels` to confirm. Do not
+    duplicate that label edit here (#223) — it just fails again, and that failure cuts off
+    the marker and the report (the ticket exists but nobody knows = exactly the loss the
+    fallback exists to prevent). Never let it pass silently.
 
   `deploy-wait` is the bucket label `loop-status.sh` uses to separate deploy-waiting from
   needs-human, and it is **the lane mark the deploy-cycle loop picks this ticket up by** —
-  that one label is required.
-  **closeout does not attach `needs-human` (#243, plan step 2) — do not revert it.** At filing
-  time there is nothing for a human to do: ⑴ the dispatch gate **requires** `label:agent-ready`
-  (`scripts/eligible-issues.sh`), which a deploy-pending issue never has, so it is not a
-  candidate to begin with; ⑵ deploy-bodat collects by **title regex** (`배포 대기: PR #<M>`),
-  not by label. Attaching it would be a duplicate mark that blurs what `needs-human` means
-  (= a human's share is left) (#190). The party that **does** attach it is deploy-cycle — on a
-  promotion/deploy/smoke failure, with a reason comment (BoDAT #5197, its hidden HALT file was
-  retired). That is why the loop-status bucket puts needs-human **ahead of** deploy-waiting
-  (2026-09-13) — so that failure mark never hides inside the deploy-waiting row.
-  After issuance leave the
-  marker `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
-  **exit as approval-required**.
-- **Missing label — fail closed, never lose the ticket (same shape as the step-6 spinoff
-  rule).** `gh issue create` fails **without creating the issue** when any `--label` does not
-  exist in the repo. Existing opted-in repos lack `deploy-wait` until `setup-labels.sh` is
-  rerun, so without this rule the first closeout after upgrading ends with the PR merged but
-  no ticket and no marker. On a `'deploy-wait' not found`-style failure, run
-  `$SCRIPTS/setup-labels.sh <repo>` **once** and retry the same command **once**. If the
-  retry also fails, do not loop — file it with **no `--label` at all** (no lost ticket —
-  `loop-status.sh` still counts it as deploy-waiting via the `배포 대기:` title fallback).
-  The result is an issue with **no labels whatsoever**, and that state is not normal — the
-  deploy-cycle loop cannot find it by its lane mark — so
-  report `BLOCKED: deploy-wait label attach failed on deploy issue — #<number>` in ④ Report
-  and demand a **three-step human recovery** (skipping the second step leaves the ticket
-  labelless even if the human does exactly what was asked — `setup-labels.sh` only recreates
-  the label *definition*, it never attaches labels to an existing issue): ⑴
-  **`$SCRIPTS/setup-labels.sh <repo>` rerun** to restore the `deploy-wait` label definition,
-  ⑵ `gh issue edit <number> --repo <repo> --add-label deploy-wait` to attach it **to that
-  issue**, then ⑶ `gh issue view <number> --repo <repo> --json labels` to confirm it landed.
-  Never pass over it silently.
-- **Verify right after issuance (same shape as step 6) — runs only when the issuance
-  that carried `--label` succeeded.** Check with
-  `gh issue view <number> --repo <repo> --json labels` that
-  `deploy-wait` actually landed; if it is missing, top it up with
-  `gh issue edit <number> --repo <repo> --add-label deploy-wait`
-  (the 8/8 miss behind this fix was not only the command sitting mid-prose — step 4 never
-  had this verify step at all, while step 6 did and did not leak).
-  **An issue filed by the fallback above with no `--label` at all is excluded from this
-  verify·top-up** (#223). On that path the issuance and its one retry both failed, so
-  "this repo cannot take the label right now" is already settled — calling the same label
-  edit again here just fails again, and that failure cuts off the PR marker
-  `배포 대기: #N` and the ④ Report line `BLOCKED: deploy-wait label attach failed …`
-  that follow (the ticket exists but nobody knows = exactly the loss the fallback exists
-  to prevent). Recovery for a fallback ticket is owned by the three-step human recovery
-  above — do not duplicate the attempt here.
+  that one label is mandatory.
+  **closeout does not attach `needs-human` (#243, plan step 2) — do not revert this.**
+  Nothing is a human's at issuance time: ⑴ the dispatch gate **requires**
+  `label:agent-ready` (`scripts/eligible-issues.sh`) and a deploy-wait issue has none, so
+  it is not a candidate at all, and ⑵ deploy-bodat collects by **title regex**
+  (`배포 대기: PR #<M>`), not by label. Attaching it would blur what `needs-human` means
+  (= a human's turn remains) into a duplicate mark (#190). **The one that attaches that
+  label is deploy-cycle** — on a promotion/deploy/smoke failure, together with a reason
+  comment (BoDAT #5197, hidden stop-files abolished). Hence the loop-status buckets put
+  needs-human **before** deploy-waiting (2026-09-13), so that failure mark cannot hide in
+  the deploy-waiting column.
 
 Why this rule was flipped: the previous rule created no issue when `<LIVE_CHECKS>` was `없음`,
 justified by "④ Report's `승격 대기 N커밋` holds the unpromoted state". But that Report line

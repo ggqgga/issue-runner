@@ -866,12 +866,42 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 전용이든 주석 한 줄이든, 머지됐다는 것은 승격 범위에 들어갔다는 뜻이고 그 사실이
 사람에게 보여야 한다.
 
-- **발행 명령 (필수 형태 — 산문으로 대체하지 마라).**
+- **발행 명령 (필수 형태 — 산문으로 대체하지 마라).** 발행 절차 전체 — 제목 형태 · 본문 절 ·
+  라벨 · 라벨 부재 3단 사다리 · 발행 직후 라벨 readback · PR 마커 — 는
+  **`$SCRIPTS/deploy-wait-issue.sh` 한 호출**이다(#446). 여기서 `gh issue create` 를 손으로
+  조립하지 마라 — 이번 사고의 8/8 누락은 발행 명령이 산문 한가운데 있었기 때문이다:
 
   ```
-  gh issue create --repo <repo> --title "배포 대기: PR #<pr> — <요약>[ (승격만)]" \
-    --body-file <본문파일> --label deploy-wait [--label P1]
+  $SCRIPTS/deploy-wait-issue.sh <repo> <pr> --sha <머지 SHA> \
+    --title "<요약 한 줄>" --summary-file <변경요약 파일> --items-file <항목 파일|없음> \
+    [--verify-url <production 베이스 URL>] [--deploy-cmd <배포 엔트리포인트>] \
+    [--parent-issue <부모 이슈#>] [--hardware]
   ```
+
+  **제목 정규식(`배포 대기: PR #<M>`) · 절 이름(`## 검증 URL`·`## 라이브/하드웨어 검증 항목`) ·
+  `없음` · `(승격만)` 은 deploy-cycle·deploy-bodat 이 읽는 파싱 계약**이고, 그 SSOT 는 이제 그
+  스크립트의 머리 주석이다(여기 산문이 아니다 — 리터럴을 바꾸려면 그 소비자부터 고쳐라).
+  하는 일: 항목 형태를 강제하고(체크박스 0인데 `없음` 도 아니면 **발행 전** exit 65) → 체크박스
+  0이면 제목에 ` (승격만)` 을 붙이고 → `--label deploy-wait` (+ `--parent-issue` 로 상속한 P,
+  `--hardware` 이고 **레포에 정의가 있을 때만** `needs:hardware`)로 발행하고 → 라벨 부재면
+  `setup-labels.sh` 1회 + 재시도 1회 → 그래도 안 되면 **`--label` 을 하나도 주지 않고 발행**해
+  티켓 유실을 막고(`loop-status.sh` 는 제목 `배포 대기:` 폴백으로 여전히 배포대기로 센다) →
+  라벨을 readback 해 보강하고 → PR 에 `배포 대기: #<번호>` 마커를 남긴다. stdout 은 이슈 번호
+  한 줄이다. `<VERIFY_URL>` 을 모르면 `--verify-url` 을 생략한다(5단계가 URL 도달불가로 폴백).
+  - **exit 0** → 마커까지 남았으므로 **approval-required 로 종료**한다.
+  - **exit 65 (발행 전 형태 위반 — 이슈는 아직 없다)** — `<LIVE_CHECKS>` 가 산문이라는 뜻이다.
+    배경·근거는 `## 변경 요약` 으로 옮기고 항목 자리엔 `없음` 이나 `- [ ]` 만 남겨 **다시 부른다**.
+  - **exit 1 (이슈 미생성)** — ④ Report 에 `BLOCKED: 배포 대기 이슈 발행 실패 — PR #<pr>` 로
+    올린다. 머지된 PR 이 티켓 없이 끝나면 승격 범위가 사람 눈에서 사라진다.
+  - **exit 2 (이슈는 생성됨 — 번호는 stdout)** — 라벨·마커가 어긋났다. 그 상태는 정상이 아니다
+    (deploy-cycle 이 레인 표식으로 못 찾는다). ④ Report 에
+    `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로 올리고 사람에게 **3단 복구**를
+    요구한다(둘째 단을 빠뜨리면 첫째 단만으로는 그 티켓이 계속 무라벨이다 — `setup-labels.sh` 는
+    라벨 *정의* 만 만들 뿐 기존 이슈에 부착하지 않는다): ⑴ **`$SCRIPTS/setup-labels.sh <repo>`
+    재실행** ⑵ `gh issue edit <번호> --repo <repo> --add-label deploy-wait` 로 **그 이슈에** 부착
+    ⑶ `gh issue view <번호> --repo <repo> --json labels` 로 확인. 여기서 같은 라벨 편집을 겹쳐
+    시도하지 마라(#223) — 또 실패하면 그 실패에 걸려 마커·보고가 끊긴다(티켓은 만들어졌는데
+    아무도 모르는 상태 = 폴백이 막으려던 바로 그 유실). 조용히 넘어가지 마라.
 
   `deploy-wait` 는 `loop-status.sh` 가 배포대기와 needs-human 을 갈라 세는 버킷 라벨이자
   **deploy-cycle 루프가 이 티켓을 집는 레인 표식**이다 — 이 라벨 하나가 필수다.
@@ -882,35 +912,6 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   몫이 남음)을 흐리는 중복 표식이 된다(#190). 그 라벨을 **붙이는 주체는 deploy-cycle** 이다 —
   승격·배포·스모크 실패에 사유 코멘트와 함께(BoDAT #5197, 숨은 정지 파일 폐지). 그래서 loop-status
   버킷은 needs-human 이 배포대기보다 **앞**이다(2026-09-13) — 그 실패 표식이 배포대기 칸에 숨지 않게.
-  발행 뒤 `gh pr comment <pr> --repo <repo> --body "배포 대기: #<생성번호>"`
-  마커를 남긴 뒤 → **approval-required 로 종료**한다.
-- **라벨 부재 fail-closed — 티켓을 잃지 않는다 (6단계 파생과 동형).** `gh issue create` 는
-  `--label` 에 레포에 없는 라벨이 있으면 **이슈 자체를 안 만들고 실패**한다. `setup-labels.sh`
-  재실행 전의 기존 옵트인 레포엔 `deploy-wait` 가 없으므로, 이 규칙이 없으면 업그레이드 뒤
-  첫 마감이 PR 은 머지된 채 티켓·마커 없이 끝난다. `'deploy-wait' not found` 류로 실패하면
-  `$SCRIPTS/setup-labels.sh <repo>` 를 **1회** 호출한 뒤 같은 명령을 **1회만** 재시도한다.
-  재시도도 실패하면 더 반복하지 말고 **`--label` 을 하나도 주지 않고 발행**한다(티켓 유실
-  방지 — `loop-status.sh` 는 제목 `배포 대기:` 폴백으로 여전히 배포대기로 센다). 그 결과는
-  **라벨이 하나도 없는 이슈**이고 그 상태는 정상이 아니다 — deploy-cycle 이 레인 표식으로
-  못 찾으므로, ④ Report 에 `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로
-  올리고 사람에게 **3단 복구**를 요구한다(둘째 단을 빠뜨리면 첫째 단만으로는 그 티켓이
-  계속 무라벨이다 — `setup-labels.sh` 는 라벨 *정의* 만 만들 뿐 기존 이슈에 부착하지
-  않는다): ⑴ **`$SCRIPTS/setup-labels.sh <repo>` 재실행**으로 `deploy-wait` 라벨 정의를
-  복구하고 ⑵ `gh issue edit <번호> --repo <repo> --add-label deploy-wait` 로 **그 이슈에**
-  부착한 뒤 ⑶ `gh issue view <번호> --repo <repo> --json labels` 로 붙었는지 확인한다.
-  조용히 넘어가지 마라.
-- **발행 직후 확인 (6단계와 동형) — `--label` 을 준 발행이 성공한 경우에만 돈다.**
-  `gh issue view <번호> --repo <repo> --json labels` 로
-  `deploy-wait` 가 붙었는지 확인하고, 빠졌으면
-  `gh issue edit <번호> --repo <repo> --add-label deploy-wait` 로
-  보강한다(이번 사고의 8/8 누락은 발행 명령이 산문 한가운데 있었던 것뿐 아니라 이 확인
-  절 자체가 4단계에 없었기 때문이다 — 6단계는 있어서 안 샜다).
-  **위 폴백으로 `--label` 을 하나도 주지 않고 발행한 건은 이 확인·보강에서 제외한다**
-  (#223). 그 경로는 발행 1회 + 재시도 1회가 모두 실패해 "이 레포에선 지금 라벨을 못
-  단다" 를 이미 확정한 상태다 — 여기서 같은 라벨 편집을 또 부르면 또 실패하고, 그
-  실패에 걸려 뒤따르는 PR `배포 대기: #N` 마커·④ Report 의 `BLOCKED: … deploy-wait
-  라벨 부착 실패` 보고가 끊긴다(티켓은 만들어졌는데 아무도 모르는 상태 = 폴백이 막으려던
-  바로 그 유실). 폴백 건의 복구는 위 3단 복구 지시(사람 조치)가 소유한다 — 여기서 겹쳐 시도하지 마라.
 
 이 규칙이 뒤집힌 이유: 직전 규칙은 `<LIVE_CHECKS>` 가 `없음` 이면 이슈를 안 만들고
 "미승격 현황은 ④ Report 의 `승격 대기 N커밋` 이 갖는다" 로 정당화했다. 그런데 그
