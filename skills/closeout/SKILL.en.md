@@ -130,7 +130,8 @@ the code closeout itself blocked. So `closeout-eligible.sh` never promotes on th
    (`BOUNCE_MARKERS` in `bounce-state.sh`) and holds both bounce channels: `재디스패치`
    (this skill, ①-b) and `재검증 실패` (verify-runner ④). Matching is **start of the first line
    + the shape after the marker**: no literal colon is required (#212). A bounce idiom right
-   after the marker (`:` / `#N` / `(` / a dash / a digit / end of line) is a bounce; if **prose
+   after the marker (**any run of whitespace** followed by `:` / `#N` / `(` / `[` / a dash / a
+   digit, or end of line — #299) is a bounce; if **prose
    continues** (a Hangul particle/ending, or a space plus a word) it counts only when a bounce
    token (`#N` / `attempt` / a dash / `반송`) is present (#221 · #251). Resolution vocabulary
    (`완료` / `해소`) is **kept out of the decision** — giving it a veto over the tokens leaks
