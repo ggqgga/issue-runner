@@ -878,6 +878,12 @@ ck "정상 스코프: exit 0" "$RC" 0
 
 has_line "헤더: 열림=버킷합(19) · 스코프 · 창" "$tmp/out" \
   "파이프라인 bodat — 열림 20 · 스코프 bodat·runner · 창 24h"
+# (#276) 줄 **순서** — 사다리 9줄(대기 → issue-runner → 검증대기 → verify-runner → 마감대기 →
+# closeout → 보류 → needs-human → 배포대기; 막힘은 대기의 갈래라 바로 아래)과 그 아래 창 3줄.
+# has_line 은 순서를 못 보므로 라벨 열만 뽑아 한 줄로 대조한다.
+ck "9줄 순서 — 누가 들고 있나 순(보류는 needs-human 앞, #244 우선순위의 역순)" \
+  "$(awk 'NR>=2 && NR<=14 {print $1}' "$tmp/out" | paste -sd' ' -)" \
+  "대기 막힘 issue-runner 검증대기 verify-runner 마감대기 closeout 보류 needs-human 배포대기 실패 중복종료 파생"
 has_line "대기 3(창 밖 파생건도 대기에는 남는다)" "$tmp/out" \
   "  대기           4  #4901 #4832 #4831 #4600"
 # (#248) 블로커가 없는 픽스처에서는 `막힘 0` 한 줄이 느는 것 말고 출력이 바뀌지 않는다 —
@@ -1389,19 +1395,24 @@ has_line "마감대기 1 — verifying + flow:ready 는 뒤 단계(flow:ready)�
 has_line "대기 0 — verifying 이슈는 대기로 새지 않는다" "$tmp/out" "  대기           0"
 # 한 이슈 = 한 버킷 — verifying 건이 검증대기 줄에 겹쳐 세지지 않는다
 no_sub "verifying: #60 은 검증대기 줄에 없다" "$tmp/out" "  검증대기       1  #64 ← PR #164 #60"
-has_line "verifying: warn 3(중복 2 · 미러 불일치 1 — 정상 #60·대조군 #64 는 조용)" "$tmp/out" \
-  "  warn           3"
+# 중복 건(#61·#63)은 이슈 쪽 미러 집합이 2개라 PR(1개)과도 어긋난다 — 중복 + 미러 불일치
+# 두 줄이 같이 뜨는 것이 맞다(두 사실). 정상 #60·대조군 #64 는 조용.
+has_line "verifying: warn 5(중복 2 · 미러 불일치 3) — 정상 #60·대조군 #64 는 조용" "$tmp/out" \
+  "  warn           5"
 has_sub "verifying: flow:verify+verifying 동시 부착은 warn 단계 라벨 중복" "$tmp/out" \
   "    - 단계 라벨 중복 #61(verifying) — flow:verify + verifying"
 has_sub "verifying: verifying+flow:ready 도 중복(사다리 순서대로)" "$tmp/out" \
   "    - 단계 라벨 중복 #63(verifying) — verifying + flow:ready"
 has_sub "verifying: 이슈 verifying ↔ PR flow:verify 는 warn 미러 불일치" "$tmp/out" \
   "    - 미러 불일치 #62(verifying) ↔ PR #162(verifying) — 이슈 verifying · PR flow:verify"
+has_sub "verifying: 중복 건의 미러도 어긋난다(#61) — 사다리 순서대로 적힌다" "$tmp/out" \
+  "    - 미러 불일치 #61(verifying) ↔ PR #161(verifying) — 이슈 flow:verify verifying · PR verifying"
 no_sub "verifying: 양쪽 verifying(#60) 은 미러 불일치가 아니다" "$tmp/out" "미러 불일치 #60"
+no_sub "verifying: 양쪽 flow:verify(#64) 는 종전대로 조용" "$tmp/out" "미러 불일치 #64"
 # PR 라벨 `verifying` 은 단계 라벨이다 — pr_stage_labels 에서 빠지면 #160 이 무소속 warn 으로 운다
 no_sub "verifying: PR 에 verifying 이 붙은 #160 은 무소속이 아니다" "$tmp/out" "무소속 PR #160"
 no_sub "verifying: PR 에 verifying 이 붙은 #165 도 무소속이 아니다" "$tmp/out" "무소속 PR #165"
-has_line "verifying: 에픽 leaf 의 verifying 은 `진행` 으로 접힌다" "$tmp/out" "    - #66 0/1 · 진행 1"
+has_line "verifying: 에픽 leaf 의 verifying 은 진행 으로 접힌다" "$tmp/out" "    - #66 0/1 · 진행 1"
 
 run --repo ggqgga/Verifying --since 24h --json
 ck "--json: buckets.verifying 항목(번호·pr)" \
@@ -1783,6 +1794,9 @@ check "post: 없으면 생성+pin" "$(grep -q 'dash-create' "$STUB_CALL_LOG" && 
 check "post: 본문 마커 첫 줄" "$(head -1 "$fx.dash.body" | grep -q '<!-- loop-dashboard -->' && echo ok || echo no)"
 check "post: 본문엔 루프별 틱 줄 없음(코멘트로 이동)" "$(grep -q '^- issue-runner:' "$fx.dash.body" && echo no || echo ok)"
 check "post: 스냅샷 블록 포함" "$(grep -q '^파이프라인 runner' "$fx.dash.body" && echo ok || echo no)"
+# (#276) 읽는 법 — 사다리에 `verifying` 이 들어가고, 9줄이 무슨 라벨인지 한 줄 요약이 있다.
+check "post: 읽는 법의 사다리에 verifying" "$(grep -qF -- '`flow:verify`→`verifying`→`flow:ready`' "$fx.dash.body" && echo ok || echo no)"
+check "post: 9줄 라벨 요약 한 줄" "$(grep -qF -- 'issue-runner(`agent:claimed`) · 검증대기(`flow:verify`) · verify-runner(`verifying`) · 마감대기(`flow:ready`) · closeout(`harvesting`) · 보류(' "$fx.dash.body" && echo ok || echo no)"
 check "post: 틱 코멘트 생성(마커+델타)" "$(jq -e '.[] | select(.body | contains("<!-- loop-tick: issue-runner -->") and contains("정리 1 · 보수 0"))' "$fx.dash.comments.json" >/dev/null && echo ok || echo no)"
 check "post: stdout 에도 블록" "$(grep -q '^파이프라인 runner' "$tmp/out" && grep -q '^대시보드: runner #900' "$tmp/out" && echo ok || echo no)"
 # 같은 루프 2회차 → 자기 코멘트 PATCH(새 코멘트 없음)
