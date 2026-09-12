@@ -2157,10 +2157,8 @@ echo "[#308] 반송 마커 시각 = 스테일 클록의 네 번째 입력 (판�
 # 라벨 공백 창이 다시 열려 살아 있는 반송 회차에 `완결 유실(검증 전 사망)` 이 찍힌다.
 grep -qF 'bounce-state.sh' scripts/finish-classify.sh \
   || { echo "  ✗ scripts/finish-classify.sh 에 bounce-state.sh 되묻기 배선 없음"; exit 1; }
-# 마커 집합 정의는 `bounce-state.sh` **한 자리**다(그 파일 주석이 명시한 계약). 베끼면
-# 사람 눈에 안 보이는 두 번째 계산기가 다른 수를 센다 — progress-evidence 와 같은 규율.
-dup308=$(grep -lE '^BOUNCE_MARKERS=' scripts/*.sh | grep -v '^scripts/bounce-state.sh$' || true)
-[ -z "$dup308" ] || { echo "  ✗ 반송 마커 집합 정의가 bounce-state.sh 밖에도 있다: $dup308"; exit 1; }
+# 마커 집합 정의가 한 자리인지는 위 `[closeout] 반송 마커 집합은 bounce-state.sh 한 자리`
+# 블록이 이미 전수로 검사한다 — 여기 두 번째 술어를 만들지 않는다(PR#216 규율).
 # 소비자가 `"$SCRIPT_DIR/bounce-state.sh"` 로 직접 exec 하므로 실행 비트를 문다
 # (비트가 빠지면 exit 126 → 판정 불가 → 모든 🔄 갈래가 조용히 active 로 접혀 완결 유실
 #  회수가 통째로 멈춘다 — progress-evidence.sh 의 같은 자리와 같은 함정).
