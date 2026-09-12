@@ -43,7 +43,7 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   덮으면서도 상한이 남는다. 횟수는 상태 파일이 아니라 이슈 코멘트 마커
   (`<!-- timebox-grace: N -->`)를 **현재 claim 시각 이후 것만** 세어 재파생한다.
 - `RESUME_AFTER_MIN = 120` — 재개 스윕이 멈춘 이슈를 다시 흘려보내기까지 기다리는
-  시간(분). `needs-human` + `hold:ladder` 이슈의 마지막 갱신이 이만큼 지나면 ① 의 재개
+  시간(분). `hold:ladder` 이슈의 마지막 갱신이 이만큼 지나면 ① 의 재개
   스윕이 집는다 (`resume-sweep.sh` 에 동명 환경변수로 전달된다).
 - `LADDER_RESUME_LIMIT = 2` — 이슈 1건당 자동 재개 상한. 초과하면 재개 대신
   `hold:policy` 승격 — 그때만 사람이다(무한 재시도 금지).
@@ -176,11 +176,12 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   `BLOCKED:` 가 가려져 사람대기 승격 대신 조용한 claim 해제로 샌다, #200)
   가 `BLOCKED:` 로 시작하면 워커가 사람 개입이 필요해서 멈춘 것이다 (모호 스펙 /
   계획-현실 불일치 / 동일 실패 반복): 재디스패치 복귀 대신
-  `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy --note "<사람이 답해야 할 질문 한 줄>"` 로 `needs-human`
-  + `hold:policy` 를 부착하고(claim 해제 포함 — 사유 없는 `needs-human` 은 만들지 않는다, #151),
+  `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy --note "<사람이 답해야 할 질문 한 줄>"` 로
+  `hold:policy` 를 부착하고(claim 해제 포함 — 기계 정지는 사유 라벨 하나만 붙인다, #244),
   worktree 제거 후 warn 으로 ④ Report 에 BLOCKED 사유를
-  올려라 (사람이 원인을 해소하고 `needs-human` **과 `hold:*` 를 둘 다** 떼면 다시 흐른다 —
-  게이트가 `hold:` 접두도 보므로 한쪽만 떼면 후보로 안 돌아온다, #242. README
+  올려라 (사람이 원인을 해소하고 `hold:*` 를 떼면 다시 흐른다 — 게이트가 `hold:` 접두를
+  보므로 사유 라벨이 남아 있으면 후보로 안 돌아온다, #242. 재심이 "사람 몫 유지" 로
+  끝나 `needs-human` 까지 붙은 건은 그것도 함께 떼야 한다. README
   '가드레일' 규약). BLOCKED 코멘트가 아니면 worktree 제거 후 claim 해제
   (재디스패치 가능 상태로 복귀).
   **timebox (무진전 감지)** — **이번 틱에 `SendMessage` 로 재개한 이슈는 면제다**
@@ -220,17 +221,33 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
 **재개 스윕 — 멈춘 건은 틱이 다시 시도한다.** 위 이벤트를 전부 처리한 뒤
 `$SCRIPTS/resume-sweep.sh` 를 인자 없이 실행하라(스코프는 세션 cwd 의 `.loop/repos` 를
-스크립트가 알아서 적용한다). `needs-human` 이 사유 라벨로 남긴 정지 중 **`hold:ladder`**
+스크립트가 알아서 적용한다). 기계 정지(`hold:*`) 중 **`hold:ladder`**
 (실측 사다리 ①~③ 칸이 전부 실패해 멈춘 건)만 창(`RESUME_AFTER_MIN`)이 지나면 자동으로
-되돌린다 — `hold:conflict`·`hold:policy` 는 사람 결정이라 건드리지 않는다. ③ Dispatch
+되돌린다 — `hold:conflict` 는 사람 결정이고 `hold:policy` 는 재심(③)을 거친다. 사람이
+직접 세운 정지(`needs-human`)가 함께 붙어 있으면 자동 재개 대상이 아니다(#244). ③ Dispatch
 **앞**에서 돌려야 이번 틱이 그 이슈를 바로 집는다.
 재개 횟수는 이슈 **코멘트**에 붙은 마커(`<!-- ladder-resume: N -->`)의 개수다 — 본문은
 읽지도 쓰지도 않는다(append-only 라 남의 편집을 덮어쓸 일이 없다). 정지 라벨은 이슈와
 **연결된 열린 PR 양쪽**에 미러돼 있으므로 재개·승격은 PR 라벨까지 함께 되돌린다 — 안 그러면
 PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·closeout-pick)가 그걸 안 뗀다.
+그 되돌림은 스윕이 **스스로 재개·승격할 때**뿐이라, 사람이 `hold:policy`·`hold:conflict` 를
+푸는 경로엔 PR 사본을 지우는 자리가 없었다 — 그래서 같은 실행이 **정지 미러 정리**(#265)도
+한다: 이슈에 정지 라벨이 하나도 없는데 짝이 되는 열린 PR 에 남아 있으면 **PR 쪽만** 뗀다
+(짝은 head 가 `agent/issue-*` 이고 `Closes` 링크가 증명된 PR 뿐 — 사람이 연 PR 의 표식과
+`Refs` 전용 PR 의 정상 홀드는 건드리지 않는다).
+**떼는 조건은 부재가 아니라 양성 증거다** — 부재("이슈에 정지 라벨이 없다")는 ⓐ 사람이 뗐다
+ⓑ 기계가 뗐다 ⓒ **전이가 부분 실패해 애초에 못 붙었다** 를 구분하지 못하고, ⓒ 는 실재한다
+(`transition.sh` 는 PR 을 먼저·이슈를 나중에 편집한다). 그래서 라벨 **이벤트 이력**으로
+이슈의 마지막 해제가 PR 의 마지막 부착보다 **늦은** 것을 확인하고, 못 하면 떼지 않고 warn 을
+낸다. 그리고 PR 정지가 맨몸 `needs-human`(= `hold:` 접두 0개)뿐이면 **절대 떼지 않는다** —
+기계는 그 모양을 못 만들므로(세 홀드 전이는 `--reason` 필수) 사람이 손으로 세운 브레이크다.
 이벤트별 처리:
 
-- `resumed` — `needs-human`·`hold:ladder` 가 떨어졌고 `agent-ready` 는 그대로다(자격은
+- `mirror_cleared` — 사람이 이슈에서만 푼 홀드의 **PR 사본**을 스크립트가 뗐다(#265).
+  이슈는 원래 깨끗하니 건드리지 않는다. **추가 조치 없다** — 그 PR 은 이번 틱부터
+  `verify-eligible.sh`·`closeout-eligible.sh` 후보로 자연히 돌아온다. ④ Report 에
+  `미러 정리 N` 으로 한 줄(번호는 `pr`, 연결 이슈는 `number`, 뗀 라벨은 `removed`).
+- `resumed` — `hold:ladder` 가 떨어졌고 `agent-ready` 는 그대로다(자격은
   건드리지 않는다). **디스패처가 따로 할 일은 없다** — 이번 틱 ③ 의 `eligible-issues.sh`
   후보로 자연히 다시 나타난다. ④ Report 의 `재개` 에 번호와 `attempt` 를 적는다. 배포 대기
   라벨(`deploy-wait`)이 붙은 이슈는 창이 지나도 이 이벤트가 나오지 않는다(#217) — 대신
@@ -238,12 +255,13 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
 - `escalated` — 재개 상한(`LADDER_RESUME_LIMIT`) 초과라 `hold:policy` 로 승격됐다
   (`attempt`/`limit` 은 마커 코멘트가 기록한 소진 횟수 대 상한 — `2/2` 로 읽는다). 라벨은
   스크립트가 이미 붙였으니 **추가 조치 없이** ④ Report 의 `승격` 에 올려 사람이 보게 하라.
-- `warn` — 사유 라벨(`hold:*`) 없는 `needs-human`(사람이 손으로 붙였을 수 있어 자동 재개
-  대상이 아니다) · 사람 몫 `hold:*` 동존 · 사람 조작과의 경합 · 첫 쓰기 **전** 실패 ·
+- `warn` — 사람 몫 `hold:*`·`needs-human` 동존(자동 재개 대상이 아니다) · 사람 조작과의
+  경합 · 첫 쓰기 **전** 실패 ·
   **목록/탐색 상한 도달**(`--limit 200` 에 닿아 잘린 이슈가 이번 틱엔 안 보인다는 뜻 — 반복되면
   `.loop/repos` 로 스코프를 좁히라는 신호다. `repo` 가 `*` 면 계정 전체 탐색 쪽이다).
   스크립트가 **손대지 않은** 건이다 — **건드리지 말고** ④ Report 의 warn 에 그대로 옮겨라.
-- `note` — 스크립트가 **손대지 않은** 정보 줄이다(배포 대기 이슈의 사유 없는 `needs-human` ·
+- `note` — 스크립트가 **손대지 않은** 정보 줄이다(사유 라벨 없는 `needs-human` — 사람이
+  직접 세운 정지라 **정상**이다(#244) · 배포 대기 이슈의 사유 없는 `needs-human` ·
   배포 대기 이슈의 `hold:ladder`(#217, 창이 지나도 재개·승격 대상이 아니다)처럼
   **정상 상태**라 조치할 것이 없는 건). warn 이 아니므로 ④ Report warn 에 올리지 않는다 —
   보고가 필요하면 정보 줄로만 남긴다. warn 을 "루프가 교정 가능한 불변식 위반" 으로 좁히고
@@ -256,9 +274,21 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
   할 질문 한 줄" 을 다시 읽고, 그 답이 플랜(`Plans/*.md`)·이슈 본문·검증 사다리에서 나오면 **루프가
   답한다** — 답을 코멘트로 남기고(`재심: <답> <!-- policy-review: resumed --><!-- bodat:worker -->`)
   `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr|->` 로 재개(needs-human·hold:* 해제,
-  agent-ready 유지 → 이번 틱 ③ 후보). 답이 정말 사람 결정이면 `재심: 사람 몫 유지 — <이유 한 줄>
-  <!-- policy-review: kept --><!-- bodat:worker -->` 코멘트만 남긴다. 어느 쪽이든 마커가 남으므로
-  **같은 건은 두 번 묻지 않는다**(사람이 라벨을 뗄 때까지). ④ Report 에 `재심 N(재개 n·유지 m)`.
+  agent-ready 유지 → 이번 틱 ③ 후보). 답이 정말 사람 결정이면 **전이가 먼저다** —
+  `$SCRIPTS/transition.sh policy-kept <repo> <issue> <pr|->` 로 `needs-human` 을 PR·이슈
+  양쪽에 붙이고(#244 — 루프가 `needs-human` 을 붙이는 유일한 자리다. `hold:policy` 는
+  사유로 남는다), 그 전이가 **exit 0 `ok` 로 끝난 뒤에만** `재심: 사람 몫 유지 — <이유 한 줄>
+  <!-- policy-review: kept --><!-- bodat:worker -->` 코멘트를 남긴다.
+  **순서가 계약이다**(#244): 마커가 곧 "재심 끝" 이라, 마커를 먼저 올리면 전이가 죽어도
+  다음 틱부터 `reviewed` 로 접혀 `needs-human` 은 영영 안 붙고 그 건은 `hold:policy` 만 남은
+  채 **아무도 다시 묻지 않는다**(사람 결정이 사람대기 칸에 영영 안 뜨는 봉인).
+  전이가 **비0이면 마커 코멘트를 올리지 말고** ④ Report 에
+  `BLOCKED: 전이 실패 policy-kept #<이슈>(exit N)` 한 줄만 남겨라 — 마커가 없으니 다음 스윕이
+  같은 건을 `policy_review_due` 로 **다시 낸다**. `policy-kept` 는 붙이기만 하는 멱등 전이라
+  재호출이 곧 복구다. 전이 exit → 마커 처분:
+  `0`=붙었다→마커 남긴다 · `1`(readback 불일치)·`2`(gh 실패)·`64`(호출 형태 오류)=마커
+  남기지 않는다(다음 스윕이 재심을 다시 낸다). **마커가 남은 건만**
+  **두 번 묻지 않는다**(사람이 라벨을 뗄 때까지). ④ Report 에 `재심 N(재개 n·유지 m)`.
 - `waiting` — 아직 창 안이다. 조용히 넘긴다(보고 불필요).
 - exit 2 — 일부 레포의 목록 조회 실패(나머지 레포는 정상 처리됐다) 또는 계정 전체 탐색 실패.
   ④ Report warn 에 `resume-sweep 부분 실패(레포 조회)` 한 줄을 남긴다.
@@ -272,8 +302,10 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
 **0. 단계 라벨 보정 (best-effort, 스캔할 때 붙인다).** 이 PR 의 마지막 판정 코멘트를
 읽어(`gh pr view <pr> --repo <repo> --json comments`) 단계 라벨 `flow:*` 를 실제 상태에
 맞춘다 — 워커·verify-runner 가 각 단계에서 직접 붙이지만 크래시·놓침이 있을 수 있어
-스캔이 안전망이다. **단, `flow:verify` 또는 `harvesting` 라벨이 붙은 PR 은 이 보정을
-건너뛴다**(각각 verify-runner·closeout 소유 — 아래 소유 규칙과 동일). 그 외 PR 만 보정:
+스캔이 안전망이다. **단, `flow:verify`·`verifying` 또는 `harvesting` 라벨이 붙은 PR 은 이 보정을
+건너뛴다**(각각 verify-runner·closeout 소유 — 아래 소유 규칙과 동일. `verifying` 은 verify-runner 가
+집는 순간 `flow:verify` 를 떼고 붙이는 점유 라벨이라(#275) 마지막 코멘트가 `🔄` 인 채로 검증이 도는
+중이다 — 여기서 `flow:verify` 를 되붙이면 단계 라벨이 둘이 된다). 그 외 PR 만 보정:
 마지막 코멘트가 `머지 판정: ✅` → `flow:ready`(closeout 이 집는다), `머지 판정: 🔄`(✅ 전)
 → `flow:verify`(verify-runner 에 넘김 — 워커가 라벨을 못 붙이고 죽은 경우 안전망),
 `머지 판정: ⚠ 보류` → flow:* 제거(needs-human 경로). 목표 라벨과 현재가 다를 때만
@@ -285,8 +317,8 @@ PR 이 아직 없어 이슈 `agent:claimed` 로만 보인다(`flow:ci` 는 재-C
 PR 본문에서 `<!-- repair-count: N -->` HTML 주석을 읽어라
 (`gh pr view <pr> --repo <repo> --json body`; 주석이 없으면 N = 0).
 N ≥ `MAX_REPAIRS_PER_PR` 이면 **보수를 디스패치하지 않는다** — 이슈에
-`$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy --note "<질문 한 줄>"` 로 `needs-human` + `hold:policy`
-를 PR·이슈 양쪽에 부착하고 warn 으로 ④ Report 에 올려라(사유 없는 `needs-human` 은 만들지 않는다, #151). N 이 상한 미만이면 보수 에이전트를
+`$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy --note "<질문 한 줄>"` 로 `hold:policy`
+를 PR·이슈 양쪽에 부착하고 warn 으로 ④ Report 에 올려라(기계 정지는 사유 라벨 하나만, #244). N 이 상한 미만이면 보수 에이전트를
 디스패치하면서 PR 본문의 주석을 `<!-- repair-count: N+1 -->` 로 갱신하라
 (`gh pr edit <pr> --repo <repo> --body ...` — 주석이 없었으면 본문 끝에 새로 추가,
 나머지 본문은 그대로 유지). 같은 PR 에 1~3 의 사유가 여러 개 겹쳐도 **틱당 같은 PR
@@ -317,8 +349,10 @@ N 도 디스패치당 1만 올린다.
 
 `harvesting` 이벤트 = closeout 마감 진행 중 → **건드리지 않는다**(보수·rebase·리뷰 코멘트 해결 제외). closeout 가 머지/정리한다.
 
-`flow:verify` PR = verify-runner 검증 진행 중(워커가 구현+결정적CI+PR 까지 마치고 넘김)
-→ **건드리지 않는다**(위 1~4 보수·규칙0 보정 모두 제외 — harvesting 과 동형). verify-runner
+`flow:verify` PR = verify-runner 검증 대기(워커가 구현+결정적CI+PR 까지 마치고 넘김),
+`verifying` PR = verify-runner 가 집어 **검증 진행 중**(#275 — 집는 순간 `verify-pick` 이 `flow:verify`
+를 이것으로 바꾼다. 원 이슈에도 미러돼 `eligible-issues.sh`·`claim-issue.sh` 가 그 이슈를 제외한다)
+→ 둘 다 **건드리지 않는다**(위 1~4 보수·규칙0 보정 모두 제외 — harvesting 과 동형). verify-runner
 가 E2E·codex 검증 후 통과면 `머지 판정: ✅`+`flow:ready` 로 closeout 에 넘기고, 실패면
 연결 이슈에 `agent-ready` 를 재부착해 반송한다(그때 이 루프의 Dispatch 가 같은 브랜치서
 워커를 다시 붙인다 — 정상 재디스패치). 결정적 CI 실패조차 verify-runner 가 반송으로
@@ -331,7 +365,7 @@ N 도 디스패치당 1만 올린다.
    closeout 이관분이나 미완이라 배압으로 함께 계수)의 수.
    **CI green + 코멘트 없음 PR(② 4, 사람 리뷰 대기)은 슬롯을 점유하지 않는다** —
    에이전트가 손댈 일이 없는 휴면 상태이므로 새 일을 막지 않는다.
-   **`flow:verify` PR 도 슬롯을 점유하지 않는다** — verify-runner 소유(이 루프 워커의
+   **`flow:verify`·`verifying` PR 도 슬롯을 점유하지 않는다** — verify-runner 소유(이 루프 워커의
    일이 아님)이므로 in-flight 에서 제외한다. 이것이 검증을 별도 레인으로 뺀 throughput
    이득의 실체다: 워커가 PR 을 열고 `flow:verify` 로 넘기는 즉시 슬롯이 반납돼, 느린
    E2E·codex 대기가 더 이상 이 루프의 5슬롯을 붙잡지 않는다.

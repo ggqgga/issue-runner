@@ -9,7 +9,9 @@ pass/fail.
 2. For each check item below, compare the screen via `take_snapshot`/`evaluate_script`
    and produce a per-item pass/fail. If the item is prose ("top Infra tab → /infra
    renders"), use LLM interpretation to resolve the target path/element and confirm the
-   actual render.
+   actual render. **But not every line gets a pass/fail** — the two categories in the
+   「held」 section below are lines you must not step or could not step, so print them as
+   `보류` and drop them from the denominator.
 3. A data-zero screen can only be demonstrated up to the empty state — distinguish
    "structure/empty-state confirmed" from "real-data render confirmed" in the result.
 4. **Cleanup (common exit — leak prevention):** after producing the verdict, always
@@ -209,8 +211,39 @@ tunnels using that port. If the socket can't be found (`-S` fails), don't swallo
 (BoDAT: `bodat-mini` on the office LAN, `bodat-remote` from outside, port 3000). If you
 cannot find them, do not invent them — report `스모크 skip: tunnel route unknown (<repo>)`.
 
-**Output contract.** One line per check item with `pass`/`fail`/`skip` and a rationale,
+**Held (`보류`) — a line you did not step is neither a pass nor a fail.** Print the two
+categories below as `보류` and **keep them out of both the numerator and the
+denominator.** Pretending Chrome compared them makes both a pass and a fail a lie.
+- **A line carrying the `[칸 ③]` prefix marker** — a real-hardware item (a TEST-worker
+  profile #18 dry run) that Chrome cannot step. **Do not even try.** Only still-open
+  `- [ ]` lines count — a marked line already ticked `- [x]` is not held either (same
+  scope as Step 5). Decide **by the
+  marker only** — never read a sentence's meaning to promote an unmarked line to real
+  hardware, or to demote a marked one to an ordinary item.
+- **An unmarked line whose means of stepping lives outside the browser, so you could not
+  even try** — a worker box · `ssh` · driving the AdsPower client · a server shell
+  `bin/rails runner` · a `log/*.out` grep: anything needing a tool the production console
+  screen does not have. Unmarked lines are **stepped first**: if you stepped it and the
+  value differed from the expectation, that is a `fail`, not a `보류` (Chrome actually saw
+  the screen or the value, so it is a genuine defect). **Only what you could not even
+  attempt** is `보류` — the basis is **whether Chrome actually stepped the line**, not what
+  the line means.
+
+**`보류` and `스모크 skip:` are different words — never use `skip` for a per-item verdict.**
+`스모크 skip:` is the degrade marker above for **the whole smoke failing to run**. Writing
+`skip` for one unstepped item overlaps the two vocabularies, so the consumer (closeout
+step 5) either misreads that line as a whole-smoke degrade or leaves it in the denominator
+and manufactures a false green. The per-item verdict vocabulary is `pass`·`fail`·`보류`,
+**those three only.**
+
+**Output contract.** One line per check item with `pass`/`fail`/`보류` and a rationale,
 then a final summary `스모크: <passed>/<total> 통과` (or `스모크 skip: <reason>`).
+**`<total>` is the number of lines Chrome actually stepped — `보류` lines go into neither
+the numerator nor the denominator.** If there is even one held line, print the breakdown
+on the line after the summary: `보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건`.
+If dropping the held lines leaves zero stepped lines, do not print `스모크: 0/0 통과` —
+that is not a pass, it is having looked at nothing (a false green). Print
+`스모크 생략: 밟을 항목 0` in the summary slot instead, together with the breakdown above.
 Read-only — make no direct changes.
 
 --- verify URL ---

@@ -18,8 +18,9 @@
 #
 #   `agent-ready` 는 사다리 전체에서 유지되는 **자격** 라벨이고, 사다리(단계) 라벨은
 #   `agent:claimed` → `flow:verify` → `flow:ready` → `harvesting` 중 **정확히 하나 이하**다
-#   (전이 표 SSOT = transition.sh 상단). `needs-human` 은 직교하는 일시정지 플래그 —
-#   붙어 있으면 eligible-issues.sh 가 서버 쿼리에서 빼므로 루프가 안 집는다.
+#   (전이 표 SSOT = transition.sh 상단). `needs-human`(사람이 직접 세운 정지)과 `hold:*`
+#   (기계 정지의 사유 — #244 로 둘은 더 이상 쌍이 아니다)는 직교하는 일시정지 플래그 —
+#   둘 중 하나라도 붙어 있으면 게이트(#242)가 빼므로 루프가 안 집는다.
 #   PR 쪽 라벨은 이슈 단계의 미러이고, `flow:ci`·`flow:codex` 는 PR 에만 있는 워커 내부
 #   단계라 이슈 미러가 없다(=미러 불일치 판정에 참여하지 않는다).
 #
@@ -32,10 +33,14 @@
 #                  이슈가 needs-human 을 달고 있어 사람대기로 오분류된다.
 #                  사다리 게이트가 필요한 이유: 제목만 보면 아직 구현·검증이 도는
 #                  이슈(`flow:verify` 등)가 배포대기로 새어 "배포만 기다린다"로 읽힌다.
-#     2. 사람대기 — `needs-human` (괄호는 `<사다리 위치>, <사유>[, 질문 없음][, PR #n]` —
+#     2. 사람대기 — `needs-human` ∪ `hold:conflict` (#244 — 사람이 직접 세운 정지, 재심이
+#                  "사람 몫 유지" 로 끝나 `needs-human` 이 붙은 `hold:policy`, 그리고 충돌:
+#                  충돌은 그 자체가 사람 몫이라 `needs-human` 을 겹치지 않는다).
+#                  (괄호는 `<사다리 위치>, <사유>[, 질문 없음][, PR #n]` —
 #                  사유는 `hold:*` 라벨의 접미(`conflict`·`policy`·`ladder`; 플랜 §2). 여러
 #                  개면 정렬해 `, ` 로 잇는다. `hold:*` 가 하나도 없으면 `사유 없음` 을 적고
-#                  warn `needs-human 사유 없음` 을 올린다.
+#                  **note** `사람이 직접 세운 정지` 를 남긴다 — 맨 `needs-human` 은 정상
+#                  상태라 warn 이 아니다(#244; warn 은 루프가 교정 가능한 위반일 때만).
 #                  `질문 없음`(#157) — 사유가 `policy`·`conflict` 인데 `<!-- hold-note:
 #                  <그 사유> -->` 마커가 붙은 코멘트가 하나도 없는 건. 마커는 **지금 붙어
 #                  있는 사유**로 가린다(#160) — 코멘트는 홀드가 풀려도 남으므로, 사유를 안
@@ -44,13 +49,20 @@
 #                  무엇을 답할지 모른다. 옛 전이가
 #                  라벨만 붙이고 코멘트에 실패해 남긴 잔여물이거나(#157 이전), 사람이 손으로
 #                  붙인 홀드다. `ladder` 는 `--note` 가 선택이라 대상이 아니다.)
-#     3. 마감중   — `harvesting`
-#     4. 마감대기 — `flow:ready`
-#     5. 검증대기 — `flow:verify`
-#     6. 구현중   — `agent:claimed`
-#     7. 대기     — `agent-ready` 만 · **OPEN 블로커가 없음**
-#     8. 막힘     — 7 의 조건인데 **OPEN 블로커가 하나 이상**(#248). 7 의 갈래라 `대기`
-#                  바로 아래 줄에 그린다. 다른 버킷(1~6)은 블로커와 무관하게 그대로다 —
+#     3. 보류     — `hold:*` 가 하나 이상인데 `needs-human` 이 없다(#244 — 사다리 재개
+#                  대기 `hold:ladder` · 재심 전 `hold:policy`). **단계 라벨보다 앞이다**:
+#                  기계가 멈춘 건은 그 단계를 들고 있는 루프가 없다. 이 칸이 없으면 그
+#                  이슈들이 전부 `대기`(= 집을 수 있는 이슈) 로 떨어져, 사람대기 칸이
+#                  "손댈 게 없는 것" 으로 찼던 오류의 **반대 방향**이 된다.
+#                  괄호는 사람대기와 같은 꼴로 **사유 병기** — `#4772(ladder)`.
+#                  사유가 없으면 이 버킷에 올 수 없다(판별 조건이 곧 `hold:*` 존재).
+#     4. 마감중   — `harvesting`
+#     5. 마감대기 — `flow:ready`
+#     6. 검증대기 — `flow:verify`
+#     7. 구현중   — `agent:claimed`
+#     8. 대기     — `agent-ready` 만 · **OPEN 블로커가 없음**
+#     9. 막힘     — 8 의 조건인데 **OPEN 블로커가 하나 이상**(#248). 8 의 갈래라 `대기`
+#                  바로 아래 줄에 그린다. 다른 버킷(1~7)은 블로커와 무관하게 그대로다 —
 #                  루프가 이미 들고 있는 건에 "막혔다" 를 덧씌우면 신호가 겹친다.
 #                  블로커 = 본문에서 **줄 시작**의 `blocked[- ]by\s+#N`(대소문자 무시, 줄 앞
 #                  공백 허용, 매치 구간의 첫 번호만) ∪ 라벨 `blocked-by:<N>`(숫자만), OR·dedupe.
@@ -71,7 +83,7 @@
 #                  (`#4981 ← #4980(대기) #4965(구현중)`) · PR 이면 `#N ← PR #M`.
 #   사다리 라벨이 2개 이상이면 **가장 뒤 단계**로 분류하고 warn "단계 라벨 중복".
 #   위 어느 라벨도 없는 열린 이슈는 루프 밖 — 세지 않는다(무소속 PR 의 연결 이슈일 때만
-#   warn 문구에 등장). `열림 N` = 1~8 버킷의 합이지 레포의 열린 이슈 총수가 아니다
+#   warn 문구에 등장). `열림 N` = 1~9 버킷의 합이지 레포의 열린 이슈 총수가 아니다
 #   (`막힘` 은 `대기` 에서 옮겨 온 것이라 이 합은 #248 앞뒤로 변하지 않는다).
 #
 #   창(`--since`) 안에서만 세는 세 줄 — 버킷이 아니라 교차 집계다(같은 이슈가 위 버킷과
@@ -96,7 +108,10 @@
 #   근거 주석에 한 벌만 둔다(여기는 정의, 거기는 근거).
 #   · 무소속 PR      — 열린 PR + head 가 `agent/issue-*`(연결 이슈는 있어도 없어도 된다) +
 #                      PR 라벨에 flow:ci·flow:codex·flow:verify·flow:ready·harvesting 이
-#                      하나도 없고 PR 도 연결 이슈도 needs-human 이 아님 → 어느 루프도 안 문다.
+#                      하나도 없고 PR 도 연결 이슈도 **정지 라벨**(`needs-human` ∪ `hold:*`)을
+#                      안 달았음 → 어느 루프도 안 문다. `hold:*` 를 함께 보는 이유는 #244 —
+#                      기계 정지가 `needs-human` 을 떼고 사유 라벨만 남기게 됐으므로,
+#                      `needs-human` 만 보면 홀드된 PR 이 통째로 이 warn 으로 쏟아진다.
 #                      head 가 `agent/issue-*` 가 **아닌** 후보(사람 세션이 판 `feat/*` 등)는
 #                      warn 이 아니라 아래 **note `사람 세션 PR`** 줄로 강등한다 — 관측에서
 #                      사라진 게 아니라 warn 이 아닌 자리로 간 것이다. 왜 그렇게 가르는지는
@@ -133,12 +148,6 @@
 #                    — **사람대기 버킷**의 `hold:policy|conflict` 이슈인데 질문(hold-note)
 #                      코멘트의 유무를 못 봤다(조회 실패·응답 파싱 실패·코멘트 100건 상한·
 #                      `HOLD_NOTE_MAX` 초과). "질문 없음" 으로 접지 않고 모른다고 말한다.
-#   · needs-human 사유 없음
-#                    — **사람대기 버킷** 이슈에 `hold:*` 라벨이 하나도 없음. 사유 없는
-#                      needs-human 은 사람이 무엇을 판단해야 하는지 아무도 모르는 쓰레기통이
-#                      된다(플랜 §2). 버킷 기준인 이유: `deploy-wait` 가 이겨 배포대기로 가는
-#                      needs-human 이슈는 루프 전이가 만든 게 아니라 사람이 손으로 붙인 것이라
-#                      이 불변식 밖이다.
 #   · 블로커 사람대기 — `막힘` 버킷의 블로커가 **사람대기 버킷**이면 한 줄 (#248).
 #                      `배포대기` 블로커도 같은 규칙으로 `블로커 배포대기 …` — 둘 다 사람이
 #                      답해야 풀리는 게이트라, 그때까지 하위는 루프가 아무리 돌아도 안 풀린다.
@@ -149,15 +158,63 @@
 #   · 단계 라벨 중복 — 이슈에 사다리 라벨 2개 이상.
 #   · 미러 불일치    — 이슈와 **열린** 연결 PR 의 {flow:verify, flow:ready, harvesting}
 #                      집합이 다름. 연결 PR 이 없으면 대조할 상대가 없으니 warn 아님.
+#   · 정지 미러 불일치 (#265)
+#                    — 이슈엔 정지 라벨(`needs-human` ∪ `hold:` **접두** — SSOT 는 BUILD_JQ 의
+#                      `stops_of`)이 **하나도 없는데** 짝이 되는 **열린** PR 에 남아 있음.
+#                      사람이 이슈에서만 홀드를 푼 잔재이고, 그 PR 은 네 게이트(#242·#262)에서
+#                      확정적으로 빠진 채 이슈도 깨끗해 어느 칸에도 안 뜬다.
+#                      **해제 방향만** 본다 — 반대(이슈에 있고 PR 에 없음)는 부착 축이라
+#                      이 루프에 교정 수단이 없어 warn 정의(#190)를 벗어난다.
+#                      짝은 **head `agent/issue-N` 의 그 `N` 이 `closingIssuesReferences` 안에
+#                      있을 때**뿐이다(사람 세션 PR·`Refs` 전용 PR 은 대상 밖 — 근거는 BUILD_JQ
+#                      주석). 그리고 그 PR 이 닫는 이슈가 **전부** 깨끗할 때만 낸다 — 묶음
+#                      디스패치(`Closes #A`·`Closes #B`)는 정지가 한쪽에만 붙을 수 있다.
+#                      그 전건 판정은 **열린 이슈 ∪ 닫힌 이슈**를 본다(#331) — 교정 갈래는
+#                      닫는 이슈를 번호로 실제 조회해 CLOSED 도 판정하므로, 열린 목록만
+#                      보면 두 술어가 갈린다(추가 gh 호출은 여전히 0 — 닫힌 이슈 목록은
+#                      에픽 절이 이미 받아 온다).
+#                      맨몸 `needs-human`(= `hold:` 접두가 하나도 없음)만 남은 PR 은 대상
+#                      밖이다 — 기계가 만들 수 없는 모양이라 사람이 손으로 세운 브레이크이고
+#                      교정 갈래도 떼지 않는다(교정 못 하는 후보는 잡음, #190).
+#                      단계 미러와 달리 짝이 되는 열린 PR 을 **전부** 대조한다(교정 갈래가
+#                      전부를 고치므로). 교정: `resume-sweep.sh` 의 정지 미러 정리 갈래.
+#                      교정 갈래엔 여기 **없는** 관문이 하나 더 있다(라벨 이벤트 이력으로
+#                      "사람이 뗐다" 를 증명) — 경보는 부재만으로 참인 사실을 말하고 교정은
+#                      증명을 요구한다. 이 비대칭의 근거는 `resume-sweep.sh` 의 ④ 머리 주석.
 #   · 좌초형(#117)   — 이슈에 사다리 라벨은 있는데 `agent-ready` 가 없음(디스패치 자격 상실).
-#   · 목록 절단      — 열린 이슈·닫힌 이슈(#260)·열린 PR·닫힌 PR 중 어느 목록이 `--limit 200` 상한에 닿음.
+#   · 목록 절단      — 열린 이슈·열린 PR·닫힌 PR 중 어느 목록이 `--limit 200` 상한에 닿음,
+#                      **또는** 에픽 닫힌 leaf 조회가 `EPIC_CLOSED_LIMIT` 에 닿음 (#292).
 #                      창 안의 실패·파생이 조용히 잘렸을 수 있다는 신호(수를 믿지 말 것).
+#                      `닫힌 이슈`(최근 200건) 목록은 **여기서 뺐다** (#292) — 그 목록의
+#                      유일한 소비자였던 에픽 leaf 카운트가 검색 스코프 조회로 옮겨 갔고,
+#                      남은 쓰임(색인 지연 보완·조용한 실패 교차확인)은 최근 것만 있으면
+#                      되는 성질이라 상한 도달이 정상이다. bodat 은 매 틱 그 상한에 닿아
+#                      (창 약 6일) 교정 불가능한 상시 소음을 냈다 — #190 의 warn 정의와
+#                      어긋나고 진짜 절단 신호를 가린다.
+#   · 에픽 닫힌 leaf 조회 실패 (#292) — 아래 에픽 절의 검색 스코프 조회가 실패했다(쿼터·
+#                      네트워크·응답 형식·**조용한 빈 결과**). 그 레포의 에픽 줄은 비율 대신
+#                      `종료 미상` 이 된다. 빈 결과(닫힌 leaf 가 정말 0건)와 실패를 가르는
+#                      것이 이 warn 의 존재 이유다 — 실패를 0건으로 접으면 `0/N` 이 되어
+#                      이 이슈가 고치려던 증상이 새 경로에서 그대로 재현된다.
+#                      **탐지 범위(실측한 한계):** ⑴ 종료코드 실패와 ⑶ 배열 아닌 응답은
+#                      무조건 잡는다. ⑵ 조용한 빈 결과(빈 출력 + exit 0)는 **core API 창
+#                      (최근 닫힌 200건)에 `Epic #N` 줄이 하나라도 있을 때만** 잡는다 —
+#                      판정 입력이 그 목록이기 때문이다. 그 창에 Epic 줄이 하나도 없는
+#                      레포에서 검색이 조용히 접히면 `0/N` 으로 남는다. 이 사각은 PR #320
+#                      본문 `## 사전 리뷰` 에 재현과 함께 적어 뒀다(닫는 방향: 0행일 때만
+#                      Epic 필터 없는 대조 검색 1회를 더 쳐서 "검색 자체가 접혔는가" 를
+#                      Epic 줄 존재와 무관하게 가른다).
 #   · 연결 이슈 종료 — 열린 PR 인데 연결 이슈가 CLOSED. `Refs` 부분착지면 정상 — 사실만 한 줄.
 #                      (연결 이슈의 OPEN 여부는 이미 받은 열린 이슈 목록의 멤버십으로 본다 —
 #                       이슈마다 `gh issue view` 를 치지 않는다. 목록 상한 200 밖의 열린
 #                       이슈는 CLOSED 로 오인될 수 있다.)
 #
 # ★note 정의 — 불변식 위반이 **아닌** 사실. 루프가 집을 수 없으니 warn 이 아니다★
+#   · 사람이 직접 세운 정지
+#                    — **사람대기 버킷** 이슈에 `hold:*` 라벨이 하나도 없음(#244). 기계 정지가
+#                      사유 라벨만 붙이게 된 뒤로 맨 `needs-human` 은 "사람이 직접 세웠다"
+#                      하나만 뜻하는 **정상 상태**라 warn 이 아니다. 버킷 기준인 이유:
+#                      `deploy-wait` 가 이겨 배포대기로 가는 needs-human 이슈는 이 축 밖이다.
 #   · 사람 세션 PR   — 무소속 PR 의 나머지 조건은 다 맞는데 head 가 `agent/issue-*` 가 아닌
 #                      열린 PR(사람 세션이 판 `feat/*` 등). warn 에서 빼되 존재는 남긴다 —
 #                      `note N` 줄 아래 한 줄씩(#188).
@@ -176,6 +233,13 @@
 #   는 그대로. 0건인 칸은 생략(`· `로 안 이어 붙인다). P 분포도 **열린** leaf 만(닫힌 leaf 의
 #   P 는 과거라 못 고치니 뺀다 — 위 warn 정의와 같은 이유), P 라벨 없는 leaf 는 세지 않는다.
 #   leaf 0 인 에픽은 비율 대신 `#<에픽> leaf 없음(Epic 줄 미부착)` 한 줄.
+#   **닫힌 leaf 조회가 실패했으면** 비율도 `leaf 없음` 도 찍지 않고 `#<에픽> 종료 미상(닫힌
+#   leaf 조회 실패)` 한 줄이다 (#292) — 둘 다 "그렇다고 확인했다" 는 주장인데 실패한 조회는
+#   그 주장을 못 한다. 버킷·P 분포는 그대로 붙는다(그건 **열린** 이슈 목록에서 오므로 이
+#   실패와 무관하다). 이때 `에픽 leaf 전부 종료` warn 은 **그대로 뜬다** — 그 판정은 "열린
+#   leaf 0 + 닫힌 leaf ≥1" 이고 조회 실패는 닫힌 leaf 를 **적게만** 셀 수 있어 거짓 양성이
+#   아니라 거짓 음성 방향이다(뜨면 참이다). 같은 에픽에 `종료 미상` 과 `전부 종료` 가 함께
+#   보이는 건 모순이 아니라 "개수는 못 셌지만 열린 leaf 는 없다" 는 두 사실이다.
 #   warn 2종(불변식 위반 — 위 ★warn 정의★ 와 같은 자리에 판정이 산다):
 #     · 에픽 leaf 전부 종료 — leaf ≥1 전부 닫힘인데 에픽 이슈가 열려 있다(에픽 스윕 대상).
 #     · 에픽 내 P 혼재     — 열린 leaf 의 P 라벨이 둘 이상 갈린다(닫힌 leaf 는 위와 같이 제외).
@@ -186,7 +250,21 @@
 #   붙이면 "에픽 밖으로 샌다" 는 관측 자체가 성립하지 않는 레포까지 서식이 바뀐다). 이
 #   게이트가 없으면 에픽을 안 쓰는 레포까지 `파생` 줄 서식이 바뀌어 이 이슈의 무회귀
 #   기준(`Epic #N` 이 하나도 없는 픽스처는 에픽 절 추가 외엔 출력이 한 글자도 안 바뀐다)을 깬다.
-#   추가 gh 호출 0 — 닫힌 이슈 목록(아래 gh 호출 예산)에서 이미 받은 본문으로만 판정한다.
+#
+#   ★닫힌 leaf 의 창★ (#292) 닫힌 leaf 는 **에픽 leaf 로 좁힌 조회**에서 온다 —
+#   `gh issue list --state closed --search '"Epic #" in:body' --limit $EPIC_CLOSED_LIMIT`
+#   (레포당 1회 · **열린 에픽이 1건 이상일 때만**. 0건이면 조회 자체를 안 한다).
+#   종전(#260)엔 "가장 최근 닫힌 200건" 에서 골랐는데 bodat 실측으로 그 창이 약 6일이라
+#   (2026-09-11: 200건 = 09-05 ~ 09-11) 6일보다 오래 산 에픽은 leaf 가 창 밖에서 닫혀
+#   `종료/전체` 가 조용히 작아지고, leaf 가 전부 창 밖이면 `leaf 없음(Epic 줄 미부착)` 이라는
+#   사실과 다른 줄이 나오면서 `에픽 leaf 전부 종료` warn 이 **안 떴다**(그 warn 이 존재하는
+#   이유가 정확히 오래 산 에픽을 잡는 것이다). 실측 대조(2026-09-12, ggqgga/BodaT):
+#   최근 200건에 든 `Epic #N` 닫힌 leaf 6건 → 새 조회 15건.
+#   그 결과는 종전의 `--state closed --limit 200`(core API) 목록과 **합집합**으로 쓴다 —
+#   후자는 ⓐ 검색 색인 지연(방금 닫힌 leaf) 보완 ⓑ 조용한 실패 교차확인의 판정 입력이다.
+#   합집합이라 새 조회는 leaf 를 더할 뿐 빼지 못한다(최악이어도 종전 수치로 degrade).
+#   leaf 재확인은 종전 그대로 `epic_of` 하나가 한다 — 검색 `in:body` 는 산문 매치도 주므로
+#   (bodat 실측 118행 중 실제 `Epic #N` 줄은 15행) 검색은 후보를 좁히고 판정은 안 한다.
 #
 # ★조회 실패 처리★ 이슈/PR 목록 조회가 실패한 레포는 블록 대신
 #   `파이프라인 <short> — 조회 실패: <사유>` 한 줄만 찍고 다음 레포로 계속하며, 최종 exit 는
@@ -195,6 +273,12 @@
 #   질문 코멘트 조회(#157)가 실패하면 그 이슈만 `질문 없음` 표시를 **생략**하고 warn
 #   `질문 유무 미확인` 을 올린다 — 실패를 "질문 없음" 으로 접으면 없는 결함을 사람에게
 #   들이민다. stderr 로만 말하지 않는 이유: 세 루프는 ④ Report 에 **stdout 만** 붙인다.
+#   에픽 닫힌 leaf 조회(#292)가 실패하면 레포를 실패로 만들지 않고 그 레포의 에픽 줄만
+#   `종료 미상` 으로 degrade 하고 warn `에픽 닫힌 leaf 조회 실패` 를 올린다 — 같은 규율이다
+#   (실패를 "닫힌 leaf 0건" 으로 접으면 `0/N` 이라는 **거짓 수치**가 되고, 그건 이 조회가
+#   없애려던 증상 그 자체다). 판정은 종료코드만이 아니라 ⑴ 종료코드 ⑵ 응답이 배열인가
+#   ⑶ core API 목록과의 교차확인(검색 0행인데 최근 닫힌 목록엔 `Epic #N` 줄이 있다 =
+#   **조용한 빈 결과**) 세 갈래를 전부 본다.
 #
 # ★환경 변수★ `HANDOFF_GRACE_MIN` — 인계 전 창(분, 기본 90, 0 이상 정수). 형식이 틀리면
 #   환경 실패로 죽는다(jq 에 그대로 넘겨 레포별 "집계 실패" 로 위장되지 않게). `0` 은 허용 —
@@ -206,14 +290,19 @@
 #   #177). **고유 이슈 수**를 센다(#181 — 한 이슈에 무소속 PR 이 여럿이어도 상한은 한 번만
 #   깎인다). 넘는 후보는 조회하지 않고 `경과 미상 — 조회 상한` 으로 남는다(조회했지만
 #   실패한 `경과 미상 — 확인 필요` 와는 다른 문구). 형식 오류는 같은 환경 실패.
+#   `EPIC_CLOSED_LIMIT` — 에픽 닫힌 leaf 조회의 행 상한(기본 1000, **1 이상** 정수, #292).
+#   상한에 닿으면 warn `목록 상한 <N> 도달 — 창 절단 가능(에픽 닫힌 leaf)`. 다른 상한과 달리
+#   `0` 을 금지하는 이유: `0` 은 "안 본다" 가 아니라 조회가 0행을 돌려주는 값이라, 이 이슈가
+#   고치려던 `닫힌 leaf 0건` 을 환경변수로 되살린다. 형식 오류는 같은 환경 실패.
 #
 # ★환경 실패 처리★ 레포와 무관한 실패(창 시각 계산 불가·jq 부재·집계/렌더/직렬화 jq 실패)는
 #   **stdout 에도** `파이프라인 — 스냅샷 실패: <사유>` 한 줄을 남기고 exit 1 한다. 세 루프는
 #   이 출력을 ④ Report 에 그대로 붙이므로, stderr 로만 말하면 사유가 사라지고 exit 1 이
 #   "레포 하나 조회 실패"(부분 실패)와 구분되지 않는다.
 #
-# gh 호출 예산: 레포당 열린 이슈 목록 1 + 닫힌 이슈 목록 1(#260) + PR 목록(open/closed) 2 +
-# release 확인 1 + 기본 브랜치 1 + compare 1 = 최대 7. 블로커 판정(#248)·에픽 leaf 판정(#260)은
+# gh 호출 예산: 레포당 열린 이슈 목록 1 + 닫힌 이슈 목록 1(#260) + 에픽 닫힌 leaf 1(#292,
+# **열린 에픽이 있을 때만**) + PR 목록(open/closed) 2 + release 확인 1 + 기본 브랜치 1 +
+# compare 1 = 최대 8(에픽 없는 레포는 7). 블로커 판정(#248)·에픽 leaf 판정(#260)은
 # 이 예산을 **한 호출도 늘리지 않는다** — 이슈 목록 `--json` 에 `body` 필드를 더하고(같은
 # 한 번의 호출) 블로커 상태·에픽 소속은 이미 받은 열린/닫힌 이슈 목록의 본문·멤버십으로만
 # 본다. 블로커·leaf 마다 `gh issue view` 를 치면 N+1 이라 이 기능의 요점이 깨진다.
@@ -223,8 +312,21 @@
 # ②(#177) 무소속 warn 중 **사망 의심 꼬리표가 붙는 후보**에 한해 이슈 타임라인
 # (`gh api .../timeline --paginate`)을 1건씩 더 쓴다 — 그 시각은 목록 API 에 없다. 대상은
 # "인계 창을 넘긴 무소속 PR" 이라 정상적으로는 0건이고, 상한은 `CLAIM_TIME_MAX`(기본 20).
-# 그 밖의 이슈·PR **개별** `gh view` 는 여전히 금지(N+1). `gh search` / `gh issue list
-# --search` 도 금지 — 인덱스 지연 + 부정 라벨 오파싱(#21, eligible-issues.sh 주석 참조).
+# ③(#292) 에픽 닫힌 leaf 조회 — 아래 단서가 붙은 **유일한 검색 사용처**다.
+# 그 밖의 이슈·PR **개별** `gh view` 는 여전히 금지(N+1).
+# `gh search` / `gh issue list --search` 는 **원칙 금지** — 인덱스 지연 + 부정 라벨 오파싱
+# (#21, eligible-issues.sh 주석 참조). 예외는 에픽 닫힌 leaf 하나뿐이고(#292), 그 예외가
+# 성립하는 이유를 여기 적어 둔다(다음에 같은 예외를 요청받으면 이 셋을 다 만족하는지 봐라):
+#   ⑴ 대안이 없다 — "최근 N건" 창으로는 오래 산 에픽의 leaf 를 원리적으로 못 본다.
+#   ⑵ 인덱스 지연이 무해하다 — 결과를 core API 목록과 **합집합**으로 쓰므로 방금 닫힌
+#      leaf 는 후자가 덮고, 검색은 더할 뿐 빼지 못한다. `epic-sweep.sh` 와 달리 여기서는
+#      이 수치로 이슈를 **닫지 않는다**(보고만 한다 — 오판의 대가가 다르다).
+#   ⑶ 라벨 오파싱이 없다 — 쿼리에 `label:`/`is:` 를 안 쓴다. 상태는 `--state closed`
+#      **플래그**로 준다(#236: `gh` 가 쿼리 문자열의 `is:` 를 오파싱한 실측 전례).
+# 쿼터: `gh issue list --search` 는 GraphQL 경로라 REST **search** 버킷(30/분)을 한 점도
+# 쓰지 않는다(2026-09-12 실측 — REST search 프로브 사이에 이 조회를 3회 끼워도
+# `X-Ratelimit-Used` 는 프로브분만 올랐다). `gh api search/issues`(에픽마다 1회)를 골랐다면
+# 열린 에픽 9건 × 세 루프 = 분당 27회로 그 버킷이 바닥났을 것이다.
 # 라벨 필터는 전부 jq 로 한다. 목록은 `--limit 200` 상한 — `--since` 를 크게 잡으면
 # (예 30d) 닫힌 PR 이 상한에 잘려 "실패" 가 조용히 누락될 수 있다.
 set -uo pipefail
@@ -419,6 +521,16 @@ case "$claim_time_max" in
 esac
 CLAIM_TIME_MAX=$claim_time_max
 
+# ── 에픽 닫힌 leaf 조회 상한 — EPIC_CLOSED_LIMIT (#292) ────────────────────
+# 에픽 leaf 를 찾는 **검색 스코프** 조회(`--search '"Epic #" in:body'`)의 행 상한.
+# 1 이상만 — `0` 은 다른 상한과 달리 "안 본다" 가 아니라 **조회가 0행을 돌려준다**,
+# 즉 `닫힌 leaf 0건` 이 되어 이 이슈가 고치려던 증상을 환경변수로 되살린다.
+epic_closed_limit=${EPIC_CLOSED_LIMIT:-1000}
+case "$epic_closed_limit" in
+  ""|*[!0-9]*|0) snapshot_abort "EPIC_CLOSED_LIMIT 형식 오류: $epic_closed_limit (1 이상 정수만)" ;;
+esac
+EPIC_CLOSED_LIMIT=$epic_closed_limit
+
 now_epoch=$(date -u +%s 2>/dev/null)
 case "$now_epoch" in
   ""|*[!0-9]*) snapshot_abort "현재 시각 계산 실패 (date -u +%s)" ;;
@@ -499,11 +611,19 @@ def key_of($s):
   else "none" end;
 def ko_of($k):
   {"none":"대기","claimed":"구현중","verify":"검증대기","ready":"마감대기","harvesting":"마감중"}[$k];
+# head 의 `agent/issue-N` 은 **먼저 교차 검증**에 쓴다(#265 재검증): 닫는 이슈가 둘 이상인
+# PR 에서 `[0]` 이 브랜치의 이슈가 아닐 수 있다(이 레포 실데이터 — PR #113
+# head=`agent/issue-109` refs=`[108,109]`). head 의 N 이 목록 안에 있으면 그것이 짝이고,
+# 없을 때만 종전 순서(`[0]` → head 폴백)로 내려간다.
 def linked($p):
-  if ($p.closingIssuesReferences | length) > 0 then $p.closingIssuesReferences[0].number
-  elif ($p.headRefName | test("^agent/issue-[0-9]+")) then
-    ($p.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber)
-  else null end;
+  ([(($p.closingIssuesReferences // [])[].number)]) as $c
+  | (if (($p.headRefName // "") | test("^agent/issue-[0-9]+"))
+     then ($p.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber)
+     else null end) as $hn
+  | if $hn != null and (($c | index($hn)) != null) then $hn
+    elif ($c | length) > 0 then $c[0]
+    elif $hn != null then $hn
+    else null end;
 def epoch($t): if $t == null then null else ($t | fromdateiso8601) end;
 def mins_since($t): (($now - epoch($t)) / 60 | floor);
 # 이슈 번호 → 가장 최근 `agent:claimed` 부착 시각(ISO) 또는 null (#177).
@@ -521,6 +641,22 @@ def stage_labels_of($l): $l | map(select(. as $x | pr_stage_labels | index($x) !
 # 금지 사유(`hold:dup`·`hold:hardware`)는 라벨을 아예 안 만드는 것으로 막는 게 SSOT
 # (setup-labels.sh) 이고, 여기서 또 걸러 내면 실수로 붙은 라벨이 화면에서 사라진다.
 def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | sort;
+# 정지 라벨 — 기계 정지(transition.sh 의 verify-held·closeout-blocked·runner-held)가 이슈와
+# PR **양쪽**에 붙이는 집합이다(#244 가 보존 대상으로 적어 둔 규약). 이슈·PR 양쪽에 같은
+# 함수를 쓴다 — 한쪽만 다른 식으로 세면 두 번째 계산기가 생긴다(blockers_of 주석과 같은 규율).
+#
+# 열거가 아니라 **접두** 판별이다: 네 게이트(eligible-issues·claim-issue·verify-eligible·
+# closeout-eligible)가 전부 `any(startswith("hold:"))` 로 보므로(#242), 사유가 하나 늘면
+# (`hold:<새사유>`) 게이트는 그 PR 을 제외하는데 여기만 못 봐서 **이 이슈가 고치려는 조용한
+# 좌초가 그대로 재현된다**. 허용 목록으로 거르지 않는 이유는 holds_of 주석과 같다 —
+# 금지 사유는 라벨을 안 만드는 것(setup-labels.sh)이 SSOT 이고, 여기서 또 거르면 실수로
+# 붙은 라벨이 화면에서 사라진다. `needs-human` 이 #244 로 기계 정지에서 빠져도 나머지
+# 절반(`hold:*`)이 그대로 판정을 이어받는다.
+#
+# 단계 미러(mirror_labels)와 **일부러 다른 함수**다: 단계는 "정확히 하나 이하" 인 사다리
+# 위치라 sort 후 완전 일치로 판정하는데, 정지는 그와 직교하는 플래그라 같은 배열에 섞으면
+# 정지 라벨 하나가 단계 일치 판정을 통째로 깨뜨린다.
+def stops_of($l): $l | map(select(. == "needs-human" or startswith("hold:"))) | sort;
 # 블로커 번호 (#248) — 규칙의 SSOT 는 `eligible-issues.sh`(body_blockers/label_blockers).
 # 거기의 `grep -oiE '^[[:space:]]*blocked[- ]by[[:space:]]+#[0-9]+'` 를 줄 단위로 옮긴 것이다:
 #   · `split("\n")` 로 먼저 줄을 가른다 — jq(Oniguruma)의 `^` 는 grep 과 달리 **문자열 시작**만
@@ -538,17 +674,23 @@ def blockers_of($body; $l):
       | select(test("^[0-9]+$"))])
   | map(tonumber) | unique | reverse;
 def bucket_ko($k):
-  {"deploy_wait":"배포대기","human_wait":"사람대기","harvesting":"마감중","ready":"마감대기",
-   "verify":"검증대기","claimed":"구현중","waiting":"대기","blocked":"막힘",
+  {"deploy_wait":"배포대기","human_wait":"사람대기","held":"보류","harvesting":"마감중",
+   "ready":"마감대기","verify":"검증대기","claimed":"구현중","waiting":"대기","blocked":"막힘",
    "outside":"루프 밖"}[$k];
-# 에픽 번호 (#260) — 본문 **줄 시작**의 `epic\s+#N`(대소문자 무시)의 **첫 매치**만.
+# 에픽 번호 (#260) — 본문의 **전용 줄**(줄 시작의 `epic\s+#N` 뒤가 줄 끝까지 공백뿐,
+# 대소문자 무시)의 **첫 매치**만.
 # `blockers_of` 와 같은 스타일(줄 단위로 가른 뒤 capture — jq 의 `^` 는 문자열 시작만
 # 앵커하므로 split 없이 걸면 본문 첫 줄만 검사된다)이지만, 블로커는 여러 개를 모아
 # dedupe 하는 반면 에픽은 **한 이슈 = 최대 한 에픽**이라 첫 매치 하나만 취한다(산문 속
 # `… epic #N …`은 애초에 매치가 안 남 — capture 는 비매치 줄에서 결과를 안 낸다).
+# 끝 앵커(`[[:space:]]*$`)는 #327 에서 `epic-sweep.sh` 의 `JQ_EPIC_OF` 와 **같은 커밋에서**
+# 넣었다 — 줄 시작은 전용 줄 모양이나 뒤에 산문이 이어지는 `Epic #100 의 후속 논의` 류를
+# leaf 로 세면 `에픽 leaf 전부 종료` warn 이 옛 에픽을 가리키고 스윕이 그걸 **잘못 닫는다**
+# (전용 줄 규약 #259). 줄 끝 공백만 허용하고 CRLF 본문의 `\r` 도 `[[:space:]]` 라 통과한다.
+# **두 파일의 이 문자열은 한 글자도 달라선 안 된다** — epic-sweep.test.sh ⑪ 이 대조한다.
 def epic_of($body):
   ([($body // "") | split("\n")[]
-      | capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)"; "i") | .n]
+      | capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)[[:space:]]*$"; "i") | .n]
    | if length > 0 then (.[0] | tonumber) else null end);
 # 라벨 목록 → P0/P1/P2 중 첫 매치(eligible-issues.sh 의 우선순위 판정과 같은 순서).
 def prio_of($l):
@@ -562,7 +704,32 @@ def prio_of($l):
 # 목록(#260, 에픽 leaf 판정용)도 같은 이유로 파일 경유.
 ($issues_in[0]) as $issues
 | ($closed_issues_in[0]) as $closed_issues
-| ($closed_issues | map({number, epic: epic_of(.body)})) as $cls
+| ($epic_closed_in[0]) as $epic_closed
+# ── 에픽 닫힌 leaf 의 출처 (#292) ──────────────────────────────────────────
+# 두 목록의 **합집합**(번호로 dedupe)을 닫힌 leaf 후보로 쓴다.
+#   ⑴ `$epic_closed` — 검색 스코프 조회(`--search '"Epic #" in:body'`). 창이 "최근 N건"
+#      이 아니라 에픽 leaf 라 오래 산 에픽도 센다. 이것이 이 이슈의 본체다.
+#   ⑵ `$closed_issues` — 종전의 `--state closed --limit 200`(core API). 남겨 두는 이유는
+#      둘이다: ⓐ 검색 **색인 지연** — 방금 닫힌 leaf 는 아직 색인 전이라 ⑴ 에 안 나오는데
+#      ⑵ 에는 있다(가장 최근 것만 담는 목록이라 정확히 상보적이다) · ⓑ 아래 조용한 실패
+#      교차확인의 **판정 입력**(core API — 검색이 빈 출력 + exit 0 으로 접혔는지는 검색으로
+#      확인할 수 없다). 합집합이라 새 조회는 leaf 를 **더할 뿐 빼지 못한다** — 최악의 경우
+#      (검색이 통째로 실패) 수치가 종전과 같아지고, 그 사실은 warn 으로 드러난다.
+# `ln` 은 정지 미러 판정(#331)의 ⑶ 전건 게이트가 쓴다 — 닫는 이슈가 CLOSED 여도 교정
+# 갈래(resume-sweep ④)는 실제로 조회해 판정하므로, 여기서도 같은 집합을 봐야 두 술어가
+# 갈리지 않는다. 두 목록 다 이미 `labels` 를 받아 오므로 추가 gh 호출 0.
+| (($closed_issues + $epic_closed) | map({number, epic: epic_of(.body), ln: [.labels[].name]})
+   | group_by(.number) | map(.[0])) as $cls
+# 조용한 실패 교차확인 — `gh` 의 검색 2차 레이트리밋은 **빈 출력 + exit 0** 으로 오고
+# `rate_limit` 은 그때도 초록이라 종료코드로는 안 걸린다. core API 목록(⑵)에 `Epic #N`
+# 줄이 하나라도 있는데 검색이 0행이면 그건 "닫힌 leaf 가 없다" 가 아니라 검색이 접힌 것이다.
+# 이 갈래를 안 막으면 조회 실패가 `0/N` 으로 위장해 이 이슈가 고치려던 증상이 새 경로에서
+# 그대로 재현된다(빈 결과와 실패를 가르는 것이 요점 — PR#139/#168).
+| (if $epicstate == "ok" and ($epic_closed | length) == 0
+      and (($closed_issues | map(select(epic_of(.body) != null)) | length) > 0)
+   then "failed" else $epicstate end) as $epicstate_eff
+| (if $epicstate_eff != $epicstate
+   then "검색 0행인데 최근 닫힌 목록엔 Epic 줄이 있다(조용한 실패)" else $epicerr end) as $epicerr_eff
 | ($issues | map({
     number, title, createdAt,
     ln: [.labels[].name],
@@ -575,7 +742,8 @@ def prio_of($l):
   | map(. + {bucket:
       (if has(.ln; "deploy-wait")
           or ((.ladder | length) == 0 and (.title | test("^배포 (대기|검증)"))) then "deploy_wait"
-       elif has(.ln; "needs-human") then "human_wait"
+       elif has(.ln; "needs-human") or has(.ln; "hold:conflict") then "human_wait"
+       elif (.holds | length) > 0 then "held"
        elif .stage == "harvesting" then "harvesting"
        elif .stage == "ready" then "ready"
        elif .stage == "verify" then "verify"
@@ -606,26 +774,28 @@ def prio_of($l):
     then "progress" else $b end;
   def epic_bucket_ko($k):
     {"progress":"진행","blocked":"막힘","waiting":"대기","human_wait":"사람대기",
-     "deploy_wait":"배포대기","outside":"루프 밖"}[$k];
+     "held":"보류","deploy_wait":"배포대기","outside":"루프 밖"}[$k];
   def bucket_counts($leaves):
     reduce $leaves[] as $x ({}; .[epic_bucket_key($x.bucket)] += 1);
   def priority_counts($leaves):
     reduce $leaves[] as $x ({}; if $x.prio == null then . else .[$x.prio] += 1 end);
   def epic_bucket_segment($bc):
-    (["progress","blocked","waiting","human_wait","deploy_wait","outside"]
+    (["progress","blocked","waiting","human_wait","held","deploy_wait","outside"]
      | map(select(($bc[.] // 0) > 0) | "\(epic_bucket_ko(.)) \($bc[.])")
      | join(" · "));
   def epic_prio_segment($pc):
     (["P0","P1","P2"] | map(select(($pc[.] // 0) > 0) | "\(.) \($pc[.])") | join(" "));
+  # 닫힌 leaf 조회가 **실패**했으면 비율을 찍지 않는다 (#292) — `0/3` 도 `leaf 없음(Epic
+  # 줄 미부착)` 도 둘 다 "그렇다고 확인했다" 는 주장인데, 실패한 조회는 그 주장을 못 한다.
+  # 버킷·P 분포는 그대로 찍는다(그건 **열린** 이슈 목록에서 오므로 이 실패와 무관하다).
   def epic_label($e):
-    if $e.total == 0 then "#\($e.number) leaf 없음(Epic 줄 미부착)"
-    else
-      ("#\($e.number) \($e.closed)/\($e.total)") as $head
-      | epic_bucket_segment($e.buckets) as $bs
-      | epic_prio_segment($e.priorities) as $ps
-      | $head + (if $bs == "" then "" else " · " + $bs end)
-             + (if $ps == "" then "" else " · " + $ps end)
-    end;
+    (if $e.closed_unknown then "#\($e.number) 종료 미상(닫힌 leaf 조회 실패)"
+     elif $e.total == 0 then "#\($e.number) leaf 없음(Epic 줄 미부착)"
+     else "#\($e.number) \($e.closed)/\($e.total)" end) as $head
+    | epic_bucket_segment($e.buckets) as $bs
+    | epic_prio_segment($e.priorities) as $ps
+    | $head + (if $bs == "" then "" else " · " + $bs end)
+           + (if $ps == "" then "" else " · " + $ps end);
   ($iss | map(select(has(.ln; "epic")))
    | sort_by(-.number)
    | map(. as $e
@@ -633,6 +803,7 @@ def prio_of($l):
        | ($cls | map(select(.epic == $e.number))) as $cl
        | {number: $e.number, repo_short: $rs, title: $e.title,
           total: (($ol | length) + ($cl | length)), closed: ($cl | length),
+          closed_unknown: ($epicstate_eff == "failed"),
           buckets: bucket_counts($ol), priorities: priority_counts($ol)}
        | . + {label: epic_label(.)})) as $epics
 # 파생 병기 게이트(#260) — "그 레포에 열린 에픽 라벨 이슈가 있는가" 가 아니라 "이슈 본문
@@ -646,7 +817,11 @@ def prio_of($l):
     ($iss | map(select(.number == $n)) | if length > 0 then bucket_ko(.[0].bucket) else null end);
   def blk_label($b):
     if $b.state == "OPEN PR" then "PR #\($b.n)" else "#\($b.n)(\(blocker_bucket($b.n)))" end;
-  ($prs_open | map({number, headRefName, createdAt, ln: [.labels[].name], issue: linked(.)})) as $po
+  # `closes` 는 **증명된** 링크(`closingIssuesReferences`)만 담는다 — `issue` 는 `linked()`
+  # 라 head 폴백이 섞여 있어 "이 PR 이 저 이슈와 한 쌍으로 전이됐다" 를 증명하지 못한다.
+  # 정지 미러 판정(#265)만 이 좁은 쪽을 쓴다(근거는 그 warn 블록 주석).
+  ($prs_open | map({number, headRefName, createdAt, ln: [.labels[].name], issue: linked(.),
+                    closes: [((.closingIssuesReferences // [])[].number)]})) as $po
 | ($prs_closed | map({number, headRefName, mergedAt, closedAt, ln: [.labels[].name], issue: linked(.)})) as $pc
 # 인계 전 창의 판정축은 `agent:claimed` **라벨**이 아니라 **구현중 버킷**이다.
 # 라벨로 걸면 `agent:claimed` 이 붙은 채 더 뒤 버킷으로 간 이슈(deploy-wait·flow:*·
@@ -664,10 +839,15 @@ def prio_of($l):
 # 그래서 공통 판정은 `orphan_base` 하나로 적고, head 로만 갈라 $ocand(agent 후보)와
 # $ohuman(사람 세션 후보)을 나눈다 — 판정을 두 번 따로 적으면 언젠가 드리프트한다.
 # 제외된 $ohuman 은 조용히 버리지 않는다 — warn 대신 note 로 강등해 존재를 남긴다.
+# `hold:*` 도 정지 신호로 센다 (#244) — 기계 정지가 `needs-human` 을 떼고 사유 라벨만
+# 붙이게 된 뒤, `needs-human` 만 보면 홀드된 PR(단계 라벨은 홀드 전이가 떼 갔다)이 통째로
+# 무소속 warn 으로 쏟아진다. 판정 대상은 "아무도 안 들고 있는 PR" 이지 "멈춰 있는 PR" 이
+# 아니다 — 홀드는 사람/재개 스윕이 들고 있다.
+def stopped($l): has($l; "needs-human") or (($l | map(select(startswith("hold:"))) | length) > 0);
 def orphan_base:
   select(((stage_labels_of(.ln) | length) == 0)
-    and (has(.ln; "needs-human") | not)
-    and ((.issue as $n | $iss | map(select(.number == $n and has(.ln; "needs-human"))) | length) == 0)
+    and (stopped(.ln) | not)
+    and ((.issue as $n | $iss | map(select(.number == $n and stopped(.ln))) | length) == 0)
     and ((.headRefName | test("^agent/issue-")) or (.issue != null)));
   ($po | map(orphan_base)) as $ocand_all
 | ($ocand_all | map(select(.headRefName | test("^agent/issue-")))) as $ocand
@@ -727,6 +907,13 @@ def orphan_base:
                                  + (if $p then ", PR #\($p.number)" else "" end) + ")")
                         + {stage: $i.stage, holds: $i.holds, note_missing: $nomiss,
                            pr: (if $p then $p.number else null end)})),
+      # 보류 (#244) — `hold:*` 가 있고 `needs-human` 이 없는 건(사다리 재개 대기 · 정책 재심 전).
+      # 표기는 사람대기와 같은 꼴로 **사유를 병기**한다 — `#4772(ladder)`. 사유가 없으면 이
+      # 버킷에 올 수 없다(판별 조건 자체가 `hold:*` 존재다), 그래서 `사유 없음` 갈래가 없다.
+      held:        bucket("held";        . as $i | pr_of($i.number) as $p
+                     | (item($i; "#\($i.number)(" + ($i.holds | join(", "))
+                                 + (if $p then ", PR #\($p.number)" else "" end) + ")")
+                        + {holds: $i.holds, pr: (if $p then $p.number else null end)})),
       deploy_wait: bucket("deploy_wait"; item(.; "#\(.number)")),
       # 실패 ⊎ 중복종료 = 창 안의 미머지 agent PR. `dup` 라벨이 둘을 가른다(겹치지 않는다).
       failed: (closed_agent_in_window
@@ -772,16 +959,12 @@ def orphan_base:
                  claimed_minutes: (if $cat == null then null else mins_since($cat) end),
                  text: ("무소속 PR #\($p.number)(\($rs)) — 열린 agent PR 인데 단계 라벨 0 · "
                         + (if $p.issue == null then "연결 이슈 없음"
-                           else "연결 이슈 #\($p.issue) 는 needs-human 아님" end)
+                           else "연결 이슈 #\($p.issue) 도 정지 라벨 없음" end)
                         + (if $claimed | not then ""
                            elif $cat != null then "(agent:claimed 인데 \(mins_since($cat))분 경과 — 워커 사망 의심)"
                            elif capped($p.issue) then "(agent:claimed 인데 경과 미상 — 조회 상한)"
                            else "(agent:claimed 인데 경과 미상 — 확인 필요)"
                            end))}))
-      # needs-human 인데 사유(hold:*)가 없다
-      + ($iss | map(select(.bucket == "human_wait" and (.holds | length) == 0))
-        | map({kind: "hold_no_reason", repo_short: $rs, issue: .number,
-               text: "needs-human 사유 없음 #\(.number)(\($rs)) — hold:* 라벨 없음"}))
       # 질문(hold-note) 유무를 못 봤다 — stderr 로만 말하면 세 루프의 ④ Report(stdout 만
       # 붙인다)에서 기능이 통째로 사라진 채 exit 0 이라 "질문 없는 홀드 0건" 으로 읽힌다.
       + ($noteunknown | sort_by(-.n)
@@ -805,6 +988,82 @@ def orphan_base:
                              + (if ($b | length) == 0 then "단계 없음" else ($b | join(" ")) end))}
                 end
             end))
+      # 정지 미러 불일치 (#265) — 이슈엔 정지 라벨이 **하나도 없는데** 연결된 열린 PR 에
+      # 남아 있다. 사람이 이슈에서만 홀드를 풀면 생기는 상태이고, 그때 네 게이트
+      # (verify-eligible·closeout-eligible·claim-issue·eligible-issues)가 `hold:` 접두를
+      # 직접 보므로(#242·#262) 그 PR 은 어느 루프에도 확정적으로 안 잡힌다. 이슈는 이미
+      # 라벨이 깨끗해 사람대기 칸에도 안 떠서, 이 줄이 없으면 관측에서 통째로 사라진다.
+      #
+      # **해제 방향만** 본다. 반대(이슈에 있고 PR 에 없음)는 부착 축의 문제이고 이 루프에
+      # 교정 수단이 없어 warn 의 정의(#190: 루프가 교정 가능한 불변식 위반)를 벗어난다 —
+      # 조치 불가능한 후보를 얹으면 상시 잡음이 되어 진짜 신호를 죽인다(#188 과 같은 규율).
+      # 이 방향의 교정 수단은 `resume-sweep.sh` 의 정지 미러 정리 갈래다.
+      #
+      # 단계 미러(위)와 달리 `pr_of`(첫 PR)가 아니라 **짝이 되는 열린 PR 전부**를 본다 —
+      # 교정 갈래도 전부를 고치므로, 여기서 첫 건만 보면 고쳐질 PR 이 경보에 안 뜨는
+      # 비대칭이 생긴다(실측: 한 이슈에 PR 두 개인 픽스처에서 정지 라벨이 남은 쪽이
+      # 두 번째였다).
+      #
+      # ★짝짓기 규칙 — `linked()` 보다 **좁다**(교정 갈래 `resume-sweep.sh` 의 ④ 와 한 글자도
+      # 다르지 않아야 한다. 경보와 교정의 대상 집합이 갈리면 한쪽이 거짓말을 한다)★
+      #   ⑴ head 가 `agent/issue-*` — 루프가 판 브랜치만. 사람이 연 `feat/*` PR 에 사람이
+      #      직접 붙인 `needs-human`·`hold:*` 는 루프가 뗄 것이 아니다(같은 파일 무소속
+      #      warn 이 #188 로 세운 경계, resume-sweep ②갈래의 "사람이 붙였을 수 있으니
+      #      손대지 않는다" 와 같은 규율). 그래서 warn 도 안 낸다 — 교정 못 하는 후보를
+      #      얹으면 조치 불가능한 잡음이다.
+      #   ⑵ `closingIssuesReferences` 로 **증명된** 링크 **이면서** head 의 `agent/issue-N` 의
+      #      그 `N` 이 그 목록 안에 있을 때만. `linked()` 의 head 폴백(refs 가 비었을 때)은
+      #      여기서 쓰지 않는다: 브랜치 이름이 `agent/issue-N` 이라는 사실만으로는 "이 홀드가
+      #      이슈 #N 과 한 쌍으로 붙었다" 를 증명하지 못한다. `Refs #N`(Closes 아님) PR 은
+      #      전이가 `issue=-` 로 걸려 **PR 에만** 정지가 남는 것이 정상인데, head 로 이으면
+      #      그 정상 상태가 불일치로 둔갑해 사람 게이트를 벗겨내는 교정을 부른다.
+      #      하지만 **교차 검증**에는 쓴다 — `closes[0]` 을 무조건 짝으로 보면 닫는 이슈가
+      #      둘 이상인 PR 에서 브랜치의 이슈가 아닌 쪽을 본다(이 레포 실데이터: PR #113
+      #      head=`agent/issue-109` refs=`[108,109]`). 둘의 교집합이라 `Refs` 전용 PR 은
+      #      종전대로 짝이 안 선다.
+      #   ⑵-b PR 의 정지 라벨에 `hold:` 접두가 **하나도 없으면**(맨몸 `needs-human`) 대상
+      #      밖이다 — 기계가 만들 수 없는 모양이라 사람이 손으로 세운 브레이크이고, 교정
+      #      갈래도 떼지 않는다(근거는 아래 그 `select` 옆 주석).
+      #   ⑶ 그 PR 이 닫는 이슈가 **전부** 깨끗할 때만 낸다. 묶음 디스패치(`Closes #A`·
+      #      `Closes #B`)는 전이가 이슈 인자를 하나만 받아 정지가 #B 에만 붙을 수 있고,
+      #      교정 갈래는 그 경우 편집하지 않는다 — 여기서만 울리면 "고쳐 준다" 고 말해 놓고
+      #      안 고치는 줄이 상시로 남는다. 판정 집합은 **열린 이슈 ∪ 닫힌 이슈**(`$iss + $cls`,
+      #      #331)다 — 교정 갈래의 `read_labels_state` 는 닫는 이슈를 번호로 **실제 조회**해
+      #      CLOSED 도 판정하므로, 열린 목록만 보면 두 술어가 갈린다. 실측(#293 마감 검증
+      #      WARN): `closes=[93 OPEN 깨끗, 97 CLOSED 깨끗]` 픽스처에서 여기는 warn 0 인데
+      #      스윕은 편집했다 — 경보가 "안 고친다" 고 말하는 사이 교정이 몰래 돈 것이다.
+      #      둘 다 이미 받은 목록 안에서 판정하므로 추가 gh 호출은 여전히 0.
+      #      남는 비대칭은 **둘 중 어느 목록에도 없는 번호**(각 200건 상한 절단)뿐이다 —
+      #      그때는 "못 봤다" 이므로 조용한 쪽으로 틀린다(교정 갈래는 번호로 직접 조회하므로
+      #      절단이 없다). 타 레포 참조(`Closes owner/other#N`)는 *부재*가 아니라 **충돌**로
+      #      나타난다 — `closes` 는 번호만 담아 동번호의 로컬 이슈를 읽는다. 비대칭은 아니다:
+      #      교정 갈래도 `read_labels_state "$repo" "$cn"` 로 **같은 레포에 같은 번호**를 묻는다.
+      #
+      # **짝**(대표 이슈 `$i`)이 CLOSED 인 경우는 여기 안 걸린다 — `$iss` 는 OPEN 이슈
+      # 목록이다(⑶ 의 전건 집합과 다른 축이다: 저쪽은 "같이 닫는 딴 이슈", 이쪽은 warn 을
+      # 매다는 대상 자신). 그 조합은 기존 `연결 이슈 종료` warn 이 이미 한 줄로 말하고,
+      # 교정은 스윕이 한다.
+      + ([$iss[] | select((stops_of(.ln) | length) == 0) | . as $i
+          | $po[] | . as $p
+          | select(($p.headRefName // "") | test("^agent/issue-[0-9]+"))
+          | select(($p.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber) == $i.number)
+          | select((($p.closes // []) | index($i.number)) != null)
+          | select([$p.closes[] | . as $cn
+                    | (($iss + $cls) | map(select(.number == $cn))
+                       | if length > 0 then (stops_of(.[0].ln) | length) == 0 else false end)] | all)
+          | stops_of($p.ln) as $b
+          | select(($b | length) > 0)
+          # ⑷ 맨몸 `needs-human`(=`hold:` 접두가 **하나도 없음**)은 대상 밖이다. 기계는 그
+          #    모양을 만들 수 없다 — `needs-human` 을 붙이는 자리는 `transition.sh` 하나뿐이고
+          #    기계 정지 세 전이는 `--reason` 이 필수라 언제나 `hold:<사유>` 와 쌍으로 붙인다.
+          #    그러니 PR 에만 맨몸으로 있다 = 사람이 머지 직전에 손으로 세운 브레이크이고,
+          #    교정 갈래(resume-sweep ④)는 그것을 떼지 않는다(②갈래와 같은 규율). 여기서만
+          #    울리면 "고쳐 준다" 고 말해 놓고 안 고치는 줄이 상시로 남는다(#190 의 warn 정의).
+          | select($b | any(startswith("hold:")))
+          | {kind: "hold_mirror_mismatch", repo_short: $rs, issue: $i.number, pr: $p.number,
+             labels: $b,
+             text: ("정지 미러 불일치 #\($i.number)(\($rs)) ↔ PR #\($p.number)(\($rs))"
+                    + " — 이슈 없음 · PR " + ($b | join(" ")))}])
       # 좌초형 (#117)
       + ($iss | map(select((.ladder | length) > 0 and (has(.ln; "agent-ready") | not)))
         | map({kind: "stranded", repo_short: $rs, issue: .number,
@@ -821,14 +1080,30 @@ def orphan_base:
                       + (["P0","P1","P2"]
                          | map(select(($e.priorities[.] // 0) > 0) | "\(.) \($e.priorities[.])")
                          | join(" · ")))}))
-      # 목록 상한 도달 — 창 안의 실패·파생이 잘렸을 수 있다
+      # 목록 상한 도달 — 창 안의 실패·파생이 잘렸을 수 있다.
+      # `닫힌 이슈`(최근 200건)는 여기서 **뺐다** (#292): 그 목록의 유일한 소비자였던 에픽
+      # leaf 카운트가 검색 스코프 조회로 옮겨 갔고, 남은 쓰임(색인 지연 보완·조용한 실패
+      # 교차확인)은 "최근 것만 있으면 되는" 성질이라 상한에 닿는 게 정상이다. bodat 은 그
+      # 상한에 **매 틱** 닿아(창 약 6일) 교정할 방법이 없는 상시 소음을 냈다 — #190 이 정한
+      # warn 의 뜻("교정 가능한 불변식 위반")과 어긋나고 진짜 절단 신호를 가린다.
+      # 대신 **새 조회의 상한**을 기준으로 다시 정의한다(바로 아래).
       + ([{n: ($issues | length), what: "이슈"},
-          {n: ($closed_issues | length), what: "닫힌 이슈"},
           {n: ($prs_open | length), what: "열린 PR"},
           {n: ($prs_closed | length), what: "닫힌 PR"}]
          | map(select(.n >= 200))
          | map({kind: "list_truncated", repo_short: $rs, list: .what,
                 text: "목록 상한 200 도달 — 창 절단 가능(\(.what))"}))
+      # 에픽 닫힌 leaf 조회가 상한에 닿음 (#292) — 종전 `닫힌 이슈` 절단 warn 의 새 자리다.
+      + (if $epicstate_eff == "capped"
+         then [{kind: "list_truncated", repo_short: $rs, list: "에픽 닫힌 leaf",
+                text: "목록 상한 \($epiclimit) 도달 — 창 절단 가능(에픽 닫힌 leaf)"}]
+         else [] end)
+      # 에픽 닫힌 leaf 조회 실패 (#292) — 빈 결과로 접지 않는다. 이 warn 이 없으면 실패가
+      # `0/N`·`leaf 없음` 으로 위장해 사람이 "닫힌 leaf 가 없다" 고 읽는다.
+      + (if $epicstate_eff == "failed"
+         then [{kind: "epic_closed_unavailable", repo_short: $rs,
+                text: "에픽 닫힌 leaf 조회 실패(\($rs)) — 종료/전체 미상: \($epicerr_eff)"}]
+         else [] end)
       # 열린 PR 인데 연결 이슈가 CLOSED
       + ($po | map(select(. as $p | $p.issue != null and (($onums | index($p.issue)) == null)))
         | map({kind: "closed_issue_open_pr", repo_short: $rs, pr: .number, issue: .issue,
@@ -853,7 +1128,14 @@ def orphan_base:
     # note 로 강등한다: 루프가 못 집는 후보를 warn 에 얹으면 조치 불가능한 잡음이 상시화되고
     # (이 이슈의 실측 원인), 그렇다고 그냥 빼면 그 PR 의 존재 자체가 관측에서 사라진다.
     notes: (
-      ($ohuman | map({kind: "human_session_pr", repo_short: $rs, pr: .number, issue: .issue,
+      # 사유(hold:*) 없는 needs-human — **정상 상태**다(#244). 기계 정지가 `hold:*` 하나만
+      # 붙게 된 뒤로 맨 `needs-human` 은 "사람이 직접 세웠다" 하나만 뜻하고, 루프가 교정할
+      # 불변식 위반이 아니다(warn 은 루프가 교정 가능한 위반일 때만 — #188/#190 의 정의).
+      # 관측에서 지우지는 않는다 — 사람이 몇 건을 직접 세워 두었는지는 계속 보여야 한다.
+      ($iss | map(select(.bucket == "human_wait" and (.holds | length) == 0))
+        | map({kind: "human_set_stop", repo_short: $rs, issue: .number,
+               text: "사람이 직접 세운 정지 #\(.number)(\($rs)) — hold:* 라벨 없음(정상)"}))
+      + ($ohuman | map({kind: "human_session_pr", repo_short: $rs, pr: .number, issue: .issue,
         text: ("사람 세션 PR #\(.number)(\($rs)) — head " + .headRefName
                + " (agent/issue-* 아님) · "
                + (if .issue == null then "연결 이슈 없음" else "연결 이슈 #\(.issue)" end)
@@ -861,7 +1143,7 @@ def orphan_base:
     )
   }
 | . + {open_total: ([.buckets.waiting, .buckets.blocked, .buckets.claimed, .buckets.verify,
-                     .buckets.ready, .buckets.harvesting, .buckets.human_wait,
+                     .buckets.ready, .buckets.harvesting, .buckets.human_wait, .buckets.held,
                      .buckets.deploy_wait]
                     | map(length) | add)}
 JQ
@@ -873,7 +1155,7 @@ RENDER_JQ=$(cat <<'JQ'
 def padded($k):
   {"waiting":"대기      ","blocked":"막힘      ","claimed":"구현중    ","verify":"검증대기  ",
    "ready":"마감대기  ","harvesting":"마감중    ","human_wait":"사람대기  ",
-   "deploy_wait":"배포대기  ","failed":"실패      ","dup_closed":"중복종료  ",
+   "held":"보류      ","deploy_wait":"배포대기  ","failed":"실패      ","dup_closed":"중복종료  ",
    "spinoff":"파생      "}[$k];
 def row($k):
   (.buckets[$k]) as $b
@@ -884,7 +1166,7 @@ if .ok == false then
 else
   ([ "파이프라인 \(.repo_short) — 열림 \(.open_total) · 스코프 \($scope) · 창 \(.since)",
      row("waiting"), row("blocked"), row("claimed"), row("verify"), row("ready"), row("harvesting"),
-     row("human_wait"), row("deploy_wait"), row("failed"), row("dup_closed"), row("spinoff"),
+     row("human_wait"), row("held"), row("deploy_wait"), row("failed"), row("dup_closed"), row("spinoff"),
      "  에픽      \((.epics // []) | length)" ]
    + ((.epics // []) | map("    - " + .label))
    + [ "  승격 대기 " + (if .promotion_ahead == null then "—" else "\(.promotion_ahead)커밋" end),
@@ -906,6 +1188,17 @@ for repo in "${repos[@]}"; do
   fail_reason=""
   prs_open_json=""
   prs_closed_json=""
+  # 에픽 닫힌 leaf 조회 상태 (#292) — `skipped`(열린 에픽 0건이라 조회 자체를 안 했다) ·
+  # `ok` · `capped`(상한 도달) · `failed`. **빈 결과와 실패를 가르는 것이 이 변수의 존재
+  # 이유다**(PR#139/#168): 실패를 `[]` 로 접으면 "닫힌 leaf 0건" 이 되어 에픽 줄이 `0/N`
+  # 으로 찍히는데, 그게 바로 이 이슈가 고치려던 증상이다.
+  epic_closed_state="skipped"
+  epic_closed_err=""
+  # 레포마다 반드시 비운다 — 쓰기 실패를 흘리면 **직전 레포의** 에픽 leaf 목록으로 집계해
+  # 부분 실패가 "성공(남의 데이터)" 으로 접힌다(아래 repo.pre.json mv 와 같은 규율).
+  if ! printf '[]\n' > "$tmpdir/issues_epic_closed.json"; then
+    fail_reason="에픽 닫힌 leaf — 임시 파일 쓰기 실패($tmpdir/issues_epic_closed.json)"
+  fi
 
   # `body` 는 블로커 줄(`Blocked by #N`)을 읽으려고 더한 필드다 (#248) — **같은 한 번의
   # 호출**이라 gh 예산이 늘지 않는다(개별 `gh issue view` 를 치면 N+1).
@@ -932,6 +1225,78 @@ for repo in "${repos[@]}"; do
       fi
     else
       fail_reason="닫힌 이슈 목록 — $GH_ERR"
+    fi
+  fi
+
+  # ── 에픽 닫힌 leaf — **검색 스코프** 조회 (#292) ──────────────────────────
+  # 위 `--state closed --limit 200` 은 "가장 최근 닫힌 200건" 이라 bodat 실측에서 창이 약
+  # 6일이었다(2026-09-11). 6일보다 오래 산 에픽은 leaf 가 창 밖에서 닫혀 `종료/전체` 가
+  # 조용히 작아지고(`0/3`), leaf 가 **전부** 창 밖이면 `leaf 없음(Epic 줄 미부착)` 이라는
+  # 사실과 다른 줄이 나오며 `에픽 leaf 전부 종료` warn 이 안 뜬다. 그래서 창을 "최근 N건"
+  # 이 아니라 **에픽 leaf 로** 좁힌다. 실측(2026-09-12, ggqgga/BodaT): 최근 200건에서
+  # `Epic #N` 줄을 가진 닫힌 이슈는 6건, 이 조회로는 15건 — 두 배 반이다.
+  #
+  # 방식 (나)를 골랐다(이슈 개발 계획 1항). 근거는 **쿼터 실측**이다 — 방식 (가)는 열린
+  # 에픽 1건당 `search/issues` 1회인데 그건 REST **search** 버킷(30/분)을 깎고, 열린 에픽
+  # 9건 × 세 루프면 분당 27회로 그 버킷이 사실상 바닥난다. `gh issue list --search` 는
+  # GraphQL 경로라 search 버킷을 **한 점도** 쓰지 않는다(측정: REST search 프로브 사이에
+  # 이 조회를 3회 끼워도 `X-Ratelimit-Used` 가 프로브분만 올랐다 — 5→6). 대신 GraphQL
+  # 5000/시간에서 100행당 1점을 쓴다(bodat 118행 = 2점).
+  # 주의: `gh api rate_limit` 의 `.resources.search` 는 이 계정에서 REST 검색을 실제로
+  # 쓴 뒤에도 `used:0` 을 돌려줬다 — 소모 측정은 그 엔드포인트가 아니라 응답 헤더
+  # `X-Ratelimit-Used`/`X-Ratelimit-Resource` 로 했다(교훈: rate_limit 은 초록이어도 믿지 마라).
+  #
+  # `is:closed` 를 쿼리 문자열에 쓰지 않고 `--state closed` 플래그로 주는 이유: `gh` 의
+  # 검색 쿼리 파서가 `is:` 를 오파싱한 실측 전례가 있다 (#236 — resume-sweep.sh).
+  # `"Epic #" in:body` 는 산문 매치도 돌려준다(bodat 실측 118행 중 `Epic #N` 줄을 실제로
+  # 가진 것은 15행뿐) — 그래서 leaf 재확인은 아래 jq 의 `epic_of` 가 종전 그대로 한다
+  # (`epic-sweep.sh` 와 같은 구조: 검색은 후보를 좁히고, 판정은 `epic_of` 하나가 한다).
+  #
+  # **열린 에픽이 0건이면 이 조회를 아예 안 한다**(gh 호출 0). 에픽 절이 없는 레포에서
+  # 틱 비용을 늘리지 않는다 — 방식 (가)의 "N=0 이면 0회" 성질을 O(1) 로 유지한 것이다.
+  # 게이트 술어는 BUILD_JQ 의 `map(select(has(.ln; "epic")))` 와 같은 것(라벨 `epic` 보유)
+  # 이고, 읽기 실패는 **조회하는 쪽**으로 떨어뜨린다(한 호출을 더 쓸지언정 창을 안 좁히는
+  # 쪽으로는 새지 않게).
+  if [ -z "$fail_reason" ]; then
+    if ! has_open_epic=$(jq -r '[.[] | select([.labels[]?.name] | index("epic"))] | length > 0' \
+        "$tmpdir/issues.json" 2>/dev/null); then
+      has_open_epic=true
+      echo "$SELF: $short 열린 에픽 유무 판정 실패(jq) — 에픽 닫힌 leaf 조회를 그대로 건다" >&2
+    fi
+    if [ "$has_open_epic" = "true" ]; then
+      if run_gh gh issue list --repo "$repo" --state closed --search '"Epic #" in:body' \
+          --limit "$EPIC_CLOSED_LIMIT" --json number,body,closedAt,labels; then
+        # 성공 종료코드만으론 부족하다 — `gh` 의 검색 2차 레이트리밋은 **빈 출력 + exit 0**
+        # 으로 온다(이 레포 실측 전례). 그래서 ⑴ 배열인지 ⑵ 몇 행인지를 따로 본다.
+        epic_rows=$(printf '%s\n' "$GH_OUT" | jq -r 'if type == "array" then length else "x" end' 2>/dev/null) \
+          || epic_rows="x"
+        case "$epic_rows" in
+          ""|*[!0-9]*)
+            epic_closed_state="failed"
+            epic_closed_err="응답이 배열이 아님" ;;
+          *)
+            if ! printf '%s\n' "$GH_OUT" > "$tmpdir/issues_epic_closed.json"; then
+              epic_closed_state="failed"
+              epic_closed_err="임시 파일 쓰기 실패"
+            elif [ "$epic_rows" -ge "$EPIC_CLOSED_LIMIT" ]; then
+              epic_closed_state="capped"
+            else
+              epic_closed_state="ok"
+            fi ;;
+        esac
+      else
+        epic_closed_state="failed"
+        epic_closed_err="$GH_ERR"
+      fi
+      # 빈 결과 ↔ 조용한 실패 교차확인은 **BUILD_JQ 안에서** 한다 — 여기서 하려면
+      # `epic_of` 정규식을 셸에 한 벌 더 적어야 하고(복제본 금지 — 두 계산기가 갈린다),
+      # 판정 입력(최근 닫힌 200건 = core API 결과)은 어차피 jq 가 이미 들고 있다.
+      if [ "$epic_closed_state" = "failed" ]; then
+        echo "$SELF: $short 에픽 닫힌 leaf 조회 실패: $epic_closed_err" >&2
+        if ! printf '[]\n' > "$tmpdir/issues_epic_closed.json"; then
+          fail_reason="에픽 닫힌 leaf — 임시 파일 쓰기 실패($tmpdir/issues_epic_closed.json)"
+        fi
+      fi
     fi
   fi
 
@@ -980,6 +1345,10 @@ for repo in "${repos[@]}"; do
     jq -n \
       --slurpfile issues_in "$tmpdir/issues.json" \
       --slurpfile closed_issues_in "$tmpdir/issues_closed.json" \
+      --slurpfile epic_closed_in "$tmpdir/issues_epic_closed.json" \
+      --arg epicstate "$epic_closed_state" \
+      --arg epicerr "$epic_closed_err" \
+      --argjson epiclimit "$EPIC_CLOSED_LIMIT" \
       --argjson prs_open "$prs_open_json" \
       --argjson prs_closed "$prs_closed_json" \
       --argjson cutoff "$cutoff" \

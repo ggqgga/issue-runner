@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 마감 후보 PR을 JSON lines 로 출력. 진입 조건 모두 충족 + harvesting 미부착.
+# 마감 후보 PR을 JSON lines 로 출력. 진입 조건 모두 충족 + harvesting 미부착
+# (+ verify-runner 소유 라벨 flow:verify·verifying 미부착 — #275).
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 me=$(gh api user -q .login 2>/dev/null); [ -n "$me" ] || exit 0
@@ -52,16 +53,20 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 루프(별도 프로세스)가 같은 PR 을 문다 — 라벨이 붙어 있는 한 closeout 은 손대지
   # 않는다(verify-eligible.sh 의 harvesting 제외와 대칭).
   printf '%s' "$meta" | jq -e '[.labels[].name]|index("flow:verify")' >/dev/null && continue
-  # needs-human = 사람 대기(hold:* 사유 — verify-held·closeout-blocked·runner-held). 마감이 집으면
+  # verifying = verify-runner 가 **지금 검증 중**(#275 — flow:verify 를 떼고 붙이는 점유 라벨,
+  # harvesting 동형). 위 flow:verify 와 같은 이유로 closeout 은 손대지 않는다 — 검증이 도는
+  # 동안 ✅ 가 남아 있을 수 있는 PR(재검증 중)을 두 루프가 함께 물지 않게.
+  printf '%s' "$meta" | jq -e '[.labels[].name]|index("verifying")' >/dev/null && continue
+  # needs-human = 사람이 직접 세운 정지(#244 — 기계 정지는 아래 hold:* 가 문다). 마감이 집으면
   # 방금 건 사람 대기를 자동으로 되돌린다(#151). 사람이 라벨을 뗄 때까지 후보가 아니다.
   printf '%s' "$meta" | jq -e '[.labels[].name]|index("needs-human")' >/dev/null && continue
-  # hold:* = 기계 정지 그 자체 (#242). 지금은 위 needs-human 과 항상 쌍이라 동작이 바뀌지
-  # 않지만, `needs-human` 부착이 사유별로 걷히면 이 줄만 남아 정지를 지킨다(플랜 1단계).
+  # hold:* = 기계 정지 그 자체 (#242). `needs-human` 부착이 사유별로 걷혔으므로(#244)
+  # 이제 이 줄만이 기계 정지를 지킨다 — 위 needs-human 필터는 사람이 직접 세운 정지용이다.
   # **접두사** 판별이라 사유가 늘어도(`hold:<새사유>`) 안 깨지고, `hold:` 로 시작하지 않는
   # 라벨(`holding`·`on-hold`·`area:hold`)은 걸리지 않는다 — 과잉 제외는 머지 가능한 PR 을
   # 조용히 큐에서 지우는 방향이라 원래 결함보다 나쁘다.
   #
-  # 해제는 **두 라벨 다** 떼는 것이다 — `needs-human` 만 떼면 `hold:*` 가 남아 후보로
+  # 해제는 **붙어 있는 정지 라벨을 다** 떼는 것이다 — `hold:*` 만 남아도 후보로
   # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
   printf '%s' "$meta" | jq -e '[.labels[].name]|any(startswith("hold:"))' >/dev/null && continue
   # mergeable 은 GitHub 이 지연 계산한다 — UNKNOWN 은 아직 미판정이므로 CONFLICTING 과

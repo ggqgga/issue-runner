@@ -6,6 +6,9 @@
 #   ② 실패·파생의 `--since` 창 필터 — 창 밖 1건씩은 빠진다.
 #   ③ warn 5종 검출(미러 불일치는 양방향 — 이슈에만 단계 / PR 에만 단계)과,
 #      깨끗한 픽스처면 `warn 0`.
+#   ③-b (#265) **정지** 라벨(needs-human·hold:*) 미러 불일치 — 단계 미러와 **별도 판정**이다
+#      (단계 배열에 섞으면 정지 라벨이 단계 일치 판정을 깨뜨린다). 해제 방향만 warn:
+#      이슈에 정지 라벨이 0개인데 연결된 **열린** PR 에 남은 칸. 4격자로 오탐 0 을 단언한다.
 #   ④ 레포 짧은 이름 — issue-runner → runner 특례.
 #   ⑤ 레포 하나 조회 실패 → 그 블록만 실패 줄, 나머지 정상, exit 1.
 #   ⑥ `--json` 의 모든 항목·warn 에 `repo_short`.
@@ -40,6 +43,14 @@
 #      아니라 **격자**(`ggqgga/Blockers` 픽스처 표)로 양방향을 전수 단언한다 — 근사가
 #      '더 많이 잡는' 쪽으로 틀리면(정상 `대기` 가 `막힘` 으로) 원래 버그보다 나쁘다.
 #      블로커 상태 판정에 **추가 gh 호출이 0** 이라는 것도 스텁 호출 로그로 못 박는다.
+#   ⑮ (#292) 에픽 닫힌 leaf 의 **창** — "최근 닫힌 200건" 이 아니라 검색 스코프 조회
+#      (`--state closed --search '"Epic #" in:body'`)에서 온다. 창 밖 leaf 픽스처
+#      (EpicWindow)가 `#100 2/3`·`#200 2/2`+`전부 종료` warn 을 문다 — 옛 경로로 되돌리면
+#      각각 `0/1`·`leaf 없음(Epic 줄 미부착)`+warn 0 이 되어 빨개진다(뮤테이션).
+#      **조회 실패는 빈 결과가 아니다** — ⑴ 종료코드 실패 ⑵ 빈 출력+exit 0(검색 2차 제한의
+#      실제 모양, core API 목록과 교차확인) ⑶ 배열 아닌 응답, 세 갈래 모두 `종료 미상` +
+#      warn 이고 `0/N` 으로 접히지 않는다. 상한 도달(EPIC_CLOSED_LIMIT)은 실패가 아니라
+#      절단 warn 이고, 열린 에픽이 0건인 레포는 이 조회를 **아예 안 한다**(호출 로그로 단언).
 #
 # 기대 줄은 **손으로 적는다** — SUT 의 jq 를 베껴 기대값을 만들면 공허하게 통과한다
 # (transition.test.sh 의 관행).
@@ -161,7 +172,37 @@ case "${1:-} ${2:-}" in
       if [ -f "$f.dash.num" ]; then cat "$f.dash.num"; fi
       exit 0 ;;
     esac
-    # 닫힌 이슈 목록(#260, 에픽 leaf 카운트용) — 열린 이슈 호출과 파일을 가른다.
+    # 에픽 닫힌 leaf 조회(#292) — 검색 스코프. 닫힌 이슈 목록보다 **먼저** 가른다
+    # (둘 다 `--state closed` 라 순서가 바뀌면 검색 호출이 최근-200 픽스처를 받는다).
+    # 호출을 로그에 남긴다 — "열린 에픽이 없으면 안 부른다" 를 실측으로 못 박기 위해서.
+    case "$args" in *"--search"*)
+      printf 'epic-closed %s\n' "$repo" >> "$STUB_CALL_LOG"
+      case "$args" in
+        *'--search "Epic #" in:body'*) ;;
+        *) echo "gh stub: 에픽 닫힌 leaf 조회의 쿼리가 예상 밖: $args" >&2; exit 1 ;;
+      esac
+      case "$args" in
+        *"--state closed"*) ;;
+        *) echo "gh stub: 에픽 닫힌 leaf 조회는 --state closed 플래그로 와야 한다(#236): $args" >&2; exit 1 ;;
+      esac
+      # `--limit` 이 `EPIC_CLOSED_LIMIT` 로 실제로 전달되는지 (#292 사전 리뷰 WARN).
+      # 안 재면 `--limit 200`(PR 이전 창)으로 되돌려도 스위트가 전건 초록이다 — 게다가
+      # 200 은 기본 상한 1000 에 못 미쳐 `capped` 도 아니라서 **절단 warn 조차 안 뜬다**
+      # (보이는 절단보다 나쁜 조용한 절단). 상한 판정은 env 를 그대로 읽어 이 회귀를 못 본다.
+      # 양옆 공백을 함께 물어야 한다 — `--limit 2` 는 `--limit 200` 의 부분문자열이다.
+      exp_limit="${EPIC_CLOSED_LIMIT:-1000}"
+      case " $args " in
+        *" --limit $exp_limit "*) ;;
+        *) echo "gh stub: 에픽 닫힌 leaf 조회의 --limit 이 EPIC_CLOSED_LIMIT($exp_limit) 과 다르다: $args" >&2; exit 1 ;;
+      esac
+      if [ -f "$f.epic_closed.fail" ]; then echo "gh: HTTP 403 rate limit" >&2; exit 1; fi
+      # 조용한 실패(빈 출력 + exit 0) 재현 — `gh` 검색 2차 제한의 실제 모양이다.
+      if [ -f "$f.epic_closed.silent" ]; then echo '[]'; exit 0; fi
+      if [ -f "$f.epic_closed.notarray" ]; then echo '{"message":"rate limited"}'; exit 0; fi
+      if [ -f "$f.epic_closed.json" ]; then cat "$f.epic_closed.json"; else echo '[]'; fi
+      exit 0 ;;
+    esac
+    # 닫힌 이슈 목록(#260, 색인 지연 보완·교차확인용) — 열린 이슈 호출과 파일을 가른다.
     case "$args" in *"--state closed"*) cat "$f.issues_closed.json"; exit 0 ;; esac
     cat "$f.issues.json"; exit 0 ;;
   "issue create")
@@ -418,6 +459,59 @@ cat > "$tmp/fx/ggqgga_Stale.comments.20.json" <<'FX'
 {"comments":[{"body":"사람 확인(conflict): 옛 홀드의 질문\n<!-- hold-note: conflict --><!-- bodat:worker -->"}]}
 FX
 
+# ── 픽스처: ggqgga/Holds (holds) — 보류 칸 가르기 (#244) ────────────────────
+# 기계 정지에서 `needs-human` 이 떨어진 뒤, `hold:*` 만 붙은 이슈가 `대기`(= 집을 수 있는
+# 이슈)로 새면 사람대기 칸이 "손댈 게 없는 것" 으로 찼던 오류의 **반대 방향**이 된다.
+#
+#   번호  입력                                  want
+#   ────  ───────────────────────────────────   ────────────────────────────────
+#   #40   hold:ladder + agent-ready             보류 `#40(ladder)`  (재개 대기)
+#   #41   hold:policy 단독                      보류 `#41(policy)`  (재심 전)
+#   #42   hold:policy + needs-human             사람대기 (재심이 "사람 몫 유지" 로 끝난 꼴)
+#   #43   hold:conflict 단독                    사람대기 (충돌은 그 자체가 사람 몫)
+#   #44   needs-human 단독                      사람대기 `사유 없음` + note(정상 상태)
+#   #45   agent-ready 만                        대기
+#   #46   hold:ladder + flow:verify             보류 (우선순위: 보류 > 단계 라벨)
+#   #47   agent-ready + Blocked by #45          막힘 (보류가 막힘으로 안 샌다는 대조군)
+#   #48   hold:ladder + Blocked by #45          보류 (우선순위: 보류 > 막힘)
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Holds.issues.json" <<'FX'
+[
+ {"number":40,"title":"사다리 재개 대기","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:ladder"}]},
+ {"number":41,"title":"정책 재심 전","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:policy"}]},
+ {"number":42,"title":"재심 유지 — 사람 몫 확정","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:policy"},{"name":"needs-human"}]},
+ {"number":43,"title":"충돌 — 그 자체가 사람 몫","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
+ {"number":44,"title":"사람이 직접 세운 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"needs-human"}]},
+ {"number":45,"title":"집을 수 있는 이슈","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"}]},
+ {"number":46,"title":"단계 라벨보다 보류가 앞","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"hold:ladder"}]},
+ {"number":47,"title":"막힘 대조군","createdAt":"@NOW@","body":"Blocked by #45","labels":[{"name":"agent-ready"}]},
+ {"number":48,"title":"막힘보다 보류가 앞","createdAt":"@NOW@","body":"Blocked by #45","labels":[{"name":"agent-ready"},{"name":"hold:ladder"}]}
+]
+FX
+# 무소속 PR warn 은 **정지 라벨**(needs-human ∪ hold:*)을 본다 (#244) — `needs-human` 만
+# 보던 옛 술어에서는 홀드된 PR 과 홀드된 이슈의 PR 이 통째로 warn 으로 쏟아진다.
+#   PR #70  연결 이슈가 보류(#40)          → warn 아님 (이슈 쪽 hold:*)
+#   PR #71  연결 이슈가 대기(#45)          → 종전대로 warn (**과잉 제외 반증**)
+#   PR #72  PR 자체에 hold:policy(#41)     → warn 아님 (PR 쪽 hold:*)
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Holds.pr_open.json" <<'FX'
+[
+ {"number":70,"headRefName":"agent/issue-40","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":40}],"labels":[]},
+ {"number":71,"headRefName":"agent/issue-45","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":45}],"labels":[]},
+ {"number":72,"headRefName":"agent/issue-41","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":41}],"labels":[{"name":"hold:policy"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_Holds.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_Holds.issues_closed.json"
+# 사람대기 버킷의 policy·conflict 에는 질문(hold-note)이 있어야 `질문 없음` 이 안 붙는다.
+cat > "$tmp/fx/ggqgga_Holds.comments.42.json" <<'FX'
+{"comments":[{"body":"사람 확인(policy): A인가 B인가\n<!-- hold-note: policy --><!-- bodat:worker -->"}]}
+FX
+cat > "$tmp/fx/ggqgga_Holds.comments.43.json" <<'FX'
+{"comments":[{"body":"사람 확인(conflict): 어느 쪽으로 풀까\n<!-- hold-note: conflict --><!-- bodat:worker -->"}]}
+FX
+
 # ── 픽스처: ggqgga/Blockers (blockers) — 대기/막힘 가르기 (#248) ─────────────
 # 블로커 파싱 규칙은 eligible-issues.sh 와 **같은 의미**여야 한다. 개별 반례만 막으면
 # 근사가 '더 많이 잡는' 쪽으로 틀리고(정상 `대기` 가 `막힘` 으로 내려간다 — 원래 버그보다
@@ -525,6 +619,150 @@ echo '[]' > "$tmp/fx/ggqgga_EpicNoRefs.issues_closed.json"
 echo '[]' > "$tmp/fx/ggqgga_EpicNoRefs.pr_open.json"
 echo '[]' > "$tmp/fx/ggqgga_EpicNoRefs.pr_closed.json"
 
+# ── (#292) 에픽 닫힌 leaf 는 "최근 200건" 이 아니라 **검색 스코프 조회**에서 온다 ──────
+# Epics 레포는 회귀 대조군이다 — 검색 결과가 최근-200 목록과 같으면(합집합이 같은 집합)
+# 출력이 #260 때와 **한 글자도** 달라지지 않아야 한다.
+cp "$tmp/fx/ggqgga_Epics.issues_closed.json" "$tmp/fx/ggqgga_Epics.epic_closed.json"
+
+# ── 픽스처: ggqgga/EpicWindow (epicwindow) — **창 밖 leaf** (#292 의 본체) ──────────
+#   최근 닫힌 200건에는 무관한 #900 만 있다(에픽 줄 없음). 에픽 #100 의 닫힌 leaf 2건과
+#   에픽 #200 의 닫힌 leaf 2건은 **검색 스코프 조회로만** 잡힌다.
+#   want: `#100 2/3 · 대기 1` · `#200 2/2` + warn `에픽 leaf 전부 종료 #200`
+#   옛 경로(최근 200건)로 되돌리면: `#100 0/1` · `#200 leaf 없음(Epic 줄 미부착)` + warn 0
+#   — 그게 이 이슈가 신고한 두 실패 시나리오의 재현이다(뮤테이션 대상).
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicWindow.issues.json" <<'FX'
+[
+ {"number":100,"title":"오래 산 에픽 A","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":200,"title":"오래 산 에픽 B — leaf 전부 창 밖에서 종료","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":101,"title":"열린 leaf","createdAt":"@NOW@","body":"Epic #100","labels":[{"name":"agent-ready"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicWindow.issues_closed.json" <<'FX'
+[
+ {"number":900,"body":"에픽과 무관","closedAt":"@NOW@","labels":[]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicWindow.epic_closed.json" <<'FX'
+[
+ {"number":103,"body":"Epic #100","closedAt":"@NOW@","labels":[]},
+ {"number":104,"body":"Epic #100","closedAt":"@NOW@","labels":[]},
+ {"number":201,"body":"Epic #200","closedAt":"@NOW@","labels":[]},
+ {"number":202,"body":"Epic #200","closedAt":"@NOW@","labels":[]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_EpicWindow.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicWindow.pr_closed.json"
+
+# ── 픽스처: ggqgga/EpicFail (epicfail) — 조회 **실패**는 "닫힌 leaf 0건" 이 아니다 ────
+# PR#239 의 세 갈래 중 ⑴ 조회 실패. 에픽 #300 은 최근-200 에 닫힌 leaf(#302)가 있어
+# 합집합 덕에 수치가 종전으로 degrade 하지만, 그래도 비율을 찍지 않는다(못 셌으므로).
+# 에픽 #310 은 `전부 종료` warn 이 **실패 중에도 그대로 뜨는지**를 문다 — 그 판정은
+# "열린 leaf 0 + 닫힌 leaf ≥1" 이고 조회 실패는 닫힌 leaf 를 적게만 셀 수 있어 거짓 음성
+# 방향이다(뜨면 참). 헤더 ★에픽 절★ 이 이 조합을 명시한다.
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicFail.issues.json" <<'FX'
+[
+ {"number":300,"title":"에픽 F","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":310,"title":"에픽 G — 최근창 기준 전부 종료","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":301,"title":"열린 leaf","createdAt":"@NOW@","body":"Epic #300","labels":[{"name":"agent-ready"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicFail.issues_closed.json" <<'FX'
+[
+ {"number":302,"body":"Epic #300","closedAt":"@NOW@","labels":[]},
+ {"number":311,"body":"Epic #310","closedAt":"@NOW@","labels":[]}
+]
+FX
+: > "$tmp/fx/ggqgga_EpicFail.epic_closed.fail"
+echo '[]' > "$tmp/fx/ggqgga_EpicFail.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicFail.pr_closed.json"
+
+# ── 픽스처: ggqgga/EpicSilent (epicsilent) — **빈 출력 + exit 0** (조용한 실패) ───────
+# PR#239 의 갈래 ⑵. `gh` 의 검색 2차 레이트리밋이 실제로 이 모양이고 `rate_limit` 은 그때도
+# 초록이라 종료코드로는 안 걸린다. 교차확인은 **core API 목록**으로 한다 — 최근 닫힌 목록에
+# `Epic #N` 줄(#402)이 있는데 검색이 0행이면 "닫힌 leaf 가 없다" 가 아니라 검색이 접힌 것이다.
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicSilent.issues.json" <<'FX'
+[
+ {"number":400,"title":"에픽 H","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":401,"title":"열린 leaf","createdAt":"@NOW@","body":"Epic #400","labels":[{"name":"agent-ready"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicSilent.issues_closed.json" <<'FX'
+[
+ {"number":402,"body":"Epic #400","closedAt":"@NOW@","labels":[]}
+]
+FX
+: > "$tmp/fx/ggqgga_EpicSilent.epic_closed.silent"
+echo '[]' > "$tmp/fx/ggqgga_EpicSilent.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicSilent.pr_closed.json"
+
+# ── 픽스처: ggqgga/EpicBadJson (epicbadjson) — 배열이 아닌 응답 ────────────────────
+# PR#239 의 갈래 ⑶ 조회 대상 오식별/형식 밖. `gh` 는 에러 JSON 을 stdout 으로 흘리는
+# 전례가 있다(claim-issue.sh 와 같은 함정) — 그걸 `[]` 로 접으면 또 `0/N` 이다.
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicBadJson.issues.json" <<'FX'
+[
+ {"number":450,"title":"에픽 I","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":451,"title":"열린 leaf","createdAt":"@NOW@","body":"Epic #450","labels":[{"name":"agent-ready"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_EpicBadJson.issues_closed.json"
+: > "$tmp/fx/ggqgga_EpicBadJson.epic_closed.notarray"
+echo '[]' > "$tmp/fx/ggqgga_EpicBadJson.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicBadJson.pr_closed.json"
+
+# ── 픽스처: ggqgga/EpicCap (epiccap) — 새 조회가 **자기 상한**에 닿는다 ─────────────
+# `EPIC_CLOSED_LIMIT` 를 낮춰 1000행짜리 픽스처 없이 상한 경로를 재현한다
+# (epic-sweep.sh 의 `EPIC_SEARCH_PER_PAGE` 와 같은 관행).
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicCap.issues.json" <<'FX'
+[
+ {"number":500,"title":"에픽 J","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":501,"title":"열린 leaf","createdAt":"@NOW@","body":"Epic #500","labels":[{"name":"agent-ready"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_EpicCap.issues_closed.json"
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicCap.epic_closed.json" <<'FX'
+[
+ {"number":502,"body":"Epic #500","closedAt":"@NOW@","labels":[]},
+ {"number":503,"body":"Epic #500","closedAt":"@NOW@","labels":[]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_EpicCap.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicCap.pr_closed.json"
+
+# ── 픽스처: ggqgga/EpicAnchor (epicanchor) — 전용 줄 끝 앵커 격자 (#327) ────
+# leaf 는 `Epic #N` **전용 줄**이다. 줄 시작은 전용 줄 모양이어도 뒤에 산문이 이어지면
+# leaf 가 아니다 — 끝 앵커가 없던 옛 정규식은 이것들을 leaf 로 셌고, 그런 언급만 달린 옛
+# 에픽(#800)이 leaf ≥1·전부 종료로 읽혀 `에픽 leaf 전부 종료` warn(=스윕이 닫을 대상)을
+# 받았다. 걸러야 할 것과 걸러선 안 될 것을 **한 레포에 나란히** 둔다.
+#   에픽  구성                                           want
+#   ────  ─────────────────────────────────────────────  ────────────────────────
+#   #800  닫힌 이슈 3건이 전부 **문장형** `Epic #800 …`   leaf 0 → `leaf 없음(Epic 줄 미부착)`
+#                                                        warn 없음(앵커 없으면 `3/3` + 전부 종료 warn)
+#   #810  열린 이슈 3건이 전부 **전용 줄** 3형태          `0/3 · 대기 3`
+#   #1    한 자리 에픽 — `Epic #1` 은 leaf, `Epic #1 #2`  `0/1 · 대기 1`
+#         (뒤에 다른 번호)·`Epic #10`(접두)은 leaf 아님
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicAnchor.issues.json" <<'FX'
+[
+ {"number":800,"title":"에픽 — 문장형 언급만","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":810,"title":"에픽 — 전용 줄 3형태","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":1,"title":"에픽 — 한 자리 번호","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":811,"title":"전용 줄","createdAt":"@NOW@","body":"Epic #810","labels":[{"name":"agent-ready"}]},
+ {"number":812,"title":"앞뒤 공백 + 소문자","createdAt":"@NOW@","body":"  epic #810  ","labels":[{"name":"agent-ready"}]},
+ {"number":813,"title":"대문자","createdAt":"@NOW@","body":"EPIC #810","labels":[{"name":"agent-ready"}]},
+ {"number":814,"title":"한 자리 에픽의 전용 줄","createdAt":"@NOW@","body":"Epic #1","labels":[{"name":"agent-ready"}]},
+ {"number":815,"title":"뒤에 다른 번호 — leaf 아님","createdAt":"@NOW@","body":"Epic #1 #2","labels":[{"name":"agent-ready"}]},
+ {"number":816,"title":"접두 오매치 — leaf 아님","createdAt":"@NOW@","body":"Epic #10","labels":[{"name":"agent-ready"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicAnchor.issues_closed.json" <<'FX'
+[
+ {"number":801,"body":"Epic #800 설명","closedAt":"@NOW@","labels":[]},
+ {"number":802,"body":"Epic #800 (부모)","closedAt":"@NOW@","labels":[]},
+ {"number":803,"body":"Epic #800:","closedAt":"@NOW@","labels":[]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_EpicAnchor.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicAnchor.pr_closed.json"
+
 # ── 픽스처: ggqgga/issue-runner (runner) — 깨끗함 + release 있음 ─────────────
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_issue-runner.issues.json" <<'FX'
 [
@@ -588,6 +826,8 @@ has_line "대기 3(창 밖 파생건도 대기에는 남는다)" "$tmp/out" \
 # (#248) 블로커가 없는 픽스처에서는 `막힘 0` 한 줄이 느는 것 말고 출력이 바뀌지 않는다 —
 # 위아래의 기존 기대값이 그대로 통과하는 것이 그 증거다.
 has_line "(#248) 비-막힘 픽스처는 막힘 0" "$tmp/out" "  막힘      0"
+# (#244) 이 픽스처의 정지는 전부 needs-human 을 달고 있어 사람대기가 이긴다 → 보류 0.
+has_line "(#244) 사람대기가 이긴 픽스처는 보류 0" "$tmp/out" "  보류      0"
 # 인계 전 창(기본 90분) — #4854 는 60분 전이라 무소속 warn 이 아니라 구현중 줄에 붙는다.
 # #4701 의 PR #4855 는 200분 전이라 붙지 않는다(아래 warn 에서 잡힌다).
 has_line "구현중 2(좌초건 포함) — 창 안 PR 만 '인계 전' 으로 병기" "$tmp/out" \
@@ -621,10 +861,19 @@ has_line "승격 대기 — release 없는 레포" "$tmp/out" \
 # 루프 밖 이슈는 어디에도 안 센다
 no_sub "루프 밖 이슈 #4900 미집계" "$tmp/out" "#4900"
 
-# ③ warn 5종 + 사유 없음 + 인계 지연(+ #188 회귀 대조 PR #4991 1건 추가)
-has_line "warn 11건(질문 유무 미확인 1 포함 + #188 회귀 대조 #4991)" "$tmp/out" "  warn      11"
+# ③ warn 5종 + 사유 없음 + 인계 지연(+ #188 회귀 대조 PR #4991 1건 + #265 정지 미러 1건)
+# (#244) `needs-human 사유 없음` warn 이 note 로 내려가 11 → 10.
+has_line "warn 10건(질문 유무 미확인 1 · #188 대조 #4991 · #265 정지 미러 포함)" "$tmp/out" "  warn      10"
+# (#265) PR #4852 는 `needs-human` 을 **맨몸으로**(= `hold:` 접두 0개) 단 채 열려 있고 연결
+# 이슈 #4832 는 깨끗하다. 기계는 이 모양을 만들 수 없다 — `needs-human` 을 붙이는 자리는
+# `transition.sh` 하나뿐이고 기계 정지 세 전이는 `--reason` 이 필수라 언제나 `hold:<사유>`
+# 와 쌍으로 붙인다. 그러니 사람이 손으로 세운 브레이크이고, 교정 갈래(resume-sweep ④)도
+# 떼지 않는다 → 교정 못 하는 후보를 경보에 얹으면 상시 잡음이다(#190 의 warn 정의).
+# 기계 미러(=`hold:*` 동반) 쪽 양성 커버리지는 아래 `ggqgga/Mirror` 격자가 전담한다.
+no_sub "(#265) 맨몸 needs-human PR #4852 는 정지 미러 warn 이 아니다" "$tmp/out" \
+  "정지 미러 불일치 #4832"
 has_sub "warn 무소속 PR" "$tmp/out" \
-  "    - 무소속 PR #4850(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4832 는 needs-human 아님"
+  "    - 무소속 PR #4850(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4832 도 정지 라벨 없음"
 has_sub "warn 단계 라벨 중복" "$tmp/out" \
   "    - 단계 라벨 중복 #4700(bodat) — flow:verify + harvesting"
 has_sub "warn 미러 불일치(이슈에만 단계)" "$tmp/out" \
@@ -643,12 +892,12 @@ no_sub "무소속: PR 자체 needs-human(#4852) 은 warn 아님" "$tmp/out" "무
 no_sub "인계 전 창 안 PR #4854 는 warn 아님" "$tmp/out" "무소속 PR #4854"
 # 정상 흐름(PR 과 claim 이 같은 시각대)은 claim 기준으로 재도 종전과 같은 숫자다 (#177 무회귀).
 has_line "인계 전 창 밖 PR #4855 는 무소속 warn + 사망 의심(claim 기준 200분)" "$tmp/out" \
-  "    - 무소속 PR #4855(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4701 는 needs-human 아님(agent:claimed 인데 200분 경과 — 워커 사망 의심)"
+  "    - 무소속 PR #4855(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4701 도 정지 라벨 없음(agent:claimed 인데 200분 경과 — 워커 사망 의심)"
 # 판정축은 `agent:claimed` **라벨**이 아니라 **구현중 버킷** — 라벨을 단 채 배포대기로 간
 # 이슈(#4790)의 라벨 없는 PR 은 warn 에서 빠지면 어디에도 안 그려져 거짓 깨끗함이 된다.
 # 정확히 이 줄이어야 한다(꼬리표가 붙으면 has_line 이 깨진다 — 인계 창과 무관한 건이다).
 has_line "구현중 버킷 밖의 agent:claimed PR 은 무소속 warn(꼬리표 없이)" "$tmp/out" \
-  "    - 무소속 PR #4856(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4790 는 needs-human 아님"
+  "    - 무소속 PR #4856(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4790 도 정지 라벨 없음"
 no_sub "구현중 버킷 밖 PR 은 '인계 전' 으로도 안 그려진다" "$tmp/out" "PR #4856(인계 전)"
 
 # ── (#188) 무소속 PR warn 이 사람 세션 브랜치(head 가 agent/issue-* 아님)에도 울리던
@@ -656,27 +905,29 @@ no_sub "구현중 버킷 밖 PR 은 '인계 전' 으로도 안 그려진다" "$t
 # 강등한다(존재 자체는 남긴다). 실측 원천(bodat PR #4987/#4963)과 같은 모양으로 픽스처.
 # 케이스1: head feat/* + 연결 이슈 있음 + 단계 라벨 0 → 무소속 warn 은 0, note 로 강등.
 no_sub "(#188) 케이스1: 사람 세션 PR #4987 는 무소속 warn 아님" "$tmp/out" "무소속 PR #4987"
-has_line "(#188) note 1건 — 사람 세션 PR 만 강등된다(에이전트 헤드·이슈 미연결은 안 섞인다)" \
-  "$tmp/out" "  note      1"
+has_line "(#188) note 2건 — 사람 세션 PR + (#244) 사람이 직접 세운 정지" \
+  "$tmp/out" "  note      2"
 has_line "(#188) 케이스1: 사람 세션 PR #4987 는 note 로 강등된다" "$tmp/out" \
   "    - 사람 세션 PR #4987(bodat) — head feat/adspower-swr-4963 (agent/issue-* 아님) · 연결 이슈 #4963 · 루프가 못 집어 warn 아님"
 # 케이스2(회귀 방지): head agent/issue-* + 단계 라벨 0 + 연결 이슈 needs-human 아님
 # → 종전대로 무소속 warn 1건. note 로는 내려가지 않는다.
 has_line "(#188) 케이스2: agent 헤드는 종전대로 무소속 warn" "$tmp/out" \
-  "    - 무소속 PR #4991(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4964 는 needs-human 아님"
+  "    - 무소속 PR #4991(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4964 도 정지 라벨 없음"
 no_sub "(#188) 케이스2: agent 헤드는 note 로 강등되지 않는다" "$tmp/out" "사람 세션 PR #4991"
 # 케이스3: head feat/* + 연결 이슈 없음 → 애초에 후보가 아니다(종전 동작 유지) —
 # 무소속 warn 에도 note 에도 나타나지 않는다(존재를 지키는 대상 자체가 아니라서).
 no_sub "(#188) 케이스3: 연결 이슈 없는 사람 브랜치는 무소속 warn 에 없다" "$tmp/out" "PR #4992"
 no_sub "(#188) 케이스3: 연결 이슈 없는 사람 브랜치는 note 에도 없다" "$tmp/out" "사람 세션 PR #4992"
 
-# 사유 없는 needs-human 만 warn — hold:* 가 붙은 셋은 조용하다
-has_sub "warn needs-human 사유 없음" "$tmp/out" \
-  "    - needs-human 사유 없음 #4826(bodat) — hold:* 라벨 없음"
-no_sub "사유 있는 건은 사유 없음 warn 아님" "$tmp/out" "사유 없음 #4825"
-no_sub "사유 있는 건은 사유 없음 warn 아님(conflict)" "$tmp/out" "사유 없음 #4770"
-# 배포대기가 이긴 needs-human 이슈(#4848)는 이 warn 밖 — 루프 전이가 만든 게 아니다
-no_sub "배포대기로 간 needs-human 은 사유 없음 warn 밖" "$tmp/out" "사유 없음 #4848"
+# (#244) 사유 라벨 없는 needs-human 은 **정상 상태**(사람이 직접 세운 정지)라 warn 이
+# 아니라 note 다 — 기계 정지가 hold:* 하나만 붙게 된 뒤로 교정할 불변식 위반이 없다.
+no_sub "사유 없음은 더 이상 warn 이 아니다" "$tmp/out" "needs-human 사유 없음"
+has_sub "(#244) 사람이 직접 세운 정지는 note" "$tmp/out" \
+  "    - 사람이 직접 세운 정지 #4826(bodat) — hold:* 라벨 없음(정상)"
+no_sub "사유 있는 건은 이 note 대상 아님" "$tmp/out" "직접 세운 정지 #4825"
+no_sub "사유 있는 건은 이 note 대상 아님(conflict)" "$tmp/out" "직접 세운 정지 #4770"
+# 배포대기가 이긴 needs-human 이슈(#4848)는 이 줄 밖 — 루프 전이가 만든 게 아니다
+no_sub "배포대기로 간 needs-human 은 이 note 밖" "$tmp/out" "직접 세운 정지 #4848"
 
 # ── ⑫ (#157) 질문(hold-note) 없는 policy·conflict 홀드는 `질문 없음` ─────────
 # 질문이 있는 #4780(policy) 과, 마커 없는 코멘트만 있는 #4770(conflict) 이 갈린다 —
@@ -754,21 +1005,21 @@ ck "reclaim: exit 0" "$RC" 0
 #     PR 나이(240)로 재면 살아 있는 워커를 사망으로 신고하고, `--paginate` 를 빠뜨리면
 #     1쪽의 옛 claim(200)이 나온다. 셋이 다 다른 값이라 무엇을 쟀는지가 드러난다.
 has_line "(a) 재claim 건은 claim 기준 5분" "$tmp/out" \
-  "    - 무소속 PR #61(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #31 는 needs-human 아님(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
+  "    - 무소속 PR #61(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #31 도 정지 라벨 없음(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
 no_sub "(a) PR 나이(240분)로 재지 않는다" "$tmp/out" "240분 경과"
 no_sub "(a) 첫 페이지의 옛 claim(200분)을 취하지 않는다 — 전량을 읽는다" "$tmp/out" "200분 경과"
 # (a) (#181) 같은 이슈(#31)를 가리키는 두 번째 무소속 PR #65 — 값은 #61 과 같아야 한다
 # (같은 타임라인을 다시 조회하지 않고 캐시된 claim 시각을 재사용한다는 뜻).
 has_line "(a) 같은 이슈의 두 번째 PR #65 도 같은 claim 시각(5분)" "$tmp/out" \
-  "    - 무소속 PR #65(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #31 는 needs-human 아님(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
+  "    - 무소속 PR #65(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #31 도 정지 라벨 없음(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
 # (b) 조회 실패·이벤트 부재는 숫자를 지어내지 않는다. warn 자체는 유지한다.
 has_line "(b) 타임라인 조회 실패 → 경과 미상(warn 은 유지)" "$tmp/out" \
-  "    - 무소속 PR #62(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #32 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+  "    - 무소속 PR #62(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #32 도 정지 라벨 없음(agent:claimed 인데 경과 미상 — 확인 필요)"
 has_line "(b) claim 이벤트 부재 → 경과 미상(0분으로 접지 않는다)" "$tmp/out" \
-  "    - 무소속 PR #63(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #33 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+  "    - 무소속 PR #63(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #33 도 정지 라벨 없음(agent:claimed 인데 경과 미상 — 확인 필요)"
 # 형식 밖 시각을 jq 에 그대로 넘기면 레포 블록이 통째로 죽는다 — 한 건만 미상으로 접는다.
 has_line "(b) 형식 밖 claim 시각 → 그 건만 경과 미상" "$tmp/out" \
-  "    - 무소속 PR #64(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #34 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+  "    - 무소속 PR #64(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #34 도 정지 라벨 없음(agent:claimed 인데 경과 미상 — 확인 필요)"
 no_sub "(b) 형식 밖 시각이 레포 블록을 죽이지 않는다" "$tmp/out" "reclaim — 조회 실패"
 has_line "reclaim: warn 5건(#65 포함)" "$tmp/out" "  warn      5"
 has_sub "(b) 조회 실패는 stderr 에도 사유가 남는다" "$tmp/err" \
@@ -801,7 +1052,7 @@ no_sub "CLAIM_TIME_MAX=4: 상한 초과가 발생하지 않는다(PR 줄 수로 
   "$tmp/out" "조회 상한"
 no_sub "CLAIM_TIME_MAX=4: 상한 초과 stderr 도 없다" "$tmp/err" "claim 시각 조회 상한"
 has_sub "CLAIM_TIME_MAX=4: 넷째 고유 이슈(#34)도 조회는 됐다(형식 밖이라 확인 필요)" \
-  "$tmp/out" "연결 이슈 #34 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+  "$tmp/out" "연결 이슈 #34 도 정지 라벨 없음(agent:claimed 인데 경과 미상 — 확인 필요)"
 
 # ── (b)(c) (#181) 상한에 걸려 안 본 것과 조회했지만 실패한 것은 다른 문구다 ──────
 # 상한을 1로 좁히면 고유 이슈 중 첫째(#31)만 조회되고 둘째(#32)는 **안 본다** — 그 문구는
@@ -812,11 +1063,11 @@ STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" CLAIM_TIME_MAX=1 \
 ck "CLAIM_TIME_MAX=1: exit 0" "$RC" 0
 ck "CLAIM_TIME_MAX=1: 타임라인 조회 1건" "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 1
 has_sub "CLAIM_TIME_MAX=1: 상한 안의 #31 은 그대로 5분" "$tmp/out" \
-  "연결 이슈 #31 는 needs-human 아님(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
+  "연결 이슈 #31 도 정지 라벨 없음(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
 has_sub "(b) CLAIM_TIME_MAX=1: 상한 밖(#32)은 '조회 상한' — '안 봤다'" "$tmp/out" \
-  "연결 이슈 #32 는 needs-human 아님(agent:claimed 인데 경과 미상 — 조회 상한)"
+  "연결 이슈 #32 도 정지 라벨 없음(agent:claimed 인데 경과 미상 — 조회 상한)"
 no_sub "(b) 상한 밖 문구는 조회 실패 문구(확인 필요)와 섞이지 않는다" "$tmp/out" \
-  "연결 이슈 #32 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+  "연결 이슈 #32 도 정지 라벨 없음(agent:claimed 인데 경과 미상 — 확인 필요)"
 has_sub "CLAIM_TIME_MAX=1: 상한 초과 사유가 stderr 에" "$tmp/err" \
   "reclaim #32 claim 시각 조회 상한(1) 초과"
 has_line "CLAIM_TIME_MAX=1: warn 은 여전히 5건" "$tmp/out" "  warn      5"
@@ -910,9 +1161,14 @@ ck "목록 절단: exit 0" "$RC" 0
 no_sub "(#248) 큰 body 페이로드가 ARG_MAX 로 집계 실패하지 않는다" "$tmp/out" \
   "파이프라인 big — 조회 실패"
 has_sub "(#248) 큰 body 페이로드에서도 블록이 정상 렌더" "$tmp/out" "파이프라인 big — 열림 0"
-has_line "목록 절단: warn 3건(#260 닫힌 이슈 포함)" "$tmp/out" "  warn      3"
+has_line "목록 절단: warn 2건(#292 로 닫힌 이슈 목록이 빠졌다)" "$tmp/out" "  warn      2"
 has_sub "목록 절단: 이슈 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(이슈)"
-has_sub "(#260) 목록 절단: 닫힌 이슈 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(닫힌 이슈)"
+# (#292) 최근 닫힌 200건의 절단 warn 은 **없앴다**. 그 목록의 유일한 소비자였던 에픽 leaf
+# 카운트가 검색 스코프 조회로 옮겨 갔고, 남은 쓰임(색인 지연 보완·조용한 실패 교차확인)은
+# 최근 것만 있으면 되는 성질이라 상한 도달이 정상이다 — bodat 은 매 틱 닿아 교정 불가능한
+# 상시 소음이었다(#190 의 warn 정의 위반). 절단 신호는 새 조회의 상한으로 옮겼다.
+no_sub "(#292) 최근 닫힌 200건의 절단 warn 은 사라졌다" "$tmp/out" \
+  "목록 상한 200 도달 — 창 절단 가능(닫힌 이슈)"
 has_sub "목록 절단: 닫힌 PR 목록" "$tmp/out" "    - 목록 상한 200 도달 — 창 절단 가능(닫힌 PR)"
 no_sub "목록 절단: 상한 안 닿은 열린 PR 은 조용하다" "$tmp/out" "창 절단 가능(열린 PR)"
 
@@ -1051,6 +1307,51 @@ ck "⑦ --json: warn kind 는 blocker_human_wait" \
   '[{"b":903,"k":"배포대기","i":[17]},{"b":900,"k":"사람대기","i":[16,10]}]'
 
 # ── ★에픽 절★ (#260) — 종료/전체·leaf 버킷·P 분포, warn 2종, 파생 병기 ─────────
+# ── ⑮ (#244) 보류 칸 — hold:* 만 붙은(needs-human 없는) 이슈는 대기가 아니다 ───
+run --repo ggqgga/Holds --since 24h
+ck "holds: exit 0" "$RC" 0
+has_line "holds 헤더 — 열림 9(보류 4 + 사람대기 3 + 대기 1 + 막힘 1)" "$tmp/out" \
+  "파이프라인 holds — 열림 9 · 스코프 holds · 창 24h"
+has_line "보류 4 — 사유 병기, 번호 내림차순, 열린 연결 PR 병기" "$tmp/out" \
+  "  보류      4  #48(ladder) #46(ladder) #41(policy, PR #72) #40(ladder, PR #70)"
+has_line "사람대기 3 — needs-human ∪ hold:conflict ∪ 재심 끝난 hold:policy" "$tmp/out" \
+  "  사람대기  3  #44(대기, 사유 없음) #43(대기, conflict) #42(대기, policy)"
+has_line "대기 1 — 보류가 대기로 새지 않는다" "$tmp/out" "  대기      1  #45"
+has_line "막힘 1 — 보류는 막힘으로도 안 샌다(우선순위: 보류 > 막힘)" "$tmp/out" \
+  "  막힘      1  #47 ← #45(대기)"
+has_line "검증대기 0 — 단계 라벨보다 보류가 앞(#46)" "$tmp/out" "  검증대기  0"
+# 보류 이슈가 다른 줄에 겹쳐 세지지 않는다(한 이슈 = 한 버킷)
+no_sub "보류: #40 은 대기 줄에 없다" "$tmp/out" "  대기      1  #45 #40"
+no_sub "보류: #46 은 검증대기 줄에 없다" "$tmp/out" "  검증대기  1"
+no_sub "보류: #48 은 막힘 줄에 없다" "$tmp/out" "#48 ←"
+# 질문(hold-note) 조회는 **사람대기 버킷**의 policy·conflict 에만 — 보류로 간 #41 엔 안 묻는다
+ck "holds: 코멘트 조회 2건(#42·#43)" "$(grep -c '^comments ' "$STUB_CALL_LOG")" 2
+for n in 42 43; do
+  check "holds: 코멘트 조회 #$n" "$(grep -qxF "comments ggqgga/Holds $n" "$STUB_CALL_LOG" && echo ok || echo no)"
+done
+for n in 40 41 46 48; do
+  check "holds: 보류 이슈 #$n 엔 안 묻는다" \
+    "$(grep -qxF "comments ggqgga/Holds $n" "$STUB_CALL_LOG" && echo no || echo ok)"
+done
+# 사람이 직접 세운 정지(#44)는 note 1건, warn 은 0
+# 무소속 PR warn — 정지 라벨이 있는 쪽 둘은 빠지고, 없는 쪽 하나만 남는다
+has_line "holds: warn 1(무소속 PR 은 정지 라벨 없는 #71 뿐)" "$tmp/out" "  warn      1"
+has_sub "holds: #71 은 종전대로 무소속 warn" "$tmp/out" \
+  "    - 무소속 PR #71(holds) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #45 도 정지 라벨 없음"
+no_sub "holds: 연결 이슈가 보류인 PR #70 은 warn 아님" "$tmp/out" "무소속 PR #70"
+no_sub "holds: PR 자체가 hold:* 인 #72 는 warn 아님" "$tmp/out" "무소속 PR #72"
+has_sub "holds: #44 는 note" "$tmp/out" \
+  "    - 사람이 직접 세운 정지 #44(holds) — hold:* 라벨 없음(정상)"
+
+run --repo ggqgga/Holds --since 24h --json
+ck "--json: held 버킷 항목(번호·holds)" \
+  "$(jq -c '.repos[0] | [.buckets.held[] | {n:.number, h:.holds, p:.pr}]' < "$tmp/out")" \
+  '[{"n":48,"h":["ladder"],"p":null},{"n":46,"h":["ladder"],"p":null},{"n":41,"h":["policy"],"p":72},{"n":40,"h":["ladder"],"p":70}]'
+ck "--json: open_total 에 보류가 합산된다" \
+  "$(jq '.repos[0].open_total' < "$tmp/out")" 9
+ck "--json: held 항목에도 repo_short" \
+  "$(jq '[.repos[0].buckets.held[] | select(has("repo_short") | not)] | length' < "$tmp/out")" 0
+
 run --repo ggqgga/Epics --since 24h
 ck "epics: exit 0" "$RC" 0
 has_line "epics 헤더 — 열림 6(에픽 이슈 자신은 루프 밖이라 안 낀다)" "$tmp/out" \
@@ -1105,11 +1406,264 @@ has_sub "leaf 없음 줄은 그대로" "$tmp/out" "    - #700 leaf 없음(Epic �
 has_line "무관한 파생은 에픽 병기 없이 그대로(실제 Epic #N 텍스트가 0건)" "$tmp/out"   "  파생      1  #701"
 no_sub "무관한 파생에 '(에픽 없음)' 이 잘못 붙지 않는다" "$tmp/out" "#701(에픽 없음)"
 
+# ── ★창 밖 leaf★ (#292) — 닫힌 leaf 는 "최근 200건" 이 아니라 검색 스코프 조회에서 온다 ──
+run --repo ggqgga/EpicWindow --since 24h
+ck "epicwindow: exit 0" "$RC" 0
+has_line "(#292) 에픽 2건" "$tmp/out" "  에픽      2"
+# 본체 — leaf 3건 중 2건이 최근 200건 **밖**이고 새 조회로만 잡힌다.
+has_sub "(#292) #100 — 창 밖 닫힌 leaf 2건이 세어진다(옛 경로면 0/1)" "$tmp/out" \
+  "    - #100 2/3 · 대기 1"
+# leaf 가 **전부** 창 밖인 에픽 — 옛 경로에서는 `leaf 없음(Epic 줄 미부착)` 이라는 사실과
+# 다른 줄이 나오고 `전부 종료` warn 이 **안 떴다**. 그 warn 이 존재하는 이유가 이 상태다.
+has_sub "(#292) #200 — leaf 전부 창 밖 종료: 2/2(옛 경로면 leaf 없음)" "$tmp/out" \
+  "    - #200 2/2"
+no_sub "(#292) #200 이 'leaf 없음' 으로 위장하지 않는다" "$tmp/out" "#200 leaf 없음"
+has_sub "(#292) #200 — 전부 종료 warn 이 뜬다(옛 경로면 안 떴다)" "$tmp/out" \
+  "    - 에픽 leaf 전부 종료 #200(epicwindow) — 닫아라(에픽 스윕 대상)"
+no_sub "(#292) 상한에 안 닿았으니 절단 warn 없음" "$tmp/out" "창 절단 가능(에픽 닫힌 leaf)"
+ck "(#292) 에픽이 있는 레포는 새 조회 1회(레포당 1회 — 에픽 수와 무관)" \
+  "$(grep -c '^epic-closed ' "$STUB_CALL_LOG")" 1
+
+# ── (#292) 조회 실패 3갈래 — 어느 것도 "닫힌 leaf 0건" 으로 접히지 않는다 ─────────
+run --repo ggqgga/EpicFail --since 24h
+ck "epicfail: 레포를 실패시키지 않는다(exit 0)" "$RC" 0
+has_sub "(#292)⑴ 조회 실패: 비율 대신 종료 미상" "$tmp/out" \
+  "    - #300 종료 미상(닫힌 leaf 조회 실패) · 대기 1"
+no_sub "(#292)⑴ 조회 실패를 0/N 으로 위장하지 않는다" "$tmp/out" "#300 0/"
+has_sub "(#292)⑴ 실패는 warn 으로 드러난다(사유 포함)" "$tmp/out" \
+  "    - 에픽 닫힌 leaf 조회 실패(epicfail) — 종료/전체 미상: gh: HTTP 403 rate limit"
+has_sub "(#292)⑴ 실패 중에도 전부 종료 warn 은 그대로(거짓 음성 방향이라 뜨면 참)" "$tmp/out" \
+  "    - 에픽 leaf 전부 종료 #310(epicfail) — 닫아라(에픽 스윕 대상)"
+has_sub "(#292)⑴ 실패 사유는 stderr 에도" "$tmp/err" "에픽 닫힌 leaf 조회 실패"
+
+run --repo ggqgga/EpicSilent --since 24h
+ck "epicsilent: exit 0" "$RC" 0
+has_sub "(#292)⑵ 빈 출력+exit 0 을 core API 대조로 실패로 가른다" "$tmp/out" \
+  "    - #400 종료 미상(닫힌 leaf 조회 실패) · 대기 1"
+has_sub "(#292)⑵ 조용한 실패 사유가 warn 에 적힌다" "$tmp/out" \
+  "검색 0행인데 최근 닫힌 목록엔 Epic 줄이 있다(조용한 실패)"
+
+run --repo ggqgga/EpicBadJson --since 24h
+ck "epicbadjson: exit 0" "$RC" 0
+has_sub "(#292)⑶ 배열이 아닌 응답도 실패다" "$tmp/out" \
+  "    - #450 종료 미상(닫힌 leaf 조회 실패) · 대기 1"
+has_sub "(#292)⑶ 사유: 응답이 배열이 아님" "$tmp/out" \
+  "    - 에픽 닫힌 leaf 조회 실패(epicbadjson) — 종료/전체 미상: 응답이 배열이 아님"
+
+# ── (#292) 새 조회가 자기 상한에 닿으면 절단 warn — 종전 `닫힌 이슈` warn 의 새 자리 ──
+: > "$STUB_CALL_LOG"
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" EPIC_CLOSED_LIMIT=2 \
+  "$SUT" --repo ggqgga/EpicCap --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "EPIC_CLOSED_LIMIT=2: exit 0" "$RC" 0
+has_sub "(#292) 새 조회 상한 도달 → 절단 warn(상한 수치를 문구에 싣는다)" "$tmp/out" \
+  "    - 목록 상한 2 도달 — 창 절단 가능(에픽 닫힌 leaf)"
+has_sub "(#292) 상한에 닿아도 받은 행은 그대로 센다" "$tmp/out" "    - #500 2/3 · 대기 1"
+no_sub "(#292) 상한 도달은 실패가 아니다(종료 미상 아님)" "$tmp/out" "#500 종료 미상"
+# 형식 오류는 조용한 기본값이 아니라 환경 실패(HANDOFF_GRACE_MIN 과 같은 규율).
+# `0` 은 "안 본다" 가 아니라 **0행을 돌려받는** 값이라 금지한다 — 이 이슈가 고친 증상을
+# 환경변수 하나로 되살리는 경로다.
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" EPIC_CLOSED_LIMIT=0 \
+  "$SUT" --repo ggqgga/EpicCap --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "EPIC_CLOSED_LIMIT=0: exit 1" "$RC" 1
+has_sub "EPIC_CLOSED_LIMIT=0: stdout 에도 사유" "$tmp/out" \
+  "파이프라인 — 스냅샷 실패: EPIC_CLOSED_LIMIT 형식 오류: 0"
+STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" EPIC_CLOSED_LIMIT=천 \
+  "$SUT" --repo ggqgga/EpicCap --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
+ck "EPIC_CLOSED_LIMIT 형식 오류: exit 1" "$RC" 1
+has_sub "EPIC_CLOSED_LIMIT 형식 오류: stdout 에도 사유" "$tmp/out" "EPIC_CLOSED_LIMIT 형식 오류: 천"
+
+# ── (#327) 전용 줄 끝 앵커 — 문장형 `Epic #N …` 은 leaf 가 아니다 ──────────
+run --repo ggqgga/EpicAnchor --since 24h
+ck "epicanchor: exit 0" "$RC" 0
+has_line "에픽 3건(#810 · #800 · #1)" "$tmp/out" "  에픽      3"
+# 걸러야 할 것 — 닫힌 이슈 3건이 전부 문장형이라 leaf 0. 앵커가 없으면 `#800 3/3` 이 되고
+# `에픽 leaf 전부 종료 #800` warn(스윕이 닫을 대상)이 붙는다 = 이 이슈가 지목한 오종료.
+has_sub "① #800 문장형 언급만 → leaf 0" "$tmp/out" "    - #800 leaf 없음(Epic 줄 미부착)"
+no_sub "①-a 『Epic #800 설명』·『(부모)』·『:』 이 leaf 로 새면 3/3 이 된다(반증)" "$tmp/out" "#800 3/3"
+no_sub "①-b 문장형만 달린 에픽에 '전부 종료' warn 이 붙으면 안 된다(반증)" "$tmp/out" \
+  "에픽 leaf 전부 종료 #800"
+# 걸러선 안 될 것 — 전용 줄 3형태(그대로·앞뒤 공백+소문자·대문자)는 전부 leaf
+has_sub "② #810 전용 줄 3형태는 전부 leaf" "$tmp/out" "    - #810 0/3 · 대기 3"
+# 숫자 경계 — 한 자리 에픽은 세고, 뒤에 다른 번호가 붙은 줄과 접두 오매치는 안 센다
+has_sub "③ #1 한 자리 에픽 — leaf 1" "$tmp/out" "    - #1 0/1 · 대기 1"
+no_sub "③-a 『Epic #1 #2』 가 leaf 로 새면 #1 이 0/2 가 된다(끝 앵커 반증)" "$tmp/out" "#1 0/2"
+# 접두 오매치(#816 `Epic #10`)는 여기서 **단언하지 않는다** — 번호를 수로 뽑아 비교하는 한
+# `Epic #10` 은 에픽 #10 이라 #1 의 총합에 닿는 경로 자체가 없다(끝 앵커·자릿수 어느 쪽을
+# 되돌려도 안 뒤집힌다). 무는 게 없는 단언을 "반증" 이라 적으면 다음 사람이 그 자리를
+# 안 의심한다 — 픽스처는 남겨 두되(에픽 목록에 없는 번호가 조용히 무시되는 것까지가 정상),
+# 반증은 실제로 뒤집히는 ③-a 하나로 둔다.
+
 # ── 무회귀 — bodat(`Epic #N` 이 하나도 없는 픽스처)은 에픽 절(0줄) 추가 외엔 그대로 ──
 run --repo ggqgga/BodaT --since 24h
 has_line "무회귀: bodat 에픽 0줄" "$tmp/out" "  에픽      0"
+# (#292) 열린 에픽이 0건인 레포는 새 조회를 **아예 안 한다** — 에픽 절이 없는 레포의 틱
+# 비용을 늘리지 않는다(방식 (가)의 "N=0 이면 0회" 성질을 O(1) 로 유지한 것).
+ck "(#292) 에픽 0건 레포: 추가 gh 호출 0회" \
+  "$(grep -c '^epic-closed ' "$STUB_CALL_LOG")" 0
 has_line "무회귀: 파생 줄은 에픽 병기 없이 종전 그대로(레포에 열린 에픽이 없다)" \
   "$tmp/out" "  파생      1  #4832"
+# ── ③-b (#265) 정지 라벨 미러 불일치 — 4격자 ───────────────────────────────
+
+# 픽스처는 **단계 라벨(flow:verify)을 이슈·PR 양쪽에 깔아** 단계 미러·무소속·좌초형 warn 을
+# 전부 끈 상태다 — 그래서 `warn 2` 가 곧 "새 판정이 낸 줄이 정확히 둘" 이라는 실측이고,
+# 나머지 두 칸이 조용하다는 것이 오탐 0 의 증거다(격자를 딴 warn 이 가리지 않는다).
+#
+#   이슈 정지 / PR 정지   want
+#   ───────────────────   ───────────────────────────────────────────────
+#   #10 無 / PR #110 無   warn 없음 (둘 다 없음 = 일치)
+#   #20 無 / PR #120 有   **warn** — 사람이 이슈에서만 뗀 잔재(이 이슈가 잡으려는 상태)
+#   #30 有 / PR #130 有   warn 없음 (둘 다 있음 = 일치, 살아 있는 사람 게이트)
+#   #40 有 / PR #140 無   warn 없음 — **부착 방향**은 이 축 밖(#244)이고 루프에 교정
+#                          수단이 없다(#190: warn 은 루프가 교정 가능한 위반일 때만)
+#   #50 無 / PR #150 有   **warn** — `hold:*` 만 남아도(needs-human 없이) 성립해야 한다
+#                          (#244 가 needs-human 을 기계 정지에서 빼는 날의 대비)
+#   (이슈 미연결) PR #160 warn 없음 — 대조할 이슈가 없다(transition.sh 의 `issue=-` 홀드)
+#   #70 無 / PR #170 有   warn 없음 — head 가 `feat/*`(사람 세션 PR). 사람이 직접 붙였을 수
+#                          있어 루프가 뗄 것이 아니다 → 교정 못 하니 warn 도 아니다(#188)
+#   #80 無 / PR #180 有   warn 없음 — head 는 `agent/issue-80` 인데 `closingIssuesReferences`
+#                          가 비었다(`Refs #N` 전용). 짝이 **증명되지 않았으므로** 대상 밖 —
+#                          그 PR 의 홀드는 `issue=-` 로 붙은 정상 상태일 수 있다
+#
+# 짝짓기는 `closingIssuesReferences[0]` 이 아니라 **head 의 `agent/issue-N` ∩ closes** 다
+# (이 레포 실데이터: PR #113 head=`agent/issue-109` refs=`[108,109]` — `[0]` 은 #108 이다).
+# 그리고 경보는 **closes 전건이 깨끗할 때만** 낸다 — 교정(resume-sweep ④)이 그 조건에서만
+# 편집하므로, 여기서 더 울리면 조치 불가능한 잡음이고 덜 울리면 교정이 몰래 돈다.
+#   #90 無 / PR #190 有   **warn** — closes 가 `[99, 90]`(순서 역전). 짝은 `[0]`(#99)이
+#                          아니라 브랜치의 이슈 #90 이다
+#   #91 無 / PR #191 有   warn 없음 — 같은 PR 이 닫는 #98 에 `hold:policy` 가 살아 있다
+#                          (묶음 디스패치 — 전이는 이슈 인자를 하나만 받는다)
+#
+# 맨몸 `needs-human`(= `hold:` 접두가 **하나도 없음**)은 짝짓기·전건 게이트를 다 통과해도
+# 대상 밖이다. 기계는 그 모양을 만들 수 없다 — `needs-human` 을 붙이는 자리는
+# `transition.sh` 하나뿐이고 기계 정지 세 전이는 `--reason` 이 **필수**라 언제나
+# `hold:<사유>` 와 쌍으로 붙인다. 그러니 PR 에만 맨몸으로 있다 = 사람이 머지 직전에 손으로
+# 세운 브레이크이고, 교정 갈래(resume-sweep ④)는 그것을 떼지 않는다. 여기서만 울리면
+# "고쳐 준다" 고 말해 놓고 안 고치는 줄이 상시로 남는다(#190).
+#   #92 無 / PR #192 有   warn 없음 — 짝도 서고 closes 전건도 깨끗한데 PR 정지가 맨몸
+#                          `needs-human` 뿐이다. 위 #170 과 달리 head 는 `agent/issue-92` 라
+#                          **이 관문 하나만** 이 칸을 조용하게 만든다(짝짓기로는 안 걸린다)
+#
+# (#331 쌍둥이 정합) ⑶ 전건 게이트의 판정 집합은 **열린 이슈 ∪ 닫힌 이슈**다. 교정 갈래
+# (`resume-sweep.sh` 의 `read_labels_state`)는 닫는 이슈를 번호로 실제 조회해 CLOSED 도
+# 판정하므로, 여기가 열린 목록만 보면 두 술어가 갈린다 — 경보는 "안 고친다" 고 말하는데
+# 교정은 몰래 도는 상태다(#293 마감 검증 WARN 의 실측 픽스처가 바로 아래 #93 이다).
+#   #93 無 / PR #193 有   **warn** — closes `[93 OPEN 깨끗, 97 CLOSED 깨끗]`. 닫힌 쪽도
+#                          깨끗하므로 스윕은 편집한다 → 경보도 울려야 한다
+#   #94 無 / PR #194 有   warn 없음 — closes `[94 OPEN 깨끗, 96 CLOSED hold:policy]`.
+#                          닫힌 이슈에 사람 게이트가 살아 있어 스윕도 무편집이다
+#                          (`read_labels_state` 는 상태를 판정에 쓰지 않는다)
+#   #95 無 / PR #195 有   warn 없음 — closes `[95 OPEN 깨끗, 9999 어느 목록에도 없음]`.
+#                          남는 비대칭(각 200건 상한 절단 — 둘 중 어느 목록에도 없는 번호)을
+#                          못 박는 칸이다: "못 봤다" 는 조용한 쪽으로 틀린다. 타 레포 참조는
+#                          비대칭이 **아니다** — 부재가 아니라 동번호 로컬 이슈와의 충돌로
+#                          나타나고 교정 갈래도 같은 레포 같은 번호를 묻는다(`loop-status.sh`
+#                          ⑶ 주석과 같은 문장)
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.issues.json" <<'FX'
+[
+ {"number":10,"title":"둘 다 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":20,"title":"PR 에만 정지 라벨이 남았다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":30,"title":"양쪽 다 정지","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":40,"title":"이슈에만 정지","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:ladder"}]},
+ {"number":50,"title":"PR 에 hold 만 남았다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":70,"title":"사람 세션 PR 이 달린 이슈","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":80,"title":"Refs 전용 PR 이 달린 이슈","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":90,"title":"closes 순서 역전 PR 의 브랜치 이슈","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":99,"title":"같은 PR 이 닫는 딴 이슈 — 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"}]},
+ {"number":91,"title":"묶음 디스패치의 브랜치 이슈 — 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":98,"title":"묶음 디스패치의 딴 이슈 — 사람 게이트가 살아 있다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"hold:policy"}]},
+ {"number":92,"title":"맨몸 needs-human 이 PR 에만 — 사람이 손으로 세운 브레이크","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:ready"}]},
+ {"number":93,"title":"닫힌 짝 이슈가 깨끗하다 — 스윕이 고치는 칸","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":94,"title":"닫힌 짝 이슈에 사람 게이트가 살아 있다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":95,"title":"닫는 이슈 하나가 어느 목록에도 없다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.pr_open.json" <<'FX'
+[
+ {"number":110,"headRefName":"agent/issue-10","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":10}],"labels":[{"name":"flow:verify"}]},
+ {"number":120,"headRefName":"agent/issue-20","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":20}],"labels":[{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":130,"headRefName":"agent/issue-30","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":30}],"labels":[{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":140,"headRefName":"agent/issue-40","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":40}],"labels":[{"name":"flow:verify"}]},
+ {"number":150,"headRefName":"agent/issue-50","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":50}],"labels":[{"name":"flow:verify"},{"name":"hold:conflict"}]},
+ {"number":160,"headRefName":"feat/이슈-없는-정지","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[],"labels":[{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":170,"headRefName":"feat/사람이-연-정지","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":70}],"labels":[{"name":"flow:verify"},{"name":"needs-human"}]},
+ {"number":180,"headRefName":"agent/issue-80","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]},
+ {"number":190,"headRefName":"agent/issue-90","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":99},{"number":90}],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]},
+ {"number":191,"headRefName":"agent/issue-91","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":91},{"number":98}],"labels":[{"name":"flow:verify"},{"name":"needs-human"}]},
+ {"number":192,"headRefName":"agent/issue-92","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":92}],"labels":[{"name":"flow:ready"},{"name":"needs-human"}]},
+ {"number":193,"headRefName":"agent/issue-93","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":93},{"number":97}],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]},
+ {"number":194,"headRefName":"agent/issue-94","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":94},{"number":96}],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]},
+ {"number":195,"headRefName":"agent/issue-95","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":95},{"number":9999}],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_Mirror.pr_closed.json"
+# (#331) 닫힌 이슈 — ⑶ 전건 게이트가 **실제로** 이 목록을 본다는 것의 실측 입력.
+# #97 은 깨끗(→ PR #193 이 warn) · #96 엔 사람 게이트가 살아 있다(→ PR #194 는 조용).
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.issues_closed.json" <<'FX'
+[
+ {"number":96,"body":"","closedAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":97,"body":"","closedAt":"@NOW@","labels":[{"name":"agent-ready"}]}
+]
+FX
+
+run --repo ggqgga/Mirror --since 24h
+ck "(#265) 격자: exit 0" "$RC" 0
+has_line "(#265·#331) 새 판정이 낸 줄은 정확히 4건(오탐 0)" "$tmp/out" "  warn      4"
+has_line "(#265) PR 에만 정지 라벨 → warn" "$tmp/out" \
+  "    - 정지 미러 불일치 #20(mirror) ↔ PR #120(mirror) — 이슈 없음 · PR hold:policy needs-human"
+has_line "(#265) needs-human 없이 hold:* 만 남아도 warn (#244 대비)" "$tmp/out" \
+  "    - 정지 미러 불일치 #50(mirror) ↔ PR #150(mirror) — 이슈 없음 · PR hold:conflict"
+no_sub "(#265) 둘 다 없음(#10)은 조용하다" "$tmp/out" "정지 미러 불일치 #10"
+no_sub "(#265) 둘 다 있음(#30)은 조용하다 — 살아 있는 사람 게이트" "$tmp/out" "정지 미러 불일치 #30"
+no_sub "(#265) 이슈에만 있음(#40)은 이 축 밖(#244)" "$tmp/out" "정지 미러 불일치 #40"
+no_sub "(#265) 연결 이슈 없는 held PR #160 은 대조 상대가 없다" "$tmp/out" "PR #160"
+# 짝짓기는 교정 갈래(resume-sweep ④)와 같은 규칙으로 좁힌다 — 경보가 교정보다 넓으면
+# "고쳐 준다" 고 말해 놓고 안 고치는 줄이 상시로 남는다.
+no_sub "(#265) 사람 세션 PR #170 은 루프가 뗄 것이 아니라 warn 도 아니다" "$tmp/out" "↔ PR #170"
+no_sub "(#265) Refs 전용(closes 링크 없음) PR #180 은 짝이 증명 안 됐다" "$tmp/out" "↔ PR #180"
+# 짝은 `closes[0]` 이 아니라 **head 의 N** 이다 — 순서가 역전된 PR 에서 갈린다.
+has_line "(#265) closes 순서 역전 — 짝은 브랜치의 이슈(#90)" "$tmp/out" \
+  "    - 정지 미러 불일치 #90(mirror) ↔ PR #190(mirror) — 이슈 없음 · PR hold:policy"
+no_sub "(#265) [0] 쪽(#99)을 짝으로 고르지 않는다" "$tmp/out" "불일치 #99"
+# 묶음 디스패치 — 짝(#91)이 깨끗해도 같은 PR 이 닫는 #98 의 사람 게이트가 살아 있다.
+# 여기서 울리면 교정(resume-sweep ④)이 안 하는 일을 경보가 하라고 말하는 꼴이다.
+no_sub "(#265) 묶음 디스패치의 딴 이슈에 정지가 있으면 조용하다" "$tmp/out" "불일치 #91"
+no_sub "(#265) 정지가 남은 #98 자신도 후보가 아니다" "$tmp/out" "불일치 #98"
+# 맨몸 `needs-human` — 짝짓기(⑴⑵)·전건 게이트(⑶)를 다 통과하는 칸이라 **이 관문만**이
+# 조용하게 만든다. 교정 갈래가 안 떼는 것을 경보만 울리면 상시 잡음이다(#190).
+no_sub "(#265) 맨몸 needs-human(PR #192)은 warn 이 아니다 — 기계가 못 만드는 모양" \
+  "$tmp/out" "불일치 #92"
+# (#331 쌍둥이 정합) ⑶ 전건 게이트는 **닫힌 이슈도** 본다 — 교정 갈래(resume-sweep ④)의
+# `read_labels_state` 가 번호로 실제 조회해 CLOSED 를 판정하므로, 여기가 열린 목록만 보면
+# 경보는 "안 고친다" 고 말하는데 교정이 몰래 도는 상태가 된다(#293 마감 검증 WARN 의 실측).
+has_line "(#331) 닫힌 짝 이슈가 깨끗하면 경보도 울린다(교정 갈래와 같은 판정)" "$tmp/out" \
+  "    - 정지 미러 불일치 #93(mirror) ↔ PR #193(mirror) — 이슈 없음 · PR hold:policy"
+no_sub "(#331) 닫힌 이슈에 사람 게이트가 살아 있으면 조용하다 — 스윕도 무편집" \
+  "$tmp/out" "불일치 #94"
+no_sub "(#331) 닫는 이슈가 어느 목록에도 없으면 조용하다 — '못 봤다' 는 조용한 쪽으로" \
+  "$tmp/out" "불일치 #95"
+# 단계 미러 판정은 정지 라벨에 오염되지 않는다 — 정지 라벨을 mirror_labels 에 밀어 넣었다면
+# #20·#50 이 **단계** 미러 불일치로도 울렸을 자리다(별도 판정이라는 것의 실측).
+no_sub "(#265) 정지 라벨이 단계 미러 판정을 깨뜨리지 않는다" "$tmp/out" "- 미러 불일치 #20"
+no_sub "(#265) 정지 라벨이 단계 미러 판정을 깨뜨리지 않는다(#50)" "$tmp/out" "- 미러 불일치 #50"
+# `--json` 면에도 같은 사실이 실린다(후속 도구가 문자열 파싱을 안 하게)
+run --repo ggqgga/Mirror --since 24h --json
+ck "(#265) --json: kind·issue·pr·labels" \
+  "$(jq -c '[.repos[0].warns[] | select(.kind=="hold_mirror_mismatch") | {i:.issue, p:.pr, l:.labels}]' < "$tmp/out")" \
+  '[{"i":20,"p":120,"l":["hold:policy","needs-human"]},{"i":50,"p":150,"l":["hold:conflict"]},{"i":90,"p":190,"l":["hold:policy"]},{"i":93,"p":193,"l":["hold:policy"]}]'
 
 # ── --post 대시보드(#163) ──────────────────────────────────────────────────
 fx="$tmp/fx/ggqgga_issue-runner"

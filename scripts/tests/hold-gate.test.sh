@@ -181,6 +181,12 @@ grid=(
   # transition.sh 뿐이고 전부 소문자라 실물이 없지만, 손으로 `Hold:ladder` 를 붙여도
   # 게이트가 안 선다는 사실 자체를 여기 못박아 조용한 드리프트를 막는다.
   'Hold:ladder(대문자) → 통과(대소문자 구분 · 실물 라벨 아님)|["Hold:ladder"]|pass'
+  # 라벨 이름에 **쉼표**가 들어갈 수 있다(GitHub 이 허용한다). 라벨 경계는 배열이지 쉼표가
+  # 아니므로, 라벨 목록을 쉼표로 이어 붙인 뒤 `,hold:`·`,needs-human,` 를 찾는 구현은
+  # 이 두 칸을 **잘못 제외**한다 — 정상 후보 소실 방향이라 원래 결함보다 나쁘다(#266).
+  # 네 게이트가 같은 표현(라벨 배열 + index/startswith)을 쓰는지 여기서 갈린다.
+  'x,hold:y(쉼표 품은 한 라벨) → 통과|["x,hold:y"]|pass'
+  'a,needs-human(쉼표 품은 한 라벨) → 통과|["a,needs-human"]|pass'
 )
 
 for sut in eligible claim closeout verify; do
@@ -198,6 +204,48 @@ for sut in eligible claim closeout verify; do
     rest=${row#*|}
     extra=${rest%%|*}
     want=${rest##*|}
+    labels=$(merge_labels "$base" "$extra")
+    got=$("run_$sut" "$labels")
+    if [ "$got" = "$want" ]; then
+      pass=$((pass + 1))
+    else
+      fail=$((fail + 1))
+      echo "  ✗ [$sut] $name — 기대=$want 실제=$got labels=$labels"
+    fi
+  done
+done
+
+# ── 격자 둘 — verify-runner 점유 라벨 `verifying` (#275) ─────────────────────
+# `verifying` 은 harvesting 동형의 점유 라벨이다(verify-runner 가 집는 순간 PR·이슈 양쪽에
+# 붙인다). 그래서 소유 경계가 **비대칭**이다: issue-runner 두 게이트(eligible·claim)와
+# closeout 게이트는 `verifying` 을 **제외**해야 하고(검증 중 이슈가 재디스패치되거나 검증
+# 중 PR 이 입양·재디스패치되면 verify-runner 와 같은 PR 을 물어뜯는다), verify-eligible 만
+# 그것을 **후보(고아 재집)** 로 낸다. 위 격자와 달리 기대가 SUT 마다 다르므로 열을 넷 둔다.
+#
+# 이슈 두 자리는 원 이슈에 미러링된 라벨을 본다 — `agent:claimed` 가 스윕에 스트립돼도
+# 이 라벨이 재디스패치를 막는 마지막 게이트다(eligible-issues.sh 의 검증/마감 레인 제외
+# 주석). claim 은 eligible 이후 인덱스 지연으로 후보에 남은 이슈를 직전에 다시 본다.
+# 과잉 제외 방향(`verified`·`verifying-x`·쉼표 품은 `x,verifying`)은 통과로 못박는다.
+#
+# `이름|추가라벨(JSON)|eligible|claim|closeout|verify`
+grid2=(
+  'verifying → 이슈 두 게이트·closeout 제외 · verify 는 고아 재집|["verifying"]|block|block|block|pass'
+  'flow:verify → 검증대기(verify-runner 소유) — 같은 경계(회귀)|["flow:verify"]|block|block|block|pass'
+  'flow:ready → 마감대기 — closeout 후보(회귀)|["flow:ready"]|block|block|pass|pass'
+  'harvesting → closeout 점유 — 넷 다 제외(회귀)|["harvesting"]|block|block|block|block'
+  'verified → 통과(과잉 제외 금지 · 정확 일치)|["verified"]|pass|pass|pass|pass'
+  'verifying-x → 통과(과잉 제외 금지 · 접두 아님)|["verifying-x"]|pass|pass|pass|pass'
+  'x,verifying(쉼표 품은 한 라벨) → 통과(라벨 경계는 배열)|["x,verifying"]|pass|pass|pass|pass'
+)
+for row in "${grid2[@]}"; do
+  IFS='|' read -r name extra w_eligible w_claim w_closeout w_verify <<< "$row"
+  for sut in eligible claim closeout verify; do
+    case "$sut" in
+      eligible) base='["agent-ready"]'; want=$w_eligible ;;
+      claim)    base='["agent-ready"]'; want=$w_claim ;;
+      closeout) base='[]';              want=$w_closeout ;;
+      verify)   base='["flow:verify"]'; want=$w_verify ;;
+    esac
     labels=$(merge_labels "$base" "$extra")
     got=$("run_$sut" "$labels")
     if [ "$got" = "$want" ]; then
