@@ -7,6 +7,10 @@
 #   ② leaf 중 하나라도 열려 있으면 **쓰기 0**·이벤트 0(조용히 넘긴다).
 #   ③ leaf 0 → note("연결된 leaf 없음")·쓰기 0. 옛 에픽은 닫지 않는다.
 #   ④ 산문 속 `… epic #N …`(줄 시작 아님)은 leaf 가 아니다 — 검색은 산문도 물어 온다.
+#   ④-d (#327) leaf 는 **전용 줄**이다 — 줄 시작은 `Epic #N` 이어도 뒤에 산문이 붙으면
+#      leaf 가 아니다(끝 앵커). 걸러야 할 것 4 · 걸러선 안 될 것 5 · 숫자 경계를 격자로 문다.
+#   ④-e (#327) 그 조임의 **반대 방향** — 문장형 줄이 **열려 있어** 에픽을 붙잡던 경우는
+#      이제 안 붙잡는다(= 닫는 쪽으로 움직인다). 닫는 방향이라 조용히 두지 않고 못 박는다.
 #   ⑤ 검색이 상한에 닿으면 **닫지 않고** warn(조용한 오판 금지) — rc 는 0(실패 아님, 보류).
 #   ⑥ `--dry-run` 은 쓰기 0 으로 같은 이벤트를 `dry_run:true` 로 낸다.
 #   ⑦ 마커(`<!-- epic-sweep -->`)가 이미 있으면 코멘트를 다시 안 달고 close 만 한다(멱등).
@@ -14,6 +18,8 @@
 #   ⑨ 조회·쓰기 실패는 "해당 없음" 으로 위장되지 않는다(warn + exit 1) — 코멘트가 실패하면
 #      close 까지 가지 않는다(다음 틱이 코멘트부터 다시 시도).
 #   ⑩ leaf 판정 정규식은 loop-status.sh(#260)와 **같은 문자열**이다(두 계산기 금지).
+#      ⑪-b 는 그 문자열에 **끝 앵커가 있다**는 것까지 따로 문다 — 두 파일이 함께 되돌아가면
+#      동일성 검사만으로는 초록이다(#327).
 #   ⑪ 도구(jq) 실패는 fail-closed — 라벨을 못 읽으면 deploy-wait 가드가 "없다" 로 새면 안 되고,
 #      leaf 번호 목록을 못 만들면 근거 빈 코멘트로 닫으면 안 된다(데이터로는 못 닿는 경로라
 #      표식 붙은 그 한 호출만 jq 스텁으로 실패시킨다 — resume-sweep.test.sh 와 같은 수법).
@@ -162,6 +168,11 @@ leaf() {  # leaf <번호> <에픽번호> <state>
   jq -n --argjson n "$1" --arg b "Epic #$2" --arg s "$3" \
     '{number:$n, state:$s, body:$b}'
 }
+# 본문을 그대로 주는 판 — 경계값 격자(④-d)가 쓴다
+leaf_body() {  # leaf_body <번호> <본문> <state>
+  jq -n --argjson n "$1" --arg b "$2" --arg s "$3" \
+    '{number:$n, state:$s, body:$b}'
+}
 
 echo "── ① leaf 3 전부 닫힘 → closed + 코멘트 1 + close 1 ──"
 reset
@@ -226,6 +237,79 @@ search "$(jq -n '[{number:100, state:"open", body:"Epic #100"}]')"
 run
 check "note(= leaf 0)" "$(has_ev note)"
 check "쓰기 0" "$(no_writes)"
+
+echo "── ④-d 전용 줄 경계 — 줄 시작이 Epic #N 이어도 뒤에 산문이 붙으면 leaf 아님 (#327) ──"
+# 걸러야 할 것 / 걸러선 안 될 것을 **함께** 격자로 단다. 끝 앵커를 되돌리면(= `[[:space:]]*$`
+# 를 지우면) 앞 칸 전부가 leaf 로 새고, 그 leaf 가 CLOSED 라 에픽 #100 이 **닫힌다** —
+# 이 이슈(#327)가 지목한 실패 시나리오 그 자체다. 각 칸은 leaf 후보 **하나만** 두어
+# "닫힘/안 닫힘" 이 곧 "leaf 로 셌다/안 셌다" 가 되게 한다.
+# 걸러야 할 것 — leaf 0(note) · 쓰기 0
+while IFS='|' read -r nm body; do
+  [ -n "$nm" ] || continue
+  reset
+  search "$(jq -n --argjson a "$(leaf_body 510 "$body" closed)" '[$a]')"
+  run
+  check "④-d 제외: $nm → note(leaf 0)" "$(has_ev note)"
+  check "④-d 제외: $nm → closed 없음(회귀 단언 — 앵커 없으면 여기서 닫혔다)" "$(no_ev closed)"
+  check "④-d 제외: $nm → 쓰기 0" "$(no_writes)"
+done <<'GRID'
+뒤에 산문|Epic #100 설명
+뒤에 괄호|Epic #100 (부모)
+뒤에 콜론|Epic #100:
+뒤에 다른 번호|Epic #100 #200
+GRID
+# 걸러선 안 될 것 — leaf 1(closed) · leaves=[511]
+esc_tab=$(printf '\t')
+esc_cr=$(printf '\r')
+while IFS='|' read -r nm body; do
+  [ -n "$nm" ] || continue
+  body=${body//@TAB@/$esc_tab}
+  body=${body//@CR@/$esc_cr}
+  body=${body//@SP@/  }
+  reset
+  search "$(jq -n --argjson a "$(leaf_body 511 "$body" closed)" '[$a]')"
+  run
+  check "④-d 포함: $nm → closed" "$(has_ev closed)"
+  check "④-d 포함: $nm → leaves=[511]" \
+    "$([ "$(ev closed | jq -c '.leaves')" = '[511]' ] && echo ok || echo no)"
+done <<'GRID'
+전용 줄|Epic #100
+앞뒤 공백 + 소문자|  epic #100@SP@
+대문자|EPIC #100
+줄 끝 탭|Epic #100@TAB@
+CRLF 본문의 캐리지리턴|Epic #100@CR@
+GRID
+# ④-e 조임의 **반대 방향** — 전용 줄 CLOSED leaf + 문장형 OPEN 줄
+# 조임은 leaf 를 빼는 변경이라 두 방향이 있다. ④-d 는 "문장형만 있던 에픽을 이제 안 닫는다"
+# 쪽이고, 이 칸은 "문장형이 **열려 있어** 에픽을 붙잡고 있던 경우 이제 닫는다" 쪽이다 —
+# 전용 줄 규약(#259)상 문장형은 애초에 leaf 가 아니므로 이게 의도한 의미론이지만, **닫는
+# 방향**이라 되돌리기가 사람 일이다. 그래서 조용히 두지 않고 여기에 못 박는다.
+# 실측: 루프 스코프 세 레포(BodaT·issue-runner·BoDAC)의 문장형 줄 4건은 **전부 CLOSED**
+# 이슈에 있어, 이 조임으로 새로 닫히는 에픽은 현재 0건이다(PR 본문 실측표).
+reset
+search "$(jq -n --argjson a "$(leaf_body 520 "Epic #100" closed)" \
+                --argjson b "$(leaf_body 521 "Epic #100 은 아직 논의 중" open)" '[$a,$b]')"
+run
+check "④-e 문장형 OPEN 줄은 에픽을 붙잡지 않는다 → closed" "$(has_ev closed)"
+check "④-e leaves 는 전용 줄 하나뿐([520])" \
+  "$([ "$(ev closed | jq -c '.leaves')" = '[520]' ] && echo ok || echo no)"
+# 숫자 경계 — 한 자리 에픽(#1)도 그대로 leaf 로 센다(`[0-9]+` 가 최소 1자리).
+# 이 두 칸은 **끝 앵커 뮤테이션으론 안 뒤집힌다**(무회귀 가드다, 반증이 아니다) — 번호를
+# 수로 뽑아 비교하는 한 `Epic #10` 이 에픽 #1 로 새는 경로가 없기 때문이다. ④-b(`Epic #1000`
+# ≠ `Epic #100`)의 한 자리 판으로 남긴다.
+reset
+epics '[{"number":1,"title":"한 자리 에픽","labels":[{"name":"epic"}]}]'
+search "$(jq -n --argjson a "$(leaf_body 512 "Epic #1" closed)" '[$a]')"
+run
+check "④-d 숫자 경계: Epic #1 은 에픽 #1 의 leaf" "$(has_ev closed)"
+check "④-d 숫자 경계: leaves=[512]" \
+  "$([ "$(ev closed | jq -c '.leaves')" = '[512]' ] && echo ok || echo no)"
+reset
+epics '[{"number":1,"title":"한 자리 에픽","labels":[{"name":"epic"}]}]'
+search "$(jq -n --argjson a "$(leaf_body 513 "Epic #10" closed)" '[$a]')"
+run
+check "④-d 숫자 경계: Epic #10 은 에픽 #1 의 leaf 가 아니다" "$(has_ev note)"
+check "④-d 숫자 경계: 닫지 않는다" "$(no_ev closed)"
 
 echo "── ⑤ 검색 상한 도달 → warn · 닫지 않음 ──"
 reset
@@ -403,6 +487,14 @@ pat_es=$(grep -o 'capture("[^"]*epic[^"]*"; *"i")' "$DIR/epic-sweep.sh" | head -
 check "loop-status.sh 에 Epic 줄 capture 존재" "$([ -n "$pat_ls" ] && echo ok || echo no)"
 check "epic-sweep.sh 가 같은 capture 를 쓴다" \
   "$([ -n "$pat_es" ] && [ "$pat_ls" = "$pat_es" ] && echo ok || echo no)"
+
+# ⑪-b (#327) 두 파일이 **함께** 되돌아가면 ⑪ 은 계속 초록이다 — 끝 앵커의 존재를 따로 문다.
+# 없앨 때 통과하던 형태(`Epic #100 설명`)의 행동은 ④-d 격자가 물고, 여기선 문자열 자체를 문다.
+case "$pat_es" in
+  *'#(?<n>[0-9]+)[[:space:]]*$"; "i")') anchored=ok ;;
+  *) anchored=no ;;
+esac
+check "⑪-b 끝 앵커([[:space:]]*\$) — 전용 줄만 leaf (#327)" "$anchored"
 
 echo "epic-sweep: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
