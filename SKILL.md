@@ -135,6 +135,18 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   않는다 (agent-ready가 이미 제거됨).
 - `stale` — 죽은 claim 해제됨. 보고만.
 - `warn` — dirty/unpushed worktree. **건드리지 말고** Report에 그대로 올려 사람이 보게 하라.
+- `half_moved_redispatch` — `verify-redispatch` 가 **반쯤 실패한** PR 이다(#394): PR 은 단계
+  라벨(`flow:*`·`verifying`)을 잃었는데 이슈는 `agent:claimed` 를 유지해 세 게이트
+  (`verify-eligible`·`closeout-eligible`·`eligible-issues`) **전부에서 빠진다** — verify-runner 가
+  "다음 틱이 잡게" 라고 넘긴 그 상태의 주체가 여기다(`references/state-machine.md` 회수 열).
+  **같은 전이를 멱등 재실행하라**: `$SCRIPTS/transition.sh verify-redispatch <repo> <이슈> <pr>`
+  (PR 쪽은 이미 이동해 있어 no-op 이고 이슈만 `agent-ready` 로 돌아온다 → 이번 틱 ③ 후보).
+  성사되면 ④ Report 의 `보수` 에 `#<num>(반쯤 이동 회수)` 한 줄. 전이가 exit 1·2 면 ④ Report 에
+  `BLOCKED: 전이 실패 verify-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>` 만 남기고 다음
+  이벤트로 간다(공통 규칙 — 조용히 넘어가지 않는다. 다음 틱이 같은 이벤트를 다시 낸다).
+  이 이벤트가 난 PR 은 **② Maintain 입력이 아니다**(`pr_open` 이 안 나온다 — `harvesting` 과
+  같은 모양). 살아 있는 워커(`progress-evidence.sh` 진행 증거 있음)와 증명 실패는 스크립트가
+  이미 걸러 이 이벤트를 내지 않으니, 여기서 신선도를 다시 재지 마라.
 - `pr_open` — ② Maintain 의 입력.
 - `working` — 워커 진행 중. TaskList 로 해당 백그라운드 에이전트가 실제 살아있는지
   확인. **"죽어 보임"(TaskList 상 종료)을 바로 사망으로 단정하지 마라** — 그 태스크의

@@ -133,6 +133,20 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
 - `stale` — a dead claim was released. Report only.
 - `warn` — dirty/unpushed worktree. **Do not touch it** — surface it as-is in
   Report so a human sees it.
+- `half_moved_redispatch` — a PR whose `verify-redispatch` **half-failed** (#394): the PR lost its
+  stage labels (`flow:*`·`verifying`) while the issue kept `agent:claimed`, so it falls out of
+  **all three** gates (`verify-eligible`·`closeout-eligible`·`eligible-issues`) — this is the owner
+  of the state verify-runner hands off as "the next tick will catch it"
+  (see the recovery column in `references/state-machine.md`).
+  **Re-run the same transition idempotently**:
+  `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr>` (the PR side has already moved, so
+  it is a no-op; only the issue returns to `agent-ready` → a ③ candidate this tick). On success add
+  `#<num>(반쯤 이동 회수)` to `보수` in ④ Report. If the transition exits 1·2, report
+  `BLOCKED: transition failed verify-redispatch PR #<pr>(<repo_short>) — <one stderr line>` and move
+  on (the common rule — never silently; the next tick re-emits the same event).
+  A PR with this event is **not** ② Maintain input (no `pr_open` — same shape as `harvesting`).
+  A live worker (progress evidence via `progress-evidence.sh`) and any unprovable lookup are already
+  filtered out by the script, so do not re-judge freshness here.
 - `pr_open` — input to ② Maintain.
 - `working` — a worker is in progress. Use TaskList to check whether that
   background agent is actually alive. **Do not assume "looks dead" (the task has
