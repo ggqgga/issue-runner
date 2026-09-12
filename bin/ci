@@ -359,6 +359,34 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   fi
 done
 
+echo "[closeout ① Reconcile] resume 재개 지점이 반송 마커를 탄다 — bounce-state 와 closeout-redispatch 가 한 문단에 (#271 ⑷)"
+# ③-1 ⓐ 의 회수가 성공하면 PR·이슈에 `harvesting` 이 남아 **다음 틱 ① Reconcile 이 `resume`**
+# 을 낸다. 그때 재개 지점을 마커표가 정하면, 이전 회차가 남긴 1단계 마커(`마감 검증:`)가
+# 이미 있는 PR 은 ③-1 을 건너뛰고 2단계 머지 게이트로 간다 — 게이트 조건(CI 캐시 pass ·
+# `검증자 리뷰:` BLOCKER 0 · MERGEABLE)은 반송 직전 상태 그대로 전부 참이라 **방금 BLOCKER 를
+# 낸 head 가 머지된다.** 그래서 ① Reconcile 절은 "반송 상태가 마커표보다 먼저" 를 적어야 하고,
+# 그 규칙이 성립하려면 **판정(`bounce-state.sh`)과 행선지(`closeout-redispatch` 재시도 지점)가
+# 같은 문단에서 이어져야** 한다 — 둘 중 하나만 남으면 규칙이 반쪽이라 봇이 마커표로 되돌아간다.
+# 줄 단위가 아니라 **문단(빈 줄로 끊긴 덩어리)** 단위로 보는 이유: 이 레포 산문은 ~90자에서
+# 되접히고 값표는 여러 줄에 걸친다 — 한 줄을 요구하면 재줄바꿈만으로 빨개진다(가드가 뜻이
+# 아니라 형태를 물면 다음 편집자가 가드를 지운다).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  r_start=$(grep -nE '^## ① Reconcile' "$f" | head -1 | cut -d: -f1) || r_start=""
+  [ -n "$r_start" ] \
+    || { echo "  ✗ $f 에 '## ① Reconcile' 절 앵커가 없다 — 개명·이동이면 앵커를 고쳐라"; exit 1; }
+  r_end=$(awk -v s="$r_start" 'NR>s && /^## / { print NR; exit }' "$f")
+  [ -n "$r_end" ] \
+    || { echo "  ✗ $f: ① Reconcile 다음 절 앵커를 못 찾았다 — 구간 스코프가 성립하지 않는다"; exit 1; }
+  sed -n "${r_start},$((r_end - 1))p" "$f" | awk '
+    function flush() { if (hb && hr) found = 1; hb = 0; hr = 0 }
+    /^[[:space:]]*$/ { flush(); next }
+    { if (index($0, "bounce-state.sh")) hb = 1
+      if (index($0, "closeout-redispatch")) hr = 1 }
+    END { flush(); exit(found ? 0 : 1) }
+  ' \
+    || { echo "  ✗ $f: ① Reconcile 절에 bounce-state.sh 와 closeout-redispatch 가 **한 문단에** 함께 없다 — resume 재개 규칙이 지워졌다(마커표를 타면 반송된 head 가 2단계 머지로 샌다, #271 ⑷)"; exit 1; }
+done
+
 echo "[worker] 반송 해소 보고 접두가 마커 집합 밖인지 — 한/영 템플릿 (#251 ②)"
 # #251 ② 는 판정기가 아니라 **문안**으로 닫혔다: 워커의 반송 해소 보고가 반송 마커로
 # 시작하면 안전망이 그걸 반송으로 읽어, 아무도 반송하지 않은 PR 이 마감 후보에서 빠진다.
@@ -400,12 +428,21 @@ echo "[closeout] ①-b 반송 게이트가 갈래 앞에 배선돼 있는지 —
 # 호출보다 앞**에 있는지까지 본다. 헤더 문구는 번역되므로 언어 불변 앵커를 쓴다: 호출 줄
 # (`$SCRIPTS/bounce-state.sh`)이 2) 절의 첫 줄(`$SCRIPTS/finish-classify.sh`)보다 **앞**이어야
 # 갈래를 가르기 전에 게이트가 선다.
+# 탐색 범위는 **①-b 절 안**이다 — 파일 전체를 `head -1` 로 훑으면 ① Reconcile 의 `resume`
+# 재개 갈래가 같은 헬퍼를 부르는 순간(#271 ⑷) 그 줄이 첫 매치를 가로채, ①-b 의 게이트가
+# 통째로 지워져도 부등식이 우연히 성립해 초록이 된다(PR#306 이 같은 형태로 밟은 함정).
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
-  b_line=$(grep -nF '$SCRIPTS/bounce-state.sh' "$f" | head -1 | cut -d: -f1)
-  fc_line=$(grep -nF '$SCRIPTS/finish-classify.sh' "$f" | head -1 | cut -d: -f1)
-  mg_line=$(grep -nF -- '--json mergeable' "$f" | head -1 | cut -d: -f1)
+  bb_start=$(grep -nE '^## ①-b' "$f" | head -1 | cut -d: -f1) || bb_start=""
+  [ -n "$bb_start" ] \
+    || { echo "  ✗ $f 에 '## ①-b' 절 앵커가 없다 — 개명·이동이면 앵커를 고쳐라"; exit 1; }
+  bb_end=$(awk -v s="$bb_start" 'NR>s && /^## / { print NR; exit }' "$f")
+  [ -n "$bb_end" ] || bb_end=$(wc -l < "$f")
+  bb_seg=$(sed -n "${bb_start},${bb_end}p" "$f")
+  b_line=$(printf '%s\n' "$bb_seg" | grep -nF '$SCRIPTS/bounce-state.sh' | head -1 | cut -d: -f1)
+  fc_line=$(printf '%s\n' "$bb_seg" | grep -nF '$SCRIPTS/finish-classify.sh' | head -1 | cut -d: -f1)
+  mg_line=$(printf '%s\n' "$bb_seg" | grep -nF -- '--json mergeable' | head -1 | cut -d: -f1)
   [ -n "$b_line" ] \
-    || { echo "  ✗ $f 에 ①-b 반송 게이트(\$SCRIPTS/bounce-state.sh) 호출 없음"; exit 1; }
+    || { echo "  ✗ $f 의 ①-b 절에 반송 게이트(\$SCRIPTS/bounce-state.sh) 호출 없음"; exit 1; }
   [ -n "$fc_line" ] \
     || { echo "  ✗ $f 에 \$SCRIPTS/finish-classify.sh 앵커 없음 — 가드가 의미를 잃었다"; exit 1; }
   [ -n "$mg_line" ] \

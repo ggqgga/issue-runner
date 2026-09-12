@@ -104,6 +104,53 @@ resume):
 | 5 post | `✅ 스모크` comment / deploy issue CLOSED + verification·deploy-complete comment | if present, do not re-smoke (including when the deploy lane (deploy-cycle) finished verification and closed it) |
 | 6 spinoff | created-issue number comment | if present, do not re-issue |
 
+**For `resume`, the bounce state decides the resume point before the marker table does
+(#271).** The marker table's step-1 row ("skip step 1 if a `마감 검증:` comment exists")
+rests on **a premise that can be false** — if a `마감 검증:` comment left by an earlier
+round is already there (e.g. a PR whose ③-1 ⓑ `⚠ 보류` a human released so the next round
+came back), the table skips step 1 and sends the PR straight to **the step-2 merge gate**.
+That gate's conditions (CI cache pass · zero `검증자 리뷰:` BLOCKERs · MERGEABLE) are all
+still true exactly as they were right before the bounce, so **the very head that just drew a
+BLOCKER gets merged.** So `resume` runs `$SCRIPTS/bounce-state.sh <repo> <pr>` once
+**before** it looks at the marker table and picks the resume point from that value (**the
+same single place** ①-b uses — never a second copy of the judgment logic). That script can
+emit four values and **all four have a destination**:
+
+| `bounce-state.sh` | Meaning | `resume` point |
+|---|---|---|
+| `ok` | no bounce marker, or the last verdict after the newest bounce marker is `머지 판정: ✅` | **the marker table as-is** — skip the finished steps and resume where it stopped. But if a bounce marker **is** in the ledger, only a `마감 검증:` comment **later than that bounce** counts as the step-1 marker (one before the bounce judged the stale head that caused the bounce — the same #171 rule applied to ✅, applied to the step-1 marker too) |
+| `bounced` | no verdict comment after the newest bounce marker, or the last one is `머지 판정: 🔄` | **do not look at the marker table**; resume at ③-1 ⓐ's `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` **retry point** (procedure right below) — never step-1 re-verification or the step-2 merge |
+| `held` | the last verdict after the newest bounce marker is `머지 판정: ⚠ 보류` | **treat as `active`, touch nothing** — the worker raised that hold explicitly. Leave one line in ④ Report, `보류: PR #<pr>(<repo_short>) — 반송 뒤 워커 ⚠`, and touch the PR no further this tick (the same direction as ①-b — the sweep does not promote this value either, #218 second round) |
+| no output (exit 1 — no judgment) | comment lookup/parse failure | **treat as `active`, touch nothing** + one line in ④ Report, `BLOCKED: 반송 판정 실패 PR #<pr>(<repo_short>)` — treating a state whose non-bounce was *never proven* as a pass is exactly fail-open (the same direction as ①-b) |
+
+**`bounced` resume procedure — align the claim before re-running the transition.** Getting
+here means ③-1 ⓐ's restore (`closeout-pick`) put `harvesting` back on both the PR and the
+issue, but that restore may have landed on only one side. Read the issue side first with
+`gh issue view <issue> --repo <repo> --json labels` and branch (the PR side must carry
+`harvesting` or no `resume` would have fired at all):
+
+- The issue has `agent:claimed` = **a replacement worker is alive** (the dispatcher got there
+  first inside the restore window). Do not run the transition — the retry would strip that
+  worker's `agent:claimed`. Treat as `active`, touch nothing, and leave one line in ④ Report:
+  `보류: PR #<pr>(<repo_short>) — 교체 워커 점유(agent:claimed)`. When that worker finishes and
+  posts `머지 판정: ✅`, the next tick's value flips to `ok` and the PR returns to the marker
+  table path on its own.
+- The issue has neither `harvesting` nor `agent:claimed` = **a half restore** (the issue side
+  was left unoccupied — run the transition as-is and the dispatcher picks that issue up
+  meanwhile). Run `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` once more to align
+  both sides (idempotent, so the PR side is a no-op) and continue below. If it exits non-zero,
+  report `BLOCKED: 전이 실패 closeout-pick PR #<pr>(<repo_short>) — <one stderr line>` in
+  ④ Report and stop on that PR for this tick.
+- Both sides have `harvesting` = a whole restore. Continue below.
+
+Then re-run **only the transition call** from ③-1 ⓐ — **do not leave the bounce comment
+again.** It is already in the ledger (that is why the value is `bounced`), and a second one
+adds a round that never happened, making the next tick's judgment input false. If that retry
+fails **again**, take ③-1 ⓐ's failure branch as written (one restore call +
+`BLOCKED: 전이 실패 closeout-redispatch …`), leave it as that `BLOCKED:` line in ④ Report, and
+**touch that PR no further this tick** (never loop it inside the same tick — no infinite
+retries). The next tick's `resume` picks the same spot back up.
+
 **Epic sweep (end of ①, every tick)** — an epic whose leaves are all closed is closed by
 **no loop at all** (an epic is never picked up by a worker; it is a sub-issue rollup target).
 Run `"$SCRIPTS/epic-sweep.sh"` with no `cd` (the scope auto-applies from the loop session
@@ -600,8 +647,13 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
     open. Attaching `harvesting` is idempotent, so **the same single call** as (b) closes it — do
     not branch on a state query first.
   Once all three have their occupation back to the pre-transition state, the next tick's ① Reconcile
-  picks that PR up again as `resume` (from ③-1, since this branch leaves no step-1 `마감 검증:`
-  marker) and re-runs the same transition at the same spot — `closeout-redispatch` is idempotent, so
+  picks that PR up again as `resume`. **That resume point is set by the bounce marker, not by the
+  marker table** — this branch leaves no step-1 `마감 검증:` marker of its own, but **an earlier
+  round may already have left one**, and then the table's "skip step 1 if present" sends the head
+  that just drew a BLOCKER past ③-1 and into the step-2 merge gate (whose conditions are all still
+  true exactly as they were right before the bounce). So follow ① Reconcile's `resume` value table —
+  as long as `bounce-state.sh` says `bounced`, ignore the marker table and resume at **the transition
+  call right above**, re-running the same transition at the same spot — `closeout-redispatch` is idempotent, so
   re-running it is harmless (the same discipline #157 set for the `--note` transitions: a failure
   leaves the pre-transition state and the caller re-runs the same transition on the next tick — and
   if the restore fails too, the two `BLOCKED` lines in ④ Report are the human signal).
