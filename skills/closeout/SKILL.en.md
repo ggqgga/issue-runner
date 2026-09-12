@@ -90,6 +90,15 @@ Run `$SCRIPTS/closeout-reconcile.sh` and handle each event:
   resume).
 - `resume` — the PR is OPEN and still holds `harvesting`. Skip the steps the
   marker table shows as finished and resume the pipeline from where it stopped.
+- `human_hold` — the PR is OPEN but carries `needs-human` (a human is investigating), or
+  that label could not be read (`why` tells which). **Touch nothing** — leave one line in
+  ④ Report, `보류: PR #<pr>(<repo_short>) — 사람 보류(<why>)`, and touch the PR no further
+  this tick. Running it as `resume` would fall into the `bounced` resume procedure below and
+  fire `closeout-redispatch`, and that transition **strips** the `needs-human`·`hold:*` a
+  human just attached (exactly the risk ①-b excludes with its target filter, #151). An
+  unreadable label goes the same way — treating a hold whose absence was never proven as a
+  pass is fail-open. **Exit path**: when the human removes `needs-human`, the next tick comes
+  back as `resume` (`harvesting` stays, so the PR never drifts out of the lane).
 - `stale` — report only.
 
 Idempotent marker table (for re-judging finished steps — prevents duplicate work on
@@ -97,12 +106,35 @@ resume):
 
 | Step | Marker | Resume judgment |
 |---|---|---|
-| 1 verify | PR comment `마감 검증:` | if present, skip step 1 |
+| 1 verify | PR comment `마감 검증: ✅` | skip step 1 only when `$SCRIPTS/closeout-step1-marker.sh <repo> <pr>` says `skip` (section right below — `verify` and any non-zero exit both mean **run it**) |
 | 2 merge | PR `MERGED` | if MERGED, merge is done (includes post-merge worktree cleanup) |
 | 3 reconcile | plan-doc diff (merge commit) + epic comment | if in the merge, done |
 | 4 deploy | `배포 대기:` comment / `deployed:<sha>` | if present, do not re-request |
 | 5 post | `✅ 스모크` comment / deploy issue CLOSED + verification·deploy-complete comment | if present, do not re-smoke (including when the deploy lane (deploy-cycle) finished verification and closed it) |
 | 6 spinoff | created-issue number comment | if present, do not re-issue |
+
+**A step-1 marker is not "present, therefore done" — it counts only as a pass verdict on the
+current head (#271).** The old table wrote step 1 as one line, "skip if a `마감 검증:` comment
+exists", and that premise **can be false in three directions**. All three end the same way: an
+unverified head reaches the step-2 merge gate, whose conditions (CI cache pass · zero
+`검증자 리뷰:` BLOCKERs · MERGEABLE) are all still true, so **it gets merged**:
+
+- (A) **The latest `마감 검증:` is `⚠ 보류`.** ③-1 ⓑ's hold comment shares the prefix, so the
+  table catches it — but `⚠ 보류` records that step 1 was **not** passed. And it is the
+  *latest* one that counts, not the mere existence of a ✅ (`✅ → ⚠` means the later ⚠
+  overrode that ✅ — the same trap #218 attempt 3 hit in `bounce-state.sh`).
+- (B) **The marker predates the current head commit.** If a rebase or a human push moved the
+  head, that verdict judged the old code (the #171 rule applied to ✅, applied to the step-1
+  marker too).
+- (C) **The marker precedes the newest bounce marker.** If the replacement worker posted ✅
+  after a bounce **without a new commit**, the head time is unchanged, so (B) never fires.
+
+The three are **ANDed**, and the judgment lives in `$SCRIPTS/closeout-step1-marker.sh
+<repo> <pr>`, **one place** (it gets the bounce marker set and ordering from
+`bounce-state.sh --marker-index` inside — never a second copy of the marker matching, #171).
+Skip step 1 **only when the output is exactly `skip`** — `verify` and a non-zero exit
+(lookup/parse failure) both mean **run it**. Re-running costs one verifier call; skipping
+costs an unverified merge, so the two are not symmetric.
 
 **For `resume`, the bounce state decides the resume point before the marker table does
 (#271).** The marker table's step-1 row ("skip step 1 if a `마감 검증:` comment exists")
@@ -118,7 +150,7 @@ emit four values and **all four have a destination**:
 
 | `bounce-state.sh` | Meaning | `resume` point |
 |---|---|---|
-| `ok` | no bounce marker, or the last verdict after the newest bounce marker is `머지 판정: ✅` | **the marker table as-is** — skip the finished steps and resume where it stopped. But if a bounce marker **is** in the ledger, only a `마감 검증:` comment **later than that bounce** counts as the step-1 marker (one before the bounce judged the stale head that caused the bounce — the same #171 rule applied to ✅, applied to the step-1 marker too) |
+| `ok` | no bounce marker, or the last verdict after the newest bounce marker is `머지 판정: ✅` | **the marker table as-is** — skip the finished steps and resume where it stopped. The step-1 row's judgment is `closeout-step1-marker.sh`, one place, per the section above (bounce ordering (C), head freshness (B), and `⚠ 보류` (A) all live inside it — do not re-derive them here) |
 | `bounced` | no verdict comment after the newest bounce marker, or the last one is `머지 판정: 🔄` | **do not look at the marker table**; resume at ③-1 ⓐ's `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` **retry point** (procedure right below) — never step-1 re-verification or the step-2 merge |
 | `held` | the last verdict after the newest bounce marker is `머지 판정: ⚠ 보류` | **treat as `active`, touch nothing** — the worker raised that hold explicitly. Leave one line in ④ Report, `보류: PR #<pr>(<repo_short>) — 반송 뒤 워커 ⚠`, and touch the PR no further this tick (the same direction as ①-b — the sweep does not promote this value either, #218 second round) |
 | no output (exit 1 — no judgment) | comment lookup/parse failure | **treat as `active`, touch nothing** + one line in ④ Report, `BLOCKED: 반송 판정 실패 PR #<pr>(<repo_short>)` — treating a state whose non-bounce was *never proven* as a pass is exactly fail-open (the same direction as ①-b) |
@@ -648,22 +680,47 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
     not branch on a state query first.
   Once all three have their occupation back to the pre-transition state, the next tick's ① Reconcile
   picks that PR up again as `resume`. **That resume point is set by the bounce marker, not by the
-  marker table** — this branch leaves no step-1 `마감 검증:` marker of its own, but **an earlier
-  round may already have left one**, and then the table's "skip step 1 if present" sends the head
-  that just drew a BLOCKER past ③-1 and into the step-2 merge gate (whose conditions are all still
-  true exactly as they were right before the bounce). So follow ① Reconcile's `resume` value table —
+  marker table** — this branch leaves no step-1 `마감 검증: ✅` marker of its own, but **an earlier
+  round may already have left one**, so going to the marker table would put the head that just drew a
+  BLOCKER in front of the step-2 merge gate (whose conditions are all still true exactly as they were
+  right before the bounce. The step-1 marker judgment (A)·(B)·(C) sends most of those back to ③-1,
+  but here **not looking at the marker table at all** comes first — a bounce round belongs to the
+  worker lane, not the closeout lane). So follow ① Reconcile's `resume` value table —
   as long as `bounce-state.sh` says `bounced`, ignore the marker table and resume at **the transition
   call right above**, re-running the same transition at the same spot — `closeout-redispatch` is idempotent, so
   re-running it is harmless (the same discipline #157 set for the `--note` transitions: a failure
   leaves the pre-transition state and the caller re-runs the same transition on the next tick — and
   if the restore fails too, the two `BLOCKED` lines in ④ Report are the human signal).
-  **If that comment exits non-zero (gh failure / bad args), do NOT run the transition** — the
-  issue would go back to `agent-ready` while the PR carries no bounce marker, so the safety net
+  **If that comment exits non-zero (gh failure / bad args), do NOT run `closeout-redispatch`** —
+  the issue would go back to `agent-ready` while the PR carries no bounce marker, so the safety net
   misses the PR and `closeout-eligible` re-picks it on the stale ✅ (exactly the state this
-  branch exists to prevent). Leave that PR's terminal state unchanged, report
-  `BLOCKED: 반송 코멘트 실패 PR #<pr>(<repo_short>) — <one stderr line>` in ④ Report, and
-  **touch that PR no further this tick** — `harvesting` is still attached, so the next tick's
-  ① Reconcile retries the same spot as `resume`.
+  branch exists to prevent). **Fold this round into ⓑ instead.** The bounce never reached the
+  ledger, so the PR cannot be handed back to the worker lane — and this tick's BLOCKER cannot be
+  treated as if it never happened either:
+  `$SCRIPTS/transition.sh closeout-blocked <repo> <issue> <pr> --reason policy --note "반송 코멘트 게시 실패 — <one stderr line>"`
+  puts it on **human hold** → **`blocked` terminal state** (no new terminal state is created; the
+  reason enum is only `conflict|policy|ladder` and a human has to decide, so it is `policy` — the
+  real reason rides in `--note`). Report
+  `BLOCKED: 반송 코멘트 실패 PR #<pr>(<repo_short>) — <one stderr line>` in ④ Report.
+  **Why a label and not a comment**: the comment channel just failed, so recording the state through
+  that same channel fails for the same reason. `transition.sh` edits labels, an independent call, and
+  `needs-human` closes **all three entrances at once** — `closeout-eligible`, ①-b's target filter,
+  and ① Reconcile (`human_hold`) — removing the stale-✅ re-pick path.
+  **If that transition also exits non-zero**, leave that PR's terminal state unchanged, add one more
+  line, `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`, to
+  ④ Report, and **touch that PR no further this tick**. `harvesting` is still attached, so the next
+  tick's ① Reconcile emits `resume` — and with no bounce trace in the ledger `bounce-state.sh` says
+  `ok`, so that `resume` takes **the marker-table path**. What guarantees ③-1 runs again there is not
+  the bounce marker but **the step-1 marker judgment** (see "A step-1 marker is not 'present,
+  therefore done'" above — an earlier round's `⚠ 보류` is caught by (A), a stale marker behind a new
+  commit by (B), a marker before the bounce by (C), and `closeout-step1-marker.sh` answers `verify`).
+  **The remaining cell is not hidden**: after that double failure (comment post and label transition
+  both failing in the same tick), if a `마감 검증: ✅` **for the current head** is still alive in the
+  ledger, the step-1 judgment is `skip` and the step-2 gate judges that head again. Closing that cell
+  too would need a **third channel** for this tick's BLOCKER, and with two channels already down
+  there is no basis for expecting a third to succeed — so the two `BLOCKED:` lines in ④ Report are
+  the human signal (the same discipline the (a)·(b)·(c) restore section set: "if the restore fails
+  too, the two `BLOCKED` lines are the human signal").
 - ⓑ **A spec/policy call is still open (no-verdict included) → hold for a human.**
   `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
   <!-- bodat:worker -->"`
@@ -1190,7 +1247,8 @@ Non-operational notes — they do not affect tick execution.
 - Operation: run closeout as a `/loop` session separate from issue-runner
   (e.g. `/loop 20m /closeout`) — the two coordinate occupation purely by label.
 - Dependencies: the deterministic helpers (`closeout-reconcile.sh`·
-  `closeout-eligible.sh`·`closeout-ci-pass.sh`·`transition.sh` (label moves)·
+  `closeout-eligible.sh`·`closeout-ci-pass.sh`·`closeout-step1-marker.sh`
+  (the ① marker table's step-1 judgment)·`transition.sh` (label moves)·
   `loop-status.sh` (the ④ Report snapshot)) live in `$SCRIPTS`
   (=`~/.claude/skills/issue-runner/scripts`), and the 3 references
   (`verifier-prompt.md`·`deploy-check-issue.md`·`spinoff-issue.md`) live in
