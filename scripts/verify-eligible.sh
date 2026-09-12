@@ -59,7 +59,7 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # (`holding`·`on-hold`·`area:hold`)은 걸리지 않는다 — 과잉 제외는 검증 대기 PR 을 조용히
   # 큐에서 지우는 방향이라 원래 결함보다 나쁘다.
   #
-  # 해제는 **두 라벨 다** 떼는 것이다 — `needs-human` 만 떼면 `hold:*` 가 남아 후보로
+  # 해제는 **붙어 있는 정지 라벨을 다** 떼는 것이다 — `hold:*` 만 남아도 후보로
   # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
   printf '%s' "$meta" | jq -e '[.labels[].name]|index("needs-human")' >/dev/null && continue
   printf '%s' "$meta" | jq -e '[.labels[].name]|any(startswith("hold:"))' >/dev/null && continue

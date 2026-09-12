@@ -459,6 +459,59 @@ cat > "$tmp/fx/ggqgga_Stale.comments.20.json" <<'FX'
 {"comments":[{"body":"사람 확인(conflict): 옛 홀드의 질문\n<!-- hold-note: conflict --><!-- bodat:worker -->"}]}
 FX
 
+# ── 픽스처: ggqgga/Holds (holds) — 보류 칸 가르기 (#244) ────────────────────
+# 기계 정지에서 `needs-human` 이 떨어진 뒤, `hold:*` 만 붙은 이슈가 `대기`(= 집을 수 있는
+# 이슈)로 새면 사람대기 칸이 "손댈 게 없는 것" 으로 찼던 오류의 **반대 방향**이 된다.
+#
+#   번호  입력                                  want
+#   ────  ───────────────────────────────────   ────────────────────────────────
+#   #40   hold:ladder + agent-ready             보류 `#40(ladder)`  (재개 대기)
+#   #41   hold:policy 단독                      보류 `#41(policy)`  (재심 전)
+#   #42   hold:policy + needs-human             사람대기 (재심이 "사람 몫 유지" 로 끝난 꼴)
+#   #43   hold:conflict 단독                    사람대기 (충돌은 그 자체가 사람 몫)
+#   #44   needs-human 단독                      사람대기 `사유 없음` + note(정상 상태)
+#   #45   agent-ready 만                        대기
+#   #46   hold:ladder + flow:verify             보류 (우선순위: 보류 > 단계 라벨)
+#   #47   agent-ready + Blocked by #45          막힘 (보류가 막힘으로 안 샌다는 대조군)
+#   #48   hold:ladder + Blocked by #45          보류 (우선순위: 보류 > 막힘)
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Holds.issues.json" <<'FX'
+[
+ {"number":40,"title":"사다리 재개 대기","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:ladder"}]},
+ {"number":41,"title":"정책 재심 전","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:policy"}]},
+ {"number":42,"title":"재심 유지 — 사람 몫 확정","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:policy"},{"name":"needs-human"}]},
+ {"number":43,"title":"충돌 — 그 자체가 사람 몫","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
+ {"number":44,"title":"사람이 직접 세운 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"needs-human"}]},
+ {"number":45,"title":"집을 수 있는 이슈","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"}]},
+ {"number":46,"title":"단계 라벨보다 보류가 앞","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"hold:ladder"}]},
+ {"number":47,"title":"막힘 대조군","createdAt":"@NOW@","body":"Blocked by #45","labels":[{"name":"agent-ready"}]},
+ {"number":48,"title":"막힘보다 보류가 앞","createdAt":"@NOW@","body":"Blocked by #45","labels":[{"name":"agent-ready"},{"name":"hold:ladder"}]}
+]
+FX
+# 무소속 PR warn 은 **정지 라벨**(needs-human ∪ hold:*)을 본다 (#244) — `needs-human` 만
+# 보던 옛 술어에서는 홀드된 PR 과 홀드된 이슈의 PR 이 통째로 warn 으로 쏟아진다.
+#   PR #70  연결 이슈가 보류(#40)          → warn 아님 (이슈 쪽 hold:*)
+#   PR #71  연결 이슈가 대기(#45)          → 종전대로 warn (**과잉 제외 반증**)
+#   PR #72  PR 자체에 hold:policy(#41)     → warn 아님 (PR 쪽 hold:*)
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Holds.pr_open.json" <<'FX'
+[
+ {"number":70,"headRefName":"agent/issue-40","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":40}],"labels":[]},
+ {"number":71,"headRefName":"agent/issue-45","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":45}],"labels":[]},
+ {"number":72,"headRefName":"agent/issue-41","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":41}],"labels":[{"name":"hold:policy"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_Holds.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_Holds.issues_closed.json"
+# 사람대기 버킷의 policy·conflict 에는 질문(hold-note)이 있어야 `질문 없음` 이 안 붙는다.
+cat > "$tmp/fx/ggqgga_Holds.comments.42.json" <<'FX'
+{"comments":[{"body":"사람 확인(policy): A인가 B인가\n<!-- hold-note: policy --><!-- bodat:worker -->"}]}
+FX
+cat > "$tmp/fx/ggqgga_Holds.comments.43.json" <<'FX'
+{"comments":[{"body":"사람 확인(conflict): 어느 쪽으로 풀까\n<!-- hold-note: conflict --><!-- bodat:worker -->"}]}
+FX
+
 # ── 픽스처: ggqgga/Blockers (blockers) — 대기/막힘 가르기 (#248) ─────────────
 # 블로커 파싱 규칙은 eligible-issues.sh 와 **같은 의미**여야 한다. 개별 반례만 막으면
 # 근사가 '더 많이 잡는' 쪽으로 틀리고(정상 `대기` 가 `막힘` 으로 내려간다 — 원래 버그보다
@@ -738,6 +791,8 @@ has_line "대기 3(창 밖 파생건도 대기에는 남는다)" "$tmp/out" \
 # (#248) 블로커가 없는 픽스처에서는 `막힘 0` 한 줄이 느는 것 말고 출력이 바뀌지 않는다 —
 # 위아래의 기존 기대값이 그대로 통과하는 것이 그 증거다.
 has_line "(#248) 비-막힘 픽스처는 막힘 0" "$tmp/out" "  막힘      0"
+# (#244) 이 픽스처의 정지는 전부 needs-human 을 달고 있어 사람대기가 이긴다 → 보류 0.
+has_line "(#244) 사람대기가 이긴 픽스처는 보류 0" "$tmp/out" "  보류      0"
 # 인계 전 창(기본 90분) — #4854 는 60분 전이라 무소속 warn 이 아니라 구현중 줄에 붙는다.
 # #4701 의 PR #4855 는 200분 전이라 붙지 않는다(아래 warn 에서 잡힌다).
 has_line "구현중 2(좌초건 포함) — 창 안 PR 만 '인계 전' 으로 병기" "$tmp/out" \
@@ -772,7 +827,8 @@ has_line "승격 대기 — release 없는 레포" "$tmp/out" \
 no_sub "루프 밖 이슈 #4900 미집계" "$tmp/out" "#4900"
 
 # ③ warn 5종 + 사유 없음 + 인계 지연(+ #188 회귀 대조 PR #4991 1건 + #265 정지 미러 1건)
-has_line "warn 11건(질문 유무 미확인 1 · #188 대조 #4991)" "$tmp/out" "  warn      11"
+# (#244) `needs-human 사유 없음` warn 이 note 로 내려가 11 → 10.
+has_line "warn 10건(질문 유무 미확인 1 · #188 대조 #4991 · #265 정지 미러 포함)" "$tmp/out" "  warn      10"
 # (#265) PR #4852 는 `needs-human` 을 **맨몸으로**(= `hold:` 접두 0개) 단 채 열려 있고 연결
 # 이슈 #4832 는 깨끗하다. 기계는 이 모양을 만들 수 없다 — `needs-human` 을 붙이는 자리는
 # `transition.sh` 하나뿐이고 기계 정지 세 전이는 `--reason` 이 필수라 언제나 `hold:<사유>`
@@ -782,7 +838,7 @@ has_line "warn 11건(질문 유무 미확인 1 · #188 대조 #4991)" "$tmp/out"
 no_sub "(#265) 맨몸 needs-human PR #4852 는 정지 미러 warn 이 아니다" "$tmp/out" \
   "정지 미러 불일치 #4832"
 has_sub "warn 무소속 PR" "$tmp/out" \
-  "    - 무소속 PR #4850(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4832 는 needs-human 아님"
+  "    - 무소속 PR #4850(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4832 도 정지 라벨 없음"
 has_sub "warn 단계 라벨 중복" "$tmp/out" \
   "    - 단계 라벨 중복 #4700(bodat) — flow:verify + harvesting"
 has_sub "warn 미러 불일치(이슈에만 단계)" "$tmp/out" \
@@ -801,12 +857,12 @@ no_sub "무소속: PR 자체 needs-human(#4852) 은 warn 아님" "$tmp/out" "무
 no_sub "인계 전 창 안 PR #4854 는 warn 아님" "$tmp/out" "무소속 PR #4854"
 # 정상 흐름(PR 과 claim 이 같은 시각대)은 claim 기준으로 재도 종전과 같은 숫자다 (#177 무회귀).
 has_line "인계 전 창 밖 PR #4855 는 무소속 warn + 사망 의심(claim 기준 200분)" "$tmp/out" \
-  "    - 무소속 PR #4855(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4701 는 needs-human 아님(agent:claimed 인데 200분 경과 — 워커 사망 의심)"
+  "    - 무소속 PR #4855(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4701 도 정지 라벨 없음(agent:claimed 인데 200분 경과 — 워커 사망 의심)"
 # 판정축은 `agent:claimed` **라벨**이 아니라 **구현중 버킷** — 라벨을 단 채 배포대기로 간
 # 이슈(#4790)의 라벨 없는 PR 은 warn 에서 빠지면 어디에도 안 그려져 거짓 깨끗함이 된다.
 # 정확히 이 줄이어야 한다(꼬리표가 붙으면 has_line 이 깨진다 — 인계 창과 무관한 건이다).
 has_line "구현중 버킷 밖의 agent:claimed PR 은 무소속 warn(꼬리표 없이)" "$tmp/out" \
-  "    - 무소속 PR #4856(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4790 는 needs-human 아님"
+  "    - 무소속 PR #4856(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4790 도 정지 라벨 없음"
 no_sub "구현중 버킷 밖 PR 은 '인계 전' 으로도 안 그려진다" "$tmp/out" "PR #4856(인계 전)"
 
 # ── (#188) 무소속 PR warn 이 사람 세션 브랜치(head 가 agent/issue-* 아님)에도 울리던
@@ -814,27 +870,29 @@ no_sub "구현중 버킷 밖 PR 은 '인계 전' 으로도 안 그려진다" "$t
 # 강등한다(존재 자체는 남긴다). 실측 원천(bodat PR #4987/#4963)과 같은 모양으로 픽스처.
 # 케이스1: head feat/* + 연결 이슈 있음 + 단계 라벨 0 → 무소속 warn 은 0, note 로 강등.
 no_sub "(#188) 케이스1: 사람 세션 PR #4987 는 무소속 warn 아님" "$tmp/out" "무소속 PR #4987"
-has_line "(#188) note 1건 — 사람 세션 PR 만 강등된다(에이전트 헤드·이슈 미연결은 안 섞인다)" \
-  "$tmp/out" "  note      1"
+has_line "(#188) note 2건 — 사람 세션 PR + (#244) 사람이 직접 세운 정지" \
+  "$tmp/out" "  note      2"
 has_line "(#188) 케이스1: 사람 세션 PR #4987 는 note 로 강등된다" "$tmp/out" \
   "    - 사람 세션 PR #4987(bodat) — head feat/adspower-swr-4963 (agent/issue-* 아님) · 연결 이슈 #4963 · 루프가 못 집어 warn 아님"
 # 케이스2(회귀 방지): head agent/issue-* + 단계 라벨 0 + 연결 이슈 needs-human 아님
 # → 종전대로 무소속 warn 1건. note 로는 내려가지 않는다.
 has_line "(#188) 케이스2: agent 헤드는 종전대로 무소속 warn" "$tmp/out" \
-  "    - 무소속 PR #4991(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4964 는 needs-human 아님"
+  "    - 무소속 PR #4991(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4964 도 정지 라벨 없음"
 no_sub "(#188) 케이스2: agent 헤드는 note 로 강등되지 않는다" "$tmp/out" "사람 세션 PR #4991"
 # 케이스3: head feat/* + 연결 이슈 없음 → 애초에 후보가 아니다(종전 동작 유지) —
 # 무소속 warn 에도 note 에도 나타나지 않는다(존재를 지키는 대상 자체가 아니라서).
 no_sub "(#188) 케이스3: 연결 이슈 없는 사람 브랜치는 무소속 warn 에 없다" "$tmp/out" "PR #4992"
 no_sub "(#188) 케이스3: 연결 이슈 없는 사람 브랜치는 note 에도 없다" "$tmp/out" "사람 세션 PR #4992"
 
-# 사유 없는 needs-human 만 warn — hold:* 가 붙은 셋은 조용하다
-has_sub "warn needs-human 사유 없음" "$tmp/out" \
-  "    - needs-human 사유 없음 #4826(bodat) — hold:* 라벨 없음"
-no_sub "사유 있는 건은 사유 없음 warn 아님" "$tmp/out" "사유 없음 #4825"
-no_sub "사유 있는 건은 사유 없음 warn 아님(conflict)" "$tmp/out" "사유 없음 #4770"
-# 배포대기가 이긴 needs-human 이슈(#4848)는 이 warn 밖 — 루프 전이가 만든 게 아니다
-no_sub "배포대기로 간 needs-human 은 사유 없음 warn 밖" "$tmp/out" "사유 없음 #4848"
+# (#244) 사유 라벨 없는 needs-human 은 **정상 상태**(사람이 직접 세운 정지)라 warn 이
+# 아니라 note 다 — 기계 정지가 hold:* 하나만 붙게 된 뒤로 교정할 불변식 위반이 없다.
+no_sub "사유 없음은 더 이상 warn 이 아니다" "$tmp/out" "needs-human 사유 없음"
+has_sub "(#244) 사람이 직접 세운 정지는 note" "$tmp/out" \
+  "    - 사람이 직접 세운 정지 #4826(bodat) — hold:* 라벨 없음(정상)"
+no_sub "사유 있는 건은 이 note 대상 아님" "$tmp/out" "직접 세운 정지 #4825"
+no_sub "사유 있는 건은 이 note 대상 아님(conflict)" "$tmp/out" "직접 세운 정지 #4770"
+# 배포대기가 이긴 needs-human 이슈(#4848)는 이 줄 밖 — 루프 전이가 만든 게 아니다
+no_sub "배포대기로 간 needs-human 은 이 note 밖" "$tmp/out" "직접 세운 정지 #4848"
 
 # ── ⑫ (#157) 질문(hold-note) 없는 policy·conflict 홀드는 `질문 없음` ─────────
 # 질문이 있는 #4780(policy) 과, 마커 없는 코멘트만 있는 #4770(conflict) 이 갈린다 —
@@ -912,21 +970,21 @@ ck "reclaim: exit 0" "$RC" 0
 #     PR 나이(240)로 재면 살아 있는 워커를 사망으로 신고하고, `--paginate` 를 빠뜨리면
 #     1쪽의 옛 claim(200)이 나온다. 셋이 다 다른 값이라 무엇을 쟀는지가 드러난다.
 has_line "(a) 재claim 건은 claim 기준 5분" "$tmp/out" \
-  "    - 무소속 PR #61(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #31 는 needs-human 아님(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
+  "    - 무소속 PR #61(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #31 도 정지 라벨 없음(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
 no_sub "(a) PR 나이(240분)로 재지 않는다" "$tmp/out" "240분 경과"
 no_sub "(a) 첫 페이지의 옛 claim(200분)을 취하지 않는다 — 전량을 읽는다" "$tmp/out" "200분 경과"
 # (a) (#181) 같은 이슈(#31)를 가리키는 두 번째 무소속 PR #65 — 값은 #61 과 같아야 한다
 # (같은 타임라인을 다시 조회하지 않고 캐시된 claim 시각을 재사용한다는 뜻).
 has_line "(a) 같은 이슈의 두 번째 PR #65 도 같은 claim 시각(5분)" "$tmp/out" \
-  "    - 무소속 PR #65(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #31 는 needs-human 아님(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
+  "    - 무소속 PR #65(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #31 도 정지 라벨 없음(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
 # (b) 조회 실패·이벤트 부재는 숫자를 지어내지 않는다. warn 자체는 유지한다.
 has_line "(b) 타임라인 조회 실패 → 경과 미상(warn 은 유지)" "$tmp/out" \
-  "    - 무소속 PR #62(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #32 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+  "    - 무소속 PR #62(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #32 도 정지 라벨 없음(agent:claimed 인데 경과 미상 — 확인 필요)"
 has_line "(b) claim 이벤트 부재 → 경과 미상(0분으로 접지 않는다)" "$tmp/out" \
-  "    - 무소속 PR #63(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #33 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+  "    - 무소속 PR #63(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #33 도 정지 라벨 없음(agent:claimed 인데 경과 미상 — 확인 필요)"
 # 형식 밖 시각을 jq 에 그대로 넘기면 레포 블록이 통째로 죽는다 — 한 건만 미상으로 접는다.
 has_line "(b) 형식 밖 claim 시각 → 그 건만 경과 미상" "$tmp/out" \
-  "    - 무소속 PR #64(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #34 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+  "    - 무소속 PR #64(reclaim) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #34 도 정지 라벨 없음(agent:claimed 인데 경과 미상 — 확인 필요)"
 no_sub "(b) 형식 밖 시각이 레포 블록을 죽이지 않는다" "$tmp/out" "reclaim — 조회 실패"
 has_line "reclaim: warn 5건(#65 포함)" "$tmp/out" "  warn      5"
 has_sub "(b) 조회 실패는 stderr 에도 사유가 남는다" "$tmp/err" \
@@ -959,7 +1017,7 @@ no_sub "CLAIM_TIME_MAX=4: 상한 초과가 발생하지 않는다(PR 줄 수로 
   "$tmp/out" "조회 상한"
 no_sub "CLAIM_TIME_MAX=4: 상한 초과 stderr 도 없다" "$tmp/err" "claim 시각 조회 상한"
 has_sub "CLAIM_TIME_MAX=4: 넷째 고유 이슈(#34)도 조회는 됐다(형식 밖이라 확인 필요)" \
-  "$tmp/out" "연결 이슈 #34 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+  "$tmp/out" "연결 이슈 #34 도 정지 라벨 없음(agent:claimed 인데 경과 미상 — 확인 필요)"
 
 # ── (b)(c) (#181) 상한에 걸려 안 본 것과 조회했지만 실패한 것은 다른 문구다 ──────
 # 상한을 1로 좁히면 고유 이슈 중 첫째(#31)만 조회되고 둘째(#32)는 **안 본다** — 그 문구는
@@ -970,11 +1028,11 @@ STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" CLAIM_TIME_MAX=1 \
 ck "CLAIM_TIME_MAX=1: exit 0" "$RC" 0
 ck "CLAIM_TIME_MAX=1: 타임라인 조회 1건" "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 1
 has_sub "CLAIM_TIME_MAX=1: 상한 안의 #31 은 그대로 5분" "$tmp/out" \
-  "연결 이슈 #31 는 needs-human 아님(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
+  "연결 이슈 #31 도 정지 라벨 없음(agent:claimed 인데 5분 경과 — 워커 사망 의심)"
 has_sub "(b) CLAIM_TIME_MAX=1: 상한 밖(#32)은 '조회 상한' — '안 봤다'" "$tmp/out" \
-  "연결 이슈 #32 는 needs-human 아님(agent:claimed 인데 경과 미상 — 조회 상한)"
+  "연결 이슈 #32 도 정지 라벨 없음(agent:claimed 인데 경과 미상 — 조회 상한)"
 no_sub "(b) 상한 밖 문구는 조회 실패 문구(확인 필요)와 섞이지 않는다" "$tmp/out" \
-  "연결 이슈 #32 는 needs-human 아님(agent:claimed 인데 경과 미상 — 확인 필요)"
+  "연결 이슈 #32 도 정지 라벨 없음(agent:claimed 인데 경과 미상 — 확인 필요)"
 has_sub "CLAIM_TIME_MAX=1: 상한 초과 사유가 stderr 에" "$tmp/err" \
   "reclaim #32 claim 시각 조회 상한(1) 초과"
 has_line "CLAIM_TIME_MAX=1: warn 은 여전히 5건" "$tmp/out" "  warn      5"
@@ -1214,6 +1272,51 @@ ck "⑦ --json: warn kind 는 blocker_human_wait" \
   '[{"b":903,"k":"배포대기","i":[17]},{"b":900,"k":"사람대기","i":[16,10]}]'
 
 # ── ★에픽 절★ (#260) — 종료/전체·leaf 버킷·P 분포, warn 2종, 파생 병기 ─────────
+# ── ⑮ (#244) 보류 칸 — hold:* 만 붙은(needs-human 없는) 이슈는 대기가 아니다 ───
+run --repo ggqgga/Holds --since 24h
+ck "holds: exit 0" "$RC" 0
+has_line "holds 헤더 — 열림 9(보류 4 + 사람대기 3 + 대기 1 + 막힘 1)" "$tmp/out" \
+  "파이프라인 holds — 열림 9 · 스코프 holds · 창 24h"
+has_line "보류 4 — 사유 병기, 번호 내림차순, 열린 연결 PR 병기" "$tmp/out" \
+  "  보류      4  #48(ladder) #46(ladder) #41(policy, PR #72) #40(ladder, PR #70)"
+has_line "사람대기 3 — needs-human ∪ hold:conflict ∪ 재심 끝난 hold:policy" "$tmp/out" \
+  "  사람대기  3  #44(대기, 사유 없음) #43(대기, conflict) #42(대기, policy)"
+has_line "대기 1 — 보류가 대기로 새지 않는다" "$tmp/out" "  대기      1  #45"
+has_line "막힘 1 — 보류는 막힘으로도 안 샌다(우선순위: 보류 > 막힘)" "$tmp/out" \
+  "  막힘      1  #47 ← #45(대기)"
+has_line "검증대기 0 — 단계 라벨보다 보류가 앞(#46)" "$tmp/out" "  검증대기  0"
+# 보류 이슈가 다른 줄에 겹쳐 세지지 않는다(한 이슈 = 한 버킷)
+no_sub "보류: #40 은 대기 줄에 없다" "$tmp/out" "  대기      1  #45 #40"
+no_sub "보류: #46 은 검증대기 줄에 없다" "$tmp/out" "  검증대기  1"
+no_sub "보류: #48 은 막힘 줄에 없다" "$tmp/out" "#48 ←"
+# 질문(hold-note) 조회는 **사람대기 버킷**의 policy·conflict 에만 — 보류로 간 #41 엔 안 묻는다
+ck "holds: 코멘트 조회 2건(#42·#43)" "$(grep -c '^comments ' "$STUB_CALL_LOG")" 2
+for n in 42 43; do
+  check "holds: 코멘트 조회 #$n" "$(grep -qxF "comments ggqgga/Holds $n" "$STUB_CALL_LOG" && echo ok || echo no)"
+done
+for n in 40 41 46 48; do
+  check "holds: 보류 이슈 #$n 엔 안 묻는다" \
+    "$(grep -qxF "comments ggqgga/Holds $n" "$STUB_CALL_LOG" && echo no || echo ok)"
+done
+# 사람이 직접 세운 정지(#44)는 note 1건, warn 은 0
+# 무소속 PR warn — 정지 라벨이 있는 쪽 둘은 빠지고, 없는 쪽 하나만 남는다
+has_line "holds: warn 1(무소속 PR 은 정지 라벨 없는 #71 뿐)" "$tmp/out" "  warn      1"
+has_sub "holds: #71 은 종전대로 무소속 warn" "$tmp/out" \
+  "    - 무소속 PR #71(holds) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #45 도 정지 라벨 없음"
+no_sub "holds: 연결 이슈가 보류인 PR #70 은 warn 아님" "$tmp/out" "무소속 PR #70"
+no_sub "holds: PR 자체가 hold:* 인 #72 는 warn 아님" "$tmp/out" "무소속 PR #72"
+has_sub "holds: #44 는 note" "$tmp/out" \
+  "    - 사람이 직접 세운 정지 #44(holds) — hold:* 라벨 없음(정상)"
+
+run --repo ggqgga/Holds --since 24h --json
+ck "--json: held 버킷 항목(번호·holds)" \
+  "$(jq -c '.repos[0] | [.buckets.held[] | {n:.number, h:.holds, p:.pr}]' < "$tmp/out")" \
+  '[{"n":48,"h":["ladder"],"p":null},{"n":46,"h":["ladder"],"p":null},{"n":41,"h":["policy"],"p":72},{"n":40,"h":["ladder"],"p":70}]'
+ck "--json: open_total 에 보류가 합산된다" \
+  "$(jq '.repos[0].open_total' < "$tmp/out")" 9
+ck "--json: held 항목에도 repo_short" \
+  "$(jq '[.repos[0].buckets.held[] | select(has("repo_short") | not)] | length' < "$tmp/out")" 0
+
 run --repo ggqgga/Epics --since 24h
 ck "epics: exit 0" "$RC" 0
 has_line "epics 헤더 — 열림 6(에픽 이슈 자신은 루프 밖이라 안 낀다)" "$tmp/out" \
