@@ -31,7 +31,8 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
   E2E 크롬 부하 상한이다 — 절대 올리지 마라(동시 실행 = 크롬 자기포화 = 타임아웃).
 - `CODEX_REVIEW_LIMIT = 2` — **같은 PR 에 codex 를 부르는 횟수 상한**(사용자 결정 2026-09-13,
   #375 · Plans/review-round-cap-and-gate-signals.md). 카운트는 PR 본문 `<!-- verify-attempt: N -->`
-  주석(N = 지금까지의 codex BLOCKER 반송 수, issue-runner repair-count 동형). N < 2 면 ③-3 이
+  주석(N = 지금까지의 codex BLOCKER 반송 수, issue-runner repair-count 동형). 읽기·증가는
+  `$SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt [--bump]` 한 자리다(#444). N < 2 면 ③-3 이
   codex 를 부르고, **N = 2 면 codex 없이 ③-3′ 자체 리뷰로 판정해 완료**한다 — 리뷰어(codex)는
   같은 diff 에 회차마다 다른 답을 내므로(같은 head 세 번 → P1 → P2 → CLEAN 실측) 세 번째부터는
   게이트가 아니라 발산이다. 옛 상한(3회 초과 → `hold:policy`)은 폐기 —
@@ -206,7 +207,10 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
   직렬 레인이라 이 느린 재확인을 감당한다(예전 per-test 재시도 하네스가 게이트에서
   하던 일을 여기서 루프 수준으로, 부하 없이).
 
-**3. codex correctness 리뷰 — 내장 리뷰어. 먼저 `<!-- verify-attempt: N -->` 을 읽는다(없으면 0).**
+**3. codex correctness 리뷰 — 내장 리뷰어. 먼저 회차를 읽는다:
+`N=$($SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt)`(마커 없으면 `0`,
+**exit 2 = 조회 실패 → codex 를 부르지 말고 이 PR 을 이번 틱에 놓아둔다** — 0 으로 읽으면
+상한이 리셋돼 회차가 무한히 돈다, #444).**
 **N ≥ `CODEX_REVIEW_LIMIT`(=2) 면 이 절을 건너뛰고 아래 3′ 로 간다 — codex 를 부르지 않는다.**
 N < 2 면 `$SCRIPTS/codex-review-gate.sh --base origin/<default>
 --cd <worktree> --out <스크래치>` 를 **동기 호출**한다(#134, Plans/codex-native-review-gate.md). 이 헬퍼가
@@ -299,7 +303,8 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
      라벨이 반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적이다(조용히 넘어가지 않는다).
 
 **redispatched** — E2E 진짜 실패 / codex BLOCKER(검증자 데드라인 초과 포함) / 결정적 CI 실패:
-1. `<!-- verify-attempt: N -->` 를 PR 본문에서 읽는다(없으면 0). **N 은 codex BLOCKER 반송 수만 센다.**
+1. `N=$($SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt)`(마커 없으면 `0` · exit 2 면
+   이 PR 을 놓아두고 ④ Report warn 한 줄, #444). **N 은 codex BLOCKER 반송 수만 센다.**
    codex BLOCKER 반송은 N+1 ≤ `CODEX_REVIEW_LIMIT` 에서만 일어난다(N = 2 면 ③-3′ 가 codex 를 부르지
    않았으니 codex BLOCKER 자체가 없다). E2E·결정적 CI 실패는 회차와 무관하게 반송한다 — 그건 게이트다 —
    **그리고 N 을 올리지 않는다**(카운터를 같이 올리면 E2E 실패 두 번에 codex 를 한 번도 못 받고 3′ 로 간다).
@@ -313,8 +318,10 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    안전망이 놓친다, #212. 생성되는 본문은
    `재검증 실패: #<issue> — <사유> (attempt N+1)\n<!-- bodat:worker -->`).
    **이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지 않는다**
-   (/loop 스팸 방지). **codex BLOCKER 반송일 때만** PR 본문 주석을 `<!-- verify-attempt: N+1 -->` 로 갱신
-   (`gh pr edit <pr> --repo <repo> --body ...` — 나머지 본문 보존).
+   (/loop 스팸 방지). **codex BLOCKER 반송일 때만**
+   `$SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt --bump` 로 회차를 올린다
+   (마커 갱신·나머지 본문 무손상은 스크립트가 한다, #444 — **exit 2 면 회차가 안 올라갔다**:
+   그 PR 은 다음 틱에 같은 회차로 다시 codex 를 받으므로 ④ Report warn 에 한 줄 남긴다).
 3. 라벨·반송: `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr>` — PR 의
    `flow:verify` 를 떼고 원 이슈를 `agent-ready`(+`flow:verify`·`agent:claimed` 제거)로 되돌린다.
    **exit 1·2 면 종료 상태를 바꾸지 말고** ④ Report 에
