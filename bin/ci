@@ -650,9 +650,20 @@ fi
 if ! grep -q '\${STATUS_KEY}: \${STATUS_REVIEWED}' "$gate" || ! grep -q '\${STATUS_KEY}: \${STATUS_NO_BASIS}' "$gate"; then
   echo "  ✗ $gate 의 프롬프트 계약문이 STATUS_* 상수로 만들어지지 않았다"; exit 1
 fi
-if ! grep -qF 'contract_re="(^|[[:space:]])${STATUS_KEY}:[[:space:]]+(${STATUS_REVIEWED}|${STATUS_NO_BASIS})$"' "$gate"; then
-  echo "  ✗ $gate 의 판정 파서가 STATUS_* 상수로 만들어지지 않았다 — 요구 형식과 갈라진다"; exit 1
+if ! grep -qF 'contract_re="^${STATUS_KEY}:[[:space:]]+(${STATUS_REVIEWED}|${STATUS_NO_BASIS})$"' "$gate"; then
+  echo "  ✗ $gate 의 판정 파서가 STATUS_* 상수로 만들어지지 않았거나 줄 전체(^…\$) 앵커가 아니다 — 같은 줄 선행 텍스트를 받으면 '못 봤다'가 CLEAN 으로 샌다(#283)"; exit 1
 fi
+# 같은 줄 선행 텍스트를 어형으로 가르려던 옛 허용 목록이 되살아나면 빨강 — 그 창이 두 회차
+# 연속 fail-open 을 냈다(부정문 인라인 → CLEAN). 판정은 앵커 하나로만 선다.
+if grep -qE '^ *(PREFIX_SENTENCE_RE|PREFIX_MARKER_RE)=' "$gate"; then
+  echo "  ✗ $gate 에 계약 줄 접두 허용 목록이 되살아났다 — 값 앞 같은 줄 텍스트는 어형 불문 거절이다(#283 재심 ①)"; exit 1
+fi
+# 렌더 경계는 CLI 저작의 증거 한 술어로만 선다(ⓐ 형식 ⓑ 접미 ⓒ 유일). 술어가 사라지거나
+# 유일성 검사가 빠지면 모델이 지어낸 헤더+불릿이 다시 경계로 읽힌다(#283 재심 ②).
+grep -qF 'function cli_rendered(' "$gate" \
+  || { echo "  ✗ $gate 에 cli_rendered() 술어가 없다 — 무엇이 CLI 렌더인가의 단일 정의 자리(#283)"; exit 1; }
+grep -qF 'if (qual != 1) { cut = 0; tail = NR }' "$gate" \
+  || { echo "  ✗ $gate 의 경계 판정에 자격 헤더 유일성(ⓒ) 검사가 없다 — 자격 헤더가 둘 이상이면 모호이므로 자르지 않아야 한다(#283)"; exit 1; }
 # 판정 창의 경계(#283) — codex 가 렌더하는 발견 섹션 헤더도 형식 문자열이다. 여기도 정의 1곳으로
 # 묶고 파서가 그 상수를 실제로 참조하는지 문다: 헤더 리터럴이 awk 안에 따로 적히면 codex 가
 # 헤더 문구를 바꿨을 때 한쪽만 고쳐져 게이트가 조용히 옛 동작(발견 있는 리뷰 전부 미산출)으로 돈다.
