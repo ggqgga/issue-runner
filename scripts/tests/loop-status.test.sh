@@ -185,6 +185,16 @@ case "${1:-} ${2:-}" in
         *"--state closed"*) ;;
         *) echo "gh stub: 에픽 닫힌 leaf 조회는 --state closed 플래그로 와야 한다(#236): $args" >&2; exit 1 ;;
       esac
+      # `--limit` 이 `EPIC_CLOSED_LIMIT` 로 실제로 전달되는지 (#292 사전 리뷰 WARN).
+      # 안 재면 `--limit 200`(PR 이전 창)으로 되돌려도 스위트가 전건 초록이다 — 게다가
+      # 200 은 기본 상한 1000 에 못 미쳐 `capped` 도 아니라서 **절단 warn 조차 안 뜬다**
+      # (보이는 절단보다 나쁜 조용한 절단). 상한 판정은 env 를 그대로 읽어 이 회귀를 못 본다.
+      # 양옆 공백을 함께 물어야 한다 — `--limit 2` 는 `--limit 200` 의 부분문자열이다.
+      exp_limit="${EPIC_CLOSED_LIMIT:-1000}"
+      case " $args " in
+        *" --limit $exp_limit "*) ;;
+        *) echo "gh stub: 에픽 닫힌 leaf 조회의 --limit 이 EPIC_CLOSED_LIMIT($exp_limit) 과 다르다: $args" >&2; exit 1 ;;
+      esac
       if [ -f "$f.epic_closed.fail" ]; then echo "gh: HTTP 403 rate limit" >&2; exit 1; fi
       # 조용한 실패(빈 출력 + exit 0) 재현 — `gh` 검색 2차 제한의 실제 모양이다.
       if [ -f "$f.epic_closed.silent" ]; then echo '[]'; exit 0; fi
