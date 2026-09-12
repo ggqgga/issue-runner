@@ -439,10 +439,18 @@ max_epoch() {
 #   ⑶ 마커는 찾았는데 `createdAt` 이 비었거나 형식 불량(파싱 실패) → `unknown`
 #      (마커가 언제인지 모르면 신선한지도 모른다 — 되돌릴 수 없는 재디스패치를 열지 않는다).
 bounce_epoch_after() {  # bounce_epoch_after <floor_epoch> → stdout <epoch>|''|unknown
-  local floor="${1:-0}" tmp out='' idx at ep bs rc
+  local floor="${1:-0}" tmp out='' idx at ep bs rc listing tab
   [ -n "$floor" ] || floor=0
   tmp=$(mktemp 2>/dev/null) || { printf 'unknown'; return 0; }
-  while IFS="$(printf '\t')" read -r idx at; do
+  tab=$(printf '\t')
+  # `<index>\t<createdAt>` 을 **최신부터** 한 줄씩. 중간 산출을 변수로 끊어 아래 루프의
+  # 입력 heredoc 이 명령치환을 품지 않게 한다(`bin/ci` 의 인용 안 한 heredoc 린트 #119).
+  # jq 실패는 빈 문자열 → 루프가 한 번도 안 돌고 `''`(= 클록 불변)이다. 이 경로에 오려면
+  # `$comments` 가 애초에 파싱 불가여야 하는데, 그러면 위 `last_matching` 도 전부 빈 값이라
+  # 판정은 이미 `active` 로 끝난다(여기까지 오지 않는다).
+  listing=$(printf '%s' "$comments" \
+    | jq -r 'to_entries | reverse | .[] | "\(.key)\t\(.value.createdAt // "")"' 2>/dev/null)
+  while IFS="$tab" read -r idx at; do
     [ -n "$idx" ] || continue
     ep=$(iso_to_epoch "${at:-}") || ep=''
     # floor 이하로 내려왔으면 더 볼 필요가 없다(max 가 안 바뀐다). 시각을 못 읽은
@@ -459,7 +467,7 @@ bounce_epoch_after() {  # bounce_epoch_after <floor_epoch> → stdout <epoch>|''
       *) out=unknown; break ;;                         # 형상 밖 출력 = 판정 불가
     esac
   done <<EOF
-$(printf '%s' "$comments" | jq -r 'to_entries | reverse | .[] | "\(.key)\t\(.value.createdAt // "")"' 2>/dev/null)
+$listing
 EOF
   rm -f "$tmp"
   printf '%s' "$out"
