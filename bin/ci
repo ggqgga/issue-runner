@@ -357,10 +357,15 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     *.en.md) fail_anchor='exits non-zero' ;;
     *)       fail_anchor='코멘트가 비0으로 끝나면' ;;
   esac
-  a_line=$(grep -nE '^- ⓐ \*\*' "$f" | head -1 | cut -d: -f1) || a_line=""
-  b_line=$(grep -nE '^- ⓑ \*\*' "$f" | head -1 | cut -d: -f1) || b_line=""
+  # 앵커는 **`## ③` 헤더 뒤 첫 매칭**이다 — 파일 첫 매칭을 잡으면 ①-c 2) 의 `- ⓐ **`/`- ⓑ **`
+  # 논리곱 불릿(#334)으로 미끄러져 엉뚱한 구간을 검사한다(fc_row 와 같은 부류의 거짓 빨강).
+  s3_line=$(grep -n '^## ③' "$f" | head -1 | cut -d: -f1) || s3_line=""
+  [ -n "$s3_line" ] || { echo "  ✗ $f: '## ③' 헤더를 못 찾았다 — ③-1 ⓐ/ⓑ 앵커의 스코프가 없다"; exit 1; }
+  a_line=$(tail -n +"$s3_line" "$f" | grep -nE '^- ⓐ \*\*' | head -1 | cut -d: -f1) || a_line=""
+  b_line=$(tail -n +"$s3_line" "$f" | grep -nE '^- ⓑ \*\*' | head -1 | cut -d: -f1) || b_line=""
   { [ -n "$a_line" ] && [ -n "$b_line" ]; } \
     || { echo "  ✗ $f: ③-1 의 ⓐ/ⓑ 갈래 앵커를 못 찾았다 — 개명·이동이면 앵커를 고쳐라"; exit 1; }
+  a_line=$((a_line + s3_line - 1)); b_line=$((b_line + s3_line - 1))
   [ "$b_line" -gt "$a_line" ] \
     || { echo "  ✗ $f: ⓑ 앵커가 ⓐ 보다 앞이다 — 구간 스코프가 성립하지 않는다"; exit 1; }
   seg=$(sed -n "${a_line},$((b_line - 1))p" "$f")
@@ -466,10 +471,14 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     *.en.md) fail_anchor='exits non-zero (gh failure / bad args)' ;;
     *)       fail_anchor='코멘트가 비0으로 끝나면' ;;
   esac
-  a_line=$(grep -nE '^- ⓐ \*\*' "$f" | head -1 | cut -d: -f1)
-  b_line=$(grep -nE '^- ⓑ \*\*' "$f" | head -1 | cut -d: -f1)
+  # 앵커 스코프는 위 가드와 같다 — `## ③` 헤더 뒤 첫 매칭(①-c 2) 의 `- ⓐ **` 불릿을 피한다, #334).
+  s3_line=$(grep -n '^## ③' "$f" | head -1 | cut -d: -f1) || s3_line=""
+  [ -n "$s3_line" ] || { echo "  ✗ $f: '## ③' 헤더를 못 찾았다"; exit 1; }
+  a_line=$(tail -n +"$s3_line" "$f" | grep -nE '^- ⓐ \*\*' | head -1 | cut -d: -f1) || a_line=""
+  b_line=$(tail -n +"$s3_line" "$f" | grep -nE '^- ⓑ \*\*' | head -1 | cut -d: -f1) || b_line=""
   { [ -n "$a_line" ] && [ -n "$b_line" ] && [ "$b_line" -gt "$a_line" ]; } \
     || { echo "  ✗ $f: ③-1 의 ⓐ/ⓑ 갈래 앵커를 못 찾았다"; exit 1; }
+  a_line=$((a_line + s3_line - 1)); b_line=$((b_line + s3_line - 1))
   seg=$(sed -n "${a_line},$((b_line - 1))p" "$f")
   f_rel=$(printf '%s\n' "$seg" | grep -nF -- "$fail_anchor" | head -1 | cut -d: -f1)
   cb_rel=$(printf '%s\n' "$seg" | grep -nF -- 'transition.sh closeout-blocked' | head -1 | cut -d: -f1)
