@@ -88,9 +88,14 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   comments=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$pr" 2>/dev/null) || continue
   [ -n "$comments" ] || continue
 
-  printf '%s' "$comments" \
-    | jq -e '[.[].body] | map(select(startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))) | length > 0' \
-    >/dev/null || continue
+  # 긍정 게이트는 ✅ 의 **마지막 매칭 인덱스**를 낸다(없으면 빈 값 → 탈락). 이 인덱스는
+  # 아래 미해결 코멘트 판정의 경계로 그대로 쓰인다(#379) — ✅ 술어를 한 벌만 두려는 것이다
+  # (같은 startswith 를 두 jq 에 베끼면 한쪽만 고쳐질 때 게이트와 경계가 갈린다). 선후는
+  # createdAt 이 아니라 배열 인덱스다(`bounce-state.sh` 와 같은 규율 — 동초 선후 문제).
+  vi=$(printf '%s' "$comments" | jq -r '[ to_entries[]
+    | select(.value.body | startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))
+    | .key ] | last // empty' 2>/dev/null)
+  [ -n "$vi" ] || continue
 
   # 결정론 재사용 — finish-classify.sh 의 head-SHA 대조 판정을 그대로 쓴다(#171 개발계획
   # 2항: 로직 두 벌 금지). ✅ 존재만으로 후보 삼지 않는다 — 반송(재디스패치) 뒤 새
@@ -157,29 +162,26 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 세는 건 같은 사실을 두 번 세는 것이고, 재심·리베이스를 여러 번 거친 PR 일수록
   # 무마커 보고가 쌓여 **더 잘 걸리는 역방향**이었다(실측 #5106: 워커 리베이스 보고 2건
   # + 사람 세션 재심 1건이 "미해결 사람 리뷰 3건" 으로 집계돼 조용히 큐에서 사라졌다).
-  # 선후는 createdAt 이 아니라 **코멘트 배열의 마지막 매칭 인덱스**로 잰다 —
-  # `bounce-state.sh` 와 같은 규율이다(초 단위 시각으로는 동초 선후를 못 가린다).
-  # ✅ 술어는 위 긍정 게이트와 **같은 startswith 둘**이고, 그 게이트가 이미 ✅ 존재를
-  # 보장하므로 여기선 항상 잡힌다 — 그래도 `// -1`(= 전량을 센다) 로 방어한다.
+  # 경계 `$vi` 는 위 긍정 게이트가 낸 ✅ 의 마지막 매칭 인덱스다(그 자리 주석 참조 —
+  # 술어는 거기 한 벌뿐). `$comments` 는 이 회전 안에서 불변이라 그대로 재사용한다.
   #
   # fail-open 이 아니다: ✅ **뒤**의 사람 코멘트는 종전 그대로 후보를 막는다. 좁힌 것은
   # "언제부터 세는가" 뿐이고, 판정 이후 들어온 진짜 새 리뷰는 하나도 놓치지 않는다.
   #
   # 탈락은 stderr 한 줄로 **드러낸다** — `continue` 만 하면 큐에서 조용히 사라져
-  # 아무도 눈치 못 챈다(조용한 큐 사망 금지, SKILL #206 원칙). 꼴은 `eligible-issues.sh`
-  # 의 `warn: ` 관례와 같고, ④ Report 가 그대로 한 줄로 옮긴다.
-  unresolved=$(printf '%s' "$comments" | jq '[.[].body] as $bodies
-    | ([ $bodies | to_entries[]
-         | select(.value | startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))
-         | .key ] | last // -1) as $vi
-    | [ $bodies | to_entries[]
-        | select(.key > $vi)
-        | .value
-        | select((contains("<!-- bodat:worker -->")
-                  or startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
+  # 아무도 눈치 못 챈다(조용한 큐 사망 금지, SKILL #206 원칙). 접두는 `warn:` 이 아니라
+  # `blocked:` 다 — warn 은 **루프가 교정 가능한** 불변식 위반에만 쓴다(`loop-status.sh`
+  # 정의 · #188: 조치 불가능한 warn 은 신호를 죽인다). 이 탈락은 사람이 답하거나
+  # verify-runner 가 새 ✅ 를 찍어야 풀리는 **정당한 미집계**라 `eligible-issues.sh` 의
+  # `blocked:` 줄과 같은 부류이고, ④ Report 가 그대로 한 줄로 옮긴다.
+  unresolved=$(printf '%s' "$comments" | jq --argjson vi "$vi" '[ to_entries[]
+    | select(.key > $vi)
+    | .value.body
+    | select((contains("<!-- bodat:worker -->")
+              or startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
     | length')
   if [ "${unresolved:-0}" -gt 0 ]; then
-    echo "warn: PR #$pr($repo) — ✅ 이후 미해결 코멘트 ${unresolved}건(마커 없음 = 사람 리뷰 대기)" >&2
+    echo "blocked: PR #$pr($repo) — ✅ 이후 미해결 코멘트 ${unresolved}건(마커 없음 = 사람 리뷰 대기)" >&2
     continue
   fi
 

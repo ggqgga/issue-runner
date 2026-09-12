@@ -97,8 +97,9 @@ build_meta() {
 #   head_at   = **진짜 head** 커밋 시각(headRefOid 경로가 주는 값). 빈 값이면 조회 실패.
 #   capped_at = `--json commits` 상한 목록의 마지막(=100번째) 커밋 시각. 미지정 시 head_at
 #               과 같다(커밋 100건 이하 = 두 경로가 같은 답을 주는 평범한 PR).
-# 선택 변수 STUB_STDERR — 비어 있으면 SUT 의 stderr 를 버린다(기존 케이스 전부). 파일
-#   경로를 담으면 거기로 받아, 탈락 사유 `warn:` 줄을 단언할 수 있다(#379 — 아래 21).
+# SUT 의 stderr 는 **항상** $tmp/last.err 로 받는다(직전 케이스 것만 남는다) — 탈락 사유
+#   `blocked:` 줄을 어느 케이스에서든 바로 단언할 수 있게(#379 — 17). 이 레포의 다른
+#   테스트(ci-queue·loop-status·epic-sweep)와 같은 상시 캡처 관례다.
 run_case() {
   local name="$1" expect="$2" comments="$3" head_at="$4" capped_at="${5:-$4}"
   local meta out n verdict
@@ -109,7 +110,7 @@ run_case() {
     STUB_CAPPED_AT="$capped_at" STUB_HEAD_SHA="${STUB_HEAD_SHA:-feed0070ab}" \
     STUB_CAPTURE="${STUB_CAPTURE:-}" \
     STUB_ROLLUP="$stub_rollup" \
-    bash "$SUT" 2>"${STUB_STDERR:-/dev/null}")
+    bash "$SUT" 2>"$tmp/last.err")
   n=$(printf '%s' "$out" | grep -c . || true)
 
   if [ "$expect" = yes ]; then
@@ -301,6 +302,17 @@ run_case "✅뒤 무마커 코멘트→탈락(#379)" no '[
   {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"},
   {"body":"이 부분 다시 봐 주세요","createdAt":"2026-07-05T04:25:00Z"}
 ]' "2026-07-05T04:10:00Z"
+#     그 탈락은 **stderr 로 드러나야 한다**(조용한 큐 사망 금지 — SKILL #206 원칙):
+#     `blocked:` 로 시작하고 PR 번호(`#5`)와 건수(`1건`)가 든 줄 **하나**. 접두가 `warn:`
+#     이 아닌 이유는 SUT 주석 참조(루프가 못 푸는 정당한 미집계 = eligible-issues 의
+#     `blocked:` 부류). 뮤테이션: echo 줄을 지우면 여기가 빨개진다.
+if [ "$(grep -c '^blocked:.*#5.*1건' "$tmp/last.err")" = 1 ]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "  ✗ 탈락 노출(#379) — stderr 에 'blocked: … #5 … 1건' 한 줄이 있어야 한다:"
+  sed 's/^/      /' "$tmp/last.err"
+fi
 
 # 18) ✅ 뒤 **마커 있는** 코멘트(closeout 자기 코멘트) → 후보. 마커 술어(#72)는 경계
 #     이동과 무관하게 그대로 살아 있어야 한다 — 안 그러면 마감 루프가 자기 코멘트에
@@ -329,26 +341,8 @@ run_case "실측#5106 재심형상→후보(#379)" yes '[
   {"body":"머지 판정: ✅ 머지 가능 (attempt 4 재심 CLEAN)\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"}
 ]' "2026-07-05T04:10:00Z"
 
-# 21) 탈락은 **stderr 로 드러난다**(조용한 큐 사망 금지 — SKILL #206 원칙). 17 과 같은
-#     형상을 stderr 를 파일로 받아 한 번 더 돌려, `warn:` 으로 시작하고 PR 번호(`#5`)와
-#     건수(`1건`)가 든 줄이 있는지 본다. `eligible-issues.sh` 의 `warn: ` 관례와 같은 꼴.
-#     (run_case 는 stderr 를 버리므로 선택적 `STUB_STDERR` 로만 잡는다 — 기존 호출부 무변경.)
-STUB_STDERR="$tmp/warn-379"; : > "$STUB_STDERR"
-run_case "✅뒤 무마커→탈락+warn(#379)" no '[
-  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"},
-  {"body":"이 부분 다시 봐 주세요","createdAt":"2026-07-05T04:25:00Z"}
-]' "2026-07-05T04:10:00Z"
-if [ "$(grep -c '^warn:.*#5.*1건' "$STUB_STDERR")" = 1 ]; then
-  pass=$((pass + 1))
-else
-  fail=$((fail + 1))
-  echo "  ✗ warn 노출(#379) — stderr 에 'warn: … #5 … 1건' 한 줄이 있어야 한다:"
-  sed 's/^/      /' "$STUB_STDERR"
-fi
-STUB_STDERR=""
-
-# 22) ✅ 가 **두 번** 찍힌 형상 — 구판정 ✅ → 무마커 사람 코멘트 → 재검증 ✅ → 후보.
-#     경계는 "어느 ✅ 냐" 까지 고정해야 한다: 16~21 에는 ✅ 가 하나뿐이라 **마지막**
+# 21) ✅ 가 **두 번** 찍힌 형상 — 구판정 ✅ → 무마커 사람 코멘트 → 재검증 ✅ → 후보.
+#     경계는 "어느 ✅ 냐" 까지 고정해야 한다: 16~20 에는 ✅ 가 하나뿐이라 **마지막**
 #     매칭을 쓰는지 **첫** 매칭을 쓰는지 구별하지 못한다. 사이에 낀 사람 코멘트는
 #     재검증 ✅ 로 이미 해소된 것이므로 세면 안 된다.
 #     뮤테이션: unresolved jq 의 `| last` 를 `first` 로 바꾸면 $vi 가 구판정(인덱스 0)을
