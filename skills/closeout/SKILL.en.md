@@ -1190,9 +1190,10 @@ structure/empty-state confirmation from real-data render confirmation in the res
 - **fail (`verdict=fail` — `fail` is one or more)** — **only lines Chrome actually stepped reach here.** Lines
   publish targets below (filing a follow-up with a "smoke failure" reason for a line that
   was never stepped records a non-defect as a defect — #309). → do not fix it directly; use the existing publish path: an
-  agent-ready issue via `references/spinoff-issue.md` if auto-fixable (**use step 6's
-  "issuance command" form verbatim** — `spinoff-inherit.sh` inheritance plus
-  `--label agent-ready --label spinoff --label "$priority"`;
+  agent-ready issue via `references/spinoff-issue.md` if auto-fixable (**the same single
+  call as step 6** —
+  `$SCRIPTS/spinoff-issue.sh <repo> <parent-issue#> <parent-pr#> --title "<title>" --body-file <body-file>`,
+  which carries the inheritance, labels, readback and marker;
   no prose substitute here either), a `--label needs-human` issue if live verification is needed.
   If the same failure recurs `REPAIR_RECUR_LIMIT`
   times, escalate to `needs-human` (**exhausted exit**). Do not close the deploy issue.
@@ -1221,80 +1222,66 @@ structure/empty-state confirmation from real-data render confirmation in the res
 
 **Step 6 — spinoff issues.** Fill `references/spinoff-issue.md` with the worker PR
 body's `follow-up:` items + adjacent work the step-1 diff review flagged, and issue an
-agent-ready issue. **A spinoff inherits its parent's epic and priority mechanically,
-every time** (#261) — `$SCRIPTS/spinoff-inherit.sh` emits `epic=` for the body's first
-line `Epic #N` and `priority=` for the P label. Record the created number in a comment
-on the original PR (a duplicate-issuance marker).
+agent-ready issue. The whole issuance procedure — inheritance (#261) · the body's first
+line `Epic #N` · labels · the missing-label fail-closed ladder · the readback right after
+issuance · the parent-PR marker — is **a single call to `$SCRIPTS/spinoff-issue.sh`**
+(#447). Never assemble `gh issue create` by hand here: the prose-only step leaks
+(measured 2026-08-13 on BoDAT: step 6 attached only the convention labels and dropped
+`agent-ready`, stranding 17 open issues outside the loop, while step 4 — whose command
+literally carried the label — was correct on all 186).
 
-- **Deciding the parent (the input to inheritance).** The parent is, first and foremost,
-  the **N in the closing PR's head branch `agent/issue-<N>`**. Use
-  `closingIssuesReferences` only to **cross-check** that N appears in that list, or as a
-  **fallback** when the head branch is not of the form `agent/issue-*` — `[0]` is not
-  guaranteed to be the branch's issue (measured: `PR #113` had `head=agent/issue-109` but
-  `closingIssuesReferences=[108, 109]`, so `[0]` was **#108**, the wrong issue. The same
-  trap silently switched off an evidence source at `finish-classify.sh:317-318`). If
-  neither source yields a parent, **do not issue** — report
-  `BLOCKED: spinoff parent unknown — PR #<pr>` in ④ Report (never issue without inheritance).
+- **Deciding the parent (the input to inheritance — this stays this step's judgment, not
+  the script's).** The parent is, first and foremost, the **N in the closing PR's head
+  branch `agent/issue-<N>`**. Use `closingIssuesReferences` only to **cross-check** that N
+  appears in that list, or as a **fallback** when the head branch is not of the form
+  `agent/issue-*` — `[0]` is not guaranteed to be the branch's issue (measured: `PR #113`
+  had `head=agent/issue-109` but `closingIssuesReferences=[108, 109]`, so `[0]` was
+  **#108**, the wrong issue. The same trap silently switched off an evidence source at
+  `finish-classify.sh:317-318`). If neither source yields a parent, do not pass `-` to the
+  script — **do not issue** and report `BLOCKED: spinoff parent unknown — PR #<pr>` in
+  ④ Report (never issue without inheritance).
 - **Issuance command (required form — do not substitute prose).** Write the filled
   `spinoff-issue.md` to a file and pass it via `--body-file` (the template is
-  **body-only** — labels written there render into the issue body; labels must come
-  from the command line):
+  **body-only** — labels written there render into the issue body; the script passes
+  labels on the command line):
 
   ```
-  eval "$($SCRIPTS/spinoff-inherit.sh <repo> <parent-issue#>)"   # epic= · priority=
-  gh issue create --repo <repo> --title "<title>" --body-file <body-file> \
-    --label agent-ready --label spinoff --label "$priority" [--label <repo-convention label>...]
+  $SCRIPTS/spinoff-issue.sh <repo> <parent-issue#> <parent-pr#> \
+    --title "<title>" --body-file <body-file> [--label <repo-convention label>...]
   ```
 
-  `spinoff-inherit.sh` reads the parent **once** and emits exactly two lines,
-  `epic=<N|->` and `priority=<P0|P1>` (read-only — it never edits the parent).
-  **On exit 1 (no output), stop issuing** — report it as the same BLOCKED as an unknown
-  parent above. Fill the body file's `<EPIC_LINE>` slot with the single line `Epic #N`
-  when `epic=N`, or with an **empty line** when `epic=-` — an epic is linked by that
-  **dedicated body line**, not by a sub-issue link or a label (#260: `loop-status.sh`'s
-  epic section counts leaves by that line; a prose `… epic #N …` is not a signal).
-  Never raise `priority` by hand — bumping a spinoff to P1 because it "looks urgent" is
-  exactly today's inflation; raising it is a human's call at the epic level.
+  That script's header comment is the SSOT for the rules. What it does: reads the parent
+  **once** through `spinoff-inherit.sh` for `epic=`/`priority=` → fills the body's
+  `<EPIC_LINE>` dedicated line with `Epic #N` (an empty line when there is no epic) and
+  guarantees it is the **first line** (an epic is linked by that dedicated body line, not
+  by a sub-issue link or a label — `loop-status.sh`'s epic section counts leaves by it) →
+  creates the issue with `--label agent-ready --label spinoff --label "$priority"` plus the
+  convention labels you passed → on a missing label, calls `setup-labels.sh` once and
+  retries once, and if that still fails **creates the issue without labels** (never lose
+  the issuance) → reads the labels and the `Epic #N` first line back and tops up what is
+  missing → leaves the marker `파생: #<new number> (Epic #<N|없음> · <P>)` on the parent PR.
+  stdout is the new issue number, one line.
+  - **exit 0** — copy the `marker:` line from stderr into ④ Report's `파생` item verbatim
+    (that is how spinoffs leaking outside their epic stay observable every tick).
+  - **exit 1 (no issue was created; no output)** — unknown parent, inheritance failure, or
+    issuance failure. Report `BLOCKED: spinoff parent unknown — PR #<pr>` or
+    `BLOCKED: spinoff issuance failed — PR #<pr>` in ④ Report.
+  - **exit 2 (the issue exists — its number is on stdout)** — labels, body or marker went
+    wrong. Report `BLOCKED: spinoff issue labeling failed — #<number>` in ④ Report
+    (recovery is a human's: rerun `setup-labels.sh`, then `gh issue edit --add-label`).
+    Do not pile another attempt on top of it here.
 
-  **`--label agent-ready` is not optional** — `eligible-issues.sh` gates dispatch on
-  `open + agent-ready + ¬agent:claimed`, so without it the issue is created but
-  issue-runner **never picks it up** (measured 2026-08-13 on BoDAT: step 6 attached only
-  the 3-axis convention labels and dropped agent-ready, stranding 17 open issues outside
-  the loop — while step 4, whose command literally carries the label (back then
-  `--label needs-human`, today `--label deploy-wait`, #243), was
-  correct on all 186. The step with a command did not leak; the prose-only step did).
-  `--label "$priority"` is **not optional** either — without one the issue falls into the
-  non-P0 bin (the same bin as P1; #401 — the axis is `P0` and everything else, and order
-  inside one bin is oldest-first FIFO). Do not invent that value; use exactly what the
-  helper emitted (if the parent carries no P label, or carries a transitional `P2`, the
-  helper hands you `P1`).
-  Add the other axes per repo convention (BoDAT: `difficulty:*`·`frontend` (only when UI is
-  touched)·`needs:hardware` — the repo CLAUDE.md label section is the SSOT), but **never let
-  convention labels displace `agent-ready`** —
-  that is exactly the observed failure shape.
-  `--label spinoff` is the provenance mark — `loop-status.sh`'s `파생` line counts spinoff
-  issues in the window by this label alone (no title heuristic). Without it the issue is
-  invisible in the inventory.
-- **Missing-label fail-closed (isomorphic to ② Pick's harvesting top-up).**
-  `gh issue create` **fails without creating the issue** when a `--label` does not exist
-  (unlike the harmless `--remove-label`). On a `'agent-ready' not found` / `'spinoff' not found`-type failure,
-  call `$SCRIPTS/setup-labels.sh <repo>` **once** and retry the same command **once**.
-  If the retry also fails, do not loop further — **create the issue without labels**
-  (never lose the issuance) and report `BLOCKED: spinoff issue labeling failed —
-  #<number>` in ④ Report.
-- **Verify right after issuance.** Check with
-  `gh issue view <number> --repo <repo> --json labels,body` that
-  ⑴ **both** `agent-ready` and `spinoff` actually landed; if either is missing, top it up with
-  `gh issue edit <number> --repo <repo> --add-label agent-ready --add-label spinoff`.
-  ⑵ **Check the `Epic` line in the same place** — if the helper emitted `epic=N` but the new
-  issue's **first line is not `Epic #N`**, the `<EPIC_LINE>` substitution leaked. Fix it
-  **immediately** with `gh issue edit <number> --repo <repo> --body-file <corrected body file>`
-  (right alongside the label top-up). Skip this and the spinoff stays an orphan outside the
-  epic, invisible forever to `loop-status.sh`'s leaf rollup.
-- **Marker comment on the original PR.** After issuing, comment
-  `파생: #<new number> (Epic #<N|없음> · <P>)` on the original PR — the inheritance result is
-  readable at a glance, and ④ Report's `파생` item uses the **same shape** (so spinoffs leaking
-  outside their epic are observable every tick).
+  The only thing to pass with `--label` is the **repo convention axis** (BoDAT:
+  `difficulty:*`·`frontend` (only when UI is touched)·`needs:hardware` — the repo
+  CLAUDE.md label section is the SSOT). `agent-ready`, `spinoff` and P are attached by the
+  script, so never repeat them — this is exactly where the observed failure shape
+  (convention labels displacing `agent-ready`) is cut off at the source. Without
+  `agent-ready` the dispatch gate (`eligible-issues.sh`: `open + agent-ready +
+  ¬agent:claimed`) means the issue is created and **never picked up**; without `spinoff`,
+  `loop-status.sh`'s `파생` line cannot see it in the inventory. Never raise `priority` by
+  hand — bumping a spinoff to P1 because it "looks urgent" is exactly today's inflation;
+  raising it is a human's call at the epic level (the helper carries a parent's `P0` and
+  folds everything else into `P1`, #401).
 - **Do not issue what step 3 already absorbed.** A finding that passed step 3's
   "absorb surface corrections" criterion (does this flip the pass/fail of any test?)
   and rode along in that commit is not remaining work. When one finding mixes surface

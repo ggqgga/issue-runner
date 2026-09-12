@@ -1020,9 +1020,9 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
 - **fail (`verdict=fail` — `fail` 이 한 건이라도)** — **크롬이 밟은 줄만 여기 온다.** 위 fail-closed 로 보류한
   미밟음 줄은 fail 이 아니므로 아래 발행 대상에서 뺀다(밟지 않은 줄에 '스모크 실패' 사유로
   후속 이슈를 내면 결함이 아닌 것이 결함으로 기록된다 — #309). → 직접 고치지 않고 기존 발행 경로: 자동수정 가능하면
-  `references/spinoff-issue.md` 로 agent-ready 이슈(**6단계의 "발행 명령" 형태를 그대로
-  쓴다** — `spinoff-inherit.sh` 상속 + `--label agent-ready --label spinoff --label "$priority"`.
-  여기도 산문으로 대신하지 마라),
+  `references/spinoff-issue.md` 로 agent-ready 이슈(**6단계와 같은 한 호출**
+  `$SCRIPTS/spinoff-issue.sh <repo> <부모 이슈#> <부모 PR#> --title "<제목>" --body-file <본문파일>` —
+  상속·라벨·readback·마커가 그 안에 있다. 여기도 산문으로 대신하지 마라),
   라이브 검증이 필요하면 `--label needs-human` 이슈. 같은 실패가 `REPAIR_RECUR_LIMIT`
   회 반복되면 `needs-human` 으로 승격한다 (**exhausted 종료**). 배포 이슈는 닫지 않는다.
   라벨명은 `needs-human`(하이픈)이다 — `needs:human` 은 존재하지 않는 라벨이라
@@ -1047,66 +1047,52 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
 
 **6단계 — 파생 이슈.** 워커 PR 본문의 `follow-up:` 항목 + 1단계 diff 리뷰가 짚은
 인접 작업을 `references/spinoff-issue.md` 로 채워 agent-ready 이슈로 발행한다.
-**파생은 부모의 에픽·우선순위를 매번 기계적으로 상속한다**(#261) — `$SCRIPTS/spinoff-inherit.sh`
-가 낸 `epic=` 로 본문 첫 줄 `Epic #N` 을, `priority=` 로 P 라벨을 채운다. 생성한 번호를
-원본 PR 코멘트에 기록한다 (중복 발행 방지 마커).
+발행 절차 전체 — 상속(#261) · 본문 첫 줄 `Epic #N` · 라벨 · 라벨 부재 fail-closed ·
+발행 직후 readback · 부모 PR 마커 — 는 **`$SCRIPTS/spinoff-issue.sh` 한 호출**이다(#447).
+여기서 `gh issue create` 를 손으로 조립하지 마라 — 산문뿐인 단계가 샌다(실증 2026-08-13:
+6단계가 규약 라벨만 달고 `agent-ready` 를 빠뜨려 열린 이슈 17건이 루프 밖 재고로 남음.
+명령이 박혀 있던 4단계는 186건 전건 정상이었다).
 
-- **부모 결정 (상속의 입력).** 부모 = 마감 중인 PR 의 **head 브랜치 `agent/issue-<N>` 의 N**
-  이 1순위다. `closingIssuesReferences` 는 그 N 이 그 목록에 있는지 **교차확인**하는 데 쓰거나,
-  head 가 `agent/issue-*` 형태가 아닐 때의 **폴백**으로만 쓴다 — `[0]` 은 브랜치 이슈라는 보장이
-  없다(실측: `PR #113` 은 `head=agent/issue-109` 인데 `closingIssuesReferences=[108, 109]` 라
-  `[0]` 이 **#108** — 엉뚱한 이슈였다. 같은 함정이 `finish-classify.sh:317-318` 에서 증거를
-  조용히 꺼뜨리는 사고를 냈다). 둘 다 못 구하면 **발행하지 않는다** — ④ Report 에
+- **부모 결정 (상속의 입력 — 이건 스크립트가 아니라 이 단계의 판단이다).** 부모 = 마감 중인
+  PR 의 **head 브랜치 `agent/issue-<N>` 의 N** 이 1순위다. `closingIssuesReferences` 는 그 N 이
+  그 목록에 있는지 **교차확인**하는 데 쓰거나, head 가 `agent/issue-*` 형태가 아닐 때의
+  **폴백**으로만 쓴다 — `[0]` 은 브랜치 이슈라는 보장이 없다(실측: `PR #113` 은
+  `head=agent/issue-109` 인데 `closingIssuesReferences=[108, 109]` 라 `[0]` 이 **#108** —
+  엉뚱한 이슈였다. 같은 함정이 `finish-classify.sh:317-318` 에서 증거를 조용히 꺼뜨리는
+  사고를 냈다). 둘 다 못 구하면 스크립트에 `-` 를 넘기지 말고 **발행하지 않는다** — ④ Report 에
   `BLOCKED: 파생 부모 미상 — PR #<pr>` 로 올린다(상속 없이 발행하지 않는다).
-- **발행 명령 (필수 형태 — 산문으로 대체하지 마라).** 본문은 채운
-  `spinoff-issue.md` 를 파일로 써서 `--body-file` 로 넘긴다(템플릿은 **본문 전용**이라
-  라벨을 거기 적으면 이슈 본문에 렌더된다 — 라벨은 반드시 명령줄에서 준다):
+- **발행 명령 (필수 형태 — 산문으로 대체하지 마라).** 본문은 채운 `spinoff-issue.md` 를
+  파일로 써서 `--body-file` 로 넘긴다(템플릿은 **본문 전용**이라 라벨을 거기 적으면 이슈
+  본문에 렌더된다 — 라벨은 스크립트가 명령줄에서 준다):
 
   ```
-  eval "$($SCRIPTS/spinoff-inherit.sh <repo> <부모 이슈#>)"   # epic= · priority=
-  gh issue create --repo <repo> --title "<제목>" --body-file <본문파일> \
-    --label agent-ready --label spinoff --label "$priority" [--label <레포 규약 라벨>...]
+  $SCRIPTS/spinoff-issue.sh <repo> <부모 이슈#> <부모 PR#> \
+    --title "<제목>" --body-file <본문파일> [--label <레포 규약 라벨>...]
   ```
 
-  `spinoff-inherit.sh` 는 부모를 **한 번** 읽고 `epic=<N|->` · `priority=<P0|P1>` 두 줄만
-  낸다(읽기 전용 — 부모를 편집하지 않는다). **exit 1(무출력)이면 발행을 멈춘다** — 위 부모
-  미상과 같은 BLOCKED 로 올린다. 본문 파일의 `<EPIC_LINE>` 자리는 `epic=N` 이면 `Epic #N`
-  한 줄로, `epic=-` 이면 **빈 줄**로 채운다 — 에픽은 sub-issue 링크나 라벨이 아니라 본문
-  **전용 줄**로 잇는다(#260 `loop-status.sh` 에픽 절이 그 줄로 leaf 를 센다. 산문 속
-  `… epic #N …` 은 신호가 아니다). `priority` 를 손으로 올리지 마라 — "급해 보여서" 파생을
-  P1 로 올리는 것이 지금의 남발이고, 올리려면 사람이 에픽 단위로 올린다.
+  규칙의 SSOT 는 그 스크립트의 머리 주석이다. 하는 일: `spinoff-inherit.sh` 로 부모를 **한 번**
+  읽어 `epic=`·`priority=` 를 받고 → 본문의 `<EPIC_LINE>` 전용 줄을 `Epic #N`(에픽 없으면 빈 줄)로
+  채워 **첫 줄**을 보장하고(에픽은 sub-issue 링크나 라벨이 아니라 본문 전용 줄로 잇는다 —
+  `loop-status.sh` 에픽 절이 그 줄로 leaf 를 센다) → `--label agent-ready --label spinoff --label "$priority"`
+  + 넘긴 규약 라벨로 발행하고 → 라벨 부재면 `setup-labels.sh` 1회 + 재시도 1회, 그래도 안 되면
+  **무라벨로라도 발행**하고(발행 유실 방지) → 라벨·`Epic #N` 첫 줄을 readback 해 보강하고 →
+  부모 PR 에 `파생: #<새번호> (Epic #<N|없음> · <P>)` 마커를 남긴다. stdout 은 새 이슈 번호 한 줄이다.
+  - **exit 0** — stderr 의 `marker:` 줄을 ④ Report 의 `파생` 항목에 그대로 옮긴다(에픽 밖으로
+    새는 파생을 매 틱 관측하기 위한 것이다).
+  - **exit 1 (이슈가 안 만들어졌다·무출력)** — 부모 미상·상속 실패·발행 실패. ④ Report 에
+    `BLOCKED: 파생 부모 미상 — PR #<pr>` 또는 `BLOCKED: 파생 발행 실패 — PR #<pr>` 로 올린다.
+  - **exit 2 (이슈는 만들어졌다 — 번호는 stdout)** — 라벨·본문·마커 중 하나가 어긋났다.
+    ④ Report 에 `BLOCKED: 파생 이슈 라벨 부착 실패 — #<번호>` 로 올린다(복구는 사람 몫:
+    `setup-labels.sh` 재실행 → `gh issue edit --add-label`). 여기서 같은 편집을 겹쳐 시도하지 마라.
 
-  **`--label agent-ready` 는 생략 불가**다 — `eligible-issues.sh` 의 디스패치 자격이
-  `open + agent-ready + ¬agent:claimed` 라, 이 라벨이 없으면 이슈는 생성되고도
-  issue-runner 가 **영원히 집지 않는다**(실증 2026-08-13 BoDAT: 6단계가 3축 라벨만 달고
-  agent-ready 를 빠뜨려 열린 이슈 17건이 루프 밖에 재고로 남음 — 4단계는 명령에
-  라벨이 박혀 있어 186건 전건 정상이었다 — 당시 그 라벨은 `--label needs-human` 이었고,
-  지금은 `--label deploy-wait` 다(#243). 명령이 있는 단계는 안 새고,
-  산문뿐인 단계가 샜다). 우선순위(`--label "$priority"`)도 **생략 불가**다 — 없으면 정렬에서
-  P0 아닌 칸(= P1 과 같은 칸)으로 처리된다(#401 — 축은 `P0` 와 그 밖 둘뿐이고, 같은 칸
-  안의 순서는 생성순 FIFO 다). 그 값은 지어내지 말고 위 헬퍼가 낸 것을 그대로
-  쓴다(부모가 P 라벨을 안 달았거나 과도기의 `P2` 를 달고 있으면 헬퍼가 `P1` 을 준다).
-  그 밖의 축(BoDAT 의 `difficulty:*`·`frontend`(UI 를 건드릴 때만)·
-  `needs:hardware` — 레포 CLAUDE.md 의 라벨 절이 SSOT)은 **레포 규약을 따라 추가**하되, 규약 라벨을 다느라
-  `agent-ready` 를 대체하지 마라 — 위 실측의 실패 형태가 정확히 그것이다.
-  `--label spinoff` 는 출처 표식이다 — `loop-status.sh` 의 `파생` 줄이 이 라벨로만 창 안의
-  파생 이슈를 센다(제목 휴리스틱을 쓰지 않는다). 빠지면 그 이슈는 재고에서 안 보인다.
-- **라벨 부재 fail-closed (② Pick 의 라벨 보강과 동형).** `gh issue create` 는
-  `--label` 이 없는 라벨이면 **이슈 자체를 안 만들고 실패**한다(무해한 `--remove-label`
-  과 다르다). `'agent-ready' not found`·`'spinoff' not found` 류로 실패하면 `$SCRIPTS/setup-labels.sh <repo>`
-  를 **1회** 호출한 뒤 같은 명령을 **1회만** 재시도한다. 재시도도 실패하면 더 반복하지
-  말고 **라벨 없이 이슈만 만들고**(발행 유실 방지) ④ Report 에
-  `BLOCKED: 파생 이슈 라벨 부착 실패 — #<번호>` 로 올린다.
-- **발행 직후 확인.** `gh issue view <번호> --repo <repo> --json labels,body` 로
-  ⑴ `agent-ready` 와 `spinoff` 가 **둘 다** 붙었는지 확인하고, 빠진 게 있으면
-  `gh issue edit <번호> --repo <repo> --add-label agent-ready --add-label spinoff` 로 보강한다.
-  ⑵ **`Epic` 줄도 같은 자리에서 확인한다** — 헬퍼가 `epic=N` 을 냈는데 새 이슈 **첫 줄이
-  `Epic #N` 이 아니면** `<EPIC_LINE>` 치환이 샌 것이다. `gh issue edit <번호> --repo <repo>
-  --body-file <고친 본문파일>` 로 **즉시 고친다**(라벨 보강과 같은 자리에서 함께). 이걸 빠뜨리면
-  그 파생은 에픽 밖 고아로 남아 `loop-status.sh` 에픽 절의 leaf 집계에서 영원히 안 보인다.
-- **원본 PR 코멘트 마커.** 발행한 뒤 원본 PR 코멘트에 `파생: #<새번호> (Epic #<N|없음> · <P>)`
-  를 적는다 — 번호만 적던 옛 형태보다 한 눈에 상속 결과가 보이고, ④ Report 의 `파생` 항목도
-  같은 꼴로 적는다(에픽 밖으로 새는 파생을 매 틱 관측하기 위한 것이다).
+  `--label` 로 넘길 것은 **레포 규약 축뿐**이다(BoDAT 의 `difficulty:*`·`frontend`(UI 를 건드릴
+  때만)·`needs:hardware` — 레포 CLAUDE.md 의 라벨 절이 SSOT). `agent-ready`·`spinoff`·P 는
+  스크립트가 붙이므로 다시 주지 마라 — 규약 라벨을 다느라 `agent-ready` 를 대체하던 실패
+  형태(위 실측)가 여기서 원천 차단된다. `agent-ready` 가 없으면 `eligible-issues.sh` 의 자격
+  (`open + agent-ready + ¬agent:claimed`)에 걸려 이슈는 생성되고도 **영원히 안 집히고**,
+  `spinoff` 가 없으면 `loop-status.sh` 의 `파생` 줄이 그 이슈를 재고에서 못 본다.
+  `priority` 를 손으로 올리지 마라 — "급해 보여서" 파생을 P1 로 올리는 것이 지금의 남발이고,
+  올리려면 사람이 에픽 단위로 올린다(헬퍼가 부모의 P0 만 그대로 잇고 나머지는 `P1` 로 접는다, #401).
 - **3단계가 이미 흡수한 표면 교정은 여기서 발행하지 않는다.** 3단계 "표면 교정 흡수"
   기준(통과/실패가 바뀌는 테스트가 하나도 없는가)을 통과해 그 커밋에 실린 건은 남은
   작업이 아니다. 한 발견에 표면과 코드가 섞여 있으면(예: "용어가 갈렸다 + 셈값 가드가
