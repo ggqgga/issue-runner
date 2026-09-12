@@ -1212,10 +1212,16 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   case "$f" in
     *.en.md) m4_anchor='^\*\*Step 4 —'; m5_anchor='^\*\*Step 5 —'; m6_anchor='^\*\*Step 6 —'
              mandate='A real-hardware line REQUIRES the `[칸 ③]` prefix marker'
-             verdict='`[칸 ③]` prefix marker** is a real-hardware item' ;;
+             verdict='`[칸 ③]` prefix marker** is a real-hardware item'
+             noissue='**Do not file a follow-up issue** — it is not a defect, only a different lane, and'
+             failexcl='- **fail (any item fails)** — **only lines Chrome actually stepped reach here.** Lines'
+             deadclause='fixed string `TEST 워커 프로필 #18` counts as real hardware' ;;
     *)       m4_anchor='^\*\*4단계 —';   m5_anchor='^\*\*5단계 —';   m6_anchor='^\*\*6단계 —'
              mandate='실장비 줄은 접두 표식 `[칸 ③]` 필수'
-             verdict='**접두 표식 `[칸 ③]` 이 붙은 줄**' ;;
+             verdict='**접두 표식 `[칸 ③]` 이 붙은 줄**'
+             noissue='**후속 이슈를 발행하지 마라** — 결함이'
+             failexcl='- **fail (한 건이라도 실패)** — **크롬이 밟은 줄만 여기 온다.**'
+             deadclause='고정 문자열 `TEST 워커 프로필 #18` 이 적혀 있으면 실장비로 본다' ;;
   esac
   m4_line=$(grep -nE "$m4_anchor" "$f" | head -1 | cut -d: -f1)
   m5_line=$(grep -nE "$m5_anchor" "$f" | head -1 | cut -d: -f1)
@@ -1234,6 +1240,21 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   #    되돌려도 초록이 된다 — 그래서 판별문 고유 문구에 결합한다.
   printf '%s\n' "$m5_body" | grep -qF "$verdict" \
     || { echo "  ✗ $f: 5단계 실장비 판별문이 표식('$live_marker')에 결합돼 있지 않다('$verdict' 부재) — 판별이 문장 해석으로 돌아갔다 (#309)"; exit 1; }
+  # ⓓ 표식 없는 줄의 라우팅 — **fail-closed**. attempt 1 은 이 자리를 고정 문자열
+  #    `TEST 워커 프로필 #18` 소급 조항으로 메웠는데, 열린 재고 10건·`- [ ]` 27줄 전수
+  #    실측에서 그 문자열은 **0줄**을 물었다(조항이 태어날 때부터 죽어 있었다). 그 결과
+  #    재고의 실장비 줄이 ⑦ 레인이 아니라 fail 갈래로 떨어져 **결함이 아닌 것에
+  #    `needs-human` 후속 이슈가 나고 사유가 '스모크 실패' 로 잘못 기록**됐다(#309 BLOCKER).
+  #    그래서 ⑴ 미밟음 줄은 후속 이슈를 내지 않는다는 문면과 ⑵ fail 갈래가 그 줄을
+  #    제외한다는 문면이 **둘 다** 있어야 한다 — 한쪽만 있으면 같은 줄을 두 갈래가 집는다.
+  #    ⑶ 죽은 고정 문자열 조항이 되살아나면 빨강(같은 사고의 재발 지문).
+  printf '%s\n' "$m5_body" | grep -qF -- "$noissue" \
+    || { echo "  ✗ $f: 5단계에 '미밟음 줄은 후속 이슈를 내지 않는다' 문면('$noissue')이 없다 — 결함 아닌 줄이 '스모크 실패' 로 기록된다 (#309)"; exit 1; }
+  printf '%s\n' "$m5_body" | grep -qF -- "$failexcl" \
+    || { echo "  ✗ $f: 5단계 fail 갈래가 미밟음 보류 줄을 제외하지 않는다('$failexcl' 부재) — 보류와 fail 이 같은 줄을 집는다 (#309)"; exit 1; }
+  if printf '%s\n' "$m5_body" | grep -qF -- "$deadclause"; then
+    echo "  ✗ $f: 5단계에 죽은 소급 조항('$deadclause')이 되살아났다 — 재고 27줄 전수 실측 0건 (#309)"; exit 1
+  fi
 done
 # ⓒ 템플릿 — 실제로 발행되는 이슈 본문의 형태가 여기서 나온다. 여기가 표식을 안 가르치면
 #    4단계 규율이 아무리 강제여도 발행물엔 표식이 안 붙는다. 스코프는 **형태 안내 주석 구간**
