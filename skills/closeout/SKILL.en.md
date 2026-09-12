@@ -571,7 +571,10 @@ re-verifying and stamping a new ✅** (the confirmation step right before that �
 absorbs the human comments — see verify-runner ④). A human reply does not clear it (a reply
 is itself an unmarked comment too); what a human needs to do is not leave a reply but send
 the PR back to `flow:verify` (or re-pick it into `verifying`). Until then, the same line
-repeating every tick is expected (never drop it silently). Why not `warn`: warn is reserved for
+repeating every tick is expected (never drop it silently). The counting boundary is the
+`코멘트 스냅샷 N` watermark in the ✅ body when present (that N is the moment verify-runner
+read the comments, so comments that slipped in between the read and the ✅ are caught too,
+#384); for an older ✅ without the watermark it is that ✅'s index. Why not `warn`: warn is reserved for
 invariant violations the loop can correct (`loop-status.sh` definition) — this is a legitimate
 non-pick, so it belongs to the `막힘` (blocked) bucket.
 
