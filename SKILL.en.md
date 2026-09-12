@@ -41,14 +41,18 @@ maintenance must come before new work).
   single run plus slack for the box-wide serial CI queue (#127) — while a worker waits
   out one CI run it is normal for no new commit to appear, so that window must not be
   counted as stalling.
-- `MAX_TIMEBOX_GRACE = 3` — cap on **cumulative reprieves** within the same claim (an
+- `MAX_TIMEBOX_GRACE = 9` — cap on **cumulative reprieves** within the same claim (an
   `unknown` tick in between does not reset it — the counting window is everything after
   the claim timestamp). Past
   it the worker is stopped by the rule even with progress evidence — an unbounded
   reprieve would never catch a real zombie, making the relaxation itself a new hole. At a
-  15-minute tick that is at most ~45 extra minutes, which covers the measured shapes
-  (72 min · 64 min) while still leaving a ceiling. The count is not a state file: it is
-  re-derived by counting issue comment markers (`<!-- timebox-grace: N -->`) created
+  5-minute tick that is at most ~45 extra minutes, which covers the measured shapes
+  (72 min · 64 min) while still leaving a ceiling. **Raised 3→9 on 2026-09-13** — the cron
+  moved from a 15-minute to a 5-minute tick, so 3 reprieves shrank to 15 minutes (a third
+  of the designed 45), and a measured case (bodat #4977) stopped a worker that was one step
+  from opening its PR (the redispatch opened the PR with zero code changes). If the tick
+  interval changes again, rescale this value to keep the reprieve window ≈ 45 minutes. The
+  count is not a state file: it is re-derived by counting issue comment markers (`<!-- timebox-grace: N -->`) created
   **after the current claim timestamp only**.
 - `RESUME_AFTER_MIN = 120` — how long (minutes) the resume sweep waits before letting a
   stalled issue flow again. Once a `hold:ladder` issue has gone this long
