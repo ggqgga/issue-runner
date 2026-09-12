@@ -208,7 +208,8 @@ printf '#!/bin/sh\nexit 1\n' > "$tmp/nogh/gh"; chmod +x "$tmp/nogh/gh"
 # 자동으로 따라간다(가짜 마커를 하나 더해도 이 스모크는 그 형태를 그대로 받아들인다).
 for args in \
   "redispatch owner/r 1 2" \
-  "reverify-fail owner/r 1 2 3 사유"; do
+  "reverify-fail owner/r 1 2 3 사유" \
+  "human-review owner/r 1 2 인용한줄"; do
   # shellcheck disable=SC2086
   out=$(PATH="$tmp/stub:$PATH" STUB_CAPTURE="$tmp/cap" scripts/bounce-comment.sh $args 2>&1)
   rc=$?
@@ -887,12 +888,14 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   row=$(grep -n "$rowpat" "$f" | sed -n '1s/^\([0-9][0-9]*\):.*/\1/p') || row=''
   [ -n "$row" ] || { echo "  ✗ $f 에 시정/Correction 행 없음"; exit 1; }
   line=$(sed -n "${row}p" "$f")
-  cpos=$(awk -v s="$line" 'BEGIN{print index(s,"gh pr comment")}')
+  # 마커 호출은 `bounce-comment.sh human-review` 채널이다 — 손타이핑 `gh pr comment` 에서
+  # 옮겼다(#334 WARN · #212: 반송 문구를 만드는 자리는 그 헬퍼 한 곳).
+  cpos=$(awk -v s="$line" 'BEGIN{print index(s,"bounce-comment.sh human-review")}')
   tpos=$(awk -v s="$line" 'BEGIN{print index(s,"transition.sh closeout-redispatch")}')
-  [ "$cpos" -gt 0 ] || { echo "  ✗ $f 시정 행에 gh pr comment(마커) 호출 없음"; exit 1; }
+  [ "$cpos" -gt 0 ] || { echo "  ✗ $f 시정 행에 bounce-comment.sh human-review(마커) 호출 없음"; exit 1; }
   [ "$tpos" -gt 0 ] || { echo "  ✗ $f 시정 행에 transition.sh closeout-redispatch 호출 없음"; exit 1; }
   [ "$cpos" -lt "$tpos" ] \
-    || { echo "  ✗ $f 시정 행 — gh pr comment(마커)가 transition.sh closeout-redispatch 보다 뒤에 온다(순서 뒤집힘, #198 반송1)"; exit 1; }
+    || { echo "  ✗ $f 시정 행 — 마커 호출이 transition.sh closeout-redispatch 보다 뒤에 온다(순서 뒤집힘, #198 반송1)"; exit 1; }
   grep -qF "$blockedw" <<<"$line" \
     || { echo "  ✗ $f 시정 행에 마커 코멘트 실패 시 전이를 부르지 않는 fail-closed 문장 없음(#198 반송1)"; exit 1; }
 done
@@ -1016,17 +1019,25 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f held 행에 '아직 해제 전' 갈래가 없음(무조건 closeout-blocked 로 되돌아갔다, #198 흡수 #174)"; exit 1; }
 done
 
-echo "[closeout] ①-c 인용 의무 — 결정 코멘트 부재·조회 실패는 면제 (반증형, #198 attempt3-P2)"
-# 검증 레인 실측 P2: 모호 행 신호에는 '결정 코멘트 부재'·'코멘트 조회 실패' 가 명시돼 있는데
-# 바로 아래 인용 의무 문장은 세 조치 모두에 결정문 원문 인용을 요구해 모순 지시가 된다.
-# '코멘트 조회 실패' 는 모호 행 신호 목록에 이미 있으므로(콜론 없이) 그 부분매칭에 속지
-# 않도록 콜론 붙은 진단 문구 형태로 좁혀 검사한다.
+echo "[closeout] ①-c 인용 의무 — 결정 코멘트 부재는 면제 · 조회 실패는 BLOCKED 칸 (반증형, #198 attempt3-P2 · #334 WARN)"
+# 검증 레인 실측 P2: 모호 행 신호에 '결정 코멘트 부재' 가 있는데 바로 아래 인용 의무 문장은
+# 세 조치 모두에 결정문 원문 인용을 요구해 모순 지시가 된다 → 그 갈래만 면제하고 진단 문구를
+# 대신 남긴다. 여기에 함께 있던 '코멘트 조회 실패' 갈래는 #334 WARN 으로 **자리가 바뀌었다** —
+# 상태를 바꾸지 않는 BLOCKED 칸으로 갔으므로 남길 코멘트 자체가 없다. 두 자리가 갈리지 않게
+# 인용 의무 문단이 그 이동을 **명시**하는지까지 문다(문장이 사라지면 다음 구현자가 조회 실패를
+# 다시 모호로 되돌린다).
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   sec=$(ic_sec "$f")
+  case "$f" in
+    *.en.md) movedw='lookup failure no longer arrives here' ;;
+    *)       movedw='조회 실패는 이제 여기로 오지 않고' ;;
+  esac
   grep -qF '결정문 없음' <<<"$sec" \
     || { echo "  ✗ $f ①-c 절에 결정 코멘트 부재용 진단 문구('결정문 없음') 없음(#198 attempt3-P2)"; exit 1; }
-  grep -qF '코멘트 조회 실패:' <<<"$sec" \
-    || { echo "  ✗ $f ①-c 절에 조회 실패용 진단 문구('코멘트 조회 실패:', 콜론 포함) 없음(#198 attempt3-P2)"; exit 1; }
+  grep -qF "$movedw" <<<"$sec" \
+    || { echo "  ✗ $f ①-c 인용 의무 문단이 '조회 실패는 BLOCKED 칸으로 옮겼다' 를 명시하지 않음(#334 WARN)"; exit 1; }
+  grep -qF '코멘트 조회 실패: <' <<<"$sec" \
+    && { echo "  ✗ $f ①-c 절에 조회 실패용 인용-대체 진단 문구가 남아 있다 — 그 갈래는 상태를 안 바꾸므로 남길 코멘트가 없다(#334 WARN)"; exit 1; }
 done
 
 echo "[closeout] ①-c 해소 판정 — '새 커밋' 이 아니라 '새 완결 판정' 이다 (반증형, #198 10:11-P1 축①)"
@@ -1070,13 +1081,16 @@ echo "[closeout] ①-c 전이 실패도 마커 실패와 같은 BLOCKED 재시�
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   sec=$(ic_sec "$f"); step1=$(ic_step "$f" 1 2 <<<"$sec")
   case "$f" in
-    *.en.md) eff='transition-effect readback'; again='re-call only the transition'
+    # 실측 대상은 '전이의 효과' 가 아니라 **이슈의 현재 라벨**이다(#334 BLOCKER — 전이의
+    # 라벨 편집이 no-op 인 형상에서 '효과' 는 관측 자체가 불가능하다). 축②가 요구하는 것은
+    # 그대로다: **마커의 존재만 보고 무접촉하지 마라.**
+    *.en.md) eff="read the linked issue's current labels"; again='re-call only the transition'
              blk_t='BLOCKED: transition failed re-dispatch PR'; blk_m='BLOCKED: transition failed re-dispatch-marker PR' ;;
-    *)       eff='전이 효과 실측'; again='전이만 재호출한다'
+    *)       eff='현재 라벨을 한 번 실측'; again='전이만 재호출한다'
              blk_t='BLOCKED: 전이 실패 재디스패치 PR'; blk_m='BLOCKED: 전이 실패 재디스패치-마커 PR' ;;
   esac
   grep -qF "$eff" <<<"$step1" \
-    || { echo "  ✗ $f ①-c 1) 멱등 분기가 '$eff' 로 갈리지 않음(마커 존재만 보면 전이 실패가 영구 정체, #198 축②)"; exit 1; }
+    || { echo "  ✗ $f ①-c 1) 멱등 분기가 '$eff' 를 하지 않음(마커 존재만 보면 전이 실패가 영구 정체, #198 축②)"; exit 1; }
   grep -qF "$again" <<<"$step1" \
     || { echo "  ✗ $f ①-c 1) 절에 '$again'(마커 재발행 없이) 문구 없음(#198 축②)"; exit 1; }
   # 개수만 세면 한 자리를 지워도 나머지가 상한을 채워 통과한다 — 전이-실패 경로가 쓰는
@@ -1087,35 +1101,68 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f ①-c 절 — 마커 실패 경로의 보고 줄이 사라졌다(#198 축② 비대칭 회귀)"; exit 1; }
 done
 
-echo "[closeout] ①-c 전이 효과 실측은 하류 활성 레인 전부를 센다 (반증형, #334 BLOCKER①-a)"
-# 검증자 BLOCKER ①: 전이 효과 실측이 **워커 레인 두 라벨**(agent-ready·agent:claimed)만 보면,
-# `handoff-verify` 가 이슈에서 agent:claimed 를 떼고 flow:verify 를 붙인 창 — 검증자가 완결
-# 판정을 찍기 전까지 수십 분 — 에서 두 라벨이 둘 다 없어 "전이가 안 섰다" 로 오독하고
-# closeout-redispatch 를 재호출해 **살아있는 검증 레인의 flow:verify 를 뗀다.** 해소 판정도
-# 그 창을 못 막는다(아직 완결 판정이 없다). 처방은 실측 대상을 `transition.sh` 전이 표에서
-# closeout-redispatch 이후 사다리가 이슈에 남기는 칸 **전부**로 넓히는 것.
+echo "[closeout] ①-c 멱등 분기 술어 A·R — 정의식 자체를 문다 (반증형, #334 BLOCKER + BLOCKER①-a)"
+# 2026-09-12 검증자 BLOCKER: 하류 활성 레인 술어가 `agent-ready` 를 품어 **열린 사다리 이슈에서
+# 상수 참**이라 "전이가 섰다/안 섰다" 를 못 갈랐고, `harvesting`·`flow:*` 는 전이가 **제거하는**
+# 칸이라 남아 있을수록 "안 섰다" 는 증거인데 술어가 이를 "섰다" 로 셌다(**신호 반전**). 결과로
+# 격자 13행·10행이 도달 불가였다. 처방은 술어를 둘로 가르는 것 — `A`(하류 레인 소유 · 재호출이
+# 해로운가)와 `R`(재디스패치 목표 상태 · 워커가 오는가). `agent-ready` 는 `A` 의 `∨` 항에서
+# 빠지고 `R` 의 **논리곱 한 항**으로만 남는다.
 #
-# **정의식 자체**를 뽑아서 문다 — 절 전체를 훑으면 파생 설명(`handoff-verify`→`flow:verify`
-# 같은 유도 괄호)이 라벨 이름을 계속 담고 있어, 정의를 워커 두 라벨로 되돌려도 초록으로
-# 남는다(실측: 첫 뮤테이션이 그대로 통과했다 — 가드가 있다는 것과 그 가드가 구간을 덮는다는
-# 것은 다른 주장이다). 정의 표지 뒤부터 닫는 `**` 앞까지가 그 식이다.
+# **정의식 자체**를 뽑아서 문다 — 절 전체를 훑으면 파생 설명이 라벨 이름을 계속 담고 있어
+# 정의를 되돌려도 초록으로 남는다(직전 회차가 실제로 그랬다). 정의 표지 뒤부터 닫는 `**` 앞까지.
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   sec=$(ic_sec "$f"); step1=$(ic_step "$f" 1 2 <<<"$sec")
   [ -n "$step1" ] || { echo "  ✗ $f 의 ①-c 1) 절을 못 찾음"; exit 1; }
   case "$f" in
-    *.en.md) lanew='Downstream active lane labels = ' ;;
-    *)       lanew='하류 활성 레인 라벨 = ' ;;
+    *.en.md) lanew='Downstream active lane labels `A` = '; tgtw='Redispatch target state `R` = ' ;;
+    *)       lanew='하류 활성 레인 라벨 `A` = ';           tgtw='재디스패치 목표 상태 `R` = ' ;;
   esac
   flat=$(tr '\n' ' ' <<<"$step1")
-  defexpr=$(sed -n "s/.*${lanew}//p" <<<"$flat" | sed 's/\*\*.*//') || defexpr=''
-  [ -n "$defexpr" ] \
-    || { echo "  ✗ $f ①-c 1) 멱등 분기에 '하류 활성 레인 라벨' 정의식이 없음 — 워커 두 라벨만 보면 살아있는 검증 레인을 걷어낸다(#334 BLOCKER①)"; exit 1; }
-  for lbl in 'agent-ready' 'agent:claimed' 'flow:verify' 'flow:ready' 'harvesting'; do
-    grep -qF -- "$lbl" <<<"$defexpr" \
-      || { echo "  ✗ $f ①-c 1) 실측 라벨 **정의식**에 '$lbl' 없음 — 전이 표가 이슈에 남기는 칸 전부를 세야 한다(#334 BLOCKER①): [$defexpr]"; exit 1; }
+  defA=$(sed -n "s/.*${lanew}//p" <<<"$flat" | sed 's/\*\*.*//') || defA=''
+  defR=$(sed -n "s/.*${tgtw}//p" <<<"$flat" | sed 's/\*\*.*//') || defR=''
+  [ -n "$defA" ] \
+    || { echo "  ✗ $f ①-c 1) 멱등 분기에 하류 활성 레인 술어 'A' 의 정의식이 없음(#334 BLOCKER)"; exit 1; }
+  [ -n "$defR" ] \
+    || { echo "  ✗ $f ①-c 1) 멱등 분기에 재디스패치 목표 상태 'R' 의 정의식이 없음(#334 BLOCKER)"; exit 1; }
+  # A = 사다리 뒤 단계 넷. agent-ready 가 들어오면 상수 참이 되어 술어가 죽는다.
+  for lbl in 'agent:claimed' 'flow:verify' 'flow:ready' 'harvesting'; do
+    grep -qF -- "$lbl" <<<"$defA" \
+      || { echo "  ✗ $f ①-c 1) 술어 A 정의식에 '$lbl' 없음 — 살아있는 하류 레인을 걷어낸다(#334 BLOCKER①-a): [$defA]"; exit 1; }
+  done
+  grep -qF -- 'agent-ready' <<<"$defA" \
+    && { echo "  ✗ $f ①-c 1) 술어 A 정의식에 'agent-ready' 가 있다 — 어느 remove 칸에도 없어 상수 참이고, ∨ 항 하나가 상수면 술어 전체가 상수다(#334 BLOCKER): [$defA]"; exit 1; }
+  # R = add 칸 있음 ∧ remove 칸 전부 없음.
+  for lbl in 'agent-ready' 'agent:claimed' 'flow:verify' 'flow:ready' 'harvesting' 'needs-human' 'hold:*'; do
+    grep -qF -- "$lbl" <<<"$defR" \
+      || { echo "  ✗ $f ①-c 1) 술어 R 정의식에 '$lbl' 없음 — 전이 표 closeout-redispatch 행의 add∧remove 전부여야 한다(#334 BLOCKER): [$defR]"; exit 1; }
   done
   grep -qF 'handoff-verify' <<<"$step1" \
-    || { echo "  ✗ $f ①-c 1) 절에 handoff-verify 창(검증 레인 소유)의 근거 없음(#334 BLOCKER①)"; exit 1; }
+    || { echo "  ✗ $f ①-c 1) 절에 handoff-verify 창(검증 레인 소유)의 근거 없음(#334 BLOCKER①-a)"; exit 1; }
+  # 신호 반전을 스스로 설명하는 문단이 있어야 한다 — 없으면 다음 구현자가 같은 반전을 되돌린다.
+  case "$f" in
+    *.en.md) sigw='Signal direction'; noopw='no-op' ;;
+    *)       sigw='신호 방향';        noopw='no-op' ;;
+  esac
+  grep -qF "$sigw" <<<"$step1" \
+    || { echo "  ✗ $f ①-c 1) 에 신호 방향(제거 대상 칸을 어느 쪽으로 세는가) 문단이 없음(#334 BLOCKER)"; exit 1; }
+  grep -qF "$noopw" <<<"$step1" \
+    || { echo "  ✗ $f ①-c 1) 에 '전이의 라벨 편집이 no-op 이라 라벨로는 성사 여부를 못 가른다' 는 근거가 없음(#334 BLOCKER)"; exit 1; }
+done
+
+echo "[closeout] ①-c 술어 실효성 — 정의식을 실제로 평가한다 (#334 BLOCKER · 테스트 갭)"
+# 문구 존재 검사는 "정의가 의미를 잃어도 초록" 이다(검증자 지적). 그래서 정의식을 파싱해
+# 픽스처 격자 위에서 **평가**하고, 전이 성공/실패 두 상태에서 **값이 갈리는지**를 잰다.
+bash scripts/tests/closeout-lane-predicate.test.sh
+
+echo "[closeout] ①-c 술어 뮤테이션 방증 — 양방향 (#334)"
+# 한쪽만 재면 "가드가 있다" 는 주장일 뿐이다. 구 동작(너무 느슨)과 과잉 조임(너무 조임)
+# 둘 다에서 **실제로 빨개지는지** 확인한다.
+for mut in loose tight; do
+  if LANE_MUT="$mut" bash scripts/tests/closeout-lane-predicate.test.sh >/dev/null 2>&1; then
+    echo "  ✗ LANE_MUT=$mut 로 술어를 망가뜨렸는데 테스트가 초록이다 — 그 테스트는 이 축을 안 문다(#334)"
+    exit 1
+  fi
 done
 
 echo "[closeout] ①-c 착수 판정 — pr-head-at.sh 가 값을 못 주면 실측 갈래에 도달하지 않는다 (반증형, #334 BLOCKER①-b)"
@@ -1176,7 +1223,10 @@ echo "[closeout] ①-c 해제 경로 없는 칸 3종 — 경계0+라벨 · 반�
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   sec=$(ic_sec "$f"); step1=$(ic_step "$f" 1 2 <<<"$sec")
   case "$f" in
-    *.en.md) noread='never reads a label'; nobounce='never went through a bounce'; loopw='self-loop' ;;
+    # en 의 'never reads a label' 은 해소 판정 ⑵ 문장("…never reads a label at all")에도
+    # 걸려 **대상이 아닌 자리**를 물었다 — 경계 0 출구를 지워도 초록이었다(#334 WARN).
+    # 경계 0 출구에만 있는 어형으로 바꾼다(`without ever reading a label`).
+    *.en.md) noread='without ever reading a label'; nobounce='never went through a bounce'; loopw='self-loop' ;;
     *)       noread='라벨을 한 번도 안 읽고'; nobounce='반송을 거치지 않은 새 커밋'; loopw='자기 순환' ;;
   esac
   grep -qF "$noread" <<<"$step1" \
@@ -1232,7 +1282,56 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   fi
 done
 
-echo "[closeout] ①-c 전수 격자 — main 대조 want 열 + 뒤집힌 칸 표식 (#198/#334 축①~⑥)"
+echo "[closeout] ①-c 조회 실패는 사람 게이트를 박지 않는다 · 경계 0 은 양쪽 배열로 (반증형, #334 WARN)"
+# WARN ⑴ `pr-comments.sh` exit 1 을 **모호 → closeout-blocked** 로 보내면 gh 일시 실패 한 번이
+#   정상 후보에 needs-human+hold:policy 를 박고, 그 게이트는 사람이 **지어낼 수 없는** 답을
+#   써야 풀린다. 같은 PR 이 pr-head-at.sh 실패엔 "BLOCKED 보고 · 상태 불변" 을 못박았으므로
+#   두 실패는 같은 칸이어야 한다.
+# WARN ⑵ 보류 경계 0 판정을 **PR 배열로만** 하면, closeout-blocked 의 PR 코멘트가 실패해
+#   이슈에만 hold-note 가 남은 형상에서 사람이 라벨을 떼는 순간 방향을 한 번도 안 읽고 ② Pick.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  sec=$(ic_sec "$f"); step1=$(ic_step "$f" 1 2 <<<"$sec")
+  case "$f" in
+    *.en.md) blk_c='BLOCKED: 코멘트 조회 실패 PR'; nob='Do not send it to'; bothw='either the PR or the issue array'; pronly='PR array alone' ;;
+    *)       blk_c='BLOCKED: 코멘트 조회 실패 PR'; nob='보내지 마라';        bothw='PR·이슈 양쪽 배열에'; pronly='PR 배열만으로 판정하지 마라' ;;
+  esac
+  grep -qF "$blk_c" <<<"$step1" \
+    || { echo "  ✗ $f ①-c 1) 에 코멘트 조회 실패용 BLOCKED 보고 줄('$blk_c') 없음 — 조회 실패가 사람 게이트를 박는다(#334 WARN)"; exit 1; }
+  grep -qF "$nob" <<<"$step1" \
+    || { echo "  ✗ $f ①-c 1) 에 '조회 실패를 closeout-blocked 로 보내지 마라' 가 없음(#334 WARN)"; exit 1; }
+  grep -qF "$bothw" <<<"$step1" \
+    || { echo "  ✗ $f ①-c 1) 경계 0 출구가 PR·이슈 양쪽 배열을 보지 않는다(#334 WARN)"; exit 1; }
+  grep -qF "$pronly" <<<"$step1" \
+    || { echo "  ✗ $f ①-c 1) 에 'PR 배열만으로 판정하지 마라' 의 근거가 없음(#334 WARN)"; exit 1; }
+  # 3) 모호 행에서 '조회 실패' 가 빠졌는지 — 두 자리가 갈리면 계약이 두 벌이 된다.
+  amb=$(grep -E '^\| \*\*(모호|Ambiguous)\*\* \|' <<<"$sec") || amb=''
+  [ -n "$amb" ] || { echo "  ✗ $f ①-c 3) 방향 표의 모호 행을 못 찾음"; exit 1; }
+  case "$f" in
+    *.en.md) badw='· comment lookup failed |' ;;
+    *)       badw='·코멘트 조회 실패 |' ;;
+  esac
+  grep -qF "$badw" <<<"$amb" \
+    && { echo "  ✗ $f ①-c 3) 모호 행이 아직 '코멘트 조회 실패' 를 그 갈래로 받는다 — 1) 의 BLOCKED 칸과 두 벌이다(#334 WARN)"; exit 1; }
+done
+
+echo "[closeout] ①-c 3) 시정 반송 마커는 bounce-comment.sh 채널로 (반증형, #212 · #334 WARN)"
+# 반송 문구를 만드는 자리는 `bounce-comment.sh` 한 곳이고, SKILL 본문 손타이핑이 #212 사고
+# 원인 그 자체다. ①-c 3) 시정 행이 `gh pr comment --body "재디스패치: …"` 를 손으로 적게
+# 지시하던 자리를 새 채널(`human-review`)로 옮겼다 — 그 채널이 스크립트에 실제로 있고
+# 두 SKILL 이 그것을 부르는지 양방향으로 문다.
+grep -qE '^ *human-review\)' scripts/bounce-comment.sh \
+  || { echo "  ✗ scripts/bounce-comment.sh 에 human-review 채널 없음(#334 WARN)"; exit 1; }
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  sec=$(ic_sec "$f")
+  corr=$(grep -E '^\| \*\*(시정|Correction)\*\* \|' <<<"$sec") || corr=''
+  [ -n "$corr" ] || { echo "  ✗ $f ①-c 3) 방향 표의 시정 행을 못 찾음"; exit 1; }
+  grep -qF 'bounce-comment.sh human-review' <<<"$corr" \
+    || { echo "  ✗ $f ①-c 3) 시정 행이 bounce-comment.sh human-review 채널을 부르지 않는다 — 문구 손타이핑은 #212 사고 원인이다(#334 WARN)"; exit 1; }
+  grep -qF 'gh pr comment' <<<"$corr" \
+    && { echo "  ✗ $f ①-c 3) 시정 행에 손타이핑 gh pr comment 가 남아 있다(#334 WARN)"; exit 1; }
+done
+
+echo "[closeout] ①-c 전수 격자 — main 대조 want 열 + 뒤집힌 칸 표식 (#198/#334 축①~⑦)"
 # PR#296 교훈: 안전망 술어를 좁힐 때 자기 격자 초록·local-ci pass 를 근거로 삼지 말고 같은
 # 입력을 main 판정기에 나란히 먹여 뒤집힌 칸을 전수로 찾아 want 열에 못박아라. ①-c 는 문서
 # 절차라 스크립트 테스트가 닿지 않으므로, 격자 자체를 문서 안에 두고 (a) want 열, (b) main
@@ -1246,8 +1345,8 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qF 'origin/main' <<<"$sec" \
     || { echo "  ✗ $f ①-c 격자에 origin/main 대조 열 없음(#198, PR#296 교훈)"; exit 1; }
   case "$f" in
-    *.en.md) axes='axis① axis② axis③ axis④ axis⑤ axis⑥' ;;
-    *)       axes='축① 축② 축③ 축④ 축⑤ 축⑥' ;;
+    *.en.md) axes='axis① axis② axis③ axis④ axis⑤ axis⑥ axis⑦' ;;
+    *)       axes='축① 축② 축③ 축④ 축⑤ 축⑥ 축⑦' ;;
   esac
   # 축 표식은 **격자 행 안**에서만 센다 — 절 본문 산문에도 '축②' 같은 참조가 있어 절 전체를
   # 훑으면 격자에서 표식이 지워져도 통과한다(뒤집힌 칸이 전수로 안 못박힌다).
@@ -1257,8 +1356,8 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
       || { echo "  ✗ $f ①-c 격자 행에 뒤집힌 칸 표식 '$axis' 없음(#198/#334)"; exit 1; }
   done
   rows=$(awk '/^\| *[0-9]+ *\|/' <<<"$sec" | wc -l | tr -d ' ')
-  [ "$rows" -ge 22 ] \
-    || { echo "  ✗ $f ①-c 격자 행이 $rows 개뿐 — 전수가 아니다(22행 이상 요구, #198/#334)"; exit 1; }
+  [ "$rows" -ge 27 ] \
+    || { echo "  ✗ $f ①-c 격자 행이 $rows 개뿐 — 전수가 아니다(27행 이상 요구, #198/#334)"; exit 1; }
 done
 
 echo "[closeout] ci-gate --repo 분기 스모크 (positive + fail-closed)"

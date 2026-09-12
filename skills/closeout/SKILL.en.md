@@ -449,8 +449,18 @@ path of every column it holds" (#225 · #265), so every leave-it / BLOCKED branc
 
 **1) Is there an unresolved hold?** Read comments through `$SCRIPTS/pr-comments.sh <repo> <pr>`,
 **one place only** (no second copy of the lookup logic; avoids the first-100 cap — same reason as
-①-b; `--paginate` lives **inside** that helper, do not pass it as an argument). If the lookup
-exits 1 that is a **failed proof**, so do not let it through — go to *ambiguous* in 3) below.
+①-b; `--paginate` lives **inside** that helper, do not pass it as an argument). **If the lookup
+exits 1 (or any non-zero) it lands in the same cell as a `pr-head-at.sh` failure** — report
+`BLOCKED: 코멘트 조회 실패 PR #<pr>(<repo_short>) — pr-comments.sh exit <code>` in ④ Report and
+**do not change that PR's state** (untouched · retried next tick). **Do not send it to
+`closeout-blocked` (WARN #334).** The two failures are the same kind (no value obtained), and if
+only one of them changes state, a single transient `gh` failure pins `needs-human`+`hold:policy`
+onto a healthy candidate — and that gate only opens once someone writes a "rejection/correction"
+answer that **cannot be invented**. A lookup failure says nothing about that PR, so there is no
+ground to change its state. **Release path**: when the lookup succeeds next tick it carries on (the
+unresolved hold is still there, so the `active`/`done_verdict` judgment routes it back here). If it
+keeps failing, the same `BLOCKED` line stacks up in ④ Report every tick for a human to see — this
+is not a silent stall.
 
 **Take the hold, the marker and the verdict each as an index — the latest one wins.** Do not put
 an "does it exist" test at the head of the branch chain; compare indices (the spot #225 nailed
@@ -490,8 +500,15 @@ down — an existence test in front makes later branches unreachable).
   **before** the hold as a decision, and reading it as rejection, is a straight mis-merge).
   `closeout-blocked` leaves `<!-- hold-note: <reason> -->` on **both** the PR and the issue, so in
   the normal shape both sides have a boundary.
-- If no such comment exists at all (PR side) → there was no hold → **② Pick only when `H`
-  (`needs-human`·`hold:*` on the issue or the PR) is currently absent**. **If `H` is present,
+- If no such comment exists in **either the PR or the issue array** → there was no hold →
+  **② Pick only when `H` (`needs-human`·`hold:*` on the issue or the PR) is currently absent**.
+  **Do not decide this from the PR array alone (WARN #334)** — `closeout-blocked` leaves
+  `<!-- hold-note: ` on both the PR and the issue, but when that comment posting fails **on the PR
+  side only**, the boundary survives on the issue alone. In that shape, once a human removes the
+  labels, this exit ② Picks **without ever reading the direction** — and "the boundary is computed
+  per source" just above **already computes** the issue-side boundary, so the cost is one
+  condition. If only the issue side has a boundary, carry on with the judgment below using it
+  (read it as `h` present). **If `H` is present,
   leave it (the hold stands)** — a human attached labels without a comment, and this is the
   **only exit in this section that reaches ② Pick without ever reading a label**, so the axis
   resolution test ⑵ closes is closed here too. No other gate covers it: the ①-b sweep's target
@@ -565,12 +582,13 @@ comment, so a live attempt-N+1 worker is not misclassified), and it reuses the e
   verdict lands, the resolution test above releases this cell (the bounce transition put the issue
   back to `agent-ready`, so a worker lane is holding it). If that lane dies,
   `timebox-check.sh` reclaims the claim and the #265 stall-mirror warn surfaces it.
-- **`r` absent — a new commit that never went through a bounce** → first check whether a
-  **downstream active lane** owns it (**the same label set** as the idempotency branch below;
-  defined there, in one place):
-  - **Any one label present** → that lane is holding it → `active`, untouched.
+- **`r` absent — a new commit that never went through a bounce** → first check ownership with the
+  **downstream active lane predicate `A`** (**the same predicate** as the idempotency branch below;
+  defined there, in one place — `agent-ready` is **not** in it: if it were, this arm would be
+  constant-true and the "none present" arm below would be **unreachable**, #334 BLOCKER):
+  - **`A` true** → that lane is holding it → `active`, untouched.
     **Release path**: that lane's completion verdict → resolution (as above).
-  - **None present** → send it to the human by the **same path as *ambiguous*** in 3)
+  - **`A` false** → send it to the human by the **same path as *ambiguous*** in 3)
     (`--note`: `반송 없이 새 커밋이 생겼다 — 원안 그대로 머지할지 재검증이 필요한지 한 줄로`).
     Leaving it `active` here **has no release path**: the code changed, so the old ✅ predates the
     head and `finish-classify` emits `active` forever (#171), and ①-b routes that `active` right
@@ -600,26 +618,46 @@ in ④ Report every tick where a human sees it — it is not a silent stall.
   read **resolution test (completion-verdict comment) → start-of-work test (new commit) →
   idempotency branch**, in that order only.
 - The **known cost** of this order: in the cell `(no completion, new commit, marker > boundary,
-  no lane label)` the start-of-work test emits `active` first, so the *re-call only the transition*
-  arm of the idempotency branch below is not reached (grid row 8). The reach condition is narrow —
-  once a transition lands, `agent-ready` survives for the worker's whole lifetime
-  (`transition.sh` transition table: `agent-ready` appears in no remove cell), so it only stands
-  for "transition failed ∧ a human then committed directly". The direction is fail-closed (no
+  `A` false ∧ `R` false)` the start-of-work test emits `active` first, so the *re-call only the
+  transition* arm of the idempotency branch below is not reached (grid row 8). The reach condition
+  is narrow — for `R` to be false, `agent-ready` must be missing or `needs-human`·`hold:*` must
+  remain on the issue, and "a human then committed directly" must be layered on top of that. The direction is fail-closed (no
   mis-merge, a stall), and the **release path** is the #265 stall-mirror warn plus a human. Do not
   flip the order to rescue this cell — that reopens axis①.
 
-**If it was already bounced, do not bounce it again — but split on 'the transition landed', not on
-'a marker exists' (idempotency, #198 bounce3/P1 + 10:11/P1 axis②).** If the **re-dispatch marker
-index > hold boundary** (a bounce for this hold already went out), do not leave it alone on the
-strength of the marker — do one **transition-effect readback**: does the linked issue currently
-carry a **downstream active lane label**?
+**If it was already bounced, do not bounce it again — but split on neither 'a marker exists' nor
+'the transition landed': split on 'is someone holding it, or is a worker coming' (idempotency,
+#198 bounce3/P1 + 10:11/P1 axis② · #334 BLOCKER).** If the **re-dispatch marker index > hold
+boundary** (a bounce for this hold already went out), do not leave it alone on the strength of the
+marker — **read the linked issue's current labels** once.
 
-**Downstream active lane labels = `agent-ready` ∨ `agent:claimed` ∨ `flow:verify` ∨ `flow:ready` ∨
-`harvesting`** — **every** cell the ladder **after** `closeout-redispatch` leaves on the issue, per
-the transition table in `scripts/transition.sh` (`closeout-redispatch`→`agent-ready`, dispatcher
-claim→`agent:claimed`, `handoff-verify`→`flow:verify`, `verify-pass`→`flow:ready`,
-`closeout-pick`→`harvesting`). **Looking at the two worker-lane labels
-(`agent-ready`·`agent:claimed`) only is wrong (BLOCKER ①-a)**: `handoff-verify` **removes**
+**★ Why this branch does not ask "did the transition land?" — that question cannot be answered by
+labels (#334 BLOCKER).** In the shape where this section calls `closeout-redispatch`, that
+transition's **issue-label edit is usually a no-op**. Lay the state just before the call next to
+the issue cells of the transition table (`scripts/transition.sh:20`) and they coincide:
+`closeout-blocked` already removed `harvesting`·`flow:ready`·`flow:verify` (`:19`),
+`handoff-verify` already removed `agent:claimed` (`:14`), 2) ⓑ below **already requires**
+`needs-human`·`hold:*` to be absent, and `agent-ready` **appears in no remove cell** (`:28-30`) so
+it survives the whole ladder. **An edit that changes no state leaves the same label shape whether
+it succeeded or failed** — so in that shape a label predicate that splits "landed / did not land"
+**cannot exist**. The old predicate was constant-true not merely because `agent-ready` sat in a
+`∨` term, but because **the question itself was not answerable from labels**. And in that shape a
+failed transition is **harmless** — the issue is already in a dispatchable shape, so a worker
+comes. So the question changes: the **only purpose** of the transition this branch would call is
+"put the issue back into a shape the dispatcher can pick up", so what must be asked is
+**"is a worker coming (`R`), or is someone already holding it (`A`)"**. Both are decided by
+labels, and neither is constant.
+
+**Downstream active lane labels `A` = `agent:claimed` ∨ `flow:verify` ∨ `flow:ready` ∨ `harvesting`**
+— the four cells of the `closeout-redispatch` row's issue **remove** column that belong to the
+**later rungs** of the ladder (`scripts/transition.sh:20`; dispatcher claim→`agent:claimed`,
+`handoff-verify`→`flow:verify`, `verify-pass`→`flow:ready`, `closeout-pick`→`harvesting`). These
+four are **absent** from the transition's target state, so finding one on the issue after the
+transition means **the ladder moved on past it**. **Do not put `agent-ready` in this list
+(#334 BLOCKER)** — it appears in no remove cell (`:28-30`), so on an open ladder issue it is
+**constant-true**, and a single constant term in a `∨` makes the whole predicate constant, unable
+to split any input. **Looking at the two worker-lane labels (`agent-ready`·`agent:claimed`) only
+is wrong too (BLOCKER ①-a)**: `handoff-verify` **removes**
 `agent:claimed` from the issue and adds `flow:verify`, so in the window after a correction worker
 has finished and handed off to the verify lane — **tens of minutes**, until the verifier posts its
 completion verdict — **neither** of those two labels is present. Re-calling `closeout-redispatch`
@@ -629,7 +667,27 @@ that window (a consequence of this section's own contract that ✅ is owned by v
 **The transition table is the SSOT** — when a new transition starts leaving a cell on the issue,
 add that cell to this list.
 
-- **Any one of them present** → the transition landed → a downstream lane owns this →
+**Redispatch target state `R` = `agent-ready` present ∧ `agent:claimed`·`flow:verify`·`flow:ready`·
+`harvesting`·`needs-human`·`hold:*` all absent** — the same transition row's issue **add cell is
+present and every remove cell is absent**, i.e. exactly the state `closeout-redispatch` aims at.
+That set is the **same set** as the dispatch-eligibility predicate in
+`scripts/eligible-issues.sh` (server query `label:agent-ready` plus the client-side exclusions
+`agent:claimed`·`needs-human`·`hold:` prefix·`flow:verify`·`flow:ready`·`harvesting`) — so when `R`
+is true, "the next dispatch tick will pick this issue up" is true, and that is all this branch
+wanted from the transition. (The SSOT of the eligibility predicate is that script — this is a
+**reuse** site, not a second definition.)
+
+**Signal direction — the same label carrying opposite polarity in the two predicates is
+deliberate.** The old predicate counted the **presence** of `harvesting`·`flow:ready`·`flow:verify`
+as "the transition landed". That reads a cell the transition **removes** as evidence of success —
+an **inversion**. In the new predicates the presence of those three (and `agent:claimed`) makes
+`R` **false** — target state not reached, the right way round. The same four count toward
+*untouched* in `A`, but that is **not** the claim *"the transition landed"*; it is the separate
+claim *"re-calling would strip a live lane's cell"*. Where the two claims disagree
+(`A` true ∧ `R` false), the **non-destructive** side wins (fail-closed) — which is why the branch
+below reads `A` first.
+
+- **`A` true (any one of the four present)** → a downstream lane owns this →
   **leave this tick alone** (`active`, untouched). Do not rewrite the marker and do not call
   `closeout-redispatch` again. ①-b's idempotency-marker paragraph says "if the marker already
   exists and there has been no new commit / verifier comment since, do not re-issue **the
@@ -640,14 +698,37 @@ add that cell to this list.
   dispatch-wait + implementation window was a re-call window every tick). **Release path**: when
   that lane posts its completion verdict, the resolution test above releases it; if the lane dies,
   `timebox-check.sh` (claim reclamation) and the #265 stall-mirror warn surface it.
-  **The cost of widening** is stated with it — the wider the label set, the more often "the
-  transition landed" is true, so the *re-call only the transition* arm gets narrower. That
-  direction is fail-closed (a live lane is never touched), and the stall that narrowing costs is
-  covered by the two release paths just named.
-- **None of them present** → the marker stands but **the transition did not** (in the
-  marker-first order only the transition failed, or it was reverted later) → left alone, the issue
-  never gets `agent-ready` back and no worker ever comes (permanent stall). The marker is already
-  there, so **do not rewrite it — re-call only the transition**:
+  **The cost of this arm** is stated with it — the more often `A` is true, the narrower the
+  *re-call only the transition* arm gets. That direction is fail-closed (a live lane is never
+  touched), and the stall that narrowing costs is covered by the two release paths just named.
+  **`agent:claimed` is the one cell of the four whose meaning is genuinely ambiguous** — it may be
+  a worker newly dispatched after the transition, or the **old claim** left behind because the
+  transition's issue-side edit failed. The label shape is identical, so here too the
+  **non-destructive** side is taken (stripping the old claim is precisely the accident PR#239
+  closed). **Release path for the old claim**: `timebox-check.sh` reclaims it, the cell empties,
+  and the next tick has `A` false · `R` true, so the dispatcher picks it up — the ambiguity lasts
+  one tick.
+
+- **`A` false ∧ `R` true** → the issue is already in the transition's target state → **untouched**
+  (`active`). Re-calling the transition would move no label at all (a no-op), so there is no
+  reason to call it, and do not rewrite the marker either. **Whether the transition actually
+  landed is unknowable and does not need to be known** — the eligibility predicate is true, so the
+  next dispatch tick picks this issue up. **Release path**: that worker's completion verdict →
+  the resolution test above.
+- **`A` false ∧ `R` false** → nobody is holding it and **the dispatcher cannot pick it up either**
+  = a real stall (`agent-ready` is missing, or `needs-human`·`hold:*` remain on the issue). The
+  marker is already there, so **do not rewrite it — re-call only the transition**: what that
+  transition does is exactly to add `agent-ready` and strip those stop labels. **How this cell is
+  reached** (exhaustive): ⑴ **only the transition's issue-side edit failed** —
+  `transition.sh:344-350` edits the PR first and the issue second, so an issue edit that exits 2
+  leaves the issue's labels as they were before the transition; if `hold:*`·`needs-human` were on
+  the issue at call time (a caller that does not pass through 2)'s conjunction — the ①-b
+  `stale_reverify` bounce — or a human re-attached them on the same tick as the bounce), the stop
+  labels survive on the issue alone. ⑵ **a human removed `agent-ready` from the OPEN issue by
+  hand** — the shape `transition.sh:29-30` names explicitly (dispatch eligibility silently
+  disappears and the issue is stranded). In both paths re-calling the transition is the **only**
+  recovery, and under the old predicate ⑴ was masked constant-true by `agent-ready` and never
+  reached. The call is:
   `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`. If that fails too, it lands in
   the **same cell** as a marker-posting failure: report
   `BLOCKED: transition failed re-dispatch PR #<pr>(<repo_short>) — <one stderr line>` in ④ Report
@@ -656,9 +737,10 @@ add that cell to this list.
   if only the marker failure is covered by retry and the transition failure is not, that
   **asymmetry** stalls the latter silently forever — the marker is in `BOUNCE_MARKERS`, so
   `closeout-eligible.sh` drops it too and nobody picks it up.
-- **The order is the contract** — the **resolution test comes before this branch**. If this branch
-  ran first after a worker finished, posted `머지 판정: ✅` and had its lane labels cleared, it
-  would misread "no label = transition failed" and bounce a finished PR. The completion verdict
+- **The order is the contract** — the **resolution test comes before this branch**. After a worker
+  finishes, posts `머지 판정: ✅` and has its lane labels cleared, `A` is false and `R` is true, so
+  this branch would also end untouched — but that PR must go to **resolution → ② Pick**, not to
+  untouched. The completion verdict
   after `max(hold boundary, redispatch marker)` filters that misreading out first.
 - **If there is no linked issue** there is no label to read and no lane to bounce to → send it to
   the human by the **same path as the *ambiguous* row** in 3).
@@ -744,9 +826,9 @@ exactly one of these three:
 
 | Direction | Signal read | Action |
 |---|---|---|
-| **Correction** | "the gate was right" · "narrow it / fix it / change it" · implementation instructions · a request for more tests — **any sentence telling you to change the code** | **Fixed order — the marker comes before the transition.** First leave `gh pr comment <pr> --repo <repo> --body "재디스패치: #<issue> — 사람 재심이 시정 방향(<one-line quote of the decision>)`⏎`<!-- bodat:worker -->"` on the PR, and only **after that posting succeeds** call `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`. That marker is in `BOUNCE_MARKERS`, so later ticks' `closeout-eligible.sh` excludes it automatically — putting the marker first removes the window where "the transition succeeded but the marker comment failed, leaving a stale `머지 판정: ✅` with no exclusion marker" (#198 bounce1: in that window the next tick behaves exactly as if the direction judgment had never run). **If the marker comment's posting fails, do not call the transition** — report `BLOCKED: transition failed re-dispatch-marker PR #<pr>(<repo_short>) — <one gh failure line>` in ④ Report, isomorphic to ①-c's other transition failures (leaving that PR's state unchanged for a next-tick retry — the unresolved `마감 검증: ⚠ 보류` is still there, so the `active`/`done_verdict` judgment routes it back into this section next tick, #198). **Do not ② Pick.** — **If there is no linked issue** this transition cannot be called (`closeout-redispatch` requires an issue number: there is no `agent-ready` to restore). With no lane to bounce to, take the **same action as the ambiguous row** below and put `시정 방향인데 연결 이슈가 없어 반송 불가` in `--note`. |
+| **Correction** | "the gate was right" · "narrow it / fix it / change it" · implementation instructions · a request for more tests — **any sentence telling you to change the code** | **Fixed order — the marker comes before the transition.** First leave the marker comment on the PR with `$SCRIPTS/bounce-comment.sh human-review <repo> <pr> <issue> "<one-line quote of the decision>"` (**do not hand-type the wording** — `bounce-comment.sh` is the one place that builds bounce wording, and hand-typing it in SKILL prose is the very cause of the #212 accident. That channel produces `재디스패치: #<issue> — 사람 재심이 시정 방향(<quote>) <!-- bodat:worker -->`, and the helper folds newlines inside the quote into one line), and only **after that posting succeeds** call `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`. That marker is in `BOUNCE_MARKERS`, so later ticks' `closeout-eligible.sh` excludes it automatically — putting the marker first removes the window where "the transition succeeded but the marker comment failed, leaving a stale `머지 판정: ✅` with no exclusion marker" (#198 bounce1: in that window the next tick behaves exactly as if the direction judgment had never run). **If the marker comment's posting fails, do not call the transition** — report `BLOCKED: transition failed re-dispatch-marker PR #<pr>(<repo_short>) — <one gh failure line>` in ④ Report, isomorphic to ①-c's other transition failures (leaving that PR's state unchanged for a next-tick retry — the unresolved `마감 검증: ⚠ 보류` is still there, so the `active`/`done_verdict` judgment routes it back into this section next tick, #198). **Do not ② Pick.** — **If there is no linked issue** this transition cannot be called (`closeout-redispatch` requires an issue number: there is no `agent-ready` to restore). With no lane to bounce to, take the **same action as the ambiguous row** below and put `시정 방향인데 연결 이슈가 없어 반송 불가` in `--note`. |
 | **Rejection** | the conclusion **explicitly** says "the gate was wrong / false positive" · "merge as is" · "no code change needed", and **not one** correction signal above is present | **② Pick it.** But **do not re-run ③-1** — the code did not change, so the same `[P1]` comes back and this PR circles hold↔release forever (the spot #174's "infinite loop" section nailed down). Leave `마감 검증: ✅ 기각 승계 — 사람이 판정을 기각(<one-line quote>), ③-1 재실행 안 함`⏎`<!-- bodat:worker -->` on the PR as the **step-1 completion marker** and start ③ **at step 2 (merge)**. The existing `머지 판정: ✅` joins the step-2 merge gate unchanged. |
-| **Ambiguous** | questions only with no conclusion · conditional · both directions mixed · no decision comment · comment lookup failed | Send it back to the human with `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<one line: is the conclusion rejection or correction?>"` (fail-closed — do not open what is not proven). **Do not ② Pick.** — this transition leaves a new `<!-- hold-note: policy -->` which advances the hold boundary, so it does not run away every tick (label re-attachment also drops it from eligible). But if the human **again** removes labels without a comment, the same ambiguity repeats — on a **second ambiguity for the same PR**, write `--note` as **options** rather than a question (`기각(원안 머지) / 시정(코드 수정) 중 하나로 답해 주세요`) and leave `방향 미판정 반복: PR #<pr>(<repo_short>)` on the ④ Report item line so the human sees the repetition. |
+| **Ambiguous** | questions only with no conclusion · conditional · both directions mixed · no decision comment (**a comment lookup failure does not belong here** — it is 1)'s `BLOCKED: 코멘트 조회 실패` cell, WARN #334) | Send it back to the human with `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<one line: is the conclusion rejection or correction?>"` (fail-closed — do not open what is not proven). **Do not ② Pick.** — this transition leaves a new `<!-- hold-note: policy -->` which advances the hold boundary, so it does not run away every tick (label re-attachment also drops it from eligible). But if the human **again** removes labels without a comment, the same ambiguity repeats — on a **second ambiguity for the same PR**, write `--note` as **options** rather than a question (`기각(원안 머지) / 시정(코드 수정) 중 하나로 답해 주세요`) and leave `방향 미판정 반복: PR #<pr>(<repo_short>)` on the ④ Report item line so the human sees the repetition. |
 
 **Correction is the default.** A decision often carries both agreement ("the gate was right") and
 instruction ("fix it like this") — the field re-review comment **upheld** the BLOCKER while also
@@ -757,11 +839,11 @@ reading a rejection as a correction costs one more worker tick.
 
 **Quotation duty.** All three actions quote **one line of the decision verbatim** in their comment
 — the point of this section is that "why was that merged / why was that bounced" can be answered
-from the history alone. **Except that the *ambiguous* row's 'no decision comment' and 'comment
-lookup failed' branches are exempt (#198 bounce3/P2)** — there is no sentence to quote in those
-two cases, and forcing a quote makes an unattended worker invent one or skip the hold. In those
-branches leave a diagnostic in place of the quote: `결정문 없음` when there is no decision comment
-at all, `코멘트 조회 실패: <one error line>` when `pr-comments.sh` exits 1.
+from the history alone. **Except that the *ambiguous* row's 'no decision comment' branch is
+exempt (#198 bounce3/P2)** — there is no sentence to quote in that case, and forcing a quote makes
+an unattended worker invent one or skip the hold. In that branch leave `결정문 없음` in place of
+the quote. A `pr-comments.sh` lookup failure no longer arrives here — it ends in 1)'s `BLOCKED`
+cell (which changes no state, so there is no comment to leave) and is unrelated to this duty.
 
 If a transition exits 1 (readback mismatch) or 2 (gh failure), do not change that PR's state;
 report `BLOCKED: transition failed <transition> PR #<pr>(<repo_short>) — <one stderr line>` in
@@ -778,43 +860,69 @@ review and regression:
 | **Correction release** | `마감 검증: ⚠ 보류` on the PR, `재심: 좁힌다 — … 이렇게 고쳐라 <!-- policy-review: resumed --><!-- bodat:worker -->` on the issue, no new commit, no new `마감 검증: ✅` | **no ② Pick** · `closeout-redispatch` + `재디스패치:` marker comment |
 | **Rejection release** | same shape but the decision reads `재심: 판정 기각 — 원안 그대로 머지, 코드 변경 없음` | **② Pick** · **no ③-1 re-run** (③ starts at step 2) · `마감 검증: ✅ 기각 승계` marker |
 | **Ambiguous** | the decision reads `이거 왜 이렇게 짰나요?` (a question only), or there is no decision comment at all | `closeout-blocked --reason policy` · **no ② Pick** |
+| **Release + no decision** | the human removed the labels and left no comment (`D` false · `H` false) | 2)ⓐ false → **ambiguous** → `closeout-blocked` (= **hold stands**) · the stall is surfaced by the #265 warn |
+| **Decision + labels still on** | the decision is there but `hold:policy` remains on the issue (`D` true · `H` true) | 2)ⓑ false → **hold stands · untouched** · do not call the transition again |
+| **New commit after release** | the head commit postdates the boundary (`c` true), no `r`, `A` false | **not `active` but the 3) ambiguous path** (`closeout-blocked --reason policy`) — grid row 10. This round **updated** #174's absorbed fixture "`active` (#171 wins)" (see the footnote below) |
+| **Lookup failure** | `pr-comments.sh` exits non-zero | **`BLOCKED: 코멘트 조회 실패` · state unchanged · untouched** — grid row 22. This round **updated** the absorbed item's "hold stands" into a form that *touches no label* (see the footnote below) |
+
+**Footnote — this round updated two fixture lines of #174's absorbed item (issue #334's body was
+edited to match).** ⑴ *"new commit after release → `active` (#171 wins)"* → **the 3) ambiguous
+path**. Reason: leaving that cell `active` gives it no release path — the code changed, so the old
+✅ predates the head, `finish-classify` emits `active` forever, ①-b sends it back into this
+section, and it becomes a **self-loop**; no bounce was ever called so there is neither a worker
+lane nor a `flow:verify`, and nobody picks it up. ⑵ *"lookup failure → hold stands"* →
+**`BLOCKED` · state unchanged**. Reason: sending it to `closeout-blocked` makes that "hold stands"
+an actual **label attachment**, so one transient `gh` failure pins a human gate on a healthy
+candidate and the human must write a "rejection/correction" answer that cannot be invented. Both
+branches stay fail-closed in direction (no mis-merge).
 
 **Exhaustive grid — `want` column and the `origin/main` comparison.** This is a narrowing change,
 so a green grid of one's own is not evidence (PR#296 lesson: feed the same inputs to the
 `origin/main` judge side by side and nail every flipped cell into a `want` column). `origin/main`
 has **no ①-c section at all**, so a PR whose hold labels were removed passes
 `closeout-eligible.sh` and goes straight to ② Pick — hence the main column is `② Pick` on every
-row. The `attempt5` column is what the **previous round's design** (closed PR #203 / branch
-`agent/issue-198`, head `683cdde2`) did on that input, and the `flipped` column is what this round
-newly closes — **axis④** = the verifier's BLOCKER ① (stripping a live downstream lane · reverting
-with no value), **axis⑤** = the verifier's BLOCKER ② (resolution not reading label absence),
-**axis⑥** = the **cells with no release path** found in pre-review (zero boundary + labels only ·
-the self-loop of a bounce-less new commit · undefined `r ≤ h`). axis①②③ are cells the previous
-round already closed, and that column shows the state **at the 10:11 bounce** — the point is not
-that the round ended there, but that this table nails those axes' regressions down too.
+row. The `before bounce` column is what the design **before this round's fix** did on that input, and
+the `flipped` column is what this round newly closes — **axis④** = the verifier's BLOCKER ①
+(stripping a live downstream lane · reverting with no value), **axis⑤** = the verifier's BLOCKER ②
+(resolution not reading label absence), **axis⑥** = the **cells with no release path** found in
+pre-review (zero boundary + labels only · the self-loop of a bounce-less new commit · undefined
+`r ≤ h`), **axis⑦** = the 2026-09-12 verifier BLOCKER + WARNs (the downstream-lane predicate
+constant-true because of `agent-ready`, so a failed transition reads as "landed" · the **signal
+inversion** of counting removal-target cells · a comment lookup failure pinning a human gate · the
+zero-boundary decision taken from the PR array alone). **For axis⑦ rows that column is this PR's
+previous commit (`d82c6e7`)**; for axis①~⑥ rows it is closed PR #203 (head `683cdde2`) **at the
+10:11 bounce**. Two baselines are mixed, so each row names its own in parentheses. Only the `want`
+column is the current contract.
 
 `h`=hold boundary · `r`=redispatch marker · `f`=completion-verdict comment (`머지 판정: ✅` ·
-`마감 검증: ✅`) · `c`=head commit is later · `L`=the issue currently carries a **downstream active
-lane label** (`agent-ready`∪`agent:claimed`∪`flow:verify`∪`flow:ready`∪`harvesting`) ·
+`마감 검증: ✅`) · `c`=head commit is later · **`A`**=the issue currently carries a **downstream
+active lane label** (`agent:claimed`∪`flow:verify`∪`flow:ready`∪`harvesting`) — **`agent-ready` is
+not in this set** (it appears in no remove cell, so it is constant-true; dropped, #334 BLOCKER) ·
+**`R`**=the issue is in the **redispatch target state** (`agent-ready` present ∧ none of `A`'s four
+∧ no `needs-human`·`hold:*` = `eligible-issues.sh` dispatch eligibility) ·
 `H`=`needs-human`·`hold:*` currently present on the issue or PR · `D`=a decision comment after the
 window exists.
 
-| # | Input | `origin/main` | `attempt5` | `want` | flipped |
+`A` and `R` are not exclusive — **only the cell where both are false is a real stall**, and only
+there is the transition re-called. Where `A` is true ∧ `R` is false (a live lane), the
+non-destructive side wins and the cell is untouched.
+
+| # | Input | `origin/main` | `before bounce` | `want` | flipped |
 |---|---|---|---|---|---|
 | 1 | no `h`, no `H` | ② Pick | ② Pick | ② Pick | — |
-| 2 | **no `h`** (zero boundary comments), **`H` present** (a human attached labels with no comment) | ② Pick | **② Pick** (an exit that never reads a label) | **untouched · hold stands** | ✅ axis⑥ |
+| 2 | **no `h`** (zero boundary comments in **both** the PR and the issue array), **`H` present** (a human attached labels with no comment) | ② Pick | **② Pick** (an exit that never reads a label, #203) | **untouched · hold stands** | ✅ axis⑥ |
 | 3 | `h`, `f > max(h,r)`, no `H` | ② Pick | ② Pick | ② Pick | — |
 | 4 | `h`, `f > max(h,r)`, **`H` present** (the human removed only `needs-human` and left `hold:policy`) | ② Pick | **resolved → ② Pick** (peels off a live human gate) | **hold stands · untouched** | ✅ axis⑤ |
-| 5 | `h`, `f` exists but **`f < r`** (a ✅ earlier than the marker) | ② Pick | **resolved → ② Pick** | **`active`** (resolution requires being after `max(h,r)`) | ✅ axis① |
+| 5 | `h`, `f` exists but **`f < r`** (a ✅ earlier than the marker), **no `c` ∧ `r > h` ∧ `A` true** | ② Pick | **resolved → ② Pick** (#203) | **`active`, untouched** (resolution requires being after `max(h,r)` → start-of-work test: no `c` → idempotency branch: `A` true) | ✅ axis① |
 | 6 | `h`, only a `머지 판정: 🔄` (not an `f`) after it | ② Pick | **leaks through as a completion → resolved** | **not a completion** → on to the start-of-work / idempotency branches | ✅ axis① |
-| 7 | `h`, `c` (no `f`), **`r` present**, `L` present | ② Pick | **② Pick** (upstream fired first, never reached 'start ≠ finish') | **`active`, untouched** | ✅ axis① |
-| 8 | `h`, `c` (no `f`), **`r` present**, **no `L`** (transition failed ∧ a human committed directly) | ② Pick | **② Pick** | **`active`, untouched** — the start-of-work test comes first (order contract); the stall is surfaced by the #265 warn | ✅ axis① |
-| 9 | `h`, `c` (no `f`), **no `r`**, **`L` present** | ② Pick | **`active`, untouched** | same (that lane owns it — released by its completion verdict) | — |
-| 10 | `h`, `c` (no `f`), **no `r`**, **no `L`** (a ③-2 conflict hold the human rebased, pushed and released) | ② Pick | **`active`, untouched → self-loop** (the old ✅ predates the head so ①-b emits `active` forever; neither a worker nor a verify lane exists) | **same path as *ambiguous*** in 3) → `closeout-blocked --reason policy` | ✅ axis⑥ |
+| 7 | `h`, `c` (no `f`), **`r` present**, `A` true | ② Pick | **② Pick** (upstream fired first, never reached 'start ≠ finish', #203) | **`active`, untouched** | ✅ axis① |
+| 8 | `h`, `c` (no `f`), **`r` present**, **`A` false ∧ `R` false** (transition failed ∧ a human committed directly) | ② Pick | **② Pick** (#203) | **`active`, untouched** — the start-of-work test comes first (order contract); the stall is surfaced by the #265 warn | ✅ axis① |
+| 9 | `h`, `c` (no `f`), **no `r`**, **`A` true** (e.g. the issue has `flow:verify`) | ② Pick | **`active`, untouched** | same (that lane owns it — released by its completion verdict) | — |
+| 10 | `h`, `c` (no `f`), **no `r`**, **`A` false** (the issue's only label is `agent-ready` — a ③-2 conflict hold the human rebased, pushed and released) | ② Pick | **`d82c6e7`: the predicate contained `agent-ready` so it was constant-true → `active`, untouched → self-loop** (the old ✅ predates the head so ①-b emits `active` forever; neither a worker nor a verify lane exists) — **this row was unreachable** | **same path as *ambiguous*** in 3) → `closeout-blocked --reason policy` | ✅ axis⑥ ✅ axis⑦ |
 | 11 | `h`, `pr-head-at.sh` **exit 1** (no value), the issue has only `flow:verify` | ② Pick | **'read on' → readback branch → transition re-call** (fail-open) | **`BLOCKED: head lookup failed` · state unchanged · untouched** | ✅ axis④ |
-| 12 | `h`, `r > h`, no `c`, `L` present | ② Pick | `active`, untouched | `active`, untouched | — |
-| 13 | `h`, `r > h`, no `c`, no `f`, **no `L` at all** (transition failed / lost) | ② Pick | **`active`, untouched → permanent stall** (no worker ever comes) | **re-call only the transition, no marker re-issue** · on another failure `BLOCKED: transition failed re-dispatch` | ✅ axis② |
-| 14 | `h`, `r > h`, no `c`, no `f`, the two worker labels **absent** but the issue has **`flow:verify`** (`handoff-verify` landed, before the verifier's verdict) | ② Pick | **re-calls the transition → strips the live verify lane's `flow:verify`** | **untouched** (a downstream active lane owns it) | ✅ axis④ |
+| 12 | `h`, `r > h`, no `c`, **`A` true** (e.g. a new worker's `agent:claimed`) | ② Pick | `active`, untouched | `active`, untouched | — |
+| 13 | `h`, `r > h`, no `c`, no `f`, **`A` false ∧ `R` false** — only the transition's **issue-side edit** failed, leaving `hold:policy` on the issue (`transition.sh:344-350`, PR then issue) | ② Pick | **`d82c6e7`: `agent-ready` survived so the predicate was true → `active`, untouched → permanent stall** — **this row was unreachable** | **re-call only the transition, no marker re-issue** · on another failure `BLOCKED: transition failed re-dispatch` | ✅ axis② ✅ axis⑦ |
+| 14 | `h`, `r > h`, no `c`, no `f`, the two worker labels **absent** but the issue has **`flow:verify`** (`handoff-verify` landed, before the verifier's verdict) → **`A` true** | ② Pick | **#203: re-calls the transition → strips the live verify lane's `flow:verify`** | **untouched** (a downstream active lane owns it — `A` beats `R`) | ✅ axis④ |
 | 15 | `h`, a marker exists but **`r ≤ h`** (a new hold landed after that marker) | ② Pick | **branch undefined** — read the marker as "not a first entry" and no branch takes it (stall) | **go to 2)** (a new hold, never judged) | ✅ axis⑥ |
 | 16 | `h`, marker posting failed (transition not called) | ② Pick | `BLOCKED` · state unchanged · retried next tick | same | — |
 | 17 | `h`, no `r`, no `c`, `D` present, no `H` | ② Pick | 3) direction judgment | 3) direction judgment | — |
@@ -822,9 +930,12 @@ window exists.
 | 19 | `h`, no `r`, no `c`, **no `D`**, no `H` | ② Pick | ambiguous → `closeout-blocked` | same (= hold stands) · the stall is surfaced by the #265 warn | — |
 | 20 | `h`, decision **only on the issue** | ② Pick | adopt the side that has one | same | — |
 | 21 | `h`, PR and issue decisions **disagree** | ② Pick | ambiguous | same | — |
-| 22 | `h`, `pr-comments.sh` lookup failed | ② Pick | ambiguous (quote exempt) | same | — |
+| 22 | `h`, `pr-comments.sh` lookup failed (non-zero exit) | ② Pick | **`d82c6e7`: ambiguous → `closeout-blocked`** (a transient `gh` failure pins a human gate on a healthy candidate) | **`BLOCKED: 코멘트 조회 실패` · state unchanged · untouched** (the same cell as row 11's `pr-head-at.sh` failure) | ✅ axis⑦ |
 | 23 | release of a worker-posted `머지 판정: ⚠ 보류` | ② Pick | **not counted as a boundary → ② Pick** | counted as a boundary → 2) conjunction → 3) direction judgment | ✅ axis③ |
 | 24 | `h`, direction = correction but **no linked issue** | ② Pick | same path as ambiguous, to the human | same | — |
+| 25 | **zero boundary in the PR array but `<!-- hold-note: ` in the issue array** (only `closeout-blocked`'s PR comment failed), no `H` | ② Pick | **`d82c6e7`: the zero-boundary test read the PR array only → ② Pick without ever reading the direction** | **read `h` as present from the issue-side boundary** and carry on (no ② Pick) | ✅ axis⑦ |
+| 26 | `h`, `r > h`, no `c`, no `f`, **`A` false ∧ `R` true** (the issue's only label is `agent-ready` = the transition's target state) | ② Pick | `active`, untouched (**because it read "the transition landed"**) | `active`, untouched (**because the eligibility predicate is true, so the next dispatch tick picks it up** — whether the transition landed is not asked) | — (same decision, **different ground**) |
+| 27 | `h`, `r > h`, no `c`, no `f`, **a human removed `agent-ready` from the OPEN issue by hand** (`A` false ∧ `R` false) | ② Pick | re-call the transition (the old predicate was false in this one cell too) | same — **re-call only the transition** | — |
 
 ## ② Pick — 1 PR at a time (MAX_CLOSEOUT=1, concurrency 1)
 
