@@ -235,6 +235,13 @@ case "${1:-} ${2:-}" in
     # 필드명에 `is:` 가 섞였을 때 코드가 멀쩡한데 스텁이 빈손을 돌려 가짜 실패가 난다.
     case "${3:-}" in *"is:"*) exit 0 ;; esac
     cat "$STUB_SEARCH"; exit 0 ;;
+  "search prs")
+    # (#331) 계정 전체 모드의 **PR 축** — ④ 정지 미러가 겨누는 상태(이슈는 깨끗하고 PR 에만
+    # 정지 라벨)를 담은 레포는 이슈 축 질의에 **절대** 안 나온다. 실패는 이슈 축과 **따로**
+    # 낸다(한쪽만 죽는 픽스처를 만들 수 있어야 "각각 구분한다" 가 실측된다).
+    [ -z "${STUB_SEARCH_PRS_FAIL:-}" ] || { echo "gh: search prs boom" >&2; exit 1; }
+    case "${3:-}" in *"is:"*) exit 0 ;; esac
+    cat "$STUB_SEARCH_PRS"; exit 0 ;;
 esac
 exit 1
 STUB
@@ -291,13 +298,14 @@ setup() {
   printf '' > "$tmp/pr.num"        # 기본: 연결 PR 없음
   printf '' > "$tmp/pr.labels"
   printf 'owner/repo\n' > "$tmp/search"
+  : > "$tmp/search.prs"          # (#331) 기본: PR 축 탐색 0건 — 합집합의 이슈 축만 남는다
   echo '[]' > "$tmp/mirror.prs.json"   # (#265) 기본: 정지 미러 정리 대상 없음
   : > "$tmp/mirror.issues"
   : > "$tmp/mirror.events"            # (#265 ⑷) 기본: 이력 픽스처 없음(스텁이 정상 해제로 답한다)
   : > "$tmp/gh.log"
   # unset 하면 export 속성이 날아가 이후 대입이 스텁에 안 전달된다 — 빈 값으로 되돌린다.
   STUB_LADDER_FAIL=""; STUB_HUMAN_FAIL=""; STUB_LABEL_EDIT_FAIL=""; STUB_COMMENT_FAIL=""
-  STUB_COMMENTS_FAIL=""; STUB_SEARCH_FAIL=""; STUB_PR_FAIL=""; STUB_PR_EDIT_FAIL=""
+  STUB_COMMENTS_FAIL=""; STUB_SEARCH_FAIL=""; STUB_SEARCH_PRS_FAIL=""; STUB_PR_FAIL=""; STUB_PR_EDIT_FAIL=""
   STUB_STATE_LABELS=""; STUB_READBACK_LABELS=""; STUB_UPDATED_LIVE=""; STUB_JQ_FAIL_PAT=""
   STUB_MIRROR_LIST_FAIL=""; STUB_MIRROR_EDIT_FAIL=""; STUB_MIRROR_READBACK=""
   STUB_MIRROR_RACE=""; rm -f "$tmp/mirror.edited"; STUB_MIRROR_EVENTS_FAIL=""
@@ -311,17 +319,21 @@ with_pr() {  # with_pr <PR번호> <PR라벨csv>
 
 # run — 이벤트는 $out, 종료코드는 $RC 로. **명령치환으로 부르지 않는다**
 # (서브셸이면 RC 가 밖으로 못 나와 exit 2·64 단언이 공회전한다).
-run() {
+run() { run_sut "$sut_dir/resume-sweep.sh"; }
+# run_sut <스크립트경로> — run 과 같은 환경으로 **다른 사본**을 돌린다. 뮤테이션 방증
+# (#331)이 쓴다: 합집합을 뺀 사본이 같은 픽스처에서 실제로 빨개지는지 스위트 안에서 본다.
+run_sut() {
   (cd "$WORKDIR" && PATH="$tmp/bin:$PATH" \
     RESUME_AFTER_MIN="${RA:-120}" LADDER_RESUME_LIMIT="${RL:-2}" \
     RESUME_LIST_LIMIT="${LL:-200}" \
-    bash "$sut_dir/resume-sweep.sh") >"$tmp/out" 2>"$tmp/err"
+    bash "$1") >"$tmp/out" 2>"$tmp/err"
   RC=$?
   out=$(cat "$tmp/out")
 }
 export STUB_LOG="$tmp/gh.log" STUB_LABELS="$tmp/labels" STUB_UPDATED="$tmp/updated"
 export STUB_LADDER="$tmp/ladder.json" STUB_HUMAN="$tmp/human.json" STUB_POLICY="$tmp/policy.json"
 export STUB_COMMENTS="$tmp/comments.json" STUB_SEARCH="$tmp/search"
+export STUB_SEARCH_PRS="$tmp/search.prs" STUB_SEARCH_PRS_FAIL=""
 export STUB_PR_NUM="$tmp/pr.num" STUB_PR_LABELS="$tmp/pr.labels"
 export STUB_LADDER_FAIL="" STUB_HUMAN_FAIL="" STUB_LABEL_EDIT_FAIL="" STUB_COMMENT_FAIL=""
 export STUB_COMMENTS_FAIL="" STUB_SEARCH_FAIL="" STUB_PR_FAIL="" STUB_PR_EDIT_FAIL=""
@@ -643,6 +655,7 @@ check "폴백 열거: exit 0"                "$([ "$RC" = 0 ] && echo ok || echo
 setup "hold:ladder,agent-ready" 200 0
 run
 check "스코프 갈래: search 미호출"       "$(none 'search issues')"
+check "스코프 갈래: search prs 도 미호출" "$(none 'search prs')"
 check "스코프 갈래: 재개까지 간다"       "$(has_ev resumed)"
 
 # ── ㉒-d (#244) 계정 전체 탐색은 세 정지 라벨을 전부 훑는다 ───────────────
@@ -1835,6 +1848,112 @@ check "㉓ 동시각은 증명이 아니다: 무편집"         "$(none 'pr edit
 check "㉓ warn 문구(이르다 갈래로 접는다)"        "$(saysl '해제(2026-01-01T00:00:00Z)가 PR 부착(2026-01-01T00:00:00Z)보다 이르다')"
 # 이력 관문은 전부 **편집 전** 실패다 — warn 이지 warn_after_edit 이 아니다
 check "이력 관문: warn_after_edit 0건"           "$(no_ev warn_after_edit)"
+
+# ── (#331) 계정 전체 모드의 레포 탐색 = 이슈 축 ∪ PR 축 ────────────────────
+# ④ 정지 미러가 겨누는 상태는 정의상 **이슈는 깨끗하고 PR 에만** 정지 라벨이 남은 모양이라,
+# `gh search issues` 축 하나로는 그 상태가 있는 레포를 **영영 못 찾는다**(실측: PR #293 자신이
+# 두 라벨을 달고 있었는데 결과에 안 나왔다 · `ggqgga/BoDAC` 은 `needs-human` 이슈 0건).
+# 여기 픽스처가 정확히 그 조건이다: 이슈 축 0건 · PR 축 1건.
+setup "needs-human,hold:policy" 10 0
+WORKDIR="$tmp/noscope"
+echo '[]' > "$tmp/ladder.json"; echo '[]' > "$tmp/human.json"
+: > "$tmp/search"                          # 이슈 축 0건 — 실패가 아니라 진짜 0건(rc=0)
+printf 'owner/prsonly\n' > "$tmp/search.prs"
+mirror_prs '[{"number":401,"headRefName":"agent/issue-501",
+  "labels":[{"name":"needs-human"},{"name":"hold:policy"},{"name":"flow:verify"}],
+  "closingIssuesReferences":[{"number":501}]}]'
+mirror_issue 501 OPEN "agent-ready,flow:verify"
+run
+check "㉒-d 합집합: PR 축만 있는 레포를 순회한다" "$(some 'pr list --repo owner/prsonly')"
+check "㉒-d 합집합: ④ 교정까지 간다"              "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==401) | .number==501 and .removed=="hold:policy,needs-human"' >/dev/null 2>&1 && echo ok || echo no)"
+check "㉒-d 합집합: PR 정지 라벨이 실제로 빠진다" "$([ "$(mpl 401)" = "flow:verify" ] && echo ok || echo no)"
+check "㉒-d 합집합: exit 0"                       "$([ "$RC" = 0 ] && echo ok || echo no)"
+
+# 대조 단언(뮤테이션 방증) — **합집합을 빼면** 같은 픽스처에서 아무 것도 안 난다. 이 사본은
+# 라벨 루프(세 라벨 × 두 축, #244 와 합쳐진 형태)에서 PR 축 결과를 `search.raw` 에 붙이는
+# 줄(`pr_hits=` 바로 다음 `cat`)만 버린 것(= #331 이전의 동작)이다. 픽스처와 단언이
+# 그대로인 채 **코드만** 갈리므로, 새 테스트가 빨개지는 이유가 합집합 그 자체임을 고정한다.
+mut="$sut_dir/resume-sweep.no-union.sh"
+sed '/pr_hits=\$(grep -c \. "\$tmp\/search\.one"/{n;s|cat "\$tmp/search\.one" >> "\$tmp/search\.raw"|: # 뮤턴트: PR 축 결과를 버린다|;}' \
+  "$sut_dir/resume-sweep.sh" > "$mut"
+check "㉒-d 뮤턴트: 합집합 한 줄만 갈렸다" \
+  "$([ "$(diff "$sut_dir/resume-sweep.sh" "$mut" | grep -c '^[<>]')" = 2 ] && echo ok || echo no)"
+setup "needs-human,hold:policy" 10 0
+WORKDIR="$tmp/noscope"
+echo '[]' > "$tmp/ladder.json"; echo '[]' > "$tmp/human.json"
+: > "$tmp/search"
+printf 'owner/prsonly\n' > "$tmp/search.prs"
+mirror_prs '[{"number":401,"headRefName":"agent/issue-501",
+  "labels":[{"name":"needs-human"},{"name":"hold:policy"},{"name":"flow:verify"}],
+  "closingIssuesReferences":[{"number":501}]}]'
+mirror_issue 501 OPEN "agent-ready,flow:verify"
+run_sut "$mut"
+check "㉒-d 대조: 합집합 없으면 레포를 못 찾는다" "$(none 'pr list --repo owner/prsonly')"
+check "㉒-d 대조: mirror_cleared 없음"            "$([ -z "$(mev 401)" ] && echo ok || echo no)"
+check "㉒-d 대조: PR 정지 라벨이 그대로 남는다"   "$([ "$(mpl 401)" = "needs-human,hold:policy,flow:verify" ] && echo ok || echo no)"
+check "㉒-d 대조: 그런데 exit 0 — 조용한 좌초다"  "$([ "$RC" = 0 ] && echo ok || echo no)"
+
+# ── (#331) 호출(라벨 × 축)은 **각각** 실패를 가른다 — 빈 목록 ≠ 실패 ────────
+# `gh search` 는 부차 레이트리밋에서 빈 출력 + rc=0 을 낸다. 그래서 판정은 출력 형태가
+# 아니라 **종료 코드**다. 한쪽만 죽어도 중단한다 — 성공한 쪽만으로 도는 부분 스코프는
+# "그 레포엔 멈춘 건이 없다" 와 구분되지 않는 조용한 축소이고, 이 갈래가 막으려는 해악이다.
+setup "needs-human,hold:ladder,agent-ready" 200 0
+WORKDIR="$tmp/noscope"; STUB_SEARCH_PRS_FAIL=1
+run
+check "PR 축 탐색 실패: exit 2"          "$([ "$RC" = 2 ] && echo ok || echo no)"
+check "PR 축 탐색 실패: stderr 가 축을 밝힌다" "$(grep -q '탐색 실패(PR)' "$tmp/err" && echo ok || echo no)"
+check "PR 축 탐색 실패: 무편집"          "$(none 'issue edit')"
+check "PR 축 탐색 실패: 레포를 하나도 안 훑는다" "$(none 'issue list')"
+# 이슈 축 실패도 축을 밝힌다(기존 ㉒ 의 `탐색 실패` 단언과 겹치되 축까지 못 박는다).
+setup "needs-human,hold:ladder,agent-ready" 200 0
+WORKDIR="$tmp/noscope"; STUB_SEARCH_FAIL=1
+run
+check "이슈 축 탐색 실패: exit 2"        "$([ "$RC" = 2 ] && echo ok || echo no)"
+check "이슈 축 탐색 실패: stderr 가 축을 밝힌다" "$(grep -q '탐색 실패(이슈)' "$tmp/err" && echo ok || echo no)"
+check "이슈 축 탐색 실패: PR 축을 부르지도 않는다" "$(none 'search prs')"
+# 빈 목록은 실패가 **아니다** — 둘 다 0건이면 조용히 exit 0(스윕할 것이 없다).
+setup "needs-human,hold:ladder,agent-ready" 200 0
+WORKDIR="$tmp/noscope"
+: > "$tmp/search"; : > "$tmp/search.prs"
+run
+check "둘 다 0건: 실패가 아니다(exit 0)"  "$([ "$RC" = 0 ] && echo ok || echo no)"
+check "둘 다 0건: 탐색 실패 문구 없음"    "$(grep -q '탐색 실패' "$tmp/err" && echo no || echo ok)"
+check "둘 다 0건: 두 축을 다 부른다"      "$([ "$(counts 'search issues')" != 0 ] && [ "$(counts 'search prs')" != 0 ] && echo ok || echo no)"
+# #244 의 세 라벨과 곱해져 세 라벨 × 두 축 = 6 쿼리다 — PR 축도 세 라벨 각각을 묻는다.
+check "둘 다 0건: 세 라벨 × 두 축 = 6 쿼리" "$([ "$(counts 'search issues')" = 3 ] && [ "$(counts 'search prs')" = 3 ] && echo ok || echo no)"
+check "둘 다 0건: PR 축도 hold:ladder 를 묻는다" "$(some 'search prs label:hold:ladder .*--state open')"
+check "둘 다 0건: PR 축도 hold:policy 를 묻는다" "$(some 'search prs label:hold:policy .*--state open')"
+check "둘 다 0건: PR 축도 is: 한정자 없음(#236)" "$(none 'search prs .*is:')"
+
+# ── (#331) PR 쪽 상한 도달도 기존 `탐색 상한 도달` 규율 그대로 ─────────────
+# 라벨과 축을 문구에 밝힌다 — 여럿이 닿으면 같은 줄이 겹쳐 어느 질의가 잘렸는지 못 가른다.
+# (스텁은 라벨과 무관하게 같은 목록을 돌려주므로 세 라벨이 모두 닿아 warn 이 셋 난다 —
+#  단언은 `needs-human` 줄로 대표한다.)
+setup "needs-human,hold:ladder,agent-ready" 200 0
+WORKDIR="$tmp/noscope"
+echo '[]' > "$tmp/ladder.json"; echo '[]' > "$tmp/human.json"
+LL=3; : > "$tmp/search"
+awk 'BEGIN{for(i=1;i<=3;i++) print "owner/p" i}' > "$tmp/search.prs"
+run
+check "PR 축 상한: warn"                 "$(has_ev warn)"
+check "PR 축 상한: 문구가 라벨과 축을 밝힌다" "$(saysl '탐색 상한 도달(3, label:needs-human, PR)')"
+check "PR 축 상한: 이슈 축 문구는 안 난다" "$(printf '%s' "$out" | grep -q '탐색 상한 도달(3, label:[^,]*, 이슈)' && echo no || echo ok)"
+check "PR 축 상한: exit 0"               "$([ "$RC" = 0 ] && echo ok || echo no)"
+setup "needs-human,hold:ladder,agent-ready" 200 0
+WORKDIR="$tmp/noscope"
+echo '[]' > "$tmp/ladder.json"; echo '[]' > "$tmp/human.json"
+LL=3; : > "$tmp/search"
+awk 'BEGIN{for(i=1;i<=2;i++) print "owner/p" i}' > "$tmp/search.prs"
+run
+check "PR 축 상한 미만: warn 없음"       "$(no_ev warn)"
+# 이슈 축이 닿았을 때 PR 축 문구가 섞이지 않는다(반대 방향 대조군).
+setup "needs-human,hold:ladder,agent-ready" 200 0
+WORKDIR="$tmp/noscope"
+echo '[]' > "$tmp/ladder.json"; echo '[]' > "$tmp/human.json"
+LL=3; awk 'BEGIN{for(i=1;i<=3;i++) print "owner/r" i}' > "$tmp/search"; : > "$tmp/search.prs"
+run
+check "이슈 축 상한: 문구가 라벨과 축을 밝힌다" "$(saysl '탐색 상한 도달(3, label:needs-human, 이슈)')"
+check "이슈 축 상한: PR 축 문구는 안 난다" "$(printf '%s' "$out" | grep -q '탐색 상한 도달(3, label:[^,]*, PR)' && echo no || echo ok)"
 
 # ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
 # 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는

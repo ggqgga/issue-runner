@@ -3,7 +3,10 @@
 # 자동으로 재개한다. "사람이 '진행해' 를 치던 것을 틱이 대신 친다" (플랜 §4 · 원칙 4).
 #
 # 사용: resume-sweep.sh          (인자 없음)
-#   스코프: 실행 cwd 의 `.loop/repos` 목록. 없으면 계정 전체(reconcile.sh 와 같은 규약 #40).
+#   스코프: 실행 cwd 의 `.loop/repos` 목록. 없으면 계정 전체(reconcile.sh 와 같은 규약 #40)
+#     — 계정 전체 모드의 레포 열거는 **이슈 축 ∪ PR 축**이다(#331): `needs-human` 이 이슈에만
+#       있는 레포도, **PR 에만** 있는 레포(④ 정지 미러의 표적)도 순회 대상이다. 전수 근거와
+#       각 축이 놓치는 상태는 스코프 블록 주석 참조.
 #   환경변수: RESUME_AFTER_MIN(기본 120) · LADDER_RESUME_LIMIT(기본 2)
 #
 # 출력(JSON lines):
@@ -866,6 +869,40 @@ repos_file="$tmp/repos"
 if [ -f "$scope_file" ]; then
   grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' > "$repos_file"
 else
+  # ── 계정 전체 모드의 레포 탐색 = 이슈 축 ∪ PR 축 (#331) ────────────────────
+  # **순회 대상을 정하는 입력 전수** — 각 입력이 어떤 상태를 놓치는지 함께 적는다.
+  # 한 겹만 고치면 다음 겹이 다음 회차에 그대로 돌아온다(#293 의 자기 진술).
+  #
+  #   입력 ⓐ `gh search issues "label:needs-human"` — **이슈**에 `needs-human` 이 붙은 레포.
+  #      ①(needs-human ∧ hold:ladder) ②(사유 없는 needs-human) ③(needs-human ∧ hold:policy)
+  #      **세 갈래 전부**가 이슈 목록에서 출발하므로 이 축 하나면 족하다.
+  #      놓치는 것: ④ 정지 미러 정리가 겨누는 상태는 정의상 **이슈는 깨끗하고 PR 에만**
+  #      정지 라벨이 남은 모양이다. `gh search issues` 는 `is:issue` 유무와 무관하게 이슈만
+  #      돌려주므로(실측: PR #293 자신이 두 라벨을 달고 있었는데 결과에 안 나왔다) 그 레포에
+  #      다른 `needs-human` **이슈**가 하나도 없으면 목록에 안 들어가고 `fetch_open_prs` 가
+  #      한 번도 안 불린다 — 좌초된 PR 사본이 영구히 남는다. 실측 조건 성립: `ggqgga/BoDAC`
+  #      은 `needs-human` 이슈 0건이다.
+  #   입력 ⓑ `gh search prs "label:needs-human"` — **열린 PR** 에 `needs-human` 이 붙은 레포.
+  #      ⓐ 가 못 보는 ④ 의 표적을 이 축이 덮는다. 기계가 만드는 정지 미러는 **언제나**
+  #      `needs-human` 을 동반하므로(정지 세 전이는 `--reason` 필수 → `hold:<사유>` 와 쌍,
+  #      `sweep_hold_mirror` 의 ⑵-b 주석) 오늘의 기계 산출은 전건 이 축에 잡힌다.
+  #      놓치는 것: `needs-human` **없이** `hold:*` 만 달린 PR(격자 ⑦·⑩ 의 모양). 오늘은
+  #      기계가 못 만드는 형태이고 사람이 그렇게 만들면 ②·⑵-b 규율대로 어차피 안 뗀다.
+  #      `hold:` 는 **접두**라(사유가 열려 있다 — #242) `--label` 로는 질의할 수 없으니
+  #      열거로 넓히지 않는다. #244 가 `needs-human` 을 기계 정지에서 뺀 뒤로는 아래 루프가
+  #      **세 라벨 각각**을 두 축으로 돌리므로(`hold:ladder`·`hold:policy` 는 PR 축에서도
+  #      질의된다) 오늘 기계가 만드는 정지 라벨은 어느 쪽이든 잡힌다 — 라벨 목록이 늘면
+  #      아래 `for _lbl` 한 곳만 늘린다.
+  #      참고: 레포가 어느 축으로든 목록에 들면 ④ 는 그 레포의 **열린 PR 전부**를 훑으므로
+  #      (`fetch_open_prs` 는 라벨로 안 좁힌다) 남는 사각은 "그 레포에 세 정지 라벨 중
+  #      어느 것도 이슈에도 PR 에도 하나도 없다" 는 칸 하나뿐이다.
+  #
+  # 호출(라벨 × 축, 아래 루프)은 **각각** 실패를 가른다. 빈 목록 ≠ 실패 — 판정은 출력 형태가 아니라 **종료
+  # 코드**다(`gh search` 는 부차 레이트리밋에서 빈 출력 + rc=0 을 내놓는다). 어느 한쪽이라도
+  # 실패하면 **중단**한다(exit 2): 성공한 쪽만으로 도는 부분 스코프는 "그 레포엔 멈춘 건이
+  # 없다" 와 구분되지 않는 **조용한 축소**이고, 그것이 이 갈래가 막으려는 바로 그 해악이다.
+  # 새 종결 상태는 만들지 않는다 — 기존 `탐색 실패 — 스코프를 못 정해 중단` 하나로 접는다.
+  #
   # 부정 라벨(`-label:`)은 gh search CLI 가 오파싱하지만(#21) 단일 긍정 라벨은 정상 —
   # reconcile.sh 스윕의 레포 열거와 같은 형태다. 다만 여기선 두 가지를 더 조인다:
   #   · `--state open` — 닫힌 이슈가 창을 채우면 진짜 대상 레포가 밀려난다. 의도는 이것이되
@@ -874,6 +911,7 @@ else
   #     `label:needs-human` 단독 3개 레포 ↔ `is:open` 을 더하면 0건).
   #     실패가 아니라 "0건" 으로 보여 "멈춘 건 없음" 과 구분되지 않는 것이 해악이었다.
   #     PR 배제용 `is:issue` 는 애초에 잉여다 — `gh search issues` 는 이슈만 찾는다.
+  #     (같은 이유로 PR 축도 `is:pr` 를 안 쓴다 — `gh search prs` 는 PR 만 찾는다.)
   #   · `--limit 200` — 기본 limit(30)은 조용히 잘라내 그 레포들이 영영 안 스윕된다.
   # **세 라벨을 전부 훑는다**(#244). 기계 정지에서 `needs-human` 을 뗀 뒤로는 `hold:ladder`·
   # `hold:policy` 만 달린 레포가 생기는데, `needs-human` 하나로만 탐색하면 그 레포가 통째로
@@ -881,22 +919,38 @@ else
   # 않는 이유는 #21 — gh search CLI 의 라벨 qualifier 파싱은 신뢰 구간이 좁다. 긍정 라벨
   # 하나짜리 쿼리(이 파일이 이미 쓰던 형태)를 세 번 돌려 합집합(sort -u)한다. 부정 라벨도
   # `is:` 질의 토큰도 쓰지 않는다 — 열림 한정은 위 주석대로 `--state open` **플래그**다(#236).
+  #
+  # 라벨마다 **두 축**(이슈 ⓐ · PR ⓑ, #331)을 돌린다 — 세 라벨 × 두 축 = 6 쿼리. 위 주석의
+  # "#244 가 뗀 날 이 축도 함께 옮긴다" 는 바로 이 루프가 답이다: 라벨 목록이 늘면 PR 축도
+  # 같은 라벨로 따라가므로 겹이 어긋나지 않는다.
   # 한 쿼리라도 실패하면 **중단**한다 — 부분 스코프는 "그 레포엔 멈춘 건이
-  # 없다" 로 위장되기 때문이다(빈 목록과 구분한다는 이 파일의 규율).
+  # 없다" 로 위장되기 때문이다(빈 목록과 구분한다는 이 파일의 규율). 메시지에 라벨과 축을
+  # 밝혀 어느 질의가 죽었는지 가른다.
   : > "$tmp/search.raw"
   for _lbl in needs-human hold:ladder hold:policy; do
     if ! gh search issues "label:$_lbl" --owner "$me" --state open --limit "$LIST_LIMIT" \
          --json repository -q '.[].repository.nameWithOwner' > "$tmp/search.one" 2>/dev/null; then
-      echo "resume-sweep: 계정 전체 $_lbl 탐색 실패 — 스코프를 못 정해 중단(빈 목록과 구분)" >&2
+      echo "resume-sweep: 계정 전체 $_lbl 탐색 실패(이슈) — 스코프를 못 정해 중단(빈 목록과 구분)" >&2
       exit 2
     fi
-    one_hits=$(grep -c . "$tmp/search.one" || true)
+    issue_hits=$(grep -c . "$tmp/search.one" || true)
+    cat "$tmp/search.one" >> "$tmp/search.raw"
+    if ! gh search prs "label:$_lbl" --owner "$me" --state open --limit "$LIST_LIMIT" \
+         --json repository -q '.[].repository.nameWithOwner' > "$tmp/search.one" 2>/dev/null; then
+      echo "resume-sweep: 계정 전체 $_lbl 탐색 실패(PR) — 스코프를 못 정해 중단(빈 목록과 구분)" >&2
+      exit 2
+    fi
+    pr_hits=$(grep -c . "$tmp/search.one" || true)
     cat "$tmp/search.one" >> "$tmp/search.raw"
     # 상한에 정확히 닿았으면 잘렸을 수 있다 — 조용히 지나가면 "그 레포엔 멈춘 건이 없다" 로
-    # 위장된다. 쿼리마다 따로 본다(합친 뒤 세면 어느 쿼리가 잘렸는지 알 수 없다).
-    # repo 는 특정 레포가 아니라는 뜻으로 `*`.
-    if [ "${one_hits:-0}" -ge "$LIST_LIMIT" ]; then
-      printf '{"event":"warn","repo":"*","number":0,"msg":"탐색 상한 도달(%s, label:%s) — 일부 레포가 누락됐을 수 있다. .loop/repos 로 스코프를 좁혀라"}\n' "$LIST_LIMIT" "$_lbl"
+    # 위장된다. 쿼리마다 따로 본다(합친 뒤 세면 어느 쿼리가 잘렸는지 알 수 없다). 라벨과
+    # 축을 문구에 밝힌다 — 여럿이 닿으면 같은 줄이 겹쳐 어느 질의가 잘렸는지(그래서 무엇이
+    # 안 보이는지) 못 가른다. repo 는 특정 레포가 아니라는 뜻으로 `*`.
+    if [ "${issue_hits:-0}" -ge "$LIST_LIMIT" ]; then
+      printf '{"event":"warn","repo":"*","number":0,"msg":"탐색 상한 도달(%s, label:%s, 이슈) — 일부 레포가 누락됐을 수 있다. .loop/repos 로 스코프를 좁혀라"}\n' "$LIST_LIMIT" "$_lbl"
+    fi
+    if [ "${pr_hits:-0}" -ge "$LIST_LIMIT" ]; then
+      printf '{"event":"warn","repo":"*","number":0,"msg":"탐색 상한 도달(%s, label:%s, PR) — 일부 레포가 누락됐을 수 있다. .loop/repos 로 스코프를 좁혀라"}\n' "$LIST_LIMIT" "$_lbl"
     fi
   done
   sort -u "$tmp/search.raw" > "$repos_file"
