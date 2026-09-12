@@ -29,9 +29,11 @@
 #      표식 붙은 그 한 호출만 jq 스텁으로 실패시킨다 — resume-sweep.test.sh 와 같은 수법).
 #   ⑫ (#343) leaf 전부 CLOSED 여도 두 겹을 더 본다(SUT 헤더 "두 겹 가드" 의 ⓐⓑ 순) — ⓐ 에픽
 #      본문에 미체크 체크박스(`- [ ]`)가 있으면 note·쓰기 0(호출 없음, 먼저) ⓑ leaf 의 하류
-#      **배포 대기 이슈**(`label:deploy-wait is:open`, leaf 번호를 단어 경계로 언급)가 열려 있으면
-#      note·쓰기 0. 조회 실패는 warn + rc 1(fail-closed), 상한은 warn + 보류. `--dry-run` 도
-#      같은 note 를 낸다(#328 이 dry-run 출력으로 판정한다).
+#      **배포 대기 이슈**가 열려 있으면 note·쓰기 0. 후보는 열린 이슈 전체 목록에서 `deploy-wait`
+#      라벨 **또는** 제목 `배포 대기`(라벨 부착 실패 폴백 — loop-status.sh 와 같은 술어)로 고르고,
+#      leaf 와의 연결은 제목의 `PR #M` → 그 PR 의 closingIssuesReferences·head 브랜치로 **파생**한다
+#      (발행 형식에 leaf 자리표가 없다 — 제목·본문의 `#leaf` 언급은 보조). 조회 실패는 warn + rc 1
+#      (fail-closed), 상한은 warn + 보류. `--dry-run` 도 같은 note 를 낸다(#328 이 dry-run 출력으로 판정한다).
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -67,8 +69,22 @@ printf '%s\n' "$*" >> "$STUB_LOG"
 
 case "${1:-} ${2:-}" in
   "issue list")
-    [ -z "${STUB_EPICS_FAIL:-}" ] || { echo "gh: epic list boom" >&2; exit 1; }
-    cat "$STUB_EPICS"; exit 0 ;;
+    case "$*" in
+      *"--label epic"*)
+        [ -z "${STUB_EPICS_FAIL:-}" ] || { echo "gh: epic list boom" >&2; exit 1; }
+        cat "$STUB_EPICS"; exit 0 ;;
+    esac
+    # ⑫ 배포 대기 후보 — 열린 이슈 **전체** 목록(라벨 필터 없음). stdin 을 **소진한다** — 진짜 gh 가
+    # 그럴 수 있다. SUT 의 후보 루프가 stdin 히어독으로 돌면 뒤 후보가 먹혀 ⑫-g 가 빨개진다(fd 4 규약).
+    cat >/dev/null
+    [ -z "${STUB_DEPLOY_FAIL:-}" ] || { echo "gh: open list boom" >&2; exit 1; }
+    cat "$STUB_DEPLOY"; exit 0 ;;
+  "pr view")
+    # ⑫ 배포 대기 이슈의 `PR #M` → 연결 이슈 파생. 픽스처(`prs`)에 없는 번호는 진짜 gh 처럼 실패한다.
+    cat >/dev/null
+    [ -z "${STUB_PR_FAIL:-}" ] || { echo "gh: pr view boom" >&2; exit 1; }
+    jq -e --arg m "${3:-}" '.[$m] // empty' "$STUB_PRS" 2>/dev/null || { echo "gh: no PR $3" >&2; exit 1; }
+    exit 0 ;;
   "issue comment")
     [ -z "${STUB_COMMENT_FAIL:-}" ] || exit 1
     body=""
@@ -92,21 +108,6 @@ esac
 
 if [ "${1:-}" = "api" ]; then
   case "$*" in
-    *search/issues*label:deploy-wait*)
-      # ⑫ 배포 대기 이슈 검색 — leaf 검색과 **다른 질의**라 따로 응답한다.
-      [ -z "${STUB_DEPLOY_FAIL:-}" ] || { echo "gh: deploy-wait search boom" >&2; exit 1; }
-      # stdin 을 **소진한다** — 진짜 gh 가 그럴 수 있다. SUT 의 묶음 루프가 stdin 히어독으로 돌면
-      # 두 번째 묶음이 여기서 먹혀 ⑫-f 가 빨개진다(fd 4 규약의 뮤테이션 방증). `run` 이 stdin 을
-      # /dev/null 로 주므로 정상 경로에선 즉시 끝난다.
-      cat >/dev/null
-      # 질의의 `"#N"` 항에 걸리는 항목만 남긴다(GitHub 처럼 — 묶음 나누기 ⑫-f 가 첫 묶음에서
-      # 조기 매치되지 않게). total_count 는 픽스처가 잘림을 흉내 낸 경우(⑫-d-b, items 보다 큼)만
-      # 그대로 두고 아니면 남은 개수로 맞춘다.
-      terms=$(printf '%s' "$*" | grep -o '"#[0-9]*"' | tr -d '"' | jq -R . | jq -sc .)
-      jq --argjson t "$terms" '(.items | length) as $n
-        | .items |= map(select(((.title // "") + "\n" + (.body // "")) as $x
-            | any($t[]; . as $k | $x | contains($k))))
-        | if .total_count > $n then . else .total_count = (.items | length) end' "$STUB_DEPLOY"; exit 0 ;;
     *search/issues*)
       [ -z "${STUB_SEARCH_FAIL:-}" ] || { echo "gh: search boom" >&2; exit 1; }
       cat "$STUB_SEARCH"; exit 0 ;;
@@ -152,31 +153,29 @@ search() {
     '{total_count: $total, incomplete_results: $inc, items: $items}' > "$tmp/search.json"
 }
 comments() { printf '%s' "${1:-[]}" > "$tmp/comments.json"; }
-# deploy <items json배열> [total_count] [incomplete] — 열린 배포 대기 이슈 검색 응답(⑫)
-deploy() {
-  jq -n --argjson items "$1" \
-        --argjson total "${2:-$(printf '%s' "$1" | jq 'length')}" \
-        --argjson inc "${3:-false}" \
-    '{total_count: $total, incomplete_results: $inc, items: $items}' > "$tmp/deploy.json"
-}
+# deploy <json배열> — 열린 이슈 전체 목록(⑫ 배포 대기 후보의 모집단, `gh issue list --state open`)
+deploy() { printf '%s' "$1" > "$tmp/deploy.json"; }
+# prs <json오브젝트 {"M": {closingIssuesReferences, headRefName}}> — `gh pr view M --json …` 응답(⑫)
+prs() { printf '%s' "$1" > "$tmp/prs.json"; }
 
 reset() {
   epics '[{"number":100,"title":"에픽","labels":[{"name":"epic"}]}]'
   search '[]'
   deploy '[]'
+  prs '{}'
   comments '[]'
   : > "$tmp/gh.log"
   : > "$tmp/close.cnt"
   STUB_EPICS_FAIL=""; STUB_SEARCH_FAIL=""; STUB_COMMENT_FAIL=""; STUB_CLOSE_FAIL=""
-  STUB_DEPLOY_FAIL=""
+  STUB_DEPLOY_FAIL=""; STUB_PR_FAIL=""
   STUB_CLOSE_FAIL_TIMES=0
   STUB_COMMENTS_FAIL=""; STUB_JQ_FAIL_PAT=""
-  WORKDIR="$tmp/work"; LIMIT=100; PER=100; ARGS=()
+  WORKDIR="$tmp/work"; LIMIT=100; PER=100; OPEN=500; ARGS=()
 }
 
 run() {
   (cd "$WORKDIR" && PATH="$tmp/bin:$PATH" \
-    EPIC_LIST_LIMIT="${LIMIT:-100}" EPIC_SEARCH_PER_PAGE="${PER:-100}" \
+    EPIC_LIST_LIMIT="${LIMIT:-100}" EPIC_SEARCH_PER_PAGE="${PER:-100}" EPIC_OPEN_LIMIT="${OPEN:-500}" \
     EPIC_CLOSE_RETRIES=3 EPIC_CLOSE_RETRY_SLEEP=0 \
     bash "$sut_dir/epic-sweep.sh" "${ARGS[@]+"${ARGS[@]}"}" </dev/null) >"$tmp/out" 2>"$tmp/err"
   RC=$?
@@ -185,6 +184,7 @@ run() {
 
 export STUB_LOG="$tmp/gh.log" STUB_EPICS="$tmp/epics.json" STUB_SEARCH="$tmp/search.json"
 export STUB_COMMENTS="$tmp/comments.json" STUB_DEPLOY="$tmp/deploy.json" STUB_DEPLOY_FAIL=""
+export STUB_PRS="$tmp/prs.json" STUB_PR_FAIL=""
 export STUB_CLOSE_CNT="$tmp/close.cnt"
 export STUB_EPICS_FAIL="" STUB_SEARCH_FAIL="" STUB_COMMENT_FAIL="" STUB_CLOSE_FAIL=""
 export STUB_CLOSE_FAIL_TIMES=0
@@ -236,10 +236,9 @@ check "close 는 --reason completed" \
 check "코멘트에 마커" "$(grep -q 'issue comment.*<!-- epic-sweep -->' "$tmp/gh.log" && echo ok || echo no)"
 check "코멘트에 leaf 번호" \
   "$(grep -q 'issue comment.*#101 #102 #103' "$tmp/gh.log" && echo ok || echo no)"
-# leaf 검색만 센다 — 배포 대기 이슈 검색(⑫, `label:deploy-wait`)은 leaf 전부 CLOSED 뒤에 따로 1회 더 간다.
+# 검색은 leaf 검색 하나뿐이다 — 배포 대기 후보(⑫)는 검색이 아니라 열린 이슈 목록(core API)으로 본다.
 check "에픽당 leaf 검색 1회" \
-  "$([ "$(grep -cE '^api .*search/issues' "$tmp/gh.log" | tr -d ' ')" = 2 ] \
-     && [ "$(grep -cE '^api .*search/issues.*label:deploy-wait' "$tmp/gh.log")" = 1 ] && echo ok || echo no)"
+  "$([ "$(grep -cE '^api .*search/issues' "$tmp/gh.log" | tr -d ' ')" = 1 ] && echo ok || echo no)"
 check "rc 0" "$([ "$RC" = 0 ] && echo ok || echo no)"
 check "출력이 전부 JSON" "$(json_lines_ok)"
 
@@ -579,61 +578,109 @@ echo "── ⑫ leaf 전부 CLOSED 여도 배포 대기·완료 기준이 남�
 # 실측(2026-09-12, #328 dry-run): BoDAT #4964 는 leaf 3건 전부 CLOSED 였지만 그 leaf 들의
 # 배포 대기 이슈 3건이 열려 있었고(프로덕션에 한 줄도 안 올라감), BoDAC #2 는 완료 기준 5개가
 # 전부 `[ ]` 였다 — 종전 가드(`deploy-wait` 라벨을 **에픽에서** 찾음)는 한 번도 발화하지 않았다.
-# 배포 대기 이슈 한 건 — 제목 `(#leaf)` 또는 본문 `Closes 한 이슈: #leaf` (closeout 4단계 형식)
-dw() {  # dw <번호> <제목> [본문]
-  jq -n --argjson n "$1" --arg t "$2" --arg b "${3:-}" '{number:$n, state:"open", title:$t, body:$b}'
+# 배포 대기 이슈의 발행 형식(closeout 4단계)은 제목 `배포 대기: PR #<pr> — <요약>` 이고 **leaf
+# 자리표가 없다**(실측 BoDAT #5215·#5147·#5145 — 본문에 `Closes` 없음, 제목의 `(#leaf)` 는 PR 제목
+# 관례가 우연히 따라온 것). 그래서 leaf 와의 연결은 `PR #M` → 그 PR 의 closingIssuesReferences ·
+# head 브랜치 `agent/issue-N` 으로 **파생**하고, 제목·본문의 `#leaf` 언급은 보조로만 본다.
+dw() {  # dw <번호> <제목> [본문] [라벨 콤마목록 — 기본 deploy-wait]
+  jq -n --argjson n "$1" --arg t "$2" --arg b "${3:-}" --arg l "${4-deploy-wait}" \
+    '{number:$n, state:"OPEN", title:$t, body:$b,
+      labels:($l | split(",") | map(select(length > 0)) | map({name: .}))}'
+}
+pr() {  # pr <PR번호> <closing refs 콤마목록> [head 브랜치] → {"M": {...}} 조각
+  jq -n --arg m "$1" --arg r "${2:-}" --arg h "${3:-main}" \
+    '{($m): {closingIssuesReferences: ($r | split(",") | map(select(length > 0)) | map({number: tonumber})),
+             headRefName: $h}}'
 }
 two_leaves() { jq -n --argjson a "$(leaf 101 100 closed)" --argjson b "$(leaf 102 100 closed)" '[$a,$b]'; }
+# 배포 대기 후보 조회 — 에픽 목록(`--label epic`)이 아닌 `issue list` 호출 수
+open_list_count() { local n; n=$(grep -E '^issue list ' "$tmp/gh.log" | grep -vc -- '--label epic') || n=0; printf '%s' "${n:-0}"; }
 
-# ⓐ 제목의 `(#leaf)` 로 걸린다
+# ⓐ 제목·본문에 leaf 번호가 **없는** 발행 형식 그대로의 배포 대기 이슈 — `PR #M` 의 연결 이슈로 잡는다.
+# 후보 둘: 앞 후보는 남의 leaf(#555)에 연결돼 근거가 아니고, 뒤 후보가 leaf #101 에 연결된다 —
+# 뒤 후보를 놓치는 판본(stdin 소진 등)은 여기서 닫아 버린다.
 reset
 search "$(two_leaves)"
-deploy "$(jq -n --argjson a "$(dw 900 '배포 대기: PR #800 — 요약 (#101)')" '[$a]')"
+deploy "$(jq -n --argjson a "$(dw 899 '배포 대기: PR #799 — 남의 변경')" \
+              --argjson b "$(dw 900 '배포 대기: PR #800 — 요약')" '[$a,$b]')"
+prs "$(jq -n --argjson a "$(pr 799 555)" --argjson b "$(pr 800 101)" '$a + $b')"
 run
-check "⑫-a closed 없음(회귀 단언 — 가드 없으면 여기서 닫혔다)" "$(no_ev closed)"
-check "⑫-a note 이벤트" "$(has_ev note)"
-check "⑫-a why = leaf #101 의 배포 대기 이슈 #900 열림" \
+check "⑫-g closed 없음(회귀 단언 — 텍스트 대조만으로는 leaf 언급이 없어 여기서 닫혔다)" "$(no_ev closed)"
+check "⑫-g why = leaf #101 의 배포 대기 이슈 #900 열림" \
   "$([ "$(ev note | jq -r '.why')" = 'leaf #101 의 배포 대기 이슈 #900 열림' ] && echo ok || echo no)"
-check "⑫-a 쓰기 0" "$(no_writes)"
-check "⑫-a rc 0 — 실패가 아니라 정상 보류" "$([ "$RC" = 0 ] && echo ok || echo no)"
-check "⑫-a 검색 2회(leaf 1 + 배포 대기 1)" "$([ "$(count_cmd 'api .*search/issues')" = 2 ] && echo ok || echo no)"
-check "⑫-a 배포 대기 질의: label:deploy-wait · is:open · leaf 번호 OR" \
-  "$(grep -E '^api .*search/issues' "$tmp/gh.log" | grep -F 'label:deploy-wait' \
-     | grep -F 'is:open' | grep -F '"#101" OR "#102"' >/dev/null && echo ok || echo no)"
-# ⓐ-b 본문의 `Closes 한 이슈: #leaf` 로도 걸린다(제목엔 PR 번호만)
+check "⑫-g 쓰기 0" "$(no_writes)"
+check "⑫-g rc 0 — 실패가 아니라 정상 보류" "$([ "$RC" = 0 ] && echo ok || echo no)"
+check "⑫-g 후보는 열린 이슈 전체 목록 1회(라벨 필터 없음 · --state open · --json 에 title,body,labels)" \
+  "$([ "$(open_list_count)" = 1 ] \
+     && grep -E '^issue list ' "$tmp/gh.log" | grep -v -- '--label epic' | grep -F -- '--state open' \
+        | grep -E -- '--json [^ ]*title' | grep -E -- '--json [^ ]*body' | grep -qE -- '--json [^ ]*labels' \
+     && echo ok || echo no)"
+check "⑫-g PR 조회: pr view 800 --json closingIssuesReferences,headRefName" \
+  "$(grep -E '^pr view 800 ' "$tmp/gh.log" | grep -F -- 'closingIssuesReferences' | grep -qF 'headRefName' && echo ok || echo no)"
+# ⓐ-b closingIssuesReferences 가 빈 PR(`Refs` 부분착지) — head 브랜치 `agent/issue-N` 으로 잡는다
 reset
 search "$(two_leaves)"
-deploy "$(jq -n --argjson a "$(dw 901 '배포 대기: PR #801 — 요약' 'Closes 한 이슈: #102 (설명)')" '[$a]')"
+deploy "$(jq -n --argjson a "$(dw 901 '배포 대기: PR #801 — 요약')" '[$a]')"
+prs "$(pr 801 '' agent/issue-102)"
 run
-check "⑫-a-b 본문 매치 → note(leaf #102 · #901)" \
+check "⑫-g-b 브랜치명 파생 → note(leaf #102 · #901)" \
   "$([ "$(ev note | jq -r '.why')" = 'leaf #102 의 배포 대기 이슈 #901 열림' ] && echo ok || echo no)"
-check "⑫-a-b 쓰기 0" "$(no_writes)"
-# ⓐ-c 검색은 후보를 좁힐 뿐이다 — 물어 온 이슈에 leaf 번호가 **단어 경계**로 없으면 근거가 아니다
-# (`#1010` 은 `#101` 이 아니다. 실측: GitHub 는 `"#1"` 을 토큰 `1` 로 풀어 본문 어디의 1 이든 문다 —
-# 그걸 그대로 믿으면 leaf 번호가 작은 에픽은 영영 안 닫힌다). **닫는 방향**이라 조용히 두지 않고 못 박는다.
+check "⑫-g-b 쓰기 0" "$(no_writes)"
+
+# ⓑ `deploy-wait` 라벨이 **없는** 배포 대기 이슈(라벨 부착 실패 폴백 — SKILL 4단계, 실측 BoDAT #5095:
+# needs-human·hold:ladder 만 있고 제목은 `배포 대기: PR #5075 — …`) 도 제목으로 후보가 된다.
 reset
 search "$(two_leaves)"
-deploy "$(jq -n --argjson a "$(dw 902 '배포 대기: PR #802 — 요약 (#1010)')" '[$a]')"
+deploy "$(jq -n --argjson a "$(dw 902 '배포 대기: PR #802 — 요약' '' 'needs-human,hold:ladder')" '[$a]')"
+prs "$(pr 802 102)"
 run
-check "⑫-a-c 국소 대조에 안 걸린 후보는 근거가 아니다 → closed" "$(has_ev closed)"
+check "⑫-h 무라벨 제목 폴백 → closed 없음(회귀 단언 — label:deploy-wait 만 보면 여기서 닫혔다)" "$(no_ev closed)"
+check "⑫-h why = leaf #102 의 배포 대기 이슈 #902 열림" \
+  "$([ "$(ev note | jq -r '.why')" = 'leaf #102 의 배포 대기 이슈 #902 열림' ] && echo ok || echo no)"
+check "⑫-h 쓰기 0" "$(no_writes)"
+# ⓑ-b 라벨도 제목도 아닌 열린 이슈는 leaf 를 언급해도 후보가 아니다 — 후보를 넓히면 leaf 를 지나가며
+# 언급한 아무 이슈가 에픽을 영영 붙잡는다(닫히지 않는 방향이라 조용히 두지 않고 못 박는다).
+reset
+search "$(two_leaves)"
+deploy "$(jq -n --argjson a "$(dw 903 '보통 이슈 — #101 후속 논의' 'PR #800 참고' '')" '[$a]')"
+prs "$(pr 800 101)"
+run
+check "⑫-h-b 라벨·제목 어느 쪽도 아닌 이슈는 후보가 아니다 → closed" "$(has_ev closed)"
+check "⑫-h-b PR 조회 0회" "$([ "$(count_cmd 'pr view')" = 0 ] && echo ok || echo no)"
+
+# ⓒ 보조 대조 — 제목·본문의 `#leaf` 언급(PR 이 leaf 에 연결돼 있지 않아도 잡는다, 호출 없이)
+reset
+search "$(two_leaves)"
+deploy "$(jq -n --argjson a "$(dw 904 '배포 대기: PR #804 — 요약 (#101)')" '[$a]')"
+prs "$(pr 804 '')"
+run
+check "⑫-a 제목의 (#leaf) 언급 → note(leaf #101 · #904)" \
+  "$([ "$(ev note | jq -r '.why')" = 'leaf #101 의 배포 대기 이슈 #904 열림' ] && echo ok || echo no)"
+check "⑫-a 텍스트 매치는 PR 조회 없이" "$([ "$(count_cmd 'pr view')" = 0 ] && echo ok || echo no)"
+# ⓒ-b 단어 경계 — `#1010` 은 `#101` 이 아니다(PR 도 leaf 에 연결돼 있지 않음 → 근거 없음 → 닫는다).
+# **닫는 방향**이라 조용히 두지 않고 못 박는다: 후보가 있어도 대조에 안 걸리면 판정 근거가 아니다.
+reset
+search "$(two_leaves)"
+deploy "$(jq -n --argjson a "$(dw 905 '배포 대기: PR #805 — 요약 (#1010)')" '[$a]')"
+prs "$(pr 805 1010)"
+run
+check "⑫-a-c 대조에 안 걸린 후보는 근거가 아니다 → closed" "$(has_ev closed)"
 check "⑫-a-c note 없음" "$(no_ev note)"
 
-# ⓑ 배포 대기 없음 → 닫는다(무회귀)
+# ⓓ 배포 대기 없음 → 닫는다(무회귀)
 reset
 search "$(two_leaves)"
 deploy '[]'
 run
 check "⑫-b 배포 대기 없음 → closed" "$(has_ev closed)"
-check "⑫-b 배포 대기 검색은 했다(1회)" \
-  "$([ "$(grep -cE '^api .*search/issues.*label:deploy-wait' "$tmp/gh.log")" = 1 ] && echo ok || echo no)"
-# ⓑ-b 열린 leaf 가 있으면 배포 대기 검색까지 가지 않는다(에픽당 호출 수 — leaf 판정이 먼저)
+check "⑫-b 후보 조회는 했다(1회)" "$([ "$(open_list_count)" = 1 ] && echo ok || echo no)"
+# ⓓ-b 열린 leaf 가 있으면 후보 조회까지 가지 않는다(에픽당 호출 수 — leaf 판정이 먼저)
 reset
 search "$(jq -n --argjson a "$(leaf 101 100 closed)" --argjson b "$(leaf 102 100 open)" '[$a,$b]')"
 run
-check "⑫-b-b 열린 leaf → 배포 대기 검색 0회" \
-  "$([ "$(grep -cE '^api .*search/issues.*label:deploy-wait' "$tmp/gh.log" || true)" = 0 ] && echo ok || echo no)"
+check "⑫-b-b 열린 leaf → 후보 조회 0회" "$([ "$(open_list_count)" = 0 ] && echo ok || echo no)"
 
-# ⓒ 에픽 본문 미체크 체크박스 → note · 쓰기 0
+# ⓔ 에픽 본문 미체크 체크박스 → note · 쓰기 0
 reset
 epics "$(jq -n '[{number:100, title:"에픽", labels:[{name:"epic"}],
   body:"## 완료 기준\n- [x] 된 것\n- [ ] 프로덕션 배포 뒤 관측\n  - [ ] 들여쓴 하위\n* [ ] 별표 불릿\n1. [ ] 번호 목록\n`- [ ] 백틱으로 시작하는 줄은 불릿이 아니다`"}]')"
@@ -643,42 +690,53 @@ check "⑫-c closed 없음" "$(no_ev closed)"
 check "⑫-c why = 완료 기준 미체크 4개" \
   "$([ "$(ev note | jq -r '.why')" = '완료 기준 미체크 4개' ] && echo ok || echo no)"
 check "⑫-c 쓰기 0" "$(no_writes)"
-check "⑫-c 검색 1회 — 본문 판정은 호출 없이, 배포 대기 검색 전에" \
-  "$([ "$(count_cmd 'api .*search/issues')" = 1 ] && echo ok || echo no)"
-# ⓒ-b 전부 체크된 본문은 그냥 지난다(닫는다)
+check "⑫-c 본문 판정은 호출 없이, 배포 대기 후보 조회 전에" \
+  "$([ "$(count_cmd 'api .*search/issues')" = 1 ] && [ "$(open_list_count)" = 0 ] && echo ok || echo no)"
+# ⓔ-b 전부 체크된 본문은 그냥 지난다(닫는다)
 reset
 epics "$(jq -n '[{number:100, title:"에픽", labels:[{name:"epic"}], body:"- [x] 다 됨\n- [X] 대문자도"}]')"
 search "$(two_leaves)"
 run
 check "⑫-c-b 전부 [x] → closed" "$(has_ev closed)"
-# ⓒ-c 에픽 목록 조회가 body 를 싣는다 — 안 실으면 ⓒ 가 영영 0개로 읽혀 조용히 지난다
+# ⓔ-c 에픽 목록 조회가 body 를 싣는다 — 안 실으면 ⓔ 가 영영 0개로 읽혀 조용히 지난다
 check "⑫-c-c 에픽 목록 --json 에 body" \
-  "$(grep -E '^issue list' "$tmp/gh.log" | grep -qE -- '--json [^ ]*body' && echo ok || echo no)"
+  "$(grep -E '^issue list .*--label epic' "$tmp/gh.log" | grep -qE -- '--json [^ ]*body' && echo ok || echo no)"
 
-# ⓓ 배포 대기 검색 실패 → warn · rc 1 · 쓰기 0 (fail-closed)
+# ⓕ 후보 조회 실패 → warn · rc 1 · 쓰기 0 (fail-closed)
 reset
 search "$(two_leaves)"
 STUB_DEPLOY_FAIL=1
 run
-check "⑫-d 검색 실패 → warn" "$(has_ev warn)"
+check "⑫-d 후보 조회 실패 → warn" "$(has_ev warn)"
 check "⑫-d why 에 '배포 대기'" "$(ev warn | jq -r '.why' | grep -q '배포 대기' && echo ok || echo no)"
 check "⑫-d rc 1" "$([ "$RC" = 1 ] && echo ok || echo no)"
 check "⑫-d 쓰기 0" "$(no_writes)"
 check "⑫-d note 로 접지 않는다" "$(no_ev note)"
-# ⓓ-b 상한 도달 → warn · 보류(rc 0) · 닫지 않음
+# ⓕ-b 상한 도달 → warn · 보류(rc 0) · 닫지 않음 — 잘린 목록 밖의 배포 대기 이슈를 못 본 채 닫으면 안 된다
 reset
 search "$(two_leaves)"
-deploy '[]' 5
+OPEN=2
+deploy "$(jq -n --argjson a "$(dw 906 '보통 이슈' '' '')" --argjson b "$(dw 907 '보통 이슈 2' '' '')" '[$a,$b]')"
 run
 check "⑫-d-b 상한 → warn" "$(has_ev warn)"
 check "⑫-d-b closed 없음" "$(no_ev closed)"
 check "⑫-d-b rc 0 — 보류" "$([ "$RC" = 0 ] && echo ok || echo no)"
+# ⓕ-c PR 조회 실패 → warn · rc 1 — "연결 없음" 으로 접으면 닫는 방향이다
+reset
+search "$(two_leaves)"
+deploy "$(jq -n --argjson a "$(dw 908 '배포 대기: PR #808 — 요약')" '[$a]')"
+STUB_PR_FAIL=1
+run
+check "⑫-d-c PR 조회 실패 → warn" "$(has_ev warn)"
+check "⑫-d-c closed 없음" "$(no_ev closed)"
+check "⑫-d-c rc 1" "$([ "$RC" = 1 ] && echo ok || echo no)"
 
-# ⓔ --dry-run 도 두 겹의 note 를 그대로 낸다(#328 이 dry-run 출력으로 판정한다)
+# ⓖ --dry-run 도 두 겹의 note 를 그대로 낸다(#328 이 dry-run 출력으로 판정한다)
 reset
 ARGS=(--dry-run)
 search "$(two_leaves)"
-deploy "$(jq -n --argjson a "$(dw 900 '배포 대기: PR #800 — 요약 (#101)')" '[$a]')"
+deploy "$(jq -n --argjson a "$(dw 900 '배포 대기: PR #800 — 요약')" '[$a]')"
+prs "$(pr 800 101)"
 run
 check "⑫-e dry-run: 배포 대기 note dry_run:true" \
   "$([ "$(ev note | jq -r '.dry_run')" = 'true' ] && echo ok || echo no)"
@@ -690,21 +748,6 @@ search "$(two_leaves)"
 run
 check "⑫-e dry-run: 미체크 note dry_run:true" \
   "$([ "$(ev note | jq -r '.dry_run')" = 'true' ] && echo ok || echo no)"
-
-# ⓕ leaf 가 7건 이상이면 질의를 나눈다 — GitHub 검색은 AND/OR/NOT 을 **5개까지**만 받는다
-# (6 항 = OR 5개). 두 번째 묶음에서 걸리는 배포 대기 이슈를 놓치면 안 된다.
-reset
-search "$(jq -n '[range(101;108) | {number:., state:"closed", body:"Epic #100"}]')"
-deploy "$(jq -n --argjson a "$(dw 903 '배포 대기: PR #803 — 요약 (#107)')" '[$a]')"
-run
-check "⑫-f 7 leaf → 배포 대기 검색 2회(6+1)" \
-  "$([ "$(grep -cE '^api .*search/issues.*label:deploy-wait' "$tmp/gh.log")" = 2 ] && echo ok || echo no)"
-check "⑫-f 묶음마다 OR 5개 이하" \
-  "$(grep -E '^api .*search/issues.*label:deploy-wait' "$tmp/gh.log" \
-     | awk '{ n=gsub(/ OR /, "&"); if (n > 5) bad=1 } END { exit bad ? 1 : 0 }' && echo ok || echo no)"
-check "⑫-f 두 번째 묶음의 매치도 note" \
-  "$([ "$(ev note | jq -r '.why')" = 'leaf #107 의 배포 대기 이슈 #903 열림' ] && echo ok || echo no)"
-check "⑫-f 쓰기 0" "$(no_writes)"
 
 echo "epic-sweep: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
