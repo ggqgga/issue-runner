@@ -1286,6 +1286,20 @@ check_nv "K4 버퍼 미도달(head 40분전·버퍼 60)→active" active   "$(ru
 check_nv "K5 claim 조회실패(unknown)→active" active   "$(run_fc "$GT/no_verdict_empty.json" "$G_OLD" none "$GT/empty.log" 30 unknown)"
 # K6 기준 시각 두 축을 **하나도** 못 얻으면(head 빈 값 + claim none) 회수하지 않는다.
 check_nv "K6 기준 시각 전무(head 빈 값·claim none)→active" active   "$(run_fc "$GT/no_verdict_empty.json" "" none "$GT/empty.log" 30 none)"
+# K7-a **못 읽는 판정 본문** — `머지 판정:` 은 있는데 세 기호가 없다(새 문형·기호 없는 판정).
+#      판정이 **있는** PR 이므로 "판정 0건" 주장이 성립하지 않는다 → active(재디스패치 금지).
+cat > "$GT/no_verdict_unreadable.json" <<'J'
+[
+  {"body":"머지 판정: 보류합니다 — 기호 없는 새 문형","createdAt":"2026-07-05T10:05:00Z"}
+]
+J
+check_nv "K7-a 못 읽는 판정 본문(개수 1)→active" active \
+  "$(run_fc "$GT/no_verdict_unreadable.json" "$G_OLD" none "$GT/empty.log" 30 none)"
+# K7-b 코멘트 JSON 이 배열이 아니다(형상 밖) — 개수를 못 세므로 주장 불가 → active.
+printf '%s' '{"comments":[]}' > "$GT/no_verdict_notarray.json"
+check_nv "K7-b 코멘트 JSON 이 배열 아님→active" active \
+  "$(run_fc "$GT/no_verdict_notarray.json" "$G_OLD" none "$GT/empty.log" 30 none)"
+
 # K7 무회귀 대조 — 같은 증거 전무·버퍼 초과라도 🔄 가 있으면 종전 계급(stale_reverify)이다.
 check_nv "K7 🔄 있음·증거 전무→stale_reverify(무회귀)" stale_reverify   "$(run_fc "$GT/bounced_noverifier.json" "$G_OLD" none "$GT/empty.log" 30 none)"
 

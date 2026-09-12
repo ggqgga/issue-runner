@@ -13,8 +13,9 @@
 #                  초과            → 4b 인라인 최종 판정 대리 append(에이전트 없음)
 #   stale_reverify 🔄 + 검증자 부재 또는 미해결 BLOCKER + STALE_FINISH_MIN 초과
 #                  → 4c 완결 에이전트 재디스패치(검증자 재실행)
-#   no_verdict     `머지 판정:` 코멘트가 **한 건도 없음**(코멘트 **조회 실패**는 이 주장이 아니다 —
-#                  `comments_lookup` 참조 · 🔄·✅·⚠ 어느 것도 없다 — 워커가
+#   no_verdict     `머지 판정:` 코멘트가 **한 건도 없음**(접두 매칭 **개수 0** 으로 확인한다 —
+#                  코멘트 조회 실패는 `comments_lookup`, 못 읽는 판정 본문은 개수 ≥ 1 이라
+#                  둘 다 이 계급이 아니다 · 🔄·✅·⚠ 어느 것도 없다 — 워커가
 #                  10단계 전에 죽었다) + STALE_FINISH_MIN 초과 + **진행 증거 없음**(#396)
 #                  → closeout ①-b 재디스패치(`stale_reverify` 와 같은 조치)
 #   active         위 어디에도 안 걸림(진행 중·시간버퍼 미도달·우리 형상 아님) 또는
@@ -538,6 +539,21 @@ case "$verdict_body" in
   *)
     # 코멘트를 **못 읽었으면** 판정 0건을 주장할 수 없다(위 comments_lookup 주석).
     [ "$comments_lookup" = ok ] || { echo active; exit 0; }
+    # 이 갈래는 `verdict_body` 가 세 기호를 **안 가진** 모든 경우로 들어온다 — 그 안에는
+    # ⑴ 판정 코멘트가 정말 0건 ⑵ `머지 판정:` 은 있는데 우리가 못 읽는 본문(새 문형·기호
+    # 없는 판정) ⑶ `last_matching` 의 jq 가 실패해 빈 값이 나온 경우가 섞여 있다. ⑵⑶ 을
+    # `no_verdict` 로 부르면 **판정이 있는 PR 을 재디스패치**한다 — `comments_lookup` 이 막는
+    # 것은 조회 실패뿐이고 이 셋은 그 뒤에 온다. 그래서 주장하는 사실 그대로,
+    # **매칭 코멘트 수가 정확히 0** 일 때만 이 계급을 연다(그 외는 종전대로 active).
+    printf '%s' "$comments" | jq -e 'type=="array"' >/dev/null 2>&1 || { echo active; exit 0; }
+    nv_n=$(printf '%s' "$comments" | jq -r '
+      [ .[]? | (.body // "")
+        | select(startswith("머지 판정") or startswith("Merge verdict")) ] | length' 2>/dev/null) \
+      || { echo active; exit 0; }
+    case "$nv_n" in
+      0) ;;                              # 판정 코멘트 0건 — 이 계급의 유일한 형상
+      *) echo active; exit 0 ;;          # 1건 이상(못 읽는 본문) · 빈 값(jq 실패) = 주장 불가
+    esac
     nv_claimed=$(claimed_arg)
     _claimed_arg_cache="$nv_claimed"   # 아래 emit_stale 의 진행 증거 조회가 같은 값을 재사용
     nv_claim_epoch=''
