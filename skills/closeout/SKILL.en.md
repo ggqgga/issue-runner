@@ -562,6 +562,14 @@ no verdict) is `policy`; `ladder` only when the rungs of
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
 were actually climbed and the failure output cited.
 
+**The stderr `warn:` line from `$SCRIPTS/closeout-eligible.sh` is moved into ④ Report**
+(same shape as issue-runner's `eligible-issues.sh` warn hand-off rule, #379). The
+`N unresolved comments after ✅` warn means "a human left a review after the ✅, so it was not
+picked up, fail-closed" — the loop does not resolve this on its own (a machine judging a
+human comment "resolved" would be fail-open). It clears on the next tick once a human replies
+to that comment, or verify-runner re-verifies and stamps a new ✅. Until then, the same warn
+repeating every tick is expected (never drop it silently).
+
 ## ③ Pipeline — steps 1–6
 
 For the picked PR, perform the 6 steps below in order. At the end of each step, plant
@@ -628,7 +636,9 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
   Machine-comment marker (required): the closeout-verification comment posted below via
   `gh pr comment` must include **a final line `<!-- bodat:worker -->`** — it is how
   closeout-eligible tells a machine comment from a human review (#72). Without it, on
-  re-evaluation the PR is mistaken for an unresolved human comment and drops out.
+  re-evaluation, the PR is mistaken for an unresolved human comment and drops out only when
+  this comment comes after the latest `머지 판정: ✅` (a comment before that ✅ is treated as
+  already seen by verify-runner, #379).
 - **Duplicate — the loop closes it itself (never handed to a human).** If the verifier
   judges that the fix the issue asked for is **already on `origin/main`**, or that this PR
   duplicates another, treat it as neither BLOCKER nor CLEAN. Confirm the evidence commit
@@ -1339,6 +1349,10 @@ tick where every count is 0** — the snapshot is the only window onto what is i
 - On exit 64 (no scope — an account-wide session with no `.loop/repos`), call it once more
   naming the repos touched this tick with `--repo <owner/repo>`; if there are none, leave one
   warn line `loop-status: 스코프 없음(.loop/repos 부재)`.
+- The stderr `warn: PR #<pr>(<repo>) — <n> unresolved comments after ✅ (no marker = awaiting
+  human review)` line from `$SCRIPTS/closeout-eligible.sh` (see ② Pick) is also pasted into
+  warn verbatim, one line — it is normal for it to repeat every tick until a human replies or
+  verify-runner stamps a new ✅.
 
 State the 7 exit states — for **each** PR processed (per-PR when the drain handled several):
 - **success** — ran steps 1–6, merged the PR, and issued follow-ups (including adopt/rebase recoveries).
