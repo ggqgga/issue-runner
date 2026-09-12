@@ -64,6 +64,8 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
   4·6단계 미완 마커가 발견되면 그 단계부터 이어간다 (멱등 재개).
 - `resume` — PR 이 OPEN 이고 `harvesting` 유지 중. 마커표로 끝난 단계를 건너뛰고
   중단 지점부터 파이프라인을 이어간다.
+- `lookup_failed` — PR **상태를 못 읽었다**(gh 실패·빈 응답, #433). CLOSED 가 아니다 — 라벨을 떼지
+  않고 **무접촉**, 다음 틱이 재조회한다. ④ Report 에 `보류: PR #<pr>(<repo_short>) — 상태 조회 실패` 한 줄.
 - `human_hold` — PR 이 OPEN 인데 `needs-human` 이 붙어 있거나(사람이 조사 중) 그 라벨을
   못 읽었다(`why` 로 갈린다). **무접촉** — ④ Report 에
   `보류: PR #<pr>(<repo_short>) — 사람 보류(<why>)` 한 줄만 남기고 이 틱엔 더 건드리지

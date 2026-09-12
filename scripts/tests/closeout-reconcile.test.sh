@@ -150,11 +150,13 @@ run_case "CLOSED → 라벨 제거 + stale" \
   '{"event":"stale","repo":"fixture-owner/fixture-428","pr":5}'
 assert_args "CLOSED" 있어야 "issue edit $PR --repo $REPO --remove-label harvesting"
 
-# ⚠ 현재 동작 고정: 상태 **조회 실패**도 빈 값이라 `그 외` 로 떨어져 라벨을 뗀다(#428 보고).
+# 상태 **조회 실패**(gh 실패 → 빈 값)는 CLOSED 가 아니다(#433): 라벨을 떼지 않고
+# `lookup_failed` 만 낸다(fail-closed — 위 `hh` 라벨 판정 실패와 같은 방향). 뮤테이션:
+# `'')` 갈래를 지우면 `그 외` 로 떨어져 `harvesting` 제거 호출이 생겨 아래 없어야 가 빨개진다.
 STUB_STATE=FAIL
-run_case "상태 조회 실패 → (현재 동작) stale 로 처리" \
-  '{"event":"stale","repo":"fixture-owner/fixture-428","pr":5}'
-assert_args "상태 조회 실패" 있어야 "issue edit $PR --repo $REPO --remove-label harvesting"
+run_case "상태 조회 실패 → lookup_failed, 라벨 무접촉" \
+  '{"event":"lookup_failed","repo":"fixture-owner/fixture-428","pr":5}'
+assert_args "상태 조회 실패" 없어야 "issue edit $PR --repo $REPO --remove-label harvesting"
 STUB_STATE=OPEN
 
 # ── 범위 필터 — .loop/repos 가 있으면 거기 적힌 레포만 ──────────────────

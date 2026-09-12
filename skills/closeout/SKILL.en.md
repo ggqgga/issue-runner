@@ -83,6 +83,9 @@ Run `$SCRIPTS/closeout-reconcile.sh` and handle each event:
   resume).
 - `resume` — the PR is OPEN and still holds `harvesting`. Skip the steps the
   marker table shows as finished and resume the pipeline from where it stopped.
+- `lookup_failed` — the PR **state could not be read** (gh failure or empty reply, #433). That is not
+  CLOSED — leave labels alone, **no-touch**, the next tick re-queries. ④ Report gets one line
+  `보류: PR #<pr>(<repo_short>) — 상태 조회 실패`.
 - `human_hold` — the PR is OPEN but carries `needs-human` (a human is investigating), or
   that label could not be read (`why` tells which). **Touch nothing** — leave one line in
   ④ Report, `보류: PR #<pr>(<repo_short>) — 사람 보류(<why>)`, and touch the PR no further
