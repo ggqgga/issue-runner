@@ -22,6 +22,15 @@
 #       <attempt> 는 PR 본문 `<!-- verify-attempt: N -->` 의 N+1(호출자가 계산해 넘긴다
 #       — 이 스크립트는 본문을 읽지 않는다).
 #
+#   bounce-comment.sh human-review <repo> <pr> <issue> "<결정문 인용 한 줄>"
+#     → closeout ①-c 3) 시정 전용(skills/closeout/SKILL.md). 사람이 보류를 **시정 방향**
+#       으로 풀었을 때의 반송이다. 사유 문구는 고정("사람 재심이 시정 방향")이고 가변인
+#       것은 결정문 인용 한 줄뿐이라, `redispatch` 채널처럼 사유를 인자로 받지 않는다.
+#       이 채널이 없던 동안 SKILL 본문이 `gh pr comment --body "재디스패치: #<이슈> — …"`
+#       를 **손으로 옮겨 적으라**고 지시했는데, 그게 #212 사고 원인 그 자체다.
+#       인용 안의 개행은 한 줄로 접는다 — 반송 마커는 **첫 줄 접두**로 판정되므로
+#       (`bounce-state.sh`) 인용이 줄을 넘기면 뒤따르는 줄이 마커 밖으로 새어 나간다.
+#
 # 둘 다 문구 생성과 게시(`gh pr comment`)를 한 호출로 묶는다 — 문구만 stdout 으로
 # 돌려주고 게시는 호출자가 따로 하게 하면, 그 게시 지점이 다시 손으로 옮겨 적는
 # 자리가 된다.
@@ -37,6 +46,7 @@ usage() {
 usage:
   bounce-comment.sh redispatch <repo> <pr> <issue>
   bounce-comment.sh reverify-fail <repo> <pr> <issue> <attempt> "<사유>"
+  bounce-comment.sh human-review <repo> <pr> <issue> "<결정문 인용 한 줄>"
 USAGE
 }
 
@@ -55,6 +65,15 @@ case "$channel" in
     fi
     body="재검증 실패: #${issue} — ${reason} (attempt ${attempt})
 <!-- bodat:worker -->"
+    ;;
+  human-review)
+    quote=${5:-}
+    if [ -z "$repo" ] || [ -z "$pr" ] || [ -z "$issue" ] || [ -z "$quote" ]; then
+      usage; exit 2
+    fi
+    # 개행·탭을 공백 하나로 접는다 — 첫 줄 접두 판정을 인용이 깨뜨리지 않게.
+    quote=$(printf '%s' "$quote" | tr '\n\t' '  ' | sed 's/  */ /g; s/^ //; s/ $//')
+    body="재디스패치: #${issue} — 사람 재심이 시정 방향(${quote}) <!-- bodat:worker -->"
     ;;
   *)
     usage; exit 2

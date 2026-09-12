@@ -81,6 +81,40 @@ expect_body="재검증 실패: #166 — codex BLOCKER (attempt 3)
 check_eq "reverify-fail rc=0" "0" "$rc"
 check_eq "reverify-fail 본문 — SKILL.md 문구와 바이트 동일(개행 포함)" "$expect_body" "$body"
 
+# ── human-review 채널 (#334 WARN — ①-c 3) 시정의 손타이핑을 대체) ──────────
+STUB_CAPTURE="$tmp/cap4"
+PATH="$tmp/bin:$PATH" STUB_CAPTURE="$STUB_CAPTURE" \
+  bash "$SUT" human-review owner/repo 42 166 "재심: 좁힌다 — 이렇게 고쳐라" >/dev/null 2>&1
+rc=$?
+body=$(get_body "$STUB_CAPTURE")
+check_eq "human-review rc=0" "0" "$rc"
+check_eq "human-review 본문 — SKILL.md 문구와 바이트 동일" \
+  "재디스패치: #166 — 사람 재심이 시정 방향(재심: 좁힌다 — 이렇게 고쳐라) <!-- bodat:worker -->" "$body"
+
+# 인용에 개행이 섞여도 **한 줄**로 접힌다 — 반송 마커는 첫 줄 접두로 판정되므로
+# 인용이 줄을 넘기면 뒤따르는 줄이 마커 밖으로 샌다.
+STUB_CAPTURE="$tmp/cap5"
+PATH="$tmp/bin:$PATH" STUB_CAPTURE="$STUB_CAPTURE" \
+  bash "$SUT" human-review owner/repo 42 166 "$(printf '판정이 맞다\n고쳐라')" >/dev/null 2>&1
+body=$(get_body "$STUB_CAPTURE")
+check_eq "human-review — 인용 안 개행을 한 줄로 접는다" \
+  "재디스패치: #166 — 사람 재심이 시정 방향(판정이 맞다 고쳐라) <!-- bodat:worker -->" "$body"
+if [ "$(printf '%s' "$body" | wc -l | tr -d ' ')" = "0" ]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1)); echo "  ✗ human-review 본문이 여러 줄이다"
+fi
+
+STUB_CAPTURE="$tmp/cap6"; : > "$STUB_CAPTURE"
+rc=0
+PATH="$tmp/bin:$PATH" STUB_CAPTURE="$STUB_CAPTURE" bash "$SUT" human-review owner/repo 42 166 >/dev/null 2>&1 || rc=$?
+check_eq "human-review 인용 누락 → exit 2" "2" "$rc"
+if [ -s "$STUB_CAPTURE" ]; then
+  fail=$((fail + 1)); echo "  ✗ human-review 인용 누락인데 gh 가 호출됨"
+else
+  pass=$((pass + 1))
+fi
+
 # ── 인자 누락 — usage(exit 2), gh 호출 없음 ──────────────────────────────
 STUB_CAPTURE="$tmp/cap3"; : > "$STUB_CAPTURE"
 rc=0
