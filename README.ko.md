@@ -230,8 +230,9 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 |---|---|
 | `agent-ready` | 집어가도 되는 이슈. 스펙 완결 후 **마지막에** 사람이(또는 `/loop-issues` 로) 부착. 디스패처는 임의로 붙이지 않는다 |
 | `agent:claimed` | 디스패처가 점유 중. **수동 부착/제거 금지** — 루프가 라이프사이클을 관리 |
-| `P0` / `P1` / `P2` | 우선순위 (최우선 → 낮음). 없으면 최하순위 |
-| `blocked-by:<N>` / `Blocked by #N` | 의존성. 라벨 또는 전용 본문 라인 중 하나. OPEN 인 블로커가 하나라도 있으면 디스패치 제외. `<N>` 은 **이슈** 번호이며, 블로커가 닫히면 게이트가 자동 해제 |
+| `P0` / `P1` / `P2` | 우선순위 — **주제(에픽) 단위**로 정하고 leaf 가 상속한다(leaf 마다 따로 매기지 않는다). `P0` 장애·차단(루프 전체가 기다린다) · `P1` 지금 끝내려는 에픽의 leaf(에픽 P 를 그대로 상속, P1 에픽은 **동시 2개**까지) · `P2` 기본(에픽 없는 단발, 우선순위 미정 에픽의 leaf). 없으면 최하순위. **에픽 본체에는 붙이지 않는다** — 에픽의 P 는 leaf 들의 P 로 표현된다 |
+| `blocked-by:<N>` / `Blocked by #N` | 의존성. 라벨 또는 전용 본문 라인 중 하나. OPEN 인 블로커가 하나라도 있으면 디스패치 제외. `<N>` 은 **이슈** 번호이며, 블로커가 닫히면 게이트가 자동 해제. 진짜 코드 의존(A 없이는 B 의 테스트가 안 돈다)에만 건다 — "먼저 하는 게 자연스럽다" 는 의존이 아니다 |
+| `Epic #N` | 주제 연결. 에픽에 속한 leaf 의 본문 **전용 라인**(형식은 `Blocked by #N` 과 같다 — 줄 시작 위치, 이슈당 하나, 대소문자 무시). 디스패처가 같은 P 안에서 시작한 에픽부터 집고, closeout 이 leaf 전부 종료된 에픽을 닫는다. 의존이 아니라 디스패치를 막지 않는다 |
 | `spinoff` | closeout 6단계가 발행한 파생 이슈라는 출처 표식. `loop-status.sh` 의 `파생` 집계가 이 라벨로만 센다 |
 | `deploy-wait` | closeout 4단계·full-cycle §7 이 만든 배포 대기 이슈 — **deploy-cycle 루프의 레인**(사람 정지가 아니다). `loop-status.sh` 가 배포대기와 사람대기를 가르는 버킷 라벨이기도 하다. `needs-human` 은 붙이지 않는다(#243) — 디스패치 게이트는 `agent-ready` 를 요구하고, 버킷은 `deploy-wait` 가 이기며, deploy-bodat 수집은 제목 정규식이라 그 라벨을 아무도 안 본다 |
 | `hold:conflict` · `hold:policy` · `hold:ladder` | `needs-human` 의 **사유**. `transition.sh verify-held|closeout-blocked --reason <사유>` 가 함께 붙인다(사유 없는 `needs-human` 은 만들 수 없다). `ladder` 만 재개 스윕이 자동 재개한다. 디스패치·검증·마감 게이트는 이 **접두**를 직접 본다(#242) — 사람이 홀드를 풀 때는 `needs-human` 과 함께 뗀다. `hold:dup`·`hold:hardware` 는 일부러 없다 — 중복은 `closeout-dup` 이 닫고, 실장비는 사다리를 오른다 |

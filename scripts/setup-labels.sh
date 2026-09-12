@@ -25,9 +25,13 @@ gh label create "agent:claimed" --repo "$repo" --color 054A91 --force \
   --description "디스패처가 점유 중 — 수동 부착/제거 금지"
 gh label create "needs-human" --repo "$repo" --color D73A49 --force \
   --description "루프가 한계 도달 — 사람 판단 필요"
-gh label create "P0" --repo "$repo" --color B60205 --force --description "최우선"
-gh label create "P1" --repo "$repo" --color FBCA04 --force --description "보통"
-gh label create "P2" --repo "$repo" --color C2E0C6 --force --description "낮음"
+# P 는 **주제(에픽) 단위**로 정하고 leaf 가 상속한다(#259) — leaf 마다 따로 매기지 않는다.
+# 정의의 SSOT 는 skills/loop-issues/SKILL.md 체크리스트 6 이고, 여기 설명은 그 요약이다
+# (라벨 목록만 보는 사람이 "보통/낮음" 으로 읽고 leaf 마다 임의로 매기던 것이 이 이슈의 원인).
+gh label create "P0" --repo "$repo" --color B60205 --force --description "장애·차단"
+gh label create "P1" --repo "$repo" --color FBCA04 --force \
+  --description "지금 끝내는 에픽의 leaf (에픽 P 상속, 동시 2개)"
+gh label create "P2" --repo "$repo" --color C2E0C6 --force --description "기본"
 
 # closeout 마감 루프 (#41) — harvesting(점유)·epic(부모 탐지)
 gh label create harvesting --repo "$repo" --color 1A7F37 \
