@@ -547,6 +547,37 @@ jq -n '[{body:"자동 보고 머리말\n검증자 리뷰: BLOCKER 1 / WARN 0건 
 run "$REPO" "$PR" "$OLD"
 want_in "①-c 중간 줄 검증자 지적도 새 본문에" "$tmp/state/created-body.md" "[P1] scripts/mid.sh:7 — 중간 줄 판정"
 
+echo "── ①-f 검증자 절은 마커 있는 머신 코멘트만 — 사람이 '검증자 리뷰:' 를 인용해도 원문이 남는다 ──"
+# 사람이 검증자 코멘트를 인용·설명하는 코멘트를 나중에 달면(마커 없음), 마지막 매칭을 집는
+# 추출은 그 사람 글로 BLOCKER/WARN 목록을 **대체**한다(#318 재심 P1-3). 후보는
+# `<!-- bodat:worker -->` 가 든 `검증자 리뷰:`/`재검증 실패:`/`마감 검증:` 코멘트뿐이다.
+setup
+jq -n --arg v "$VERIFIER_BODY" '[
+  {body:$v, created_at:"2026-09-11T02:00:00Z"},
+  {body:"검증자 리뷰: 를 읽어 보니 [P1] 두 건은 같은 뿌리 같다 — 사람 메모", created_at:"2026-09-11T02:30:00Z"}
+]' > "$tmp/state/comments-$PR.json"
+run "$REPO" "$PR" "$OLD"
+check "①-f exit 0" "$([ "$(rc)" = 0 ] && echo ok || echo no)"
+want_in "①-f 검증자 원문 BLOCKER 절이 남는다"      "$tmp/state/created-body.md" "[P1] scripts/foo.sh:12 — 조용한 폴백이 실패를 삼킨다"
+want_not_in "①-f 사람 코멘트로 대체되지 않는다"    "$tmp/state/created-body.md" "사람 메모"
+
+echo "── ①-g 마지막 회차가 E2E/CI 실패 — 현재 실패 사유를 --reason 으로 싣고 BLOCKER 절도 남는다 ──"
+# 상한에 닿은 회차는 반송 코멘트를 만들지 않는다(재발행이 처방이다). 그 회차가 E2E/CI 실패면
+# 마지막 `재검증 실패:` 는 **이전 회차** 사유라 새 이슈에 실제 재발행 원인이 안 남는다
+# (#318 재심 P1-4). 호출자가 이번 회차 사유를 `--reason` 으로 넘기면 "현재 실패 사유" 절에
+# 그대로 싣고, 이전 회차의 검증자 BLOCKER 목록도 함께 남긴다.
+setup
+jq -n --arg v "$VERIFIER_BODY" '[
+  {body:$v, created_at:"2026-09-11T02:00:00Z"},
+  {body:"재검증 실패: #10 — codex BLOCKER: 조용한 폴백 (attempt 2)\n<!-- bodat:worker -->", created_at:"2026-09-11T02:10:00Z"}
+]' > "$tmp/state/comments-$PR.json"
+run "$REPO" "$PR" "$OLD" --reason "E2E 실패: test/system/login_test.rb::2FA 블록"
+check "①-g exit 0" "$([ "$(rc)" = 0 ] && echo ok || echo no)"
+want_in "①-g 현재 실패 사유 절"                  "$tmp/state/created-body.md" "## 현재 실패 사유"
+want_in "①-g --reason 원문 그대로"               "$tmp/state/created-body.md" "E2E 실패: test/system/login_test.rb::2FA 블록"
+want_in "①-g 이전 회차 검증자 BLOCKER 절도 남는다" "$tmp/state/created-body.md" "[P1] scripts/foo.sh:12 — 조용한 폴백이 실패를 삼킨다"
+want_in "①-g 이전 반송 사유도 남는다"            "$tmp/state/created-body.md" "codex BLOCKER: 조용한 폴백 (attempt 2)"
+
 echo "── ②-c 멱등 마커 코멘트 실패 → 닫기는 계속(중복 발행 창을 줄인다) ──"
 setup
 touch "$tmp/state/fail-issue-comment"

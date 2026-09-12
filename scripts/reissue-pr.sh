@@ -2,8 +2,13 @@
 # reissue-pr.sh — 재디스패치 상한에 닿은 PR 의 **처방**을 한 자리에 모은 결정적 헬퍼 (#301).
 #
 # usage:
-#   reissue-pr.sh <owner/repo> <pr> <issue>               # 재발행(기본 처방)
+#   reissue-pr.sh <owner/repo> <pr> <issue> [--reason "<이번 회차 실패 사유>"]   # 재발행(기본 처방)
 #   reissue-pr.sh grant-round <owner/repo> <pr> <issue>   # 사람 예외 회차(`회차 허용:`) 판정·적용
+#
+# `--reason` — 상한에 닿은 **이번 회차**의 실패 사유(호출자가 bounce-comment 에 넘겼을 그 문장).
+# 상한 회차는 반송 코멘트를 만들지 않으므로(재발행이 처방), E2E/CI 실패로 상한에 닿으면 PR 의
+# 마지막 `재검증 실패:` 는 **이전 회차** 사유다 — 새 이슈에 실제 재발행 원인이 안 남는다(재심
+# P1-4). 넘기면 새 이슈 "현재 실패 사유" 절에 그대로 실리고, 없으면 마지막 `재검증 실패:` 로 대신한다.
 #
 # 배경(왜 held 가 아니라 재발행인가): `VERIFY_ATTEMPTS_LIMIT` 에 닿으면 예전엔 `hold:policy`
 # 로 사람에게 "한 회차 더 줄까" 를 물었다. 2026-09-11 하루에 그 질문이 네 PR 에서 나왔고 넷
@@ -40,7 +45,7 @@ MARKER_WORKER='<!-- bodat:worker -->'
 usage() {
   cat >&2 <<'USAGE'
 usage:
-  reissue-pr.sh <owner/repo> <pr> <issue>               # 재발행
+  reissue-pr.sh <owner/repo> <pr> <issue> [--reason "<이번 회차 실패 사유>"]   # 재발행
   reissue-pr.sh grant-round <owner/repo> <pr> <issue>   # `회차 허용: +1 — 범위: …` 판정·적용
 USAGE
 }
@@ -58,7 +63,13 @@ fi
 repo="${1:-}"
 pr="${2:-}"
 issue="${3:-}"
-[ "$#" -eq 3 ] || { usage; exit 64; }
+reason=""
+if [ "$#" -eq 5 ] && [ "$mode" = reissue ] && [ "$4" = "--reason" ]; then
+  reason="$5"
+  [ -n "$(printf '%s' "$reason" | tr -d '[:space:]')" ] || { usage; exit 64; }
+elif [ "$#" -ne 3 ]; then
+  usage; exit 64
+fi
 case "$repo" in */*) ;; *) usage; exit 64 ;; esac
 _int "$pr" || { usage; exit 64; }
 _int "$issue" || { usage; exit 64; }
@@ -267,21 +278,61 @@ issue_state=$(printf '%s' "$issue_json" | jq -r '.state // ""')
 pr_comments=$(comments_of "$pr") \
   || die 2 "PR #$pr 코멘트 조회 실패 — 검증자 스펙 없이 발행하지 않는다(아무것도 쓰지 않았다)"
 
-# 검증자의 **마지막** 코멘트 본문을 원문 그대로 싣는다(요약하지 않는다 — 요약이 스펙을 깎는다).
+# 검증자 절 — 후보는 **머신 코멘트뿐**이다: `<!-- bodat:worker -->` 마커가 든 `검증자 리뷰:` /
+# `재검증 실패:` / `마감 검증:` 코멘트(재심 P1-3). 사람이 그 머리말을 인용·설명한 코멘트(마커
+# 없음)를 후보로 세면 마지막 매칭이 사람 글이 되어 BLOCKER/WARN 목록이 통째로 대체된다.
+# 그중 **마지막** 것을 원문 그대로 싣는다(요약하지 않는다 — 요약이 스펙을 깎는다).
 # `startswith` 로 좁히지 않는 이유: 이 레포엔 판정 줄을 코멘트 **중간**에 넣어 머리 매칭
 # 게이트가 헛돈 실측 전례가 있다(그때 closeout 큐가 통째로 정체했다). 줄 머리면 센다.
-findings=$(printf '%s' "$pr_comments" | jq -r '
-  [ .[]? | .body // "" | select(test("(^|\n)검증자 리뷰:")) ] | last // ""') \
+# 마지막 후보가 한 줄짜리 반송(`재검증 실패:`)이면 그 앞의 마지막 **리뷰형** 후보(`검증자
+# 리뷰:`/`마감 검증:`)도 이어 싣는다 — 이슈가 요구하는 알맹이는 BLOCKER/WARN 목록이다.
+CAND_RE='(^|\n)(검증자 리뷰|재검증 실패|마감 검증):'
+REVIEW_RE='(^|\n)(검증자 리뷰|마감 검증):'
+cand_json=$(printf '%s' "$pr_comments" | jq -c --arg re "$CAND_RE" '
+  [ .[]? | .body // "" | select(test("<!--\\s*bodat:worker\\s*-->")) | select(test($re)) ]') \
   || die 2 "PR #$pr 검증자 코멘트 파싱 실패 — 아무것도 쓰지 않았다"
-findings=$(printf '%s' "$findings" | grep -vF "$MARKER_WORKER" || true)
-if [ -z "$(printf '%s' "$findings" | tr -d '[:space:]')" ]; then
-  # 재발행의 알맹이가 비었다 — 발행은 하되 **조용히 넘기지 않는다**(warn 이 ④ Report 에 뜬다).
-  warn "warn: PR #$pr 에서 '검증자 리뷰:' 코멘트를 못 찾았다 — 새 이슈가 검증자 스펙 없이 나간다(사람이 PR 코멘트를 확인하라)"
-  findings="(PR #$pr 에서 \`검증자 리뷰:\` 코멘트를 못 찾았다 — 그 PR 의 코멘트를 직접 읽어라.)"
+findings=$(printf '%s' "$cand_json" | jq -r 'last // ""') \
+  || die 2 "PR #$pr 검증자 코멘트 파싱 실패 — 아무것도 쓰지 않았다"
+if ! printf '%s' "$findings" | grep -qE "$(printf '%s' "$REVIEW_RE" | sed 's/(^|\\n)/^/')"; then
+  prev_review=$(printf '%s' "$cand_json" | jq -r --arg re "$REVIEW_RE" '
+    [ .[] | select(test($re)) ] | last // ""') || prev_review=""
+  if [ -n "$(printf '%s' "$prev_review" | tr -d '[:space:]')" ]; then
+    findings="$findings
+
+(그 앞의 마지막 검증자 리뷰 — 원문)
+
+$prev_review"
+  fi
 fi
+findings=$(printf '%s' "$findings" | grep -vF "$MARKER_WORKER" || true)
+if ! printf '%s' "$cand_json" | jq -e --arg re "$REVIEW_RE" 'any(.[]; test($re))' >/dev/null 2>&1; then
+  # 재발행의 알맹이(리뷰형 후보)가 없다 — 발행은 하되 **조용히 넘기지 않는다**(warn 이 ④ Report 에 뜬다).
+  warn "warn: PR #$pr 에서 '검증자 리뷰:' 코멘트를 못 찾았다 — 새 이슈가 검증자 스펙 없이 나간다(사람이 PR 코멘트를 확인하라)"
+  placeholder="(PR #$pr 에서 \`검증자 리뷰:\` 코멘트를 못 찾았다 — 그 PR 의 코멘트를 직접 읽어라.)"
+  if [ -z "$(printf '%s' "$findings" | tr -d '[:space:]')" ]; then
+    findings="$placeholder"
+  else
+    findings="$findings
+
+$placeholder"
+  fi
+fi
+# 현재 실패 사유(재심 P1-4) — 호출자가 준 이번 회차 사유가 1순위. 없으면 마지막 머신 반송
+# 코멘트의 첫 줄(이전 회차 사유일 수 있다 — 그 점을 본문에 적는다).
 last_bounce=$(printf '%s' "$pr_comments" | jq -r '
-  [ .[]? | .body // "" | select(startswith("재검증 실패:")) | split("\n")[0] ] | last // ""')
-[ -n "$last_bounce" ] || last_bounce="(반송 코멘트 없음)"
+  [ .[]? | .body // "" | select(test("<!--\\s*bodat:worker\\s*-->")) | select(test("(^|\n)재검증 실패:"))
+    | split("\n") | map(select(startswith("재검증 실패:"))) | first // "" ] | last // ""') \
+  || die 2 "PR #$pr 반송 코멘트 파싱 실패 — 아무것도 쓰지 않았다"
+if [ -n "$reason" ]; then
+  current_failure="$reason (attempt 상한 $LIMIT 도달 회차)"
+  [ -z "$last_bounce" ] || current_failure="$current_failure
+- 직전 반송: $last_bounce"
+elif [ -n "$last_bounce" ]; then
+  current_failure="$last_bounce
+- (호출자가 이번 회차 사유를 넘기지 않았다 — 위는 PR 의 마지막 반송 코멘트로, 상한 회차가 E2E/CI 실패였다면 이전 회차 사유일 수 있다. PR #$pr 코멘트를 확인하라.)"
+else
+  current_failure="(반송 코멘트 없음 — PR #$pr 의 코멘트·CI 로그를 직접 읽어라.)"
+fi
 
 # 상속(`Epic` 줄·P)은 `spinoff-inherit.sh`(#261) 한 자리다 — 이슈 본문의 규칙("있으면 그것으로").
 # 손으로 옮긴 규칙은 헬퍼와 갈린다(P 없는 부모의 P2 기본값 · 소문자/들여쓴 `epic #N` 줄 ·
@@ -316,7 +367,7 @@ if [ -z "$new" ]; then
   body=${body//<EPIC_LINE>/$epic_line}
   body=${body//<BRANCH>/$head_ref}
   body=${body//<HEAD_SHA>/$head_sha}
-  body=${body//<LAST_BOUNCE>/$last_bounce}
+  body=${body//<CURRENT_FAILURE>/$current_failure}
   body=${body//<VERIFIER_FINDINGS>/$findings}
   body=${body//<ISSUE_BODY>/$issue_body}
   printf '%s\n' "$body" > "$tmp/newbody.md"
