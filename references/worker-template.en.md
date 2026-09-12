@@ -64,13 +64,15 @@ Procedure:
      for the right reason**.
    - Map at least one test to each acceptance-criteria checkbox.
    - After it passes, finish behavior-preserving refactoring before committing.
-     Commit in small units.
+     Commit in small units. (If edits pile up while you wait for green, follow the
+     **WIP commit discipline** inside step 8 — do not die with zero commits.)
    - If the repo has no test runner, do not introduce one on your own — follow
      the CLAUDE.md guidance, and if there is none, state in the PR body why
      testing was not possible.
 6. Before each commit, run the stack's lint and tests yourself and confirm they pass
    (the global quality-gate hook does not protect worktree commits — you are the
-   only line of defense).
+   only line of defense). This requirement applies to **completed commits** only — the
+   **WIP commit discipline** inside step 8 marks the exception with the `WIP:` prefix.
 7. If the same test/build failure repeats 3 times in a row (the same check failing
    for the same cause), stop trying — leave a comment starting with
    `BLOCKED: same failure repeating — <failure details>` on the issue with
@@ -80,6 +82,41 @@ Procedure:
    comment and escalates to needs-human instead of re-dispatching.)
 8. **Immediately after every commit, run `cd <WT_PATH> && git push -u origin agent/issue-<NUM>`** —
    this worktree can be discarded at any time. Unpushed work is as good as nonexistent.
+
+   **WIP commit discipline — do not wait for "done" (#187).** The "commit only when
+   green" requirement in step 6 applies to **completed commits** only. At the two
+   moments below, commit whatever is in your hands — not green, not finished — and
+   **push it immediately, exactly as step 8 above says**:
+   - **(a) Before entering a long stage** — the step 9 local-CI call, the step 9-b
+     pre-review collection: anywhere a single tool call takes minutes. If you die
+     there, every edit you made before it stays uncommitted.
+   - **(b) When significant edits have piled up since your last commit** — if you have
+     touched several files and are holding the commit back because it is not green
+     yet, that is exactly when to commit.
+   ```bash
+   cd <WT_PATH> && git add -A && git commit -m "WIP: <one line>"
+   cd <WT_PATH> && git push -u origin agent/issue-<NUM>   # runs even if there was nothing to commit
+   ```
+   The commit message must start with the **`WIP: <one line>`** prefix — that prefix is
+   the marker saying the commit was taken as an **exception to the green requirement**,
+   not in violation of step 6. Never leave a red commit without it (a reader cannot tell
+   it apart from a completed commit).
+   **Disposition: WIP commits are left in the final PR as-is — do not clean them up**
+   (no `rebase -i`, no squash, no `commit --amend`, no force-push). Two reasons:
+   (1) merging is owned by the closeout lane, which **always merges with `--squash`**
+   (`skills/closeout/SKILL.md` stage 2 — the loop's own **squash merge**, regardless of the
+   target repo's merge settings), so every commit in a PR collapses into a single commit
+   on main (measured: PR #189 had 12 commits and landed on main as the single commit
+   `8936f67`) — WIP commits never reach main's history, so cleaning them up buys nothing. (2) Cleaning up requires rewriting history plus a force-push, which breaks
+   the very guarantee step 8 above makes ("what is pushed exists") and at the same time
+   invalidates the SHA-keyed local-CI result cache and the verify-lane verdict comments
+   that point at those SHAs.
+   One limit: **the HEAD you open the PR with (step 10) must not be a WIP commit** — WIP
+   is an intermediate state. Cover it with a completed commit that passed step 6 (stack a
+   new commit on top rather than rewriting the WIP one). **If the WIP commit is already
+   green and there is nothing left to stack on it**, do not reach for amend — close it
+   with one empty commit: `git commit --allow-empty -m "<one line> (WIP finalized)"`, then
+   push as step 8 says. HEAD becomes a completed commit without rewriting history.
 9. After the final push, run local CI:
    `~/.claude/skills/issue-runner/scripts/run-local-ci.sh <REPO> <NUM>`
    (Automatically skipped if the repo has not opted into bin/ci.) If it fails, fix,
