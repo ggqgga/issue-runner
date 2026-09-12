@@ -52,6 +52,11 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   스윕이 집는다 (`resume-sweep.sh` 에 동명 환경변수로 전달된다).
 - `LADDER_RESUME_LIMIT = 2` — 이슈 1건당 자동 재개 상한. 초과하면 재개 대신
   `hold:policy` 승격 — 그때만 사람이다(무한 재시도 금지).
+- `MIRROR_RETRY_LIMIT = 3` — ① 재개 스윕의 **정지 미러 정리**가 양성 증거를 못 얻었을 때
+  같은 건을 다시 시도하는 상한(#397). 회차는 짝 이슈 코멘트의 `<!-- mirror-retry: … -->`
+  마커 개수이고, 상한에 닿으면 스크립트가 `mirror_retry_exhausted` 를 낸다(전이는 아래
+  이벤트 처리 참조). 값은 `resume-sweep.sh` 의 동명 상수와 **같아야 한다** — 그 파일이
+  이 절을 가리키고 있다(플랜 1단계 전이라 두 벌 허용).
 - `STALE_FINISH_MIN = 30` — 완결 유실 판별 시간버퍼(분). `finish-classify.sh` 의
   버퍼이며, 이제 이 헬퍼는 **closeout ①-b 정체 스윕**이 소비한다(issue-runner 는 규칙4
   원복 후 직접 쓰지 않음). 살아있는 워커는 `검증자 리뷰:` 직후 수초 내 최종 판정을
@@ -264,6 +269,14 @@ PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·
   이슈는 원래 깨끗하니 건드리지 않는다. **추가 조치 없다** — 그 PR 은 이번 틱부터
   `verify-eligible.sh`·`closeout-eligible.sh` 후보로 자연히 돌아온다. ④ Report 에
   `미러 정리 N` 으로 한 줄(번호는 `pr`, 연결 이슈는 `number`, 뗀 라벨은 `removed`).
+- `mirror_retry_exhausted` — 정지 미러 정리가 **양성 증거를 못 얻은 채** `MIRROR_RETRY_LIMIT`
+  회를 채웠다(#397 — `attempts`/`limit` 를 `3/3` 으로 읽는다). 스크립트는 라벨을 한 번도
+  건드리지 않았다(증거 없이 사람 게이트를 벗기지 않는 게 그 갈래의 규율). 여기서 **사람 몫으로
+  올려라**: `$SCRIPTS/transition.sh runner-held <repo> <number> <pr> --reason policy --note "미러 불일치 증거 부재 <attempts>회 — PR 과 이슈의 정지 라벨이 어긋난다"`
+  (이슈와 PR 양쪽에 `hold:policy` + 질문 코멘트). 전이가 exit 1·2 면 ④ Report 에
+  `BLOCKED: 전이 실패 runner-held #<number>(exit N)` 한 줄 — 다음 틱이 같은 이벤트를 다시 낸다
+  (마커를 더 쌓지 않으므로 회차가 부풀지 않는다). 성사되면 이슈에 정지 라벨이 생겨 그 PR 은
+  다음 틱부터 미러 정리 대상에서 빠진다(자연 종료). ④ Report 의 warn 에 `미러 상한 #<pr>` 한 줄.
 - `resumed` — `hold:ladder` 가 떨어졌고 `agent-ready` 는 그대로다(자격은
   건드리지 않는다). **디스패처가 따로 할 일은 없다** — 이번 틱 ③ 의 `eligible-issues.sh`
   후보로 자연히 다시 나타난다. ④ Report 의 `재개` 에 번호와 `attempt` 를 적는다. 배포 대기

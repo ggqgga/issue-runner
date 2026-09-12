@@ -57,6 +57,12 @@ maintenance must come before new work).
 - `LADDER_RESUME_LIMIT = 2` — cap on automatic resumes per issue. Beyond it the issue is
   escalated to `hold:policy` instead of resumed — only then is it a human's (no infinite
   retries).
+- `MIRROR_RETRY_LIMIT = 3` — cap on retries when ①'s resume sweep **stop-mirror cleanup**
+  cannot obtain positive evidence (#397). The round count is the number of
+  `<!-- mirror-retry: … -->` marker comments on the paired issue; at the cap the script emits
+  `mirror_retry_exhausted` (see the event handling below for the transition). The value must
+  match the constant of the same name in `resume-sweep.sh`, which points back at this section
+  (two copies are allowed until plan step 1).
 - `STALE_FINISH_MIN = 30` — lost-finish time buffer (minutes). The buffer for
   `finish-classify.sh`, which is now consumed by the **closeout ①-b stuck-PR sweep**
   (issue-runner no longer uses it directly after the rule-4 revert). A live worker
@@ -291,6 +297,16 @@ so it is a brake a human put there by hand. Per event:
   further to do** — that PR returns as a `verify-eligible.sh`/`closeout-eligible.sh`
   candidate from this tick on. Put one line under `mirror cleared N` in ④ Report (`pr` is
   the PR, `number` the linked issue, `removed` the labels taken off).
+- `mirror_retry_exhausted` — the stop-mirror cleanup hit `MIRROR_RETRY_LIMIT` rounds **without
+  ever obtaining positive evidence** (#397 — read `attempts`/`limit` as `3/3`). The script never
+  touched a label (that branch never strips a human gate without proof). **Escalate it to a human
+  here**:
+  `$SCRIPTS/transition.sh runner-held <repo> <number> <pr> --reason policy --note "미러 불일치 증거 부재 <attempts>회 — PR 과 이슈의 정지 라벨이 어긋난다"`
+  (attaches `hold:policy` plus the question comment on both the issue and the PR). If the
+  transition exits 1·2, leave one line `BLOCKED: transition failed runner-held #<number>(exit N)`
+  in ④ Report — the next tick re-emits the same event (no new marker is added, so the round count
+  does not inflate). Once it lands, the issue carries a stop label and the PR drops out of mirror
+  cleanup on the next tick (it terminates itself). Report one warn line `미러 상한 #<pr>` in ④.
 - `resumed` — `hold:ladder` is off and `agent-ready` is untouched (the
   eligibility label is never touched). **Nothing for the dispatcher to do** — the issue
   reappears naturally as an `eligible-issues.sh` candidate in ③ this tick. Record the

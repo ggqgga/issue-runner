@@ -13,6 +13,9 @@
 #   mirror_cleared — 사람이 이슈에서만 푼 홀드의 **PR 사본**을 뗐다(#265, ④ 갈래). 이슈는
 #               건드리지 않는다(이미 깨끗하다). number=짝 이슈 · pr=고친 PR ·
 #               issue_state=그 이슈의 OPEN/CLOSED · removed=뗀 라벨(정렬·콤마 구분).
+#   mirror_retry_exhausted — ④ 정지 미러 정리가 **양성 증거를 못 얻은 채** `MIRROR_RETRY_LIMIT`
+#               회를 채웠다(#397). number=짝 이슈 · pr=그 PR · attempts/limit=회차/상한.
+#               전이는 SKILL 이 건다(`runner-held … --reason policy`) — 스크립트는 이벤트만.
 #   resumed   — 라벨을 되돌려 재디스패치 가능 상태로. attempt = 이번이 몇 번째 재개인가.
 #   escalated — 재개 상한 초과 → hold:policy 로 승격. 사람 호출(needs-human)이 되는 것은
 #               그 뒤 재심(③)이 "사람 몫 유지" 로 끝났을 때뿐이다(#244 — 디스패처가 판정).
@@ -63,6 +66,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 RESUME_AFTER_MIN="${RESUME_AFTER_MIN:-120}"
 LADDER_RESUME_LIMIT="${LADDER_RESUME_LIMIT:-2}"
+# ④ 정지 미러 정리가 **양성 증거를 못 얻었을 때** 같은 건을 다시 시도하는 상한(#397).
+# 값의 정의·근거는 SKILL.md 의 `## 상수` 절(`MIRROR_RETRY_LIMIT = 3`) — 플랜 1단계 전이라
+# 두 벌을 허용하고 주석으로 상호 참조한다. 회차는 상태 파일이 아니라 **이슈 코멘트 마커**
+# (`<!-- mirror-retry: <사유> -->`)의 개수가 SSOT 다(`ladder-resume` 과 같은 규약).
+MIRROR_RETRY_LIMIT="${MIRROR_RETRY_LIMIT:-3}"
+# 마커 정규식은 `count_markers` 의 인자로 간다 — 세는 자리와 쓰는 자리가 한 짝이어야 한다.
+MIRROR_RETRY_RE='<!--\s*mirror-retry:[^>]*-->'
 # 목록·탐색 조회 상한. 기본 200 — 기본 limit(30)은 조용히 잘라 그 이슈들이 영영 안 보인다.
 # 테스트가 상한 도달 경로를 200건짜리 픽스처 없이 재현하도록 env 로 낮출 수 있게 열어 뒀다
 # (운영에서 내리는 값이 아니다 — 내리면 그만큼 잘린다. 잘림 자체는 warn 으로 드러난다).
@@ -78,6 +88,10 @@ if ! _nonneg_int "$RESUME_AFTER_MIN"; then
 fi
 if ! _nonneg_int "$LADDER_RESUME_LIMIT"; then
   echo "resume-sweep: LADDER_RESUME_LIMIT 은 음이 아닌 정수여야 한다 (받은 값: '$LADDER_RESUME_LIMIT')" >&2
+  exit 64
+fi
+if ! _nonneg_int "$MIRROR_RETRY_LIMIT"; then
+  echo "resume-sweep: MIRROR_RETRY_LIMIT 은 음이 아닌 정수여야 한다 (받은 값: '$MIRROR_RETRY_LIMIT')" >&2
   exit 64
 fi
 if ! _nonneg_int "$LIST_LIMIT" || [ "$LIST_LIMIT" -lt 1 ]; then
@@ -354,12 +368,16 @@ read_state() {  # read_state <repo> <num> <updatedAt 저장파일> — 라벨 �
 
 # 재개 횟수 = 마커를 품은 코멘트의 **개수**. 창을 넘긴 후보에만 부른다(코멘트 조회는
 # 이슈당 한 번의 왕복이라, 대기 중인 건까지 훑으면 틱마다 큰 레포를 헛돈다).
-count_markers() {  # count_markers <repo> <num>
-  local out
+# 세 번째 인자로 **마커 정규식**을 받는다(#397) — 기본값은 재개 마커라 기존 호출은 그대로다.
+# 정규식을 인자로 두는 이유: `mirror-retry` 마커의 꼬리는 숫자가 아니라 사유 문자열이라
+# 재개 마커의 `[0-9]+` 형식을 공유할 수 없다. 세는 규칙(인용 제거·코멘트 개수)은 한 자리다.
+count_markers() {  # count_markers <repo> <num> [마커 정규식]
+  local out re="${3:-}"
+  [ -n "$re" ] || re='<!--\s*ladder-resume:\s*[0-9]+\s*-->'
   out=$(gh issue view "$2" --repo "$1" --json comments 2>/dev/null) || return 1
   printf '%s' "$out" | jq -e 'type=="object"' >/dev/null 2>&1 || return 1
   printf '%s' "$out" \
-    | jq "$JQ_UNQUOTE"'[.comments[]? | select(.body | unquoted | test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+    | jq --arg re "$re" "$JQ_UNQUOTE"'[.comments[]? | select(.body | unquoted | test($re))] | length'
 }
 
 # ── ③ 재심의 두 판정 — **이슈 축과 PR 축이 같은 자리를 쓴다** (#395) ──────────────
@@ -559,6 +577,44 @@ mirror_row() {  # mirror_row <PR row-json> — "<PR><TAB><짝 이슈|빈값><TAB
     | @tsv' 2>/dev/null
 }
 
+# ── ④-r 증거 부재의 **재시도 주체** (#397) ─────────────────────────────────────
+# ④ 의 양성 증거 게이트(⑷)는 증거를 못 얻으면 떼지 않고 warn 만 냈다. 그 warn 을 다음 틱에
+# 다시 시도하는 주체가 없어 불일치가 영구히 남고 **매 틱 같은 줄**이 반복됐다(#397 배경).
+# 여기서 회차를 세어 ⑴ 진행이 보이게 하고(`N/상한`) ⑵ 상한에 닿으면 사람 몫으로 올린다.
+#
+# 회차의 SSOT 는 **이슈 코멘트에 붙은 마커**(`<!-- mirror-retry: <사유> -->`)의 개수다 —
+# `ladder-resume` 과 같은 규약이고 같은 이유다: 상태 파일을 만들지 않고, 본문을 쓰지 않으며
+# (남의 글을 덮어쓰지 않는다), append-only 라 경합에 안전하다. 본문 카운터는 산문 전용이라
+# 쓰지 않는다.
+#
+# 상한 도달은 **이벤트만** 낸다(`mirror_retry_exhausted`) — 전이(`runner-held`)는 SKILL 이
+# 건다. 이 파일의 규율 그대로다: 스크립트는 판정하지 않고 이벤트/계급만 낸다.
+# 상한 뒤에는 마커를 더 쌓지 않으므로 그 전이가 걸릴 때까지 같은 이벤트가 반복되고, 걸리면
+# 이슈에 정지 라벨이 생겨 ⑶ 가 먼저 막는다(자연 종료).
+#
+# 조회·게시 실패는 회차를 올리지 않는다 — 회차를 못 기록한 채 올리면 상한이 조용히 앞당겨진다.
+mirror_retry() {  # mirror_retry <repo> <이슈> <PR> <사유 한 줄>
+  local repo="$1" issue="$2" prnum="$3" reason="$4" n body
+  if ! n=$(count_markers "$repo" "$issue" "$MIRROR_RETRY_RE"); then
+    emit_warn "$repo" "$issue" "PR #$prnum 정지 미러 — $reason · 재시도 회차 조회 실패, 이번 틱은 넘긴다"
+    return 0
+  fi
+  _json_int "${n:-}" || n=0
+  if [ "$n" -ge "$MIRROR_RETRY_LIMIT" ]; then
+    printf '{"event":"mirror_retry_exhausted","repo":"%s","number":%s,"pr":%s,"attempts":%s,"limit":%s}\n' \
+      "$repo" "$(_emit_num "$issue")" "$(_emit_num "$prnum")" "$(_emit_num "$n")" "$(_emit_num "$MIRROR_RETRY_LIMIT")"
+    return 0
+  fi
+  # 마커는 코멘트가 **스스로 품는다** — 카운터와 알림이 한 번의 append 로 끝난다(재개 코멘트 동형).
+  body=$(printf '정지 미러 재시도 %s/%s: PR #%s — %s\n<!-- mirror-retry: %s --><!-- bodat:worker -->' \
+    "$((n + 1))" "$MIRROR_RETRY_LIMIT" "$prnum" "$reason" "$reason")
+  if ! gh issue comment "$issue" --repo "$repo" --body "$body" >/dev/null 2>&1; then
+    emit_warn "$repo" "$issue" "PR #$prnum 정지 미러 — $reason · 재시도 마커 코멘트 실패(회차 미기록)"
+    return 0
+  fi
+  emit_warn "$repo" "$issue" "PR #$prnum 정지 미러 — $reason (재시도 $((n + 1))/$MIRROR_RETRY_LIMIT)"
+}
+
 # ── ③-b PR 단독 `hold:policy` 재심 (#395) ──────────────────────────────────────
 # `verify-held`·`closeout-blocked` 는 `<issue>` 자리에 `-` 를 받아 **연결 이슈가 없어도** PR 에
 # `hold:policy` 를 붙인다. 그런데 ③ 은 **이슈 목록**에서 출발하므로 그 홀드는 재심(#155)에
@@ -715,16 +771,23 @@ sweep_hold_mirror() {  # sweep_hold_mirror <repo> <PR row-json>
   for lab in $stops; do
     at_off=$(last_label_event_at "$tmp/mirror.issue.events" unlabeled "$lab")
     at_on=$(last_label_event_at "$tmp/mirror.pr.events" labeled "$lab")
+    # 증거를 못 얻은 세 갈래는 **상한 있는 재시도**로 간다(#397) — 떼지 않는 것은 그대로고,
+    # 회차가 warn 문구에 실리며 상한에 닿으면 `mirror_retry_exhausted` 로 사람 몫이 된다.
+    # (위 두 `fetch_label_events` 실패는 여기 들지 않는다 — 그건 일시적 조회 실패라 다음 틱이
+    #  저절로 다시 묻는 축이고, 회차를 세면 gh 가 흔들린 날에 사람 정지가 만들어진다.)
     if [ -z "$at_off" ]; then
-      emit_warn "$repo" "$issue" "PR #$prnum 정지 미러 — 이슈 #$issue 의 $lab: 붙었다 떨어진 이력이 없다(전이 부분 실패 의심) — 떼지 않는다"
+      mirror_retry "$repo" "$issue" "$prnum" \
+        "이슈 #$issue 의 $lab: 붙었다 떨어진 이력이 없다(전이 부분 실패 의심) — 떼지 않는다"
       return 0
     fi
     if [ -z "$at_on" ]; then
-      emit_warn "$repo" "$issue" "PR #$prnum 정지 미러 — PR 의 $lab: 붙은 이력이 없다(이력 미상) — 떼지 않는다"
+      mirror_retry "$repo" "$issue" "$prnum" \
+        "PR 의 $lab: 붙은 이력이 없다(이력 미상) — 떼지 않는다"
       return 0
     fi
     if [[ ! "$at_off" > "$at_on" ]]; then
-      emit_warn "$repo" "$issue" "PR #$prnum 정지 미러 — 이슈 #$issue 의 $lab 해제($at_off)가 PR 부착($at_on)보다 이르다(옛 에피소드) — 떼지 않는다"
+      mirror_retry "$repo" "$issue" "$prnum" \
+        "이슈 #$issue 의 $lab 해제($at_off)가 PR 부착($at_on)보다 이르다(옛 에피소드) — 떼지 않는다"
       return 0
     fi
   done

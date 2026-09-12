@@ -129,6 +129,16 @@ case "${1:-} ${2:-}" in
     if [ -f "${STUB_MIRROR_ISSUES:-/dev/null}" ]; then
       mline=$(grep "^${3:-} " "$STUB_MIRROR_ISSUES" || true)
       if [ -n "$mline" ]; then
+        # (#397) 재시도 마커 카운트는 **이 이슈의 코멘트**를 읽는다 — 라벨 조회와 인자로 갈린다.
+        case "$*" in
+          *comments*)
+            if [ -f "$STUB_MIRROR_COMMENTS.${3:-}" ]; then
+              jq -n --slurpfile c "$STUB_MIRROR_COMMENTS.${3:-}" '{comments: $c[0]}'
+            else
+              echo '{"comments":[]}'
+            fi
+            exit 0 ;;
+        esac
         mrest=${mline#* }
         mstate=${mrest%% *}
         mlabels=${mrest#* }
@@ -171,11 +181,20 @@ case "${1:-} ${2:-}" in
   "issue comment")
     [ -z "${STUB_COMMENT_FAIL:-}" ] || exit 1
     # 실제로 코멘트가 쌓여야 마커 카운트가 다음 조회에 반영된다.
+    cnum="${3:-}"
     body=""
     while [ $# -gt 0 ]; do
       [ "$1" = "--body" ] && { body="$2"; break; }
       shift
     done
+    # (#397) 미러 픽스처의 이슈면 **그 이슈의** 코멘트 파일에 쌓는다 — 재개(ladder) 픽스처와
+    # 섞이면 두 회차가 서로의 마커를 센다.
+    if [ -f "${STUB_MIRROR_ISSUES:-/dev/null}" ] && grep -q "^$cnum " "$STUB_MIRROR_ISSUES"; then
+      [ -f "$STUB_MIRROR_COMMENTS.$cnum" ] || echo '[]' > "$STUB_MIRROR_COMMENTS.$cnum"
+      jq --arg b "$body" '. + [{body: $b}]' "$STUB_MIRROR_COMMENTS.$cnum" > "$STUB_MIRROR_COMMENTS.$cnum.tmp" \
+        && mv "$STUB_MIRROR_COMMENTS.$cnum.tmp" "$STUB_MIRROR_COMMENTS.$cnum"
+      exit 0
+    fi
     jq --arg b "$body" '. + [{body: $b}]' "$STUB_COMMENTS" > "$STUB_COMMENTS.tmp" \
       && mv "$STUB_COMMENTS.tmp" "$STUB_COMMENTS"
     exit 0 ;;
@@ -315,6 +334,8 @@ setup() {
   : > "$tmp/mirror.issues"
   : > "$tmp/mirror.events"            # (#265 ⑷) 기본: 이력 픽스처 없음(스텁이 정상 해제로 답한다)
   echo '[]' > "$tmp/pr.comments.json"  # (#395) 기본: PR 코멘트 0건
+  rm -f "$tmp"/mirror.comments.*       # (#397) 기본: 재시도 마커 0개
+  MRL=3
   STUB_PR_COMMENTS_FAIL=""
   : > "$tmp/gh.log"
   # unset 하면 export 속성이 날아가 이후 대입이 스텁에 안 전달된다 — 빈 값으로 되돌린다.
@@ -339,7 +360,7 @@ run() { run_sut "$sut_dir/resume-sweep.sh"; }
 run_sut() {
   (cd "$WORKDIR" && PATH="$tmp/bin:$PATH" \
     RESUME_AFTER_MIN="${RA:-120}" LADDER_RESUME_LIMIT="${RL:-2}" \
-    RESUME_LIST_LIMIT="${LL:-200}" \
+    RESUME_LIST_LIMIT="${LL:-200}" MIRROR_RETRY_LIMIT="${MRL:-3}" \
     bash "$1") >"$tmp/out" 2>"$tmp/err"
   RC=$?
   out=$(cat "$tmp/out")
@@ -358,6 +379,7 @@ export STUB_MIRROR_LIST_FAIL="" STUB_MIRROR_EDIT_FAIL="" STUB_MIRROR_READBACK=""
 export STUB_MIRROR_RACE="" STUB_MIRROR_EDITED="$tmp/mirror.edited"
 export STUB_MIRROR_EVENTS="$tmp/mirror.events" STUB_MIRROR_EVENTS_FAIL=""
 export STUB_PR_COMMENTS="$tmp/pr.comments.json" STUB_PR_COMMENTS_FAIL=""
+export STUB_MIRROR_COMMENTS="$tmp/mirror.comments"
 WORKDIR="$tmp/work"
 RC=0
 out=""
@@ -2085,6 +2107,67 @@ LL=3; awk 'BEGIN{for(i=1;i<=3;i++) print "owner/r" i}' > "$tmp/search"; : > "$tm
 run
 check "이슈 축 상한: 문구가 라벨과 축을 밝힌다" "$(saysl '탐색 상한 도달(3, label:needs-human, 이슈)')"
 check "이슈 축 상한: PR 축 문구는 안 난다" "$(printf '%s' "$out" | grep -q '탐색 상한 도달(3, label:[^,]*, PR)' && echo no || echo ok)"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ⑨-r (#397) 정지 미러 정리의 **재시도 주체** — 증거 부재가 영구 warn 으로 남지 않는다
+#
+# ④ 의 양성 증거 게이트는 증거를 못 얻으면 warn 만 냈고, 다시 시도하는 주체가 없어 같은 줄이
+# 매 틱 반복됐다. 이제 회차를 마커 코멘트로 세어 `N/상한` 을 문구에 싣고, 상한에 닿으면
+# `mirror_retry_exhausted` 로 사람 몫이 된다(전이는 SKILL 이 건다 — 스크립트는 이벤트만).
+# ══════════════════════════════════════════════════════════════════════════════
+mr_markers() {  # mr_markers <이슈> — 그 이슈에 쌓인 mirror-retry 마커 수
+  if [ -f "$tmp/mirror.comments.$1" ]; then
+    jq '[.[] | select(.body | test("mirror-retry"))] | length' "$tmp/mirror.comments.$1"
+  else echo 0; fi
+}
+mr_setup() {  # mr_setup — 증거를 못 얻는 미러 형상(이슈에 해제 이력 없음 = ⓒ)
+  setup "" 200 0
+  mirror_prs '[{"number":241,"headRefName":"agent/issue-341","labels":[{"name":"hold:policy"}],
+                "closingIssuesReferences":[{"number":341}]}]'
+  : > "$tmp/mirror.issues"; mirror_issue 341 OPEN "agent-ready"
+  : > "$tmp/mirror.events"; mirror_events 341 "__NONE__"
+}
+
+mr_setup
+run
+check "⑨-r 증거 없음 1회: 마커 코멘트 1개" "$([ "$(mr_markers 341)" = 1 ] && echo ok || echo no)"
+check "⑨-r 증거 없음 1회: warn 에 회차(1/3)" "$(saysl '(재시도 1/3)')"
+check "⑨-r 증거 없음 1회: 라벨 무편집"       "$(none 'pr edit 241')"
+check "⑨-r 증거 없음 1회: 상한 이벤트 없음"  "$(no_ev mirror_retry_exhausted)"
+# 마커는 코멘트가 **스스로 품는다**(카운터와 알림이 한 번의 append) — gh.log 는 본문의
+# 줄바꿈에서 잘리므로 쌓인 코멘트 본문을 직접 본다.
+check "⑨-r 마커 본문이 자기 회차를 품는다" \
+  "$(jq -e '.[-1].body | test("<!-- mirror-retry:") and test("정지 미러 재시도 1/3")' "$tmp/mirror.comments.341" >/dev/null 2>&1 && echo ok || echo no)"
+
+# 다음 틱 — 같은 상태면 회차가 **올라간다**(매 틱 같은 줄이 아니다).
+run
+check "⑨-r 다음 틱: 마커 2개"               "$([ "$(mr_markers 341)" = 2 ] && echo ok || echo no)"
+check "⑨-r 다음 틱: warn 에 2/3"            "$(saysl '(재시도 2/3)')"
+
+# 상한 도달 — 마커 3개 상태에서는 코멘트를 더 쌓지 않고 이벤트를 낸다.
+run
+check "⑨-r 3회차: 마커 3개"                 "$([ "$(mr_markers 341)" = 3 ] && echo ok || echo no)"
+run
+check "⑨-r 상한 도달: mirror_retry_exhausted" "$(has_ev mirror_retry_exhausted)"
+check "⑨-r 상한 도달: 이슈·PR·회차가 실린다" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_retry_exhausted") | .number==341 and .pr==241 and .attempts==3 and .limit==3' >/dev/null 2>&1 && echo ok || echo no)"
+check "⑨-r 상한 도달: 마커를 더 쌓지 않는다"  "$([ "$(mr_markers 341)" = 3 ] && echo ok || echo no)"
+check "⑨-r 상한 도달: 라벨은 끝까지 무편집"   "$(none 'pr edit 241')"
+check "⑨-r 상한 도달: 전이는 스크립트가 걸지 않는다" "$(none 'issue edit 341')"
+
+# 증거가 서면 종전대로 정리된다 — 재시도 관문이 정상 경로를 막지 않는다(대조군).
+mr_setup
+: > "$tmp/mirror.events"   # 이력 픽스처 없음 = 스텁이 정상 해제로 답한다
+run
+check "⑨-r 대조군(증거 있음): 정리된다"     "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==241)' >/dev/null 2>&1 && echo ok || echo no)"
+check "⑨-r 대조군: 마커를 쌓지 않는다"       "$([ "$(mr_markers 341)" = 0 ] && echo ok || echo no)"
+
+# 상수 오타는 **쓰기 전에** 멈춘다(다른 두 상수와 같은 규율).
+mr_setup
+MRL=3x run
+MRL=3
+check "⑨-r MIRROR_RETRY_LIMIT 오타: exit 64" "$([ "$RC" = 64 ] && echo ok || echo no)"
+check "⑨-r MIRROR_RETRY_LIMIT 오타: 무편집"  "$(none 'pr edit 241')"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ⑩ (#395) PR 단독 `hold:policy` 재심 — ③ 이 이슈만 스캔해 영영 안 오르던 칸
