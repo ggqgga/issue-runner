@@ -88,8 +88,10 @@ gh label create "loop-dashboard" --repo "$repo" --color 656D76 --force \
 # 않는다) 목록 조회 한 번에 분류가 보이게 한다(코멘트 마커가 아니라 라벨 — 상태 = 라벨의 존재).
 # `hold:dup`·`hold:hardware` 는 일부러 만들지 않는다 — dup 은 closeout-dup 이 닫고
 # hardware 는 사다리를 오른다(#147). 라벨 부재로 금지를 강제한다.
+# 설명 접두는 셋 다 "기계 정지 —" 다(#364 — 옛 "사람 대기 사유 —" 는 #244 이전 축). 누가 푸는지는
+# 접두가 아니라 뒷말이 말한다: conflict 는 사람이 푼다(자동 재개 없음), ladder 는 스윕이 자동 재개.
 gh label create "hold:conflict" --repo "$repo" --color D93F0B \
-  --description "사람 대기 사유 — rebase/semantic conflict, 사람 판단" --force
+  --description "기계 정지 — rebase/semantic 충돌, 사람이 푼다(자동 재개 없음)" --force
 # `hold:policy` 는 재심 1회를 **루프가** 답한다(#155 — 디스패처 ① 재심, resume-sweep ③ 이
 # 이벤트를 낸다). 사람 몫이 되는 것은 그 재심이 "유지" 로 끝나 `needs-human` 이 겹쳐 붙은
 # 뒤뿐이다 — 설명이 "사람 대기" 로만 적혀 있으면 재심 전 정지까지 사람 몫으로 읽힌다.
@@ -98,8 +100,9 @@ gh label create "hold:policy" --repo "$repo" --color E4A11B \
 # `hold:ladder` 만 B 티어(한색·조용한 쪽)인 이유: 이건 루프가 창이 지나면 **스스로 푸는**
 # 정지(재개 스윕 대상)라 사람이 볼 일이 없다. 반대로 `hold:conflict` 는 사람이 손대야만
 # 풀리고, `hold:policy` 는 재심(#155) 뒤 사람 차례가 되는 경로라 둘 다 A 티어(난색 고채도)다.
+# 창 상수명은 resume-sweep.sh 의 실제 정의(RESUME_AFTER_MIN, 기본 120분)를 그대로 쓴다 — bin/ci 가 대조한다.
 gh label create "hold:ladder" --repo "$repo" --color B6E3FF \
-  --description "사람 대기 사유 — 검증 사다리 ①~③ 전부 실패(출력 인용 필수), 재개 스윕 대상" --force
+  --description "기계 정지 — 검증 사다리 ①~③ 전부 실패(출력 인용 필수), 창(RESUME_AFTER_MIN) 뒤 재개 스윕이 자동 재개(사람 개입 불요)" --force
 
 # closeout-dup(#147) — 이슈가 요구한 수정이 이미 main 에 있어 머지 없이 닫은 PR.
 # loop-status 의 `실패` 줄이 이 라벨로 "중복 종료" 를 가른다(코멘트 마커 대신 라벨).
