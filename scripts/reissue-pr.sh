@@ -13,15 +13,21 @@
 # 바꾸고, 예외 회차는 사람이 문형 한 줄로만 준다.
 #
 # ── 쓰기 순서가 이 스크립트의 안전 계약이다 ────────────────────────────────
-#   발행 → 확인 → (재발행 마커) → blocked-by 이전 → PR 닫기 → 원 이슈 닫기
+#   발행 → 확인 → (재발행 마커) → blocked-by 이전 → 원 이슈 닫기 → PR 닫기
 # 순서를 뒤집으면 원 이슈가 닫히고 새 이슈가 없는 **유실**이 난다. 그래서:
 #   · 조회가 하나라도 실패하면 아무것도 쓰지 않는다(exit 2 — 빈 결과와 실패를 구분한다).
 #   · 새 이슈 발행·확인이 실패하면 **아무것도 닫지 않는다**(exit 3).
-#   · 발행 뒤 단계가 실패하면 닫기를 멈추고 exit 4 — 원 이슈가 열려 있어야 다음 틱이 이어간다.
+#   · 발행 뒤 단계가 실패하면 닫기를 멈추고 exit 4 — PR 이 열려 있어야 다음 틱이 이어간다.
 #   · `blocked-by:<구>` 이전은 **원 이슈를 닫기 전**이다. 닫힌 블로커는 eligible 게이트가
 #     "해제" 로 읽어(block-issue.sh 머리말) 하위 이슈가 조기에 풀린다.
-# 멱등: 발행 직후 원 이슈에 `<!-- reissued: #N -->` 마커를 남긴다. 뒤 단계가 실패해 다음 틱이
-# 다시 불려도 그 마커를 보고 **새 이슈를 또 만들지 않고** 닫기부터 이어간다.
+#   · **PR 은 마지막**이다(재심 2026-09-12). 재진입의 열쇠는 PR 이다 — verify-runner 는
+#     `verify-eligible`(is:open PR) 큐로 이 헬퍼를 다시 부르므로, PR 을 먼저 닫으면 원 이슈
+#     닫기가 실패했을 때 원 이슈·새 이슈가 동시에 열린 채 아무도 다시 오지 않는다.
+# 멱등 재진입: 발행 직후 원 이슈에 `<!-- reissued: #N -->` 마커 코멘트를 남긴다. 어느 단계에서
+# 죽어도 같은 PR 로 다시 불리면 그 마커와 새 이슈 존재(ensure_lane)를 먼저 확인해 **발행은
+# 건너뛰고** 남은 단계(원 이슈 닫기·PR 닫기)만 이어간다 — 이미 닫힌 것은 상태로 건너뛴다.
+# 마커가 없는데 원 이슈가 이미 닫혀 있으면(사람이 닫았거나 마커 코멘트가 유실된 회차) 새 이슈를
+# 내지 않고 exit 4 — 닫힌 이슈를 재발행하면 중복 이슈가 틱마다 증식한다.
 #
 # 상태 파일 없음 — 상태는 GitHub 의 코멘트 마커·라벨·이슈 상태가 전부다(레포 규약).
 set -uo pipefail
@@ -293,6 +299,10 @@ new=$(printf '%s' "$issue_comments" | jq -r "$JQ_UNQUOTE"'
 _int "$new" || new=""
 
 if [ -z "$new" ]; then
+  # 마커 없이 원 이슈가 이미 닫혀 있다 — 앞 회차의 마커 코멘트가 유실됐거나 사람이 닫았다.
+  # 어느 쪽이든 닫힌 이슈를 재발행하면 안 된다(틱마다 새 이슈가 증식). 사람이 보게 멈춘다.
+  [ "$issue_state" = "OPEN" ] \
+    || die 4 "원 이슈 #$issue 가 이미 $issue_state 인데 재발행 마커(<!-- reissued: #N -->)가 없다 — 발행하지 않는다. 사람이 확인: 이미 낸 새 이슈가 있으면 원 이슈에 마커 코멘트를 달고, 없으면 원 이슈를 다시 열어라"
   [ -f "$TEMPLATE" ] || die 2 "템플릿 없음: $TEMPLATE — 아무것도 쓰지 않았다"
   tpl=$(cat "$TEMPLATE") || die 2 "템플릿 읽기 실패: $TEMPLATE"
   body="$tpl"
@@ -345,8 +355,9 @@ if [ -z "$new" ]; then
 
   # 멱등 앵커 — 이 마커 뒤로는 다시 불려도 발행하지 않는다.
   # 실패해도 **멈추지 않는다**: 여기서 멈추면 다음 틱이 마커를 못 보고 같은 이슈를 또 내
-  # (틱마다 중복 `agent-ready` 이슈가 증식) 고치려던 것보다 나빠진다. 이어서 PR·원 이슈를
+  # (틱마다 중복 `agent-ready` 이슈가 증식) 고치려던 것보다 나빠진다. 이어서 원 이슈·PR 을
   # 닫으면 그 PR 은 `is:open` 큐에서 빠져 재진입 자체가 없어진다 — 그게 더 좁은 창이다.
+  # (원 이슈만 닫히고 PR 닫기가 실패한 회차는 위 "마커 없이 닫힌 원 이슈" 가드가 잡는다.)
   if ! gh issue comment "$issue" --repo "$repo" --body "재발행: #$issue → #$new (attempt 상한 $LIMIT)
 <!-- reissued: #$new -->
 $MARKER_WORKER" >/dev/null 2>&1; then
@@ -402,20 +413,21 @@ for b in $body_blocked_nums; do
   warn "warn: #$b 의 본문 'Blocked by #$issue' 줄은 낡았다 — blocked-by:$new 라벨로 막힘을 이었다(본문은 사람이 고쳐라)"
 done
 
-# PR 닫기 — 브랜치는 남긴다(`--delete-branch` 를 쓰지 않는다. 새 워커가 참고한다).
+# 원 이슈 닫기 — not planned(재발행이라 '완료' 가 아니다). **PR 보다 먼저** — 여기서 실패해도
+# PR 이 열린 채 큐에 남아 다음 틱이 같은 PR 로 재진입해 마저 닫는다(위 순서 계약).
+if [ "$issue_state" = "OPEN" ]; then
+  gh issue close "$issue" --repo "$repo" --reason "not planned" \
+    --comment "재발행으로 닫는다 — 후속 이슈 #$new. PR #$pr 은 이어서 닫히고 브랜치 \`$head_ref\` 는 남는다.
+$MARKER_WORKER" >/dev/null 2>&1 \
+    || die 4 "원 이슈 #$issue 닫기 실패 — PR 은 열어 둔다, 다음 틱이 마커를 보고 이어간다"
+fi
+
+# PR 닫기 — 마지막 단계. 브랜치는 남긴다(`--delete-branch` 를 쓰지 않는다. 새 워커가 참고한다).
 if [ "$pr_state" = "OPEN" ]; then
   gh pr close "$pr" --repo "$repo" --comment "재발행으로 닫는다 — 후속 이슈 #$new (원 이슈 #$issue, attempt 상한 $LIMIT).
 브랜치 \`$head_ref\` 는 남겨 둔다(마지막 head \`$head_sha\`) — 새 워커가 참고하되 그대로 이어받지 않는다.
 $MARKER_WORKER" >/dev/null 2>&1 \
-    || die 4 "PR #$pr 닫기 실패 — 원 이슈를 닫지 않는다(다음 틱 재시도)"
-fi
-
-# 원 이슈 닫기 — not planned(재발행이라 '완료' 가 아니다).
-if [ "$issue_state" = "OPEN" ]; then
-  gh issue close "$issue" --repo "$repo" --reason "not planned" \
-    --comment "재발행으로 닫는다 — 후속 이슈 #$new. PR #$pr 은 닫혔고 브랜치 \`$head_ref\` 는 남아 있다.
-$MARKER_WORKER" >/dev/null 2>&1 \
-    || die 4 "원 이슈 #$issue 닫기 실패 — 다음 틱이 마커를 보고 이어간다"
+    || die 4 "PR #$pr 닫기 실패 — 원 이슈는 닫혔고 새 이슈 #$new 는 있다, 다음 틱이 같은 PR 로 재진입해 마저 닫는다"
 fi
 
 echo "재발행: #$issue → #$new (PR #$pr 닫음, attempt 상한 $LIMIT)"

@@ -6,9 +6,10 @@
 #   ① 정상 재발행 — 새 이슈 본문에 `재발행:` 첫 절·검증자 BLOCKER 절·`Epic` 줄·수용 기준이
 #      들어가고, 라벨은 원 이슈에서 상속하되 레인 라벨(agent:claimed·flow:*)은 빠지고
 #      `agent-ready` 가 붙는다. 원 이슈는 not planned 로 닫히고 PR 도 닫힌다.
-#   ② **쓰기 순서가 안전 계약이다** — 발행 → 확인 → PR 닫기 → 원 이슈 닫기. 새 이슈
+#   ② **쓰기 순서가 안전 계약이다** — 발행 → 확인 → 원 이슈 닫기 → PR 닫기. 새 이슈
 #      발행이 실패하면 **아무것도 닫지 않는다**(뒤집히면 원 이슈가 닫히고 새 이슈가 없는
-#      유실이 난다).
+#      유실이 난다). PR 이 마지막인 이유: 원 이슈 닫기가 실패해도 PR 이 열린 채 큐에 남아
+#      다음 틱이 같은 PR 로 재진입해 마저 닫는다(①-e).
 #   ③ `blocked-by:<구>` 라벨을 단 이슈는 새 번호로 옮긴다(옮기기 전엔 원 이슈를 안 닫는다 —
 #      닫힌 블로커는 eligible 게이트가 해제로 읽어 하위가 조기 풀린다).
 #   ④ `회차 허용: +1 — 범위: <한 줄>` 1회 → PR 본문 verify-attempt 를 LIMIT-1 로 갱신 +
@@ -116,11 +117,12 @@ case "${1:-} ${2:-}" in
     exit 0 ;;
   "issue comment")
     fail_if issue-comment
+    tgt="$3"   # 루프가 shift 하기 전에 잡는다 — 재진입 픽스처가 이 파일을 다음 회차 입력으로 쓴다
     while [ $# -gt 0 ]; do
       case "$1" in
         --body) printf '%s\n' "$2" >> "$STUB_DIR/comments-posted.txt"
-                jq -n --arg b "$2" '{body:$b, created_at:"2026-09-12T00:00:00Z"}' \
-                  >> "$STUB_DIR/posted-$3.jsonl"; shift 2 ;;
+                jq -n --arg b "$2" '{body:$b, createdAt:"2026-09-12T00:00:00Z"}' \
+                  >> "$STUB_DIR/posted-$tgt.jsonl"; shift 2 ;;
         *) shift ;;
       esac
     done
@@ -260,10 +262,34 @@ c_create=$(grep -n '^issue create' "$STUB_LOG" | head -1 | cut -d: -f1)
 c_conf=$(grep -n "^issue view $NEW " "$STUB_LOG" | head -1 | cut -d: -f1)
 c_prclose=$(grep -n '^pr close' "$STUB_LOG" | head -1 | cut -d: -f1)
 c_iclose=$(grep -n '^issue close' "$STUB_LOG" | head -1 | cut -d: -f1)
-check "① 순서: 발행 < 확인 < PR닫기 < 원이슈닫기 ($order)" \
+# PR 은 **마지막**이다 — 원 이슈 닫기가 실패해도 PR 이 `verify-eligible`(is:open) 큐에 남아
+# 다음 틱이 같은 PR 로 재진입한다(재심 2026-09-12: PR 을 먼저 닫으면 재개 경로가 사라진다).
+check "① 순서: 발행 < 확인 < 원이슈닫기 < PR닫기 ($order)" \
   "$([ -n "$c_create" ] && [ -n "$c_conf" ] && [ -n "$c_prclose" ] && [ -n "$c_iclose" ] \
-     && [ "$c_create" -lt "$c_conf" ] && [ "$c_conf" -lt "$c_prclose" ] \
-     && [ "$c_prclose" -lt "$c_iclose" ] && echo ok || echo no)"
+     && [ "$c_create" -lt "$c_conf" ] && [ "$c_conf" -lt "$c_iclose" ] \
+     && [ "$c_iclose" -lt "$c_prclose" ] && echo ok || echo no)"
+
+echo "── ①-e 원 이슈 닫기 실패 → 같은 PR 로 재진입 → 발행 없이 마저 닫힌다 ──"
+# 1회차: 발행·확인·마커까지 성공, 원 이슈 닫기에서 죽는다. PR 은 아직 열려 있어야 한다.
+setup
+touch "$tmp/state/fail-issue-close"
+run "$REPO" "$PR" "$OLD"
+check "①-e 1회차 exit 비0"              "$([ "$(rc)" != 0 ] && echo ok || echo no)"
+want_in "①-e 1회차 발행했다"             "$STUB_LOG" "issue create"
+want_in "①-e 1회차 마커 코멘트"          "$tmp/state/comments-posted.txt" "<!-- reissued: #900 -->"
+want_not_in "①-e 1회차 PR 은 열린 채다(큐 잔류)" "$STUB_LOG" "pr close"
+# 2회차: 1회차가 남긴 코멘트(마커)를 그대로 읽는다. 원 이슈는 아직 OPEN.
+rm -f "$tmp/state/fail-issue-close"
+jq -s '.' "$tmp/state/posted-$OLD.jsonl" > "$tmp/state/comments-$OLD.json"
+: > "$STUB_LOG"
+rm -f "$tmp/state/created-body.md"
+run "$REPO" "$PR" "$OLD"
+check "①-e 2회차 exit 0"                "$([ "$(rc)" = 0 ] && echo ok || echo no)"
+want_not_in "①-e 2회차 새 이슈를 또 내지 않는다" "$STUB_LOG" "issue create"
+want_in "①-e 2회차 확인을 다시 지난다"    "$STUB_LOG" "issue view $NEW "
+want_in "①-e 2회차 원 이슈 닫힘"          "$STUB_LOG" "issue close 10"
+want_in "①-e 2회차 PR 닫힘"               "$STUB_LOG" "pr close 55"
+want_in "①-e 2회차 보고 한 줄"            "$tmp/state/out.txt" "재발행: #10 → #900"
 
 echo "── ② 발행 실패 → 아무것도 닫지 않는다 ─────────────────────────────"
 setup
