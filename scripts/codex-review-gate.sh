@@ -56,7 +56,7 @@ STATUS_NO_BASIS='no-basis'
 RENDER_HEADER_ONE='Review comment:'
 RENDER_HEADER_MANY='Full review comments:'
 STATUS_CONTRACT_TEXT="출력 계약(필수) — 아래를 지키지 않은 응답은 판정이 아니라 **미산출**로 버려지고 리뷰가 다시 돌려진다.
-리뷰 본문의 **마지막 줄**은 다음 둘 중 하나와 **정확히 같아야** 한다 — 그 줄에 다른 텍스트를 함께 두지 말고(앞에도 뒤에도), 그 줄 뒤에는 빈 줄이나 닫는 코드펜스 외의 텍스트를 두지 마라:
+리뷰 본문의 **마지막 줄**은 다음 둘 중 하나와 **정확히 같아야** 한다 — 그 줄에 다른 텍스트를 함께 두지 말고(앞에도 뒤에도), 줄 머리를 들여쓰지 말고(공백·탭 금지), 그 줄 뒤에는 빈 줄이나 닫는 코드펜스 외의 텍스트를 두지 마라(닫는 코드펜스는 리뷰 전체를 하나의 코드펜스로 감쌌을 때만 — 본문 중간에 연 코드펜스 안에 이 줄을 넣지 마라):
 ${STATUS_KEY}: ${STATUS_REVIEWED}
 ${STATUS_KEY}: ${STATUS_NO_BASIS}
 '${STATUS_REVIEWED}' = 지정된 범위의 변경을 실제로 열어 읽고 판정했다는 뜻이다. 범위를 읽지 못했거나 판정 근거를 얻지 못했으면 '${STATUS_NO_BASIS}' 를 쓰고, 그때는 발견 항목을 지어내지 마라. 키와 값은 위 문자열 그대로 쓰고 값 뒤에 다른 텍스트를 붙이지 마라."
@@ -256,6 +256,22 @@ p3=$(grep -c -E "$ITEM_P3_RE" "$REVIEW")
 # 방향은 명시적으로 정한다: **과잉 차단이 원래 결함보다 나쁘다.** 이 게이트가 멈추면 검증 레인이
 # 통째로 정체하므로, 리뷰 전체를 펜스로 감싼 정상 응답(여는 펜스 → 본문 → 계약 줄 → 닫는 펜스)은
 # 짝이 맞아 종전대로 벗겨지고 판정이 그대로 산다. 격자(4b-2)가 양방향을 전수로 못박는다.
+#
+# **짝이 맞아도 리뷰 전체를 감싼 블록의 짝만 벗긴다(#339).** 짝 세기만으로는 안 닫히는 형상이
+# 하나 남는다 — 리뷰어가 diff 를 못 열고 계약문을 *되읊는* 응답: "판정 근거를 얻지 못했습니다.
+# 계약 형식은 다음과 같습니다:" + 펜스 블록 안의 계약 줄 + 닫는 펜스. 짝이 맞으니 닫는 펜스가
+# 벗겨지고 인용된 계약 줄이 마지막 줄로 채택돼 발견 0 → CLEAN(closeout 폴백 검증자 실측 P1).
+# 그 응답과 "리뷰 전체를 펜스로 감싼 정상 응답"을 가르는 것은 산문의 뜻이 아니라 **여는 펜스의
+# 위치**다: 정상 형태는 구역의 첫 비공백 줄이 여는 펜스이고(모델 산문이 펜스 밖에 없다), 인용
+# 형태는 산문 **뒤에** 펜스가 열린다. 그래서 꼬리 닫는 펜스는 그 짝인 여는 펜스가 구역의 첫
+# 비공백 줄일 때만 artifact 로 벗긴다. 산문 뒤에 열린 블록의 닫는 펜스는 벗기지 않는다 → 마지막
+# 줄이 펜스 자신 → 계약 위반 → 미산출(fail-closed). 산문 정규식으로 되돌아가는 게 아니다(#207·
+# #283) — 새 판별 입력도 여전히 구조(펜스 줄의 위치)뿐이다.
+# **판정 줄의 선행 공백은 지우지 않는다(#339 두 번째 변종).** 옛 trim() 은 마지막 줄의 양끝
+# 공백을 지워, 4칸/탭으로 들여쓴 계약 줄(markdown 코드 블록 인용 — 같은 실측 P2)이 맨몸 계약
+# 줄과 같아졌다. 들여쓰기는 인용 표식이다(4b-2e 의 `>`·`-`·`1.`·`##` 과 같은 가족) — 줄 전체
+# 규칙(#283 재심 ①) 그대로 선행 공백도 "같은 줄의 다른 텍스트"로 본다. 끝 공백만 벗긴다(꼬리
+# artifact — 계약 위반의 표식이 아니다). 리뷰 전체 펜스 안 정상 형태는 들여쓰기 0 이라 회귀 없음.
 if [ "$STATUS_CONTRACT" = 1 ]; then
   # 경계 = **CLI 가 쓴 것**일 때만이다(#283 재심 ②). 앞 회차는 "헤더 + 그 뒤에 항목"이면
   # 경계로 봤는데, 헤더도 항목도 **같은 무제약 텍스트**에서 나온다 — 모델이 헤더를 적고 그
@@ -281,6 +297,7 @@ if [ "$STATUS_CONTRACT" = 1 ]; then
   ITEM_LINES=$(grep -n -E "$ITEM_P1_RE|$ITEM_P2_RE|$ITEM_P3_RE" "$REVIEW" 2>/dev/null | cut -d: -f1 | tr '\n' ' ')
   region=$(awk -v h1="$RENDER_HEADER_ONE" -v hn="$RENDER_HEADER_MANY" -v items="$ITEM_LINES" '
     function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    function rtrim(s) { sub(/[ \t]+$/, "", s); return s }    # 판정 줄용 — 선행 공백은 남긴다(#339)
     BEGIN { n = split(items, a, " "); for (k = 1; k <= n; k++) if (a[k] != "") isitem[a[k] + 0] = 1 }
     # CLI 저작의 증거 — 이 술어가 유일한 정의 자리다(ⓐ 형식 · ⓑ 위치=접미).
     function cli_rendered(i,   j, k, seen) {
@@ -327,37 +344,46 @@ if [ "$STATUS_CONTRACT" = 1 ]; then
       }
       if (qual != 1) { cut = 0; tail = NR }                   # ⓒ 0개=경계 없음 · 2개 이상=모호 → 안 자른다
       # 펜스 짝 세기(#279) — 구역 [1..tail] 안에서 한 패스로 각 줄이 "앞에서 열린 블록을 닫는 줄"인지 표시한다.
-      open_c = ""; open_n = 0
+      # 닫는 줄마다 그 짝인 여는 펜스의 줄 번호(opener[])도 남긴다 — 꼬리 벗기기가 "리뷰 전체를 감싼
+      # 블록의 짝인가"(#339) 를 이 번호로 묻는다.
+      first = 0                                              # 구역의 첫 비공백 줄(정상 형태의 여는 펜스 자리)
+      for (i = 1; i <= tail; i++) if (trim(line[i]) != "") { first = i; break }
+      open_c = ""; open_n = 0; open_at = 0
       for (i = 1; i <= tail; i++) {                            # 렌더 섹션 뒤는 모델 텍스트가 아니다 — 구역 안에서만 센다
-        closer[i] = 0
+        closer[i] = 0; opener[i] = 0
         scan_fence(line[i])
         if (fn == 0) continue
         if (open_n == 0) {
           if (fc == "`" && index(frest, "`") > 0) continue   # 백틱 info 에 백틱 금지 → 여는 펜스 아님
-          open_c = fc; open_n = fn                           # 여는 펜스(정보 문자열 허용)
+          open_c = fc; open_n = fn; open_at = i              # 여는 펜스(정보 문자열 허용)
         } else if (fc == open_c && fn >= open_n && frest ~ /^[ \t]*$/) {
-          closer[i] = 1; open_c = ""; open_n = 0             # 닫는 펜스 — 같은 문자·길이 이상·info 없음
+          closer[i] = 1; opener[i] = open_at                 # 닫는 펜스 — 같은 문자·길이 이상·info 없음
+          open_c = ""; open_n = 0; open_at = 0
         }
         # 열린 블록 안에서 짝이 안 맞는 펜스 줄은 그냥 블록 본문이다(위 두 갈래 어디에도 안 든다)
       }
-      last = ""
+      last = ""; quoted = 0
       for (i = tail; i >= 1; i--) {
         s = trim(line[i])
         if (s == "") continue                                 # 빈 줄 — 꼬리 artifact
-        if (closer[i] == 1) continue                          # 닫는 코드펜스 — 꼬리 artifact. **짝이 맞는** 줄만 여기
-                                                                # 온다(#279 — 위 closer[] · 닫는 펜스는 info 가 없으므로
-                                                                # 언제나 맨몸이다). 짝 없는 맨몸 펜스 = 여는 펜스 → 안
-                                                                # 벗긴다 → 그 줄이 마지막 줄이 되어 계약 위반 → 미산출
-                                                                # (fail-closed). 언어 태그가 붙은 펜스(예: "```python")도
-                                                                # 같은 규칙으로 여는 펜스다(#207 attempt8 을 그대로 품는다)
-        last = s; break
+        if (closer[i] == 1 && opener[i] == first) continue    # 닫는 코드펜스 — 꼬리 artifact. **짝이 맞고** 그 짝이
+                                                                # 구역 첫 비공백 줄(= 리뷰 전체를 감싼 블록)인 줄만 여기
+                                                                # 온다(#279 짝 · #339 위치). 짝 없는 맨몸 펜스 = 여는
+                                                                # 펜스 → 안 벗긴다 → 그 줄이 마지막 줄이 되어 계약 위반
+                                                                # → 미산출(fail-closed). 언어 태그가 붙은 펜스(예:
+                                                                # "```python")도 같은 규칙으로 여는 펜스다(#207 attempt8).
+                                                                # 산문 **뒤에** 열린 블록의 닫는 펜스(#339 — 계약문을
+                                                                # 펜스로 되읊은 응답)도 안 벗긴다 → 같은 경로로 미산출.
+        if (closer[i] == 1) quoted = 1                        # 진단용 — 산문 뒤 블록의 닫는 펜스가 마지막 줄이 됐다
+        last = rtrim(line[i]); break                          # 선행 공백은 남긴다(#339) — 들여쓴 계약 줄은 줄 전체가 아니다
       }
-      printf "%d\t%d\t%d\t%s\n", cut, hdr, qual, last
+      printf "%d\t%d\t%d\t%d\t%s\n", cut, hdr, qual, quoted, last
     }' "$REVIEW" 2>/dev/null)
   TAB=$(printf '\t')
   cut_at=${region%%"$TAB"*}; region_rest=${region#*"$TAB"}
   hdr_seen=${region_rest%%"$TAB"*}; region_rest=${region_rest#*"$TAB"}
-  qual_seen=${region_rest%%"$TAB"*}; last_line=${region_rest#*"$TAB"}
+  qual_seen=${region_rest%%"$TAB"*}; region_rest=${region_rest#*"$TAB"}
+  quoted_fence=${region_rest%%"$TAB"*}; last_line=${region_rest#*"$TAB"}
   # 계약 줄은 **줄 전체**일 때만 판정이다(#283 재심 ① — 위 신뢰 규칙 ⑴).
   # 두 회차를 태운 자리다. 앞 회차들은 값 **앞**의 같은 줄 텍스트를 조건부로 받았다:
   # 처음엔 "표식만 아니면 통과"(→ *"이것을 <키>: <값> 으로 읽지 마라"* 는 부정문이 CLEAN 으로
@@ -376,8 +402,13 @@ if [ "$STATUS_CONTRACT" = 1 ]; then
   status=""
   if printf '%s\n' "$last_line" | grep -qE "$contract_re"; then
     status=$(printf '%s\n' "$last_line" | sed -e "s/^${STATUS_KEY}:[[:space:]]*//")
+  elif printf '%s\n' "$last_line" | grep -qE "^[[:space:]]+${STATUS_KEY}:"; then
+    log "계약 줄이 들여쓰여 있다 — 선행 공백/탭은 인용(코드 블록) 표식이라 판정으로 안 읽는다(fail-closed, #339)"
   elif printf '%s\n' "$last_line" | grep -qF "${STATUS_KEY}:"; then
     log "계약 줄이 줄 전체가 아니다 — 같은 줄에 다른 텍스트가 있으면 판정으로 안 읽는다(fail-closed)"
+  fi
+  if [ "${quoted_fence:-0}" = 1 ]; then
+    log "모델 통제 구역의 마지막 줄이 산문 뒤에 연 펜스 블록의 닫는 펜스다 — 리뷰 전체를 감싼 블록이 아니면 벗기지 않는다(계약문을 펜스로 되읊은 응답, fail-closed, #339)"
   fi
   case "$status" in
     "$STATUS_REVIEWED") : ;;   # 계약 충족 — 아래 항목 집계가 verdict 를 낸다
