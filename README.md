@@ -16,7 +16,7 @@
 
 <p><strong>An issue&nbsp;→&nbsp;PR factory. The loops own <code>main</code>; you own the release.</strong><br>
 Pair it with <code>/closeout</code> — the dock that verifies and merges.<br>
-Two loops, one repo, human gates where they matter.</p>
+Two loops, one repo, the deploy gate runs in the deploy-cycle lane.</p>
 
 <p>🇰🇷 <code>agent-ready</code> 이슈를 자동으로 집어 격리 worktree에서 구현하고 PR을 여는 자율 루프 — 머지는 사람 몫.<br>
 <strong>전체 한글 문서 → <a href="README.ko.md">README.ko.md</a></strong></p>
@@ -132,11 +132,11 @@ flowchart LR
   R -->|opens PR| V["verify-runner<br/><i>verify</i>"]
   V -->|"verdict ✅"| C["closeout<br/><i>close</i>"]
   C -->|merge to main| G["deploy-pending<br/>issue"]
-  G -.->|human gate| D["you: verify → promote → ship"]
+  G -.->|lane handoff| D["deploy-cycle lane:<br/>verify → promote → ship"]
   V -.->|fails| R
 ```
 
-They don't collide because ownership is a **label boundary**: when closeout claims a PR it labels it `harvesting`, and issue-runner won't touch a `harvesting` PR. verify-runner similarly owns `flow:verify` PRs. closeout finishes one PR to completion per tick (`MAX_CLOSEOUT = 1`), with pacing set by its `/loop` interval. And the autonomy has a ceiling — the loops merge to `main`, reconcile plan docs, and file follow-up issues on their own, but **production deploy is a human gate**: closeout files a "deploy-pending" issue and stops there. Details in [`skills/closeout/SKILL.md`](skills/closeout/SKILL.md).
+They don't collide because ownership is a **label boundary**: when closeout claims a PR it labels it `harvesting`, and issue-runner won't touch a `harvesting` PR. verify-runner similarly owns `flow:verify` PRs. closeout finishes one PR to completion per tick (`MAX_CLOSEOUT = 1`), with pacing set by its `/loop` interval. And the autonomy has a ceiling — the loops merge to `main`, reconcile plan docs, and file follow-up issues on their own, but **closeout never deploys to production** — it files a "deploy-pending" issue and stops there, and the **deploy-cycle lane** picks that issue up and runs verify → promote → ship → close unattended. Details in [`skills/closeout/SKILL.md`](skills/closeout/SKILL.md).
 
 <details>
 <summary><b>Why a separate verification lane?</b></summary>
@@ -151,15 +151,15 @@ So the three loops never move a label out of step, every label move goes through
 
 ## Shipping — main, release & the deploy gate
 
-The loops are autonomous up to `main`, and **stop there**. Merging to `main` is *not* shipping. Production tracks a separate pointer branch (conventionally `release`), and only a human advances it — so `main` moving forward never means "live."
+closeout is autonomous up to `main`, and **stops there**. Merging to `main` is *not* shipping. Production tracks a separate pointer branch (conventionally `release`), and only the **deploy-cycle lane** advances it — so `main` moving forward never means "live."
 
-The handoff is an issue. When closeout merges a green PR to `main`, it doesn't deploy — it files a **deploy-pending issue** and stops. That issue *is* the loop → human boundary. From there the human runs the gate:
+The handoff is an issue. When closeout merges a green PR to `main`, it doesn't deploy — it files a **deploy-pending issue** and stops. That issue *is* the closeout → **deploy-cycle lane** boundary. From there the deploy-cycle lane runs the gate:
 
 1. **Batch** — deploy-pending issues accumulate on `main`, each one a merged-but-unshipped change.
-2. **Verify on dev/staging** — you check the batch against a dev server, exercising the behavior the loops can't fully prove on their own.
+2. **Verify on dev/staging** — the deploy-cycle lane checks the batch against a dev server, exercising the behavior the loops can't fully prove on their own.
 3. **Promote** — passing SHAs are promoted to `release` and tagged with a version. A failure halts promotion; production stays on the previous `release`.
 4. **Ship** — production (or a worker) pulls `release`, deploys, and smoke-tests.
-5. **Close** — the shipped deploy-pending issues are closed in a batch. Anything you deem broken becomes a fix issue that re-enters the loop at the top.
+5. **Close** — deploy-cycle ⑦ closes the shipped deploy-pending issues in a batch. Anything judged broken becomes a fix issue that re-enters the loop at the top.
 
 ```mermaid
 flowchart TD
@@ -168,7 +168,7 @@ flowchart TD
     A2 --> A3["merge to main"]
     A3 --> A4["file deploy-pending issue · stop at the gate"]
   end
-  subgraph human["Human gate"]
+  subgraph lane["deploy-cycle lane (unattended)"]
     H1["batch deploy-pending issues"] --> H2["verify on dev / staging"]
     H2 -->|pass| H3["promote SHA to release + version tag"]
     H3 --> H4["deploy to prod → smoke"]
@@ -183,7 +183,7 @@ flowchart TD
   H6 -.->|fix issue back to the loop| A1
 ```
 
-So `main` is the integration branch the loops own, `release` is the production pointer only a human advances, and version tags mark each promotion. This repo's own skill changes ship through the same gate — a merged PR files a "deploy-pending" issue, and a human syncs (`git pull` the symlinked checkout) and verifies before it goes live.
+So `main` is the integration branch the loops own, `release` is the production pointer only the deploy-cycle lane advances, and version tags mark each promotion. This repo's own skill changes ship through the same gate — a merged PR files a "deploy-pending" issue, and the deploy-cycle lane syncs (`git pull` the symlinked checkout) and verifies before it goes live.
 
 ## Guardrails
 
