@@ -850,7 +850,7 @@ note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- boda
 STUB_STATE_LABELS='__FAIL__'
 run
 check "③-r 재조회 실패: policy_review_due 안 냄" "$(no_ev policy_review_due)"
-check "③-r 재조회 실패: warn 으로 알린다" "$(saysl '재조회 실패')"
+check "③-r 재조회 실패: warn 으로 알린다" "$([ "$(has_ev warn)" = ok ] && [ "$(saysl '재조회 실패')" = ok ] && echo ok || echo no)"
 check "③-r 재조회 실패: 무편집" "$(none 'issue edit')"
 setup "hold:policy,agent-ready" 200 0
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
