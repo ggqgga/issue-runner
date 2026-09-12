@@ -146,7 +146,17 @@ case "$total" in
       # 겹침의 중복 디스패치는 claim-issue.sh 의 원자적 잠금(#108)이 막고, 누락은 다음 틱에
       # 회복된다(검색은 매 틱 새로 돈다). 여기서 dedupe 로 지우면 total 대조가 흔들려 경고가
       # 거짓말을 하므로, 받은 그대로 합친다.
-      cands=$(jq -c -n --argjson a "$cands" --argjson b "$pitems" '$a + $b')
+      # 합치는 경로는 **argv 를 안 탄다**. `--argjson` 은 누적 배열을 통째로 커맨드라인
+      # 인자로 실어 ARG_MAX(macOS 1048576 — 인자+환경 합산)에 걸린다. 이 파일은 #257 이후
+      # 투영에 `body` 를 싣기 때문에 페이로드가 **21배**다(실측: 한 페이지 50건이 body 없이
+      # 6941 bytes → body 포함 152441 bytes). 기본 상수(50 × 5 = 250)의 마지막 병합이
+      # 이미 상한의 **78%**(820452/1042968)를 쓰고, 건당 본문이 평균 **4020 bytes** 를
+      # 넘으면 그 자리에서 `Argument list too long` 으로 **디스패치가 통째로 멈춘다**
+      # (오늘 라이브 평균 3133 bytes — 여유 28%). `ELIGIBLE_SEARCH_MAX_PAGES` 를 7 이상으로
+      # 덮어도 같은 곳에서 죽는다. 이 레포는 같은 실패를 `scripts/loop-status.sh:601-604`
+      # 에서 이미 겪고 파일 경유(`--slurpfile`)로 막아 뒀다 — 여기선 stdin 으로 막는다.
+      # stdin 엔 그 상한이 없다: 두 JSON 값을 이어 흘려 `-s` 로 슬러프해 잇는다(형상 동일).
+      cands=$(printf '%s\n%s\n' "$cands" "$pitems" | jq -c -s 'add')
     done
 
     if [ "$total" -gt "$SEARCH_CAP" ]; then
@@ -278,9 +288,22 @@ else
   echo "warn: 에픽 시작 집합 조회 실패 — finish-first 없이 정렬" >&2
 fi
 
+# 판정은 **파이프 없이** 한다. `printf … | grep -q` 는 grep 이 첫 매치에서 즉시 끝나
+# printf 에 SIGPIPE 를 주는데, 이 스크립트는 `set -o pipefail` 이라 파이프라인이 141 을
+# 내고 `if` 가 그걸 거짓으로 읽는다 — 즉 **있는 키가 `false` 로 답한다**(실측: 집합이
+# 파이프 버퍼 64KB 를 넘으면 rc=141, 그 아래면 rc=0). 지금 집합은 최대 (a) 250 + (b) 100 =
+# 350줄 ≈ 8.4KB 라 안 닿지만, `ELIGIBLE_SEARCH_MAX_PAGES` 는 env 로 열려 있다(#315).
+# 문자열 `case` 는 서브프로세스도 파이프도 없다 — 앞뒤 개행을 붙여 **줄 단위 완전일치**를
+# 그대로 유지한다(`owner/repo#70` 이 `owner/repo#700` 에 걸리지 않는다).
 epic_started_of() {  # epic_started_of <owner/repo> <에픽 번호 또는 빈 문자열> → true|false
   if [ -z "$2" ]; then printf 'false'; return 0; fi
-  if printf '%s' "$started_epics" | grep -qxF "$1#$2"; then printf 'true'; else printf 'false'; fi
+  case "
+$started_epics" in
+    *"
+$1#$2
+"*) printf 'true' ;;
+    *)  printf 'false' ;;
+  esac
 }
 
 blocked_n=0

@@ -38,6 +38,8 @@
 #   Ⓔ⑫ **두 축의 교차** — 페이지(#277·#315)를 전부 모은 뒤 **한 번** 정렬한다. 2페이지에만 있는
 #       시작-에픽 leaf 가 1페이지 후보보다 앞이고, 2페이지의 진행 라벨 row 가 (a) 출처가 된다.
 #   Ⓔ⑬ 정렬 키 경계값 — 빈 본문 · `Epic` 줄 없음 · P 라벨 없음이 겹쳐도 안 죽고 종전 자리를 지킨다.
+#   Ⓔ⑭ 큰 본문 × 페이지 병합 — 합치는 경로가 **argv 를 안 탄다**(ARG_MAX). `body` 를 실은 뒤
+#       페이로드가 21배가 됐다 — `--argjson` 이면 기본 상수 구간에서 틱이 통째로 죽는다.
 #
 # 기대 줄은 **손으로 적는다** — SUT 의 jq 를 베껴 기대값을 만들면 공허하게 통과한다
 # (loop-status.test.sh·transition.test.sh 의 관행).
@@ -196,6 +198,20 @@ bulk_issues() {  # bulk_issues <fx> <검색파일> <시작번호> <개수> — �
         number: ., title: "bulk \(.)",
         labels: [{name: "agent-ready"}],
         created_at: "2026-03-01T00:00:00Z"}]' "$fx/$file" > "$fx/b.tmp"
+  mv "$fx/b.tmp" "$fx/$file"
+  i="$from"; end=$((from + n))
+  while [ "$i" -lt "$end" ]; do printf '{"body":""}\n' > "$fx/body.$i.json"; i=$((i + 1)); done
+}
+bulk_big_issues() {  # bulk_big_issues <fx> <검색파일> <시작번호> <개수> <본문바이트>
+  # 본문이 큰 후보를 한 번에. ARG_MAX 격자(Ⓔ⑭) 전용 — 페이지 병합 페이로드를 키운다.
+  local fx="$1" file="$2" from="$3" n="$4" sz="$5" i end
+  jq --argjson f "$from" --argjson n "$n" --argjson sz "$sz" \
+    '.items += [range($f; $f + $n) | {
+        repository_url: "https://api.github.com/repos/owner/repo",
+        number: ., title: "big \(.)",
+        labels: [{name: "agent-ready"}],
+        created_at: "2026-03-01T00:00:00Z",
+        body: ("x" * $sz)}]' "$fx/$file" > "$fx/b.tmp"
   mv "$fx/b.tmp" "$fx/$file"
   i="$from"; end=$((from + n))
   while [ "$i" -lt "$end" ]; do printf '{"body":""}\n' > "$fx/body.$i.json"; i=$((i + 1)); done
@@ -753,6 +769,31 @@ ck "Ⓔ⑬ P 라벨이 없으면 priority 는 종전대로 3" \
   "$(jq -c '[.[] | {n:.number, p:.priority}]' "$OUT")" \
   '[{"n":221,"p":2},{"n":222,"p":3},{"n":220,"p":3}]'
 no_line "Ⓔ⑬ 빈 본문이 warn 을 만들지 않는다" "$ERR" "warn:"
+
+# ── Ⓔ⑭ 큰 본문 × 페이지 병합 — 합치는 경로가 argv 를 타면 안 된다 (#257 × #277) ──
+# 이 PR 이 검색 투영에 `body` 를 되돌려 얹어(시작 집합 (a) 의 출처) 페이지 병합 페이로드가
+# **21배**가 됐다(실측: 한 페이지 50건 = body 없이 6941 bytes → 있으면 152441 bytes).
+# `--argjson` 으로 합치면 그 누적이 통째로 커맨드라인 인자가 되어 ARG_MAX(1048576)에 걸리고,
+# `set -e` 아래라 **디스패치 틱 전체가 죽는다**. 실측 여유는 28% 뿐이었다 —
+# 기본 상수(50×5=250)의 마지막 병합이 상한의 78% 를 쓰고, 건당 본문 평균이 4020 bytes 를
+# 넘으면 터진다(오늘 라이브 평균 3133 bytes). 같은 실패를 `loop-status.sh:601-604` 가
+# 이미 문서로 남겼다(그쪽은 `--slurpfile` 로 막았다).
+#
+# 격자는 창 5 × 3페이지에 본문 150KB × 10건을 실어 **어느 박스에서도** 확실히 상한을 넘긴다
+# (한 병합의 두 인자 합 ≈ 1.5MB > 1.04MB). argv 경로면 여기서 `Argument list too long`.
+# 건수는 적게(페이지당 2건), 본문은 크게(300KB) — 병합 한 번의 두 인자 합 ≈ 1.2MB 로
+# 상한을 확실히 넘기면서 스텁 호출 수는 4건뿐이라 스위트가 안 느려진다.
+fx=$(mkfx e14 10)
+mkpage "$fx" 2 10
+bulk_big_issues "$fx" search.json    300 2 300000
+bulk_big_issues "$fx" search.p2.json 305 2 300000
+run_sut_small "$fx"
+ck "Ⓔ⑭ 1.2MB 페이지 병합에서도 exit 0(argv 경로면 Argument list too long)" "$RC" "0"
+ck "Ⓔ⑭ 두 페이지 후보가 하나도 안 없어진다" "$(jq 'length' "$OUT")" "4"
+ck "Ⓔ⑭ 2페이지 후보가 실제로 있다" \
+  "$(jq -c '[.[].number] | map(select(. >= 305)) | sort' "$OUT")" '[305,306]'
+ck "Ⓔ⑭ 2페이지를 이어 받았다" "$(count_of "$LOG" 'search page=2')" "1"
+no_line "Ⓔ⑭ 큰 본문이 진단을 만들지 않는다" "$ERR" "warn:"
 
 echo "eligible-issues.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]
