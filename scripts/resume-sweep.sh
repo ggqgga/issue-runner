@@ -505,8 +505,23 @@ last_label_event_at() {  # last_label_event_at <파일> <labeled|unlabeled> <라
 # 이미 이슈 라벨을 고친 뒤에 부르므로 여기서의 실패는 전부 warn_after_edit 이다.
 # 라벨을 하나도 안 달고 있는 PR 은 건드리지 않는다 — 레포에 없는 라벨을 remove 하면
 # gh 가 편집 **전체**를 실패시키므로(실측), 불필요한 편집은 애초에 안 낸다.
-mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate>
-  local repo="$1" num="$2" mode="$3" prs prnum prlabels back
+#
+# 재개는 **칸 미러까지 되돌린다**(#420). `verify-held`·`closeout-blocked --reason ladder` 는 PR 의
+# 단계 라벨(`flow:verify`·`verifying`·…)을 떼고 `hold:ladder` 만 남기므로, 재개가 `hold:ladder`
+# 만 떼면 그 PR 은 다음 claim 까지 **무라벨**이다 — `transition.sh` 불변식("열린 agent PR 은 항상
+# 어느 칸의 라벨을 하나 단다", #281)이 여기서 깨진다. 이슈 칸에 맞춰 되붙인다: 이슈가
+# `agent:claimed` 면 `flow:claimed`(issue-runner 칸), 아니면 `flow:agent-ready`(대기 — 재개는 `agent-ready`
+# 를 건드리지 않으므로 이슈는 대기 칸이다). PR 이 이미 어느 칸의 라벨을 달고 있으면(옛 형상 —
+# `flow:verify` 가 남은 PR 등) 겹쳐 붙이지 않는다 — 단계 라벨 둘은 또 다른 사고다. 해제와 부착은
+# **한 번의 `gh pr edit`** 로 간다(둘로 나누면 그 사이가 곧 무라벨 창이다).
+PR_RUNG_LABELS="flow:agent-ready flow:claimed flow:verify verifying flow:ready harvesting"
+has_rung() {  # has_rung <PR 라벨 콤마목록> — 사다리 칸 라벨을 하나라도 달고 있나
+  local l
+  for l in $PR_RUNG_LABELS; do has_label "$1" "$l" && return 0; done
+  return 1
+}
+mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate> [이슈 라벨 콤마목록]
+  local repo="$1" num="$2" mode="$3" issue_labels="${4:-}" prs prnum prlabels back want
   if ! prs=$(list_mirror_prs "$repo" "$num"); then
     emit_warn_after_edit "$repo" "$num" "연결 PR 조회 실패 — 이슈는 반영됐지만 PR 미러 라벨이 남았을 수 있다"
     return 0
@@ -517,8 +532,21 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate>
     if [ "$mode" = resume ]; then
       # `needs-human` 은 떼지 않는다(#244) — 사람이 PR 에 직접 세운 정지다.
       has_label "$prlabels" "hold:ladder" || continue
+      want=""
+      if ! has_rung "$prlabels"; then
+        if has_label "$issue_labels" "agent:claimed"; then want="flow:claimed"; else want="flow:agent-ready"; fi
+      fi
       if ! gh pr edit "$prnum" --repo "$repo" \
-           --remove-label "hold:ladder" >/dev/null 2>&1; then
+           ${want:+--add-label "$want"} --remove-label "hold:ladder" >/dev/null 2>&1; then
+        # 결합 편집 실패의 흔한 원인은 미러 라벨이 레포에 **없는** 것이다(#281 이전 형상 —
+        # `setup-labels.sh` 미실행). 그 한 라벨 때문에 `hold:ladder` 해제까지 잃으면 PR 이 영구
+        # needs-human 으로 되돌아간다(#265 가 고친 증상) — 해제만 다시 시도해 그것은 지키고,
+        # 미러 미부착은 warn_after_edit 으로 남긴다(다음 claim 이 `flow:claimed` 로 덮는다).
+        if [ -n "$want" ] && gh pr edit "$prnum" --repo "$repo" \
+             --remove-label "hold:ladder" >/dev/null 2>&1; then
+          emit_warn_after_edit "$repo" "$num" "PR #$prnum 칸 미러 $want 부착 실패(라벨 부재면 setup-labels.sh 를 돌려라) — hold:ladder 는 해제됐고 PR 은 다음 claim 까지 무라벨"
+          continue
+        fi
         emit_warn_after_edit "$repo" "$num" "PR #$prnum 미러 라벨 해제 실패 — PR 이 needs-human 으로 남는다"
         continue
       fi
@@ -528,6 +556,8 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate>
       fi
       if has_label "$back" "hold:ladder"; then
         emit_warn_after_edit "$repo" "$num" "PR #$prnum 미러 readback 불일치(정지 라벨이 남아 있다)"
+      elif [ -n "$want" ] && ! has_label "$back" "$want"; then
+        emit_warn_after_edit "$repo" "$num" "PR #$prnum 미러 readback 불일치(칸 라벨 $want 부착 기대) — PR 이 무라벨로 남는다"
       fi
     else
       has_label "$prlabels" "hold:ladder" || continue
@@ -1083,7 +1113,7 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
     emit_warn_after_edit "$repo" "$num" "라벨 해제 실패 — 마커는 이미 남았다(다음 틱이 남은 횟수로 재시도)"
     return 0
   fi
-  mirror_labels "$repo" "$num" resume
+  mirror_labels "$repo" "$num" resume "$cur"
 
   # 라벨이 0개로 돌아오는 것은 **성공**이다(둘 다 떨어진 이슈). rc 로만 실패를 가른다.
   if ! back=$(read_labels "$repo" "$num"); then

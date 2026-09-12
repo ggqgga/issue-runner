@@ -34,6 +34,11 @@
 `flow:agent-ready` 는 이슈 칸(`agent:claimed`·`agent-ready`)의 **PR 쪽 미러**다(#281) — 열린 agent PR 이 어느 칸에도
 안 보이는 창을 없앤다. `claim-issue.sh` 가 열린 PR 에 `flow:claimed` 를, 반송 두 전이가 `flow:agent-ready` 를 붙이고,
 `handoff-verify`·`verify-pick`·`closeout-pick`·`closeout-dup` 이 둘을 뗀다(`transition.sh` `WORKER_MIRROR`).
+`resume-sweep.sh` 의 자동 재개(H:ladder → S0)도 `hold:ladder` 를 떼는 그 편집에서 이슈 칸에 맞는 미러
+(`agent:claimed` 면 `flow:claimed`, 아니면 `flow:agent-ready`)를 되붙이고(PR 에 칸 라벨이 이미 있으면 겹치지
+않는다), issue-runner ② Maintain 규칙0 은 두 미러가 붙은 PR 을 건너뛴다(#420) — 둘 다 워커 레인 소유 칸이라
+`🔄` 만 보고 `flow:verify` 로 올리지 않는다. 대시보드(`loop-status.sh` `pr_stage_labels`)는 두 미러를 단계로
+세지 않는다(#281 결정 5 유지 — PR 의 단계는 이슈 칸이 말하고, 미러 없는 PR 은 무소속 warn 으로 드러난다).
 
 ## 정지와 반송
 

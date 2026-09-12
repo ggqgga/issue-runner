@@ -23,7 +23,8 @@ mkdir -p "$tmp/bin"
 cat > "$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 # 상태: $STUB_DIR/claimed(이슈 edit 이 만든다) · $STUB_DIR/prs.json(pr list 응답)
-# 스위치: STUB_PRLIST_FAIL=1(pr list 실패) · STUB_PREDIT_FAIL=1(pr edit 실패)
+# 스위치: STUB_PRLIST_FAIL=1(pr list 실패) · STUB_PRLIST_NOISE=1(pr list 성공인데 stderr 에 한 줄)
+#         · STUB_PREDIT_FAIL=1(pr edit 실패)
 # $STUB_DIR/calls.log 에 **쓰기 호출만** 남긴다: issue-edit N <args> / pr-edit N <args>
 set -uo pipefail
 sub="${1:-} ${2:-}"
@@ -37,7 +38,17 @@ case "$sub" in
     printf 'issue-edit %s %s\n' "$num" "$*" >> "$STUB_DIR/calls.log"
     : > "$STUB_DIR/claimed" ;;
   "pr list")
+    # (#420) 인자를 **단언**한다 — head 브랜치 정확 일치(`agent/issue-5` 가 `agent/issue-50` 을 안 문다)
+    # 와 열린 PR 한정은 SUT 의 계약인데, 인자를 무시하는 스텁은 그 계약이 사라져도 초록이다.
+    case " $* " in
+      *" --head agent/issue-5 "*) ;; *) echo "gh: stub — --head agent/issue-5 없음: $*" >&2; exit 1 ;;
+    esac
+    case " $* " in
+      *" --state open "*) ;; *) echo "gh: stub — --state open 없음: $*" >&2; exit 1 ;;
+    esac
     [ "${STUB_PRLIST_FAIL:-0}" = "1" ] && { echo "gh: connection refused" >&2; exit 1; }
+    # 성공인데 stderr 에 뭔가 찍는 gh(업데이트 알림 등) — stdout JSON 과 섞이면 안 된다.
+    [ "${STUB_PRLIST_NOISE:-0}" = "1" ] && echo "! A new release of gh is available" >&2
     cat "$STUB_DIR/prs.json" ;;
   "pr edit")
     num=$1; shift
@@ -66,7 +77,8 @@ run() {
   rm -rf "$tmp/state"; mkdir -p "$tmp/state"
   printf '%s\n' "$1" > "$tmp/state/prs.json"
   : > "$tmp/state/calls.log"
-  STUB_DIR="$tmp/state" STUB_PRLIST_FAIL="${STUB_PRLIST_FAIL:-0}" STUB_PREDIT_FAIL="${STUB_PREDIT_FAIL:-0}" \
+  STUB_DIR="$tmp/state" STUB_PRLIST_FAIL="${STUB_PRLIST_FAIL:-0}" STUB_PRLIST_NOISE="${STUB_PRLIST_NOISE:-0}" \
+  STUB_PREDIT_FAIL="${STUB_PREDIT_FAIL:-0}" \
   CLAIM_STALE_WAIT=0 PATH="$tmp/bin:$PATH" bash "$SUT" o/r 5 >"$tmp/out" 2>"$tmp/err"
   RC=$?
 }
@@ -104,6 +116,14 @@ check "PR 편집 실패: stderr 한 줄(PR 번호·best-effort)" \
   "$(grep -q 'PR #42 미러 실패(best-effort' "$tmp/err" && echo ok || echo no)"
 ck "PR 편집 실패: stderr 정확히 1줄" "$(wc -l < "$tmp/err" | tr -d ' ')" 1
 
+# ── ③-b (#420) PR 조회 **성공**인데 gh 가 stderr 에 한 줄 찍는다 → 미러는 그대로 간다 ──
+# `2>&1` 로 받으면 그 줄이 JSON 을 오염시켜 jq 가 비고 미러가 **조용히** 생략된다(fail-open).
+# stderr 는 따로 받고, 실패했을 때만 note 문구에 합친다.
+STUB_PRLIST_NOISE=1 run '[{"number":42}]'
+ck "조회 stderr 잡음: exit 0" "$RC" 0
+ck "조회 stderr 잡음: PR edit 1회(미러 생략 안 됨)" "$(pr_edits)" 1
+check "조회 stderr 잡음: 미러 경고 없음(성공 경로)" "$(grep -q '미러 안 됨\|미러 실패' "$tmp/err" && echo no || echo ok)"
+
 # ── ④ PR 조회 자체 실패 → "PR 없음" 이 아니라 조회 실패다: claim 은 유지, 편집 시도 없이 stderr ──
 STUB_PRLIST_FAIL=1 run '[{"number":42}]'
 ck "PR 조회 실패: exit 0(claim 유지)" "$RC" 0
@@ -111,6 +131,9 @@ check "PR 조회 실패: claimed 출력" "$(grep -q '^claimed: o/r#5$' "$tmp/out
 ck "PR 조회 실패: PR edit 0회" "$(pr_edits)" 0
 check "PR 조회 실패: stderr 한 줄" \
   "$(grep -q 'PR 조회 실패(best-effort' "$tmp/err" && echo ok || echo no)"
+# 실패 사유(gh 의 stderr 마지막 줄)는 note 에 실려야 한다 — 갈라 받은 stderr 가 버려지면 안 된다.
+check "PR 조회 실패: gh stderr 사유가 note 에 실린다" \
+  "$(grep -q 'PR 조회 실패(best-effort.*connection refused' "$tmp/err" && echo ok || echo no)"
 
 echo "claim-issue: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
