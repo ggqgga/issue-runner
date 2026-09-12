@@ -7,8 +7,11 @@
 #   환경변수: EPIC_LIST_LIMIT(기본 100) · EPIC_SEARCH_PER_PAGE(기본 100)
 #             — 테스트가 상한 도달 경로를 100건짜리 픽스처 없이 재현하려고 열어 둔 값이다
 #               (운영에서 내리는 값이 아니다 — 내리면 그만큼 잘리고, 잘림은 warn 으로 드러난다).
-#             EPIC_CLOSE_RETRIES(기본 3) · EPIC_CLOSE_RETRY_SLEEP(기본 2, 초)
+#             EPIC_CLOSE_RETRIES(기본 3) · EPIC_CLOSE_RETRY_SLEEP(기본 10, 초)
 #             — close 의 같은 틱 재시도(아래 "멱등" 절). 테스트는 sleep 0 으로 돌린다.
+#               기본 창은 3회·간격 10초(≈20초 대기) — "코멘트 직후 close 실패" 의 가장 흔한 원인이
+#               연속 쓰기 뒤 secondary rate limit 이라 2초 간격으로는 창이 닿지 않는다. 더 길게
+#               잡지 않는 이유: 이 대기는 closeout 틱 전체를 세운다.
 #
 # 왜 있나: 에픽 이슈는 **워커가 집지 않아** 아무 루프도 닫지 않는다. leaf 를 다 닫고도
 # 열린 채 남아 목록을 채운다(2026-09-11 실측: leaf 12건 중 11건 종료된 에픽이 덩그러니
@@ -37,6 +40,10 @@
 #   틱은 그것을 되돌림으로 읽는다) — 같은 틱 안에서 close 를 `EPIC_CLOSE_RETRIES` 번 재시도하고,
 #   그래도 실패하면 warn(rc 1) 으로 "다음 틱이 재시도하지 않는다" 를 말한다. 그 에픽은 사람이
 #   직접 닫거나, 마커 코멘트를 지우면 다음 틱이 처음부터(코멘트 → close) 다시 한다.
+#   게이트는 "사람 되돌림" 과 "재시도를 다 쓴 close 실패 잔여" 를 **구분하지 못한다**(둘 다 마커
+#   있음 + 열림) — 그래서 note 의 why 는 둘 다를 말하고 어느 쪽이라고 단정하지 않는다. 후자를
+#   알리는 warn 은 실패한 그 틱에 한 번만 뜬다 — 이후는 `loop-status.sh` 의 `에픽 leaf 전부 종료`
+#   warn 이 그 에픽을 계속 보여 준다.
 #   (대안이던 "마커 2종 — 코멘트에 close 성공 여부를 실어 넣기" 는 close 뒤 코멘트 편집이라는
 #   세 번째 쓰기가 필요하고 그 편집이 실패하는 창에서 같은 버그가 좁게 남아 택하지 않았다.)
 #
@@ -72,7 +79,7 @@ usage() {
 EPIC_LIST_LIMIT="${EPIC_LIST_LIMIT:-100}"
 EPIC_SEARCH_PER_PAGE="${EPIC_SEARCH_PER_PAGE:-100}"
 EPIC_CLOSE_RETRIES="${EPIC_CLOSE_RETRIES:-3}"
-EPIC_CLOSE_RETRY_SLEEP="${EPIC_CLOSE_RETRY_SLEEP:-2}"
+EPIC_CLOSE_RETRY_SLEEP="${EPIC_CLOSE_RETRY_SLEEP:-10}"
 
 # 값 검증은 **모든 GitHub 호출 앞**에 둔다 — `[ "$x" -ge "$y" ]` 는 정수가 아니면 bash 가
 # 에러를 내고 거짓으로 떨어지는데, set -e 가 아니라 그대로 흘러 "상한에 안 닿았다" 로
@@ -338,7 +345,7 @@ EOF
     return 0
   fi
   if [ "$marker" -gt 0 ]; then
-    emit_note "$repo" "$num" "스윕 마커가 있는데 열려 있다 — 사람이 되돌린 것이라 다시 닫지 않는다(종료는 사람 몫)"
+    emit_note "$repo" "$num" "스윕 마커가 있는데 열려 있다 — 다시 닫지 않는다(사람 되돌림 또는 이전 close 실패 잔여 — 종료는 사람 몫)"
     return 0
   fi
 

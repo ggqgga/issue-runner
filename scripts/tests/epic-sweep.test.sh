@@ -384,7 +384,8 @@ comments '[{"body":"이전 틱 — leaf 전부 종료로 자동 종료 <!-- epic
 run
 check "closed 없음(회귀 단언 — 게이트 없으면 여기서 다시 닫혔다)" "$(no_ev closed)"
 check "note 이벤트" "$(has_ev note)"
-check "why 에 되돌림" "$(ev note | jq -r '.why' | grep -q '되돌' && echo ok || echo no)"
+check "why 가 '다시 닫지 않는다' 를 말한다" \
+  "$(ev note | jq -r '.why' | grep -q '다시 닫지 않는다' && echo ok || echo no)"
 check "쓰기 0(코멘트도 close 도)" "$(no_writes)"
 check "rc 0 — 실패가 아니라 정상 상태" "$([ "$RC" = 0 ] && echo ok || echo no)"
 check "마커 확인을 위해 코멘트를 조회한다(1회)" \
@@ -466,8 +467,9 @@ check "close 실패 → rc 1" "$([ "$RC" = 1 ] && echo ok || echo no)"
 check "close 실패 → closed 이벤트 없음" "$(no_ev closed)"
 check "close 실패 → 상한(3)까지 같은 틱에서 재시도" \
   "$([ "$(count_cmd 'issue close')" = 3 ] && echo ok || echo no)"
-check "close 실패 → why 가 다음 틱 재시도 없음을 말한다(마커가 남아 되돌림으로 읽힌다)" \
-  "$(ev warn | jq -r '.why' | grep -q '다음 틱.*재시도하지 않' && echo ok || echo no)"
+# closeout SKILL 이 "다음 틱이 재시도하지 않는 warn" 의 식별자로 지정한 접두다.
+check "close 실패 → why 접두 '에픽 close 실패(3회 시도)'(closeout SKILL 계약)" \
+  "$(ev warn | jq -r '.why' | grep -q '^에픽 close 실패(3회 시도)' && echo ok || echo no)"
 
 reset
 search "$(jq -n --argjson a "$(leaf 101 100 closed)" '[$a]')"
