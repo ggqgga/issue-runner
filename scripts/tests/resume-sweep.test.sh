@@ -1675,6 +1675,38 @@ check "미러 ⑮(이슈가 hold: 접두만): 무편집"     "$(none 'pr edit 22
 check "미러 ⑮: PR 라벨 그대로"                  "$([ "$(mpl 224)" = "needs-human,hold:policy" ] && echo ok || echo no)"
 check "미러 ⑮: 이벤트 없음"                     "$([ -z "$(mev 224)" ] && echo ok || echo no)"
 
+# ── (#331 쌍둥이 정합) ⑶ 전건 게이트는 **CLOSED 도** 판정한다 ──────────────
+# 여기 `read_labels_state` 는 닫는 이슈를 번호로 실제 조회하므로 상태와 무관하게 라벨을
+# 본다(상태는 이벤트에 실을 뿐 판정에 쓰지 않는다 — 그 함수 주석). 경보(`loop-status.sh`
+# 의 mirror 블록)는 **이미 받은 열린 이슈 목록 안에서만** 보고 있어서 아래 첫 칸에서 두
+# 술어가 갈렸다 — 경보 warn 0 인데 여기서는 편집(#293 마감 검증의 비차단 WARN).
+# **같은 번호·같은 모양의 픽스처를 `loop-status.test.sh` 도 들고 있다**(거기 #93·#94) —
+# 두 스위트가 같은 입력에 같은 판정을 낸다는 것이 이 절의 주장이다.
+#
+#   PR / head / closes                  이슈                        want
+#   ──────────────────────────────────  ─────────────────────────  ──────────────────
+#   193 agent/issue-93 [93, 97]         93 OPEN 깨끗 · 97 CLOSED 깨끗   **편집**
+#   194 agent/issue-94 [94, 96]         94 OPEN 깨끗 · 96 CLOSED 정지 有  무편집
+setup "needs-human,hold:policy" 10 0
+mirror_prs '[
+ {"number":193,"headRefName":"agent/issue-93","labels":[{"name":"hold:policy"},{"name":"flow:verify"}],
+  "closingIssuesReferences":[{"number":93},{"number":97}]},
+ {"number":194,"headRefName":"agent/issue-94","labels":[{"name":"hold:policy"},{"name":"flow:verify"}],
+  "closingIssuesReferences":[{"number":94},{"number":96}]}
+]'
+mirror_issue 93 OPEN "agent-ready,flow:verify"
+mirror_issue 97 CLOSED "agent-ready"
+mirror_issue 94 OPEN "agent-ready,flow:verify"
+mirror_issue 96 CLOSED "agent-ready,needs-human,hold:policy"
+run
+check "쌍둥이: exit 0"                          "$([ "$RC" = 0 ] && echo ok || echo no)"
+check "쌍둥이 ①(닫힌 짝도 깨끗): 정리된다"       "$([ "$(mpl 193)" = "flow:verify" ] && echo ok || echo no)"
+check "쌍둥이 ①: 짝은 브랜치의 이슈 #93"         "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==193) | .number==93' >/dev/null 2>&1 && echo ok || echo no)"
+check "쌍둥이 ①: CLOSED 인 #97 도 실제로 조회한다" "$(some 'issue view 97')"
+check "쌍둥이 ②(닫힌 이슈에 정지 잔존): 무편집"  "$(none 'pr edit 194')"
+check "쌍둥이 ②: PR 라벨 그대로"                "$([ "$(mpl 194)" = "hold:policy,flow:verify" ] && echo ok || echo no)"
+check "쌍둥이 ②: 이벤트 없음"                    "$([ -z "$(mev 194)" ] && echo ok || echo no)"
+
 # 묶음 디스패치의 **딴** closes 이슈 조회가 실패해도 떼지 않는다(fail-safe 는 짝과 같다)
 setup "needs-human,hold:policy" 10 0
 mirror_prs '[{"number":225,"headRefName":"agent/issue-347","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
