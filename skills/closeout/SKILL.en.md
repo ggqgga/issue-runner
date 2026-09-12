@@ -1030,8 +1030,9 @@ keeps accruing items loses its closing moment and becomes an issue that never en
 decision, 2026-08-13). Even as the count grows, keep **one PR = one ticket = a container with
 a clear closing moment**.
 
-**Step 5 — post-deploy handling (Chrome smoke).** For a deploy issue a human has
-reported deployed, without any new detection mechanism (no polling/timing), actively run
+**Step 5 — post-deploy handling (Chrome smoke).** For a deploy issue **reported deployed**
+(it does not ask who reported it — in the new model the deploy-cycle lane leaves that
+report), without any new detection mechanism (no polling/timing), actively run
 a Chrome smoke to judge it. Parse `## 검증 URL` (`<VERIFY_URL>`) and
 `## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body, fill
 `references/smoke-prompt.en.md`'s placeholders
