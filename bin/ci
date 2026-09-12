@@ -902,6 +902,11 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f: 1단계 검증자에 lessons 주입(<LESSONS_OR_ ← lessons-verifier.md) 지시 없음"; exit 1; }
 done
 
+echo "[test] loop.jq 판정 술어 격자 — 한/영·마커 위치·빈 배열·null 본문 + 뮤테이션 1건 (#426)"
+# 열한 소비처가 같은 술어를 부르므로 술어가 조용히 넓어지면 전부 같은 방향으로 틀어진다.
+# 만료 조건: 없음(라이브러리 자체의 행동 테스트 — 이 파일이 그 SSOT 의 가드다).
+bash scripts/tests/loop-jq.test.sh
+
 echo "[test] finish-classify.sh 분류 픽스처 테스트 (#88)"
 bash scripts/tests/finish-classify.test.sh
 
