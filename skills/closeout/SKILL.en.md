@@ -574,19 +574,37 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
   the same PR branch** and no new PR appears.
   **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
   report `BLOCKED: transition failed closeout-redispatch PR #<pr>(<repo_short>) — <one stderr line>`
-  in ④ Report, and **immediately re-run `$SCRIPTS/transition.sh closeout-pick <repo> - <pr>` to
-  restore closeout's `harvesting` claim on the PR** (the same call ② Pick makes — idempotent, and it
-  moves no label by hand). `transition.sh` edits **the PR first**, so when the PR side succeeds and
-  the issue side fails you are left with **no `harvesting` on the PR + no `agent-ready` on the
-  issue** — a combination no lane recovers: ①-b leaves it untouched because the bounce marker makes
-  it `bounced`, `closeout-eligible` excludes `bounced` as well, and the dispatcher skips an issue
-  that is not `agent-ready`. Restoring `harvesting` puts the state back to what it was before the
-  transition, so the next tick's ① Reconcile picks that PR up again as `resume` (from ③-1, since
-  this branch leaves no step-1 `마감 검증:` marker) and re-runs the same transition at the same spot
-  — `closeout-redispatch` is idempotent, so re-running it is harmless (the same discipline #157 set
-  for the `--note` transitions: a failure leaves the pre-transition state and the caller re-runs the
-  same transition on the next tick — and if the restore fails too, the two `BLOCKED` lines in
-  ④ Report are the human signal).
+  in ④ Report, and **immediately re-run
+  `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` to restore the `harvesting` claim on
+  BOTH the PR and the issue** (the same call ③-1 makes to mirror the source issue — idempotent, and
+  it moves no label by hand). This branch **always** has a linked issue (without one you would have
+  taken ⓑ), so do not call it in ② Pick's `<repo> - <pr>` shape: restoring **the PR only** leaves the
+  issue side unoccupied in (b)·(c) below and the dispatcher picks that issue up. `agent-ready` left
+  on the restored issue is harmless — `eligible-issues.sh` excludes the flow-label mirror
+  (`harvesting`) **first**, so an `agent-ready` + `harvesting` issue is not dispatchable.
+  `transition.sh` **finishes both edits before it reads either side back** (`run_edit` PR →
+  `run_edit` issue → `verify_side` PR → `verify_side` issue). That makes three failure branches, and
+  the one call above returns all three to the pre-transition state:
+  - **(a) PR edit succeeds · issue edit fails (exit 2 — edit stage).** No `harvesting` on the PR;
+    the issue is untouched and keeps `harvesting`. The dispatcher will not take the issue, but no
+    lane recovers the PR — ①-b leaves it untouched because the bounce marker makes it `bounced`,
+    and `closeout-eligible` excludes `bounced` too. The restore call re-attaches `harvesting` to
+    the PR and is an idempotent no-op on the issue.
+  - **(b) Both edits succeed · PR readback mismatch (exit 1).** The issue is **already**
+    `agent-ready` + no `harvesting` + no `agent:claimed` — i.e. dispatchable. Left that way, the
+    next tick hands that issue to a worker who holds the same branch closeout is holding, and the
+    tick after that the retried `closeout-redispatch` **strips the live worker's `agent:claimed`**.
+    The restore call re-attaches `harvesting` to both sides and closes that eligibility again.
+  - **(c) Both edits succeed · issue readback fails (exit 1 mismatch · exit 2 lookup failure).**
+    The labels are either as in (b) (mismatch) or unknown (lookup failure), so (b)'s race may be
+    open. Attaching `harvesting` is idempotent, so **the same single call** as (b) closes it — do
+    not branch on a state query first.
+  Once all three have their occupation back to the pre-transition state, the next tick's ① Reconcile
+  picks that PR up again as `resume` (from ③-1, since this branch leaves no step-1 `마감 검증:`
+  marker) and re-runs the same transition at the same spot — `closeout-redispatch` is idempotent, so
+  re-running it is harmless (the same discipline #157 set for the `--note` transitions: a failure
+  leaves the pre-transition state and the caller re-runs the same transition on the next tick — and
+  if the restore fails too, the two `BLOCKED` lines in ④ Report are the human signal).
   **If that comment exits non-zero (gh failure / bad args), do NOT run the transition** — the
   issue would go back to `agent-ready` while the PR carries no bounce marker, so the safety net
   misses the PR and `closeout-eligible` re-picks it on the stale ✅ (exactly the state this

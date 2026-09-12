@@ -502,13 +502,29 @@ Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에
   브랜치에서 이어 완결**하므로 새 PR 이 생기지 않는다.
   **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
   `BLOCKED: 전이 실패 closeout-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올리고,
-  **곧바로 `$SCRIPTS/transition.sh closeout-pick <repo> - <pr>` 를 한 번 더 걸어 PR 의
-  `harvesting` 점유를 되살려라**(② Pick 과 같은 호출 — 멱등이고, 손으로 라벨을 옮기지
-  않는다). `transition.sh` 는 **PR 을 먼저** 편집하므로 PR 쪽만 성공하고 이슈 쪽이 실패하면
-  **PR 엔 `harvesting` 없음 + 이슈는 `agent-ready` 아님** 이 남는데, 그 조합은 어느 레인도
-  회수하지 않는다 — ①-b 는 반송 마커 때문에 `bounced` 로 무접촉이고, `closeout-eligible` 도
-  `bounced` 를 빼며, 디스패처는 이슈가 `agent-ready` 가 아니라 안 집는다. `harvesting` 을
-  되살리면 상태가 전이 이전으로 돌아가 다음 틱 ① Reconcile 이 그 PR 을 `resume` 으로 다시
+  **곧바로 `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` 를 한 번 더 걸어 PR 과
+  이슈 양쪽의 점유를 되살려라**(③-1 의 원 이슈 미러와 같은 호출 — 멱등이고, 손으로 라벨을
+  옮기지 않는다). 이 갈래엔 연결 이슈가 **항상** 있다(없으면 애초에 ⓑ 로 갔다) — 그러니
+  ② Pick 의 `<repo> - <pr>` 형태로 부르지 마라. **PR 만** 되살리면 아래 (b)·(c) 에서 이슈 쪽
+  점유가 빈 채로 남아 디스패처가 그 이슈를 집는다. 되살린 이슈에 `agent-ready` 가 남아 있어도
+  무해하다 — `eligible-issues.sh` 는 플로우 라벨 미러(`harvesting`)를 **먼저** 배제하므로
+  `agent-ready` + `harvesting` 이슈는 디스패치 자격이 없다.
+  `transition.sh` 는 **양쪽 편집을 먼저 끝낸 뒤 readback** 한다(`run_edit` PR → `run_edit` 이슈
+  → `verify_side` PR → `verify_side` 이슈). 그래서 실패 갈래가 셋이고, 위 한 호출이 셋 다를
+  전이 이전으로 되돌린다:
+  - **(a) PR 편집 성공 · 이슈 편집 실패(exit 2 — 편집 단계).** PR 엔 `harvesting` 없음 ·
+    이슈는 손대지 않아 `harvesting` 유지. 디스패처는 이슈를 안 집지만 PR 을 회수할 레인이
+    없다 — ①-b 는 반송 마커 때문에 `bounced` 로 무접촉이고 `closeout-eligible` 도 `bounced`
+    를 뺀다. 회수 호출이 PR 에 `harvesting` 을 되붙이고 이슈 쪽은 멱등 no-op 이다.
+  - **(b) 양쪽 편집 성공 · PR readback 불일치(exit 1).** 이슈는 **이미** `agent-ready` +
+    `harvesting` 없음 + `agent:claimed` 없음 — 곧 디스패치 자격을 갖춘 상태다. 이대로 두면
+    다음 틱에 워커가 그 이슈를 집어 closeout 과 같은 브랜치를 동시에 들고, 그다음 틱의
+    `closeout-redispatch` 재시도가 **살아 있는 워커의 `agent:claimed` 를 뗀다**. 회수 호출이
+    PR·이슈 양쪽에 `harvesting` 을 되붙여 그 자격을 다시 닫는다.
+  - **(c) 양쪽 편집 성공 · 이슈 readback 실패(exit 1 불일치 · exit 2 조회 실패).** 라벨은
+    (b) 와 같거나(불일치) 미상(조회 실패)이라 (b) 의 경합이 열려 있을 수 있다. `harvesting`
+    부착은 멱등이므로 (b) 와 **같은 한 호출**로 닫힌다 — 상태를 먼저 조회해 갈라 부르지 마라.
+  셋 다 점유가 전이 이전으로 돌아가면 다음 틱 ① Reconcile 이 그 PR 을 `resume` 으로 다시
   집고(이 갈래엔 1단계 마커 `마감 검증:` 이 없으므로 ③-1 부터), 같은 자리에서 같은 전이를
   다시 건다 — `closeout-redispatch` 는 멱등이라 재실행이 무해하다(#157 이 `--note` 전이에
   세운 "실패는 전이 이전 상태를 남기고 호출부가 다음 틱에 같은 전이를 다시 건다" 를 이
