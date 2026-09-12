@@ -140,6 +140,10 @@ case "${1:-} ${2:-}" in
         [ -z "${STUB_LADDER_FAIL:-}" ] || { echo "gh: ladder list boom" >&2; exit 1; }
         cat "$STUB_LADDER" ;;
       *hold:policy*) if [ -s "${STUB_POLICY:-/dev/null}" ]; then cat "$STUB_POLICY"; else echo '[]'; fi ;;
+      *hold:conflict*)
+        # (#345) ① 의 두 번째 재개 축 — ladder 와 **같은 모양의 서버 쿼리**(라벨 AND)다.
+        [ -z "${STUB_CONFLICT_FAIL:-}" ] || { echo "gh: conflict list boom" >&2; exit 1; }
+        if [ -s "${STUB_CONFLICT:-/dev/null}" ]; then cat "$STUB_CONFLICT"; else echo '[]'; fi ;;
       *)
         [ -z "${STUB_HUMAN_FAIL:-}" ] || { echo "gh: human list boom" >&2; exit 1; }
         cat "$STUB_HUMAN" ;;
@@ -351,6 +355,11 @@ setup() {
     *,hold:policy,*) cp "$tmp/row.json" "$tmp/policy.json" ;;
     *) echo '[]' > "$tmp/policy.json" ;;
   esac
+  # (#345) conflict 쿼리도 라벨 AND 서버 쿼리다 — hold:conflict 가 없으면 빈 배열.
+  case ",$labels," in
+    *,hold:conflict,*) cp "$tmp/row.json" "$tmp/conflict.json" ;;
+    *) echo '[]' > "$tmp/conflict.json" ;;
+  esac
   echo '[]' > "$tmp/comments.json"
   i=0
   while [ "$i" -lt "$markers" ]; do
@@ -373,12 +382,12 @@ setup() {
   STUB_PR_COMMENTS_FAIL=""
   : > "$tmp/gh.log"
   # unset 하면 export 속성이 날아가 이후 대입이 스텁에 안 전달된다 — 빈 값으로 되돌린다.
-  STUB_LADDER_FAIL=""; STUB_HUMAN_FAIL=""; STUB_LABEL_EDIT_FAIL=""; STUB_COMMENT_FAIL=""
+  STUB_LADDER_FAIL=""; STUB_CONFLICT_FAIL=""; STUB_HUMAN_FAIL=""; STUB_LABEL_EDIT_FAIL=""; STUB_COMMENT_FAIL=""
   STUB_COMMENTS_FAIL=""; STUB_SEARCH_FAIL=""; STUB_SEARCH_PRS_FAIL=""; STUB_PR_FAIL=""; STUB_PR_EDIT_FAIL=""
   STUB_STATE_LABELS=""; STUB_READBACK_LABELS=""; STUB_UPDATED_LIVE=""; STUB_JQ_FAIL_PAT=""
   STUB_MIRROR_LIST_FAIL=""; STUB_MIRROR_EDIT_FAIL=""; STUB_MIRROR_READBACK=""
   STUB_MIRROR_RACE=""; rm -f "$tmp/mirror.edited"; STUB_MIRROR_EVENTS_FAIL=""
-  WORKDIR="$tmp/work"; RA=120; RL=2; LL=200
+  WORKDIR="$tmp/work"; RA=120; RL=2; CL=1; LL=200
 }
 
 with_pr() {  # with_pr <PR번호> <PR라벨csv>
@@ -393,7 +402,7 @@ run() { run_sut "$sut_dir/resume-sweep.sh"; }
 # (#331)이 쓴다: 합집합을 뺀 사본이 같은 픽스처에서 실제로 빨개지는지 스위트 안에서 본다.
 run_sut() {
   (cd "$WORKDIR" && PATH="$tmp/bin:$PATH" \
-    RESUME_AFTER_MIN="${RA:-120}" LADDER_RESUME_LIMIT="${RL:-2}" \
+    RESUME_AFTER_MIN="${RA:-120}" LADDER_RESUME_LIMIT="${RL:-2}" CONFLICT_RESUME_LIMIT="${CL:-1}" \
     RESUME_LIST_LIMIT="${LL:-200}" MIRROR_RETRY_LIMIT="${MRL:-3}" \
     bash "$1") >"$tmp/out" 2>"$tmp/err"
   RC=$?
@@ -401,6 +410,7 @@ run_sut() {
 }
 export STUB_LOG="$tmp/gh.log" STUB_LABELS="$tmp/labels" STUB_UPDATED="$tmp/updated"
 export STUB_LADDER="$tmp/ladder.json" STUB_HUMAN="$tmp/human.json" STUB_POLICY="$tmp/policy.json"
+export STUB_CONFLICT="$tmp/conflict.json" STUB_CONFLICT_FAIL=""
 export STUB_COMMENTS="$tmp/comments.json" STUB_SEARCH="$tmp/search"
 export STUB_SEARCH_PRS="$tmp/search.prs" STUB_SEARCH_PRS_FAIL=""
 export STUB_PR_NUM="$tmp/pr.num" STUB_PR_LABELS="$tmp/pr.labels"
@@ -434,6 +444,9 @@ haspl()   { case ",$(cat "$tmp/pr.labels")," in *",$1,"*) echo ok ;; *) echo no 
 lackspl() { case ",$(cat "$tmp/pr.labels")," in *",$1,"*) echo no ;; *) echo ok ;; esac; }
 saysl()   { if printf '%s' "$out" | grep -q "$1"; then echo ok; else echo no; fi; }
 markers() { jq '[.[] | select(.body | test("ladder-resume"))] | length' "$tmp/comments.json"; }
+cmarkers() { jq '[.[] | select(.body | test("conflict-resume"))] | length' "$tmp/comments.json"; }
+# 이벤트 한 줄의 필드를 jq 술어로 묻는다 — ev_is <event> '<jq 술어>'
+ev_is() { printf '%s' "$out" | jq -e 'select(.event=="'"$1"'") | '"$2" >/dev/null 2>&1 && echo ok || echo no; }
 
 # ── ① 창 전 — waiting 만, 무쓰기 ───────────────────────────────────────────
 setup "hold:ladder,agent-ready" 10 0
@@ -450,6 +463,7 @@ setup "hold:ladder,agent-ready" 200 0
 run
 check "마커 0: resumed"                  "$(has_ev resumed)"
 check "마커 0: attempt=1"                "$(printf '%s' "$out" | jq -e 'select(.event=="resumed") | .attempt == 1' >/dev/null 2>&1 && echo ok || echo no)"
+check "마커 0: reason=ladder (#345)"     "$(ev_is resumed '.reason == "ladder"')"
 check "마커 0: 마커 코멘트가 쌓인다"      "$([ "$(markers)" = 1 ] && echo ok || echo no)"
 check "마커 0: 코멘트 본문에 마커"        "$(grep -q 'issue comment .*<!-- ladder-resume: 1 -->' "$tmp/gh.log" && echo ok || echo no)"
 check "마커 0: hold:ladder 해제"          "$(lacksl hold:ladder)"
@@ -471,6 +485,7 @@ run
 check "마커 2: escalated"                "$(has_ev escalated)"
 check "마커 2: resumed 아님"             "$(no_ev resumed)"
 check "마커 2: attempt=2 · limit=2"      "$(printf '%s' "$out" | jq -e 'select(.event=="escalated") | .attempt == 2 and .limit == 2' >/dev/null 2>&1 && echo ok || echo no)"
+check "마커 2: reason=ladder (#345)"     "$(ev_is escalated '.reason == "ladder"')"
 check "마커 2: hold:policy 부착"         "$(hasl hold:policy)"
 check "마커 2: hold:ladder 해제"         "$(lacksl hold:ladder)"
 check "마커 2: 승격 코멘트엔 마커 없음"   "$([ "$(markers)" = 2 ] && echo ok || echo no)"
@@ -582,11 +597,19 @@ check "PR 미러: --remove-label needs-human 을 안 보낸다" \
 check "이슈 편집도 needs-human 을 안 보낸다" \
   "$(grep -q 'issue edit .*--remove-label needs-human' "$tmp/gh.log" && echo no || echo ok)"
 
-# ── ⑬ hold:conflict — 재개 대상도 warn 대상도 아니다 ──────────────────────
-setup "hold:conflict,agent-ready" 200 0
+# ── ⑬ (#345) hold:conflict + needs-human — 사람이 세운 정지라 충돌 재개도 안 한다 ──
+# 옛 판본은 "hold:conflict 는 재개 대상도 warn 대상도 아니다" 였다. #345 로 hold:conflict 단독은
+# 루프가 1회 재개하므로(아래 (#345) 블록), 무편집을 지키는 술어는 이제 **needs-human 동존**이다
+# (ladder 와 같은 술어 #244). 조용한 continue 가 아니라 note 다 — ③ 이 같은 사람 행동에 내는
+# 낱말과 같다(#247: 왜 안 도는지가 어디에도 안 남는 침묵을 두지 않는다).
+setup "hold:conflict,needs-human,agent-ready" 200 0
 run
-check "hold:conflict: 무이벤트"          "$([ -z "$out" ] && echo ok || echo no)"
-check "hold:conflict: 편집 0회"          "$(none 'issue edit')"
+check "conflict+needs-human: resumed 없음"  "$(no_ev resumed)"
+check "conflict+needs-human: escalated 없음" "$(no_ev escalated)"
+check "conflict+needs-human: warn 아님"      "$(no_ev warn)"
+check "conflict+needs-human: note(사람이 세운 정지)" "$(saysl '사람이 세운 needs-human 동존 — 충돌 재개 안 함')"
+check "conflict+needs-human: 편집 0회"       "$(none 'issue edit')"
+check "conflict+needs-human: 코멘트 0회"     "$(none 'issue comment')"
 
 # ── ⑭ 사람 몫 hold 동존 → 자동 재개 안 함 ─────────────────────────────────
 setup "hold:ladder,hold:policy,agent-ready" 200 0
@@ -683,6 +706,12 @@ RL='-1'
 run
 check "잘못된 LADDER_RESUME_LIMIT: exit 64" "$([ "$RC" = 64 ] && echo ok || echo no)"
 check "잘못된 LADDER_RESUME_LIMIT: gh 호출 0" "$([ ! -s "$tmp/gh.log" ] && echo ok || echo no)"
+setup "hold:conflict,agent-ready" 200 0
+CL='abc'
+run
+check "잘못된 CONFLICT_RESUME_LIMIT: exit 64 (#345)" "$([ "$RC" = 64 ] && echo ok || echo no)"
+check "잘못된 CONFLICT_RESUME_LIMIT: stderr"        "$(grep -q 'CONFLICT_RESUME_LIMIT' "$tmp/err" && echo ok || echo no)"
+check "잘못된 CONFLICT_RESUME_LIMIT: gh 호출 0"     "$([ ! -s "$tmp/gh.log" ] && echo ok || echo no)"
 
 # ── ㉒ .loop/repos 부재 = 계정 전체 탐색 ──────────────────────────────────
 setup "hold:ladder,agent-ready" 200 0
@@ -2361,6 +2390,107 @@ STUB_PR_COMMENTS_FAIL=1 run
 STUB_PR_COMMENTS_FAIL=""
 check "⑩ 코멘트 조회 실패: due 안 냄" "$(no_ev policy_review_due)"
 check "⑩ 코멘트 조회 실패: warn"      "$(has_ev warn)"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# (#345) hold:conflict 1회 자동 재개 — ladder 와 같은 골격(마커 · 창 · 상한 · PR 미러 · 승격)
+# ──────────────────────────────────────────────────────────────────────────────
+# 실측(BoDAT #5103 · #185): 첫 conflict 의 사람 답은 늘 ⓐ(워커 한 회차 더)였다. #344 가
+# closeout 쪽에서 사유를 갈라 `hold:conflict` = "루프가 1회 재개해도 되는 건" 으로 좁혔으니
+# 그 재개를 스윕이 한다. 마커는 `<!-- conflict-resume: N -->`, 상한은 CONFLICT_RESUME_LIMIT(기본 1).
+# `full-cycle` 은 사람이 인수(ⓑ)한 표식이라 절대 재개하지 않는다 — deploy-wait 과도기 축과
+# **별개의 갈래**다(그 축이 걷히는 날에도 이 제외는 남아야 한다). 그래서 문구가 다르다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ⓐ hold:conflict 단독 + 창 경과 + 마커 0 → resumed(reason conflict, attempt 1)
+setup "hold:conflict,agent-ready" 200 0
+with_pr 77 "hold:conflict,flow:verify"
+run
+check "conflict ⓐ: resumed"                    "$(has_ev resumed)"
+check "conflict ⓐ: reason=conflict · attempt=1" "$(ev_is resumed '.reason == "conflict" and .attempt == 1')"
+check "conflict ⓐ: 재개 코멘트에 conflict-resume: 1" "$(grep -q 'issue comment .*충돌 재시도 — origin/.* rebase .*<!-- conflict-resume: 1 -->' "$tmp/gh.log" && echo ok || echo no)"
+check "conflict ⓐ: 마커 1개 쌓임"               "$([ "$(cmarkers)" = 1 ] && echo ok || echo no)"
+check "conflict ⓐ: ladder 마커는 안 쌓인다"      "$([ "$(markers)" = 0 ] && echo ok || echo no)"
+check "conflict ⓐ: 이슈 hold:conflict 해제"      "$(lacksl hold:conflict)"
+check "conflict ⓐ: PR hold:conflict 해제"        "$(lackspl hold:conflict)"
+check "conflict ⓐ: PR flow:verify 유지"          "$(haspl flow:verify)"
+check "conflict ⓐ: agent-ready 유지"             "$(hasl agent-ready)"
+check "conflict ⓐ: hold:policy 안 붙는다"        "$(lacksl hold:policy)"
+check "conflict ⓐ: escalated 없음"               "$(no_ev escalated)"
+check "conflict ⓐ: hold:conflict 단독 쿼리로 목록을 뜬다" "$(grep -q 'issue list --repo owner/repo .*--label hold:conflict' "$tmp/gh.log" && echo ok || echo no)"
+check "conflict ⓐ: 본문은 건드리지 않는다"        "$(none '--body-file')"
+check "conflict ⓐ: warn 없음"                    "$(no_ev warn)"
+
+# ⓑ 마커 1(= 상한) + 창 경과 → escalated(limit 1) · hold:policy 부착 · hold:conflict 해제(이슈·PR)
+# attempt 는 ladder 와 같은 뜻이다 — 마커가 **실제로 기록한** 소진 횟수(1)지 거절된 next 가 아니다
+# (기존 필드 의미 그대로 — 합산하는 소비자가 승격마다 1씩 과다 계수하지 않게).
+setup "hold:conflict,agent-ready" 200 0
+jq --arg b "재개 1/1: 충돌 재시도 — origin/main 위로 rebase 후 홀드 노트의 범위를 구현 <!-- conflict-resume: 1 --><!-- bodat:worker -->" \
+  '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/comments.tmp" && mv "$tmp/comments.tmp" "$tmp/comments.json"
+with_pr 77 "hold:conflict"
+run
+check "conflict ⓑ: escalated"                  "$(has_ev escalated)"
+check "conflict ⓑ: resumed 아님"               "$(no_ev resumed)"
+check "conflict ⓑ: reason=conflict · attempt=1 · limit=1" "$(ev_is escalated '.reason == "conflict" and .attempt == 1 and .limit == 1')"
+check "conflict ⓑ: 이슈 hold:policy 부착"       "$(hasl hold:policy)"
+check "conflict ⓑ: 이슈 hold:conflict 해제"     "$(lacksl hold:conflict)"
+check "conflict ⓑ: PR hold:policy 부착"         "$(haspl hold:policy)"
+check "conflict ⓑ: PR hold:conflict 해제"       "$(lackspl hold:conflict)"
+check "conflict ⓑ: policy hold-note 코멘트"     "$(grep -q 'issue comment .*사람 확인(policy): 충돌 재개 상한(1) 초과.*full-cycle.*<!-- hold-note: policy -->' "$tmp/gh.log" && echo ok || echo no)"
+check "conflict ⓑ: 승격 코멘트엔 마커 없음"      "$([ "$(cmarkers)" = 1 ] && echo ok || echo no)"
+check "conflict ⓑ: agent-ready 유지"            "$(hasl agent-ready)"
+
+# ⓒ 창 안 → waiting 만, 무쓰기
+setup "hold:conflict,agent-ready" 10 0
+run
+check "conflict ⓒ: waiting"                    "$(has_ev waiting)"
+check "conflict ⓒ: resumed 없음"               "$(no_ev resumed)"
+check "conflict ⓒ: 편집 0회"                   "$(none 'issue edit')"
+check "conflict ⓒ: 코멘트 0회"                 "$(none 'issue comment')"
+
+# ⓓ hold:conflict + full-cycle → note(사람 인수 ⓑ), 편집 0회 — 문구가 deploy-wait 축과 다르다
+setup "hold:conflict,full-cycle,agent-ready" 200 0
+run
+check "conflict ⓓ: note"                       "$(has_ev note)"
+check "conflict ⓓ: 사람 인수 문구"              "$(saysl '사람 인수(full-cycle) — 충돌 재개 안 함')"
+check "conflict ⓓ: resumed 없음"               "$(no_ev resumed)"
+check "conflict ⓓ: warn 없음"                  "$(no_ev warn)"
+check "conflict ⓓ: 편집 0회"                   "$(none 'issue edit')"
+check "conflict ⓓ: 코멘트 0회"                 "$(none 'issue comment')"
+check "conflict ⓓ: hold:conflict 유지"          "$(hasl hold:conflict)"
+# ⓓ' deploy-wait 축도 종전 술어 그대로 note — 재개 안 함
+setup "hold:conflict,deploy-wait,agent-ready" 200 0
+run
+check "conflict ⓓ': deploy-wait 는 배포 대기 note" "$(saysl '배포 대기(라벨 deploy-wait)')"
+check "conflict ⓓ': resumed 없음"              "$(no_ev resumed)"
+check "conflict ⓓ': 편집 0회"                  "$(none 'issue edit')"
+
+# ⓔ hold:conflict + hold:policy 동존 → warn, 편집 0회
+setup "hold:conflict,hold:policy,agent-ready" 200 0
+run
+check "conflict ⓔ: warn"                       "$(has_ev warn)"
+check "conflict ⓔ: 문구"                       "$(saysl 'hold:conflict 외 hold:\* 동존')"
+check "conflict ⓔ: resumed 없음"               "$(no_ev resumed)"
+check "conflict ⓔ: 편집 0회"                   "$(none 'issue edit')"
+
+# ⓕ 코드펜스 안에 인용된 conflict-resume 마커는 세지 않는다 — 상한(1)이 인용으로 소진되지 않는다
+setup "hold:conflict,agent-ready" 200 0
+jq --arg b $'마커 설명:\n```\n<!-- conflict-resume: 1 -->\n```\n끝' \
+  '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/comments.tmp" && mv "$tmp/comments.tmp" "$tmp/comments.json"
+run
+check "conflict ⓕ: 인용 마커는 0회로 센다 → resumed" "$(has_ev resumed)"
+check "conflict ⓕ: attempt=1"                  "$(ev_is resumed '.attempt == 1')"
+check "conflict ⓕ: escalated 아님"             "$(no_ev escalated)"
+
+# ⓖ 뮤테이션 방증 — conflict 갈래의 full-cycle 제외 한 줄을 지운 사본은 ⓓ 픽스처에서 재개해 버린다
+# (전체 스위트를 그 사본에 돌린 로그는 PR 본문에 — 여기서는 그 한 칸만 스위트 안에서 실증한다).
+mut="$sut_dir/resume-sweep.mut-fullcycle.sh"
+sed '/# conflict-full-cycle-guard/,/^  fi$/d' "$sut_dir/resume-sweep.sh" > "$mut"
+check "conflict ⓖ: 뮤테이션 사본이 원본과 다르다" "$(cmp -s "$mut" "$sut_dir/resume-sweep.sh" && echo no || echo ok)"
+setup "hold:conflict,full-cycle,agent-ready" 200 0
+run_sut "$mut"
+check "conflict ⓖ: 제외를 지우면 사람 인수 문구가 사라진다" "$(if printf '%s' "$out" | grep -q '사람 인수(full-cycle)'; then echo no; else echo ok; fi)"
+run
+check "conflict ⓖ: 대조군 — 원본은 같은 픽스처에서 사람 인수 note" "$(saysl '사람 인수(full-cycle)')"
 
 # ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
 # 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는
