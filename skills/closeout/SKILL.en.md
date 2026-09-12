@@ -901,7 +901,7 @@ for out-of-merge-scope verification the step-1 verifier excluded from the merge 
 **`<LIVE_CHECKS>` must take one of two shapes — no free prose.**
 - If there is **nothing at all** to step through after deploy, exactly the one word
   `없음`. Do not append an explanation after it.
-- Otherwise a **`- [ ]` checkbox list**. One line = one action deploy-cycle ⑦ performs
+- Otherwise a **`- [ ]` checkbox list**. One line = one action `e2e-test` performs after the deploy (deploy-cycle ⑤ moves these lines into a `테스트` issue once the deploy is done — BoDAT #5197)
   once. Background·rationale·caveats go in `## 변경 요약`; leave only the actions here.
 - **A real-hardware line REQUIRES the `[칸 ③]` prefix marker** — write it as
   `- [ ] [칸 ③] <action>`. Saying in prose that real hardware means an action only
@@ -934,7 +934,7 @@ not be copied into this section as-is — doing so shoves work nobody attempted 
 into the deploy lane. closeout attempts **rung ① (dev server — `bin/rails runner`·localhost) and
 rung ② (`bin/dry-run`·the AdsPower relay)** of
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-**once each** first. **Rung ③ (the TEST worker) is deploy-cycle ⑦'s job** — that is why
+**once each** first. **Rung ③ (the TEST worker) is `e2e-test`'s job after the deploy** — that is why
 the item moves into `<LIVE_CHECKS>` rather than being escalated into a human's lap, and
 the ①② attempt results ride along so ⑦ does not repeat the same rungs.
 - If rung ①② **yields a verdict**, **drop** the item from `<LIVE_CHECKS>` (it is not a
@@ -963,13 +963,15 @@ and that fact must be visible to a human.
   `deploy-wait` is the bucket label `loop-status.sh` uses to separate deploy-waiting from
   needs-human, and it is **the lane mark the deploy-cycle loop picks this ticket up by** —
   that one label is required.
-  **`needs-human` is deliberately not attached (#243, plan step 2) — do not revert it.**
-  All three consumers of a deploy-pending issue ignore that label: ⑴ the dispatch gate
-  **requires** `label:agent-ready` (`scripts/eligible-issues.sh`), which a deploy-pending
-  issue never has, so it is not a candidate to begin with; ⑵ the bucket decision at
-  `scripts/loop-status.sh:474` lets `deploy-wait` **win over** `needs-human`; ⑶ deploy-bodat
-  collects by **title regex** (`배포 대기: PR #<M>`), not by label. All that was left was a
-  duplicate mark that blurred what `needs-human` means (= a stop a human raised) (#190).
+  **closeout does not attach `needs-human` (#243, plan step 2) — do not revert it.** At filing
+  time there is nothing for a human to do: ⑴ the dispatch gate **requires** `label:agent-ready`
+  (`scripts/eligible-issues.sh`), which a deploy-pending issue never has, so it is not a
+  candidate to begin with; ⑵ deploy-bodat collects by **title regex** (`배포 대기: PR #<M>`),
+  not by label. Attaching it would be a duplicate mark that blurs what `needs-human` means
+  (= a human's share is left) (#190). The party that **does** attach it is deploy-cycle — on a
+  promotion/deploy/smoke failure, with a reason comment (BoDAT #5197, its hidden HALT file was
+  retired). That is why the loop-status bucket puts needs-human **ahead of** deploy-waiting
+  (2026-09-13) — so that failure mark never hides inside the deploy-waiting row.
   After issuance leave the
   marker `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
   **exit as approval-required**.
@@ -1066,9 +1068,9 @@ structure/empty-state confirmation from real-data render confirmation in the res
   them makes both a pass and a fail a lie (the same false green as "no items" above). If dropping them leaves zero items to
   compare, do not open Chrome — skip the smoke exactly like the "no items" bullet above.
   And if **even one** such line remains, **do not close the deploy issue even when
-  everything else passes** — rung ③ is deploy-cycle ⑦'s job, so closing here finalizes a
+  everything else passes** — rung ③ is `e2e-test`'s job after the deploy, so closing here finalizes a
   ticket whose real-hardware items never met the TEST worker once. Leave the reason as a
-  comment instead: `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦`. That issue is a
+  comment instead: `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다`. That issue is a
   container the deploy-cycle lane's ⑦ closes after it steps rung ③.
   **Unmarked lines — do not catch them by a string; hand them to rung ③ fail-closed.**
   Deploy issues filed before this discipline and still open carry no `[칸 ③]` at all
@@ -1092,7 +1094,7 @@ structure/empty-state confirmation from real-data render confirmation in the res
     runner` · a `log/*.out` grep — anything needing a tool the production console screen
     does not have) → **print it as neither a pass nor a fail; count it as held, exactly
     like a marked line** — drop it from the denominator and **add it to** the marked
-    count in `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦`, leaving the issue open.
+    count in `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다`, leaving the issue open.
     **Do not file a follow-up issue** — it is not a defect, only a different lane, and
     dropping it into fail files a `needs-human` follow-up whose recorded reason is a
     false "smoke failure" (#309 attempt 1 leaked exactly this way).
@@ -1137,7 +1139,7 @@ structure/empty-state confirmation from real-data render confirmation in the res
   **Unless the real-hardware exception above applies** — if even one rung-③ item
   (a marked line, or a line held unstepped by the fail-closed branch above) is
   still `- [ ]`, stop at the label cleanup, leave the issue open, and finish with the
-  `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦` comment (verification was not the only
+  `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` comment (verification was not the only
   remaining gate — rung ③ is). Since #243 a step-4 issue
   never carries `needs-human` in the first place — this removal is harmless leftover
   cleanup for issues filed before that (`--remove-label` is a no-op for an absent label).

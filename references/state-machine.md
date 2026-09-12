@@ -25,7 +25,7 @@
 | S3 | `verifying` / `verifying` / `🔄` | verify-runner ③ Verify(지금 검증 중) | `verify-pick` | `verify-eligible.sh` 가 `orphan:true` 로 **먼저** 낸다 — 틱 시작에 남은 `verifying` 은 정의상 이전 틱의 사망 | `verify-pass` → S4 · `verify-redispatch` → S0(반송 마커 `재검증 실패:`) · `verify-held` → H · `verify-unpick`(flake) → S2 | verify-runner ②(고아 재집) |
 | S4 | `flow:ready` / `flow:ready` / `✅`(head 이후·`코멘트 스냅샷 N`) | closeout | `verify-pass` | `closeout-eligible.sh`: `✅` 마지막 인덱스 + `finish-classify.sh`=done_verdict(✅ 가 head 커밋 이후임을 증명) + `bounce-state.sh`=ok + 스냅샷 경계 이후 무마커 코멘트 0 + `closeout-ci-pass.sh` + MERGEABLE + ¬harvesting·¬verifying·¬flow:verify·¬needs-human·¬hold:* | `closeout-pick` → S5 | closeout ①-b 스윕(아래 계급 표) |
 | S5 | `harvesting` / `harvesting` / `✅` | closeout ③ 파이프라인 | `closeout-pick` | `closeout-reconcile.sh`: 크래시 재개(resume) / `human_hold`(needs-human 붙었거나 라벨 미상) · 1단계 재개 지점은 `closeout-step1-marker.sh` | 머지(Closes → 이슈 닫힘) → E · `closeout-dup` → E · `closeout-blocked` → H · `closeout-redispatch` → S0(반송 마커 `재디스패치:`) | closeout ①(크래시 재개) |
-| E | 종료 — 머지됨 / CLOSED, 또는 `dup` / CLOSED | — | 머지 · `closeout-dup`(`release-labels.sh` 가 닫힌 이슈의 agent-ready 회수) | — | 배포 대기 이슈(`deploy-wait`) → deploy-cycle 레인(루프 밖) | — |
+| E | 종료 — 머지됨 / CLOSED, 또는 `dup` / CLOSED | — | 머지 · `closeout-dup`(`release-labels.sh` 가 닫힌 이슈의 agent-ready 회수) | — | 배포 대기 이슈(`deploy-wait`) → deploy-cycle 레인(루프 밖) → 배포 뒤 검증 항목이 남으면 `테스트` 이슈(e2e-test 레인, 사용자 호출) | — |
 
 `agent-ready` 는 사다리 전체에서 유지되는 **자격** 라벨이다 — 위 표의 어느 remove 칸에도 없고, 반송 두 전이만
 다시 add 한다. `flow:ci`·`flow:codex` 는 PR 에만 있는 워커 내부 단계라 이슈 미러가 없다. 반대로 `flow:claimed`·
