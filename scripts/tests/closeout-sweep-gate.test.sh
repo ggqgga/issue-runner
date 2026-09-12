@@ -38,6 +38,10 @@ fail=0
 #   bounce == ok, 그 외        → finish-classify 결과를 그대로 조치로 사용
 #     (finish-classify 자신의 `held` 행 — 반송 마커가 없는 순수 ⚠ — 은 이 폐지의
 #     영향을 받지 않는다. 아래 (e) 가 그 대조군이다.)
+# CI 롤업은 **주입한다**(`FC_FAILING=0 FC_PENDING=0`, #421) — 이 스위트는 무접속인데 주입이
+# 없으면 finish-classify 가 실 `gh pr view --json statusCheckRollup` 을 타고, 그 실패는
+# `ci_lookup=unknown` 이라 `no_verdict` 를 닫는다(초록을 증명 못 했으니 맞는 처분이다 —
+# 그러나 이 표가 무는 것은 CI 축이 아니라 **분기표**라, 초록을 픽스처로 고정해 둔다).
 sweep_decide() {
   local mergeable="$1" bounce_file="$2" fc_json="$3" fc_now="$4" fc_head_at="$5"
   local bstate rc=0 fc
@@ -47,7 +51,7 @@ sweep_decide() {
   #  정체. 재디스패치 갈래만 열고 입양은 어느 출력에서도 안 연다.)
   if [ "$rc" = 0 ] && [ "$bstate" = "bounced" ] && [ "$mergeable" = "CONFLICTING" ]; then
     fc=$(FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
-      FC_CLAIMED_AT=none bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null)
+      FC_CLAIMED_AT=none FC_FAILING=0 FC_PENDING=0 bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null)
     case "$fc" in
       stale_reverify|stale_inline) echo "redispatch" ;;
       *)                           echo "active" ;;
@@ -66,7 +70,7 @@ sweep_decide() {
   # 이 함수는 표의 *조치*를 거울로 재현하므로 예외 갈래와 같은 낱말(`redispatch`)로 옮긴다 —
   # 나머지 출력이 계급 이름 그대로인 것은 그 이름이 곧 표의 행 이름이기 때문이다.
   fc=$(FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
-    FC_CLAIMED_AT=none \
+    FC_CLAIMED_AT=none FC_FAILING=0 FC_PENDING=0 \
     bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null)
   case "$fc" in
     no_verdict) echo "redispatch" ;;
@@ -94,7 +98,7 @@ sweep_decide_pre_c() {
     return
   fi
   FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
-    FC_CLAIMED_AT=none \
+    FC_CLAIMED_AT=none FC_FAILING=0 FC_PENDING=0 \
     bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null
 }
 
@@ -121,7 +125,7 @@ sweep_decide_pre218() {
     return
   fi
   FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
-    FC_CLAIMED_AT=none \
+    FC_CLAIMED_AT=none FC_FAILING=0 FC_PENDING=0 \
     bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null
 }
 
@@ -299,7 +303,7 @@ sweep_decide_attempt3() {
   if [ "$rc" != 0 ] || [ "$bstate" != "ok" ]; then echo "active"; return; fi
   if [ "$mergeable" = "CONFLICTING" ]; then echo "adopt_conflict"; return; fi
   FC_COMMENTS_JSON="$fc_json" FC_NOW="$fc_now" FC_HEAD_AT="$fc_head_at" \
-    FC_CLAIMED_AT=none \
+    FC_CLAIMED_AT=none FC_FAILING=0 FC_PENDING=0 \
     bash "$DIR/finish-classify.sh" owner/repo 9 2>/dev/null
 }
 mut3_pass=0

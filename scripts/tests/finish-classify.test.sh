@@ -696,8 +696,11 @@ cat > "$GT/held.json" <<'J'
 J
 
 # run_fc <comments-file> <head_at> <head_sha> <queue.log> [STALE_FINISH_MIN] [claimed_at]
+# 7번째 인자 = CI 롤업의 **미완료 수**(#421). 기본 0 = 전부 종결(종전 격자 전부 불변).
+# 위치 인자로 받는 이유: `FC_PENDING=1 run_fc …` 접두는 명령치환 밖에서 쓰면 다음 행까지
+# 값이 남는다(bash 는 함수 호출의 접두 대입을 셸에 남긴다) — 격자가 조용히 오염된다.
 run_fc() {
-  FC_NOW="$NOW" FC_FAILING=0 STALE_FINISH_MIN="${5:-30}" STALL_MIN=25 \
+  FC_NOW="$NOW" FC_FAILING=0 FC_PENDING="${7:-0}" STALE_FINISH_MIN="${5:-30}" STALL_MIN=25 \
     ISSUE_TIMEBOX_HOURS=1 \
     FC_COMMENTS_FILE="$1" FC_HEAD_AT="$2" FC_HEAD_SHA="$3" FC_QUEUE_LOG="$4" \
     FC_CLAIMED_AT="${6:-none}" \
@@ -1302,6 +1305,23 @@ check_nv "K7-b 코멘트 JSON 이 배열 아님→active" active \
 
 # K7 무회귀 대조 — 같은 증거 전무·버퍼 초과라도 🔄 가 있으면 종전 계급(stale_reverify)이다.
 check_nv "K7 🔄 있음·증거 전무→stale_reverify(무회귀)" stale_reverify   "$(run_fc "$GT/bounced_noverifier.json" "$G_OLD" none "$GT/empty.log" 30 none)"
+
+# ── K8 **CI 축**(#421 [P2-2]) — "초록" 은 실패 0 만이 아니라 미완료 0 이기도 하다 ──
+# K1 과 다른 것은 미완료 수 하나뿐이다(교락 없음). 진행 증거는 여전히 전무하고 버퍼도 넘겼다 —
+# 그런데도 체크가 도는 중이면 이 PR 은 아직 초록이 아니므로 재디스패치 대상이 아니다
+# (박스 전역 CI 큐 대기가 정확히 이 모양이다 — #127·#200).
+check_nv "K8-a CI 미완료 1건(실패 0)→active" active \
+  "$(run_fc "$GT/no_verdict_empty.json" "$G_OLD" none "$GT/empty.log" 30 none 1)"
+# K8-b 대조군 — 같은 형상에서 미완료 0 이면 종전대로 이 계급이 열린다(축이 정말 미완료뿐임).
+check_nv "K8-b CI 미완료 0(대조군)→no_verdict" no_verdict \
+  "$(run_fc "$GT/no_verdict_empty.json" "$G_OLD" none "$GT/empty.log" 30 none 0)"
+# K8-c 롤업을 못 읽으면(정수 아님 = 조회 실패 경로) "초록" 을 증명 못 한다 → active.
+check_nv "K8-c 롤업 조회 실패(정수 아님)→active" active \
+  "$(run_fc "$GT/no_verdict_empty.json" "$G_OLD" none "$GT/empty.log" 30 none boom)"
+# K8-d 무회귀 — CI 축 게이트는 `no_verdict` **한 계급에만** 걸린다. 🔄 갈래는 미완료가 있어도
+#      종전 판정 그대로다(이 회차가 다른 계급의 출력을 옮기지 않았다는 증거).
+check_nv "K8-d 🔄 있음·미완료 1건→stale_reverify(무회귀)" stale_reverify \
+  "$(run_fc "$GT/bounced_noverifier.json" "$G_OLD" none "$GT/empty.log" 30 none 1)"
 
 chmod 644 "$GT/unreadable.log" 2>/dev/null || true
 rm -rf "$GT"

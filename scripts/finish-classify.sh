@@ -16,7 +16,8 @@
 #   no_verdict     `머지 판정:` 코멘트가 **한 건도 없음**(접두 매칭 **개수 0** 으로 확인한다 —
 #                  코멘트 조회 실패는 `comments_lookup`, 못 읽는 판정 본문은 개수 ≥ 1 이라
 #                  둘 다 이 계급이 아니다 · 🔄·✅·⚠ 어느 것도 없다 — 워커가
-#                  10단계 전에 죽었다) + STALE_FINISH_MIN 초과 + **진행 증거 없음**(#396)
+#                  10단계 전에 죽었다) + **CI 가 초록**(실패 0 **이고 미완료 0** — #421)
+#                  + STALE_FINISH_MIN 초과 + **진행 증거 없음**(#396)
 #                  → closeout ①-b 재디스패치(`stale_reverify` 와 같은 조치)
 #   active         위 어디에도 안 걸림(진행 중·시간버퍼 미도달·우리 형상 아님) 또는
 #                  최신 `머지 판정: ✅` 의 신선도를 **증명하지 못함**(head 커밋보다 이르거나,
@@ -28,7 +29,13 @@
 # 죽으면(handoff 이전 사망) PR 은 CI 초록인데 판정 코멘트가 0건이다. 그 칸은 세 레인 어디에도
 # 안 들어갔다 — issue-runner ② Maintain 은 "CI green·리뷰 없음" 을 사람 리뷰 대기로 무접촉,
 # closeout ①-b 는 🔄/✅ 를 전제, 이 파일은 판정이 없으면 `active` 였다(무한 무접촉).
-# 그래서 **판정 부재 + 증거 없음 + 시간버퍼 초과**를 별도 계급으로 낸다.
+# 그래서 **판정 부재 + CI 초록 + 증거 없음 + 시간버퍼 초과**를 별도 계급으로 낸다.
+#
+# **"초록" 은 실패 0 이 아니라 실패 0 + 미완료 0 이다**(#421 [P2-2]). 이 계급의 주장은 "CI 는
+# 끝났는데 판정만 없다" 이므로, 아직 도는 체크(check-run `status != COMPLETED` · local-ci 커밋
+# 상태 `pending`)가 하나라도 있으면 주장할 수 없다 — 그 창에 커밋·claim 만 낡으면 **아직 초록도
+# 아닌 PR** 이 재디스패치된다(CI 큐 대기 중인 PR 이 정확히 그 모양이다, #127·#200). 롤업 조회
+# 실패도 같은 처분(`ci_lookup=unknown` → active) — 이 파일의 "증명 못 하면 안 연다" 규율.
 #
 # 스테일 클록의 기준 시각은 `agent:claimed` 부착 시각과 head 커밋 시각 중 **더 최신** 쪽이다
 # (🔄 계열과 같은 max 규율 — 판정 코멘트가 없으니 그 두 축만 남는다). 반송 마커 시각도 같은
@@ -168,14 +175,34 @@ fi
 # (pr-comments.sh 계약). 여기서 갈라 두지 않으면 위 세 경로의 실패가 다시 합쳐진다.
 [ -n "$comments" ] || { comments='[]'; comments_lookup=unknown; }
 
-if [ -n "${FC_FAILING:-}" ]; then
-  failing="$FC_FAILING"
+# ── CI 롤업 = 실패 수 + **미완료 수**, 한 조회에서 (#421) ──────────────────────
+# 미완료를 따로 세는 이유는 위 `no_verdict` 문단 참조(그 계급만 이 값을 읽는다 — 종전 갈래의
+# 입력인 `failing` 의 뜻과 처분은 한 글자도 안 바뀐다).
+# 미완료 술어는 `closeout-ci-pass.sh` 의 "그 외 레포" 분기와 **같은 낱말**이다(종결 상태
+# allowlist 의 여집합). 그 스크립트를 직접 부르지 않는 이유: 그것은 `repo-dir.sh` + 로컬 CI
+# 캐시를 타는 **통과 판정**이라, 모든 입력을 env 로 주입받는 이 파일의 무접속 테스트 계약
+# (`FC_*`)을 깬다. 여기서 세는 것은 통과 모양이 아니라 미완료 개수뿐이라 두 번째 판정기가
+# 되지 않는다.
+# `ci_lookup` — 조회의 결말을 담는 별도 플래그(head_lookup·comments_lookup 과 같은 3값 규율의
+# 2값판: ok|unknown). 조회 실패를 0 으로 접으면 "롤업을 못 읽었다" 가 "초록이다" 로 둔갑한다.
+ci_lookup=ok
+if [ -n "${FC_FAILING:-}" ] || [ -n "${FC_PENDING+x}" ]; then
+  failing="${FC_FAILING:-0}"
+  pending="${FC_PENDING:-0}"
 else
-  failing=$(gh pr view "$pr" --repo "$repo" --json statusCheckRollup \
-    -q '[.statusCheckRollup[]? | select((.conclusion // .state // "")
-        | test("FAILURE|ERROR|CANCELLED|TIMED_OUT"))] | length' 2>/dev/null || echo 0)
+  rollup=$(gh pr view "$pr" --repo "$repo" --json statusCheckRollup 2>/dev/null) || rollup=''
+  failing=$(printf '%s' "$rollup" | jq '[.statusCheckRollup[]? | select((.conclusion // .state // "")
+      | test("FAILURE|ERROR|CANCELLED|TIMED_OUT"))] | length' 2>/dev/null) || failing=''
+  # 미완료 = check-run 이 COMPLETED 가 아니고 커밋 상태도 종결값이 아닌 것.
+  pending=$(printf '%s' "$rollup" | jq '[.statusCheckRollup[]? | select(((.status // "") != "COMPLETED")
+      and ((.state // "") != "SUCCESS") and ((.state // "") != "FAILURE")
+      and ((.state // "") != "ERROR"))] | length' 2>/dev/null) || pending=''
 fi
-[ -n "$failing" ] || failing=0
+# 정수가 아니면(빈 값·jq 실패·주입 오타) 조회 실패와 같은 처분이다. `failing` 은 종전대로 0 으로
+# 정규화해 아래 CI 실패 가드의 출력을 보존하고, 그 사실은 `ci_lookup` 이 기억해 `no_verdict`
+# 만 읽는다.
+case "${failing:-}" in ''|*[!0-9]*) ci_lookup=unknown; failing=0 ;; esac
+case "${pending:-}" in ''|*[!0-9]*) ci_lookup=unknown; pending=0 ;; esac
 
 # head_lookup — **조회의 결말을 담는 별도 플래그**(#206 회차2). 값 셋:
 #   ok       조회(또는 주입)에 성공 — head_at·head_sha 가 그 PR 의 값이다
@@ -554,6 +581,10 @@ case "$verdict_body" in
       0) ;;                              # 판정 코멘트 0건 — 이 계급의 유일한 형상
       *) echo active; exit 0 ;;          # 1건 이상(못 읽는 본문) · 빈 값(jq 실패) = 주장 불가
     esac
+    # CI 가 아직 도는 중이면 "초록인데 판정만 없다" 가 아니다(#421 [P2-2]) — 실패 가드(위)는
+    # 실패만 세므로 **미완료**는 여기서 따로 막는다. 롤업을 못 읽은 경우도 같은 처분.
+    [ "$ci_lookup" = ok ] || { echo active; exit 0; }
+    if [ "$pending" -gt 0 ]; then echo active; exit 0; fi
     nv_claimed=$(claimed_arg)
     _claimed_arg_cache="$nv_claimed"   # 아래 emit_stale 의 진행 증거 조회가 같은 값을 재사용
     nv_claim_epoch=''

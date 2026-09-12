@@ -52,7 +52,7 @@
 | `done_verdict` | 최신 `✅` 가 head 커밋 이후임이 증명됨 | S4 정상 경로(closeout-eligible)가 처리 — 스윕 skip |
 | `stale_inline` | `🔄` + 검증자 CLEAN + `STALE_FINISH_MIN` 초과 + 진행 증거 없음 | 입양(② Pick 후보) — 1단계 독립 재검증 후 마감 |
 | `stale_reverify` | `🔄` + 검증자 부재/미해결 BLOCKER + 초과 + 진행 증거 없음 | `closeout-redispatch` → S0 |
-| `no_verdict` | `머지 판정:` 코멘트 **0건** + 초과(기준 시각 = claim·head 중 최신) + 진행 증거 없음 — 워커가 판정 전에 죽었다(#396) | `closeout-redispatch` → S0(`stale_reverify` 와 같은 조치 · 연결 이슈 없으면 무접촉) |
+| `no_verdict` | `머지 판정:` 코멘트 **0건** + CI 초록(실패 0 **이고 미완료 0** — #421) + 초과(기준 시각 = claim·head 중 최신) + 진행 증거 없음 — 워커가 판정 전에 죽었다(#396) | `closeout-redispatch` → S0(`stale_reverify` 와 같은 조치 · 연결 이슈 없으면 무접촉) |
 | `held` | 최신 판정 `⚠ 보류` | `closeout-blocked --reason policy` → H:policy |
 | `active` | 진행 중 · 버퍼 미도달 · ✅ 신선도 미증명 · 진행 증거 있음 | 무접촉 |
 | `bounced`(bounce-state) | 반송 마커 뒤 판정 없음/`🔄` | 재디스패치 재시도 지점에서 재개(교체 워커 사망 판정은 finish-classify) |
@@ -66,7 +66,7 @@
 |---|---|---|
 | `verify-redispatch` exit 1·2 — PR 은 `flow:verify`/`verifying` 상실, 이슈는 `agent:claimed` 유지 | **issue-runner ① Reconcile**(#394) | `reconcile.sh` 가 세 술어(단계 라벨 0 · 마지막 판정성 코멘트가 `재검증 실패` · 진행 증거 없음)로 판별해 `half_moved_redispatch` 를 내고, SKILL ① 이 같은 전이를 **멱등 재실행**한다(증명 실패는 종전 `pr_open`) |
 | 열린 연결 이슈가 없는 PR 의 `hold:policy` | **issue-runner ① 재심 → 사람**(#395·#421) | `resume-sweep.sh` ③-b 가 열린 PR 축에서 같은 판정(창·hold-note 마커·needs-human)을 돌려 `policy_review_due`(`pr` 필드)를 낸다. 처분은 `policy-kept` 하나 — 재개(`verify-redispatch <repo> - <pr>`)는 소비자가 없다(이슈 디스패치는 `eligible-issues.sh`, 검증은 `flow:verify`·`verifying`). 연결 이슈가 **열려 있는** PR 은 이슈 축만(중복 금지) · 참조가 전부 닫힌 PR 은 이슈 축이 못 보므로 PR 축이 본다 |
-| `머지 판정` 코멘트가 0건인 초록 PR(handoff 전 사망) | **closeout ①-b 스윕**(#396) | `finish-classify.sh` 의 계급 `no_verdict` → 위 계급 표의 재디스패치 행. 코멘트 조회 실패는 이 계급이 아니다(`active`) |
+| `머지 판정` 코멘트가 0건인 초록 PR(handoff 전 사망) | **closeout ①-b 스윕**(#396) | `finish-classify.sh` 의 계급 `no_verdict` → 위 계급 표의 재디스패치 행. 코멘트 조회 실패도, **아직 도는 체크**(CI 큐 대기)도 이 계급이 아니다(`active`) |
 | resume-sweep 미러 정리 "양성 증거 못 얻음" warn | **resume-sweep 재시도 + 사람**(#397) | 증거 부재 세 갈래가 `<!-- mirror-retry: <사유> pr=<n> -->` 마커로 회차를 센다(그 PR 의 것만 · 마지막 `policy-review`·`hold-note` 경계 이후만 · `MIRROR_RETRY_LIMIT` 기본 3) — warn 에 `N/3` 을 싣는다. 상한에 닿으면 `mirror_retry_exhausted` → SKILL 이 `runner-held --reason policy` 로 사람 몫(H:policy) |
 
 알고 두는 정체(사용자 선택, closeout SKILL ①-b 참조): ⑴ 반송 마커 최신 + 단계 라벨 0 + CONFLICTING + 교체 워커
