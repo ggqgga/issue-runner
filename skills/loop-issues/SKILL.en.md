@@ -59,27 +59,30 @@ context — the issue body is the only spec.
    of the issue labeled `epic`. It is **required** on a leaf that has an epic, and
    **absent** on a standalone issue. This line is a **topic link**, not a dependency,
    so it never blocks dispatch — do not express "I'd rather this one went first
-   within the epic" as a `Blocked by` (the `Epic #N` line plus finish-first ordering
-   handles that).
+   within the epic" as a `Blocked by`: dispatch is **oldest-first (FIFO)** inside one
+   P and the epic plays no part in ordering (#401 retired finish-first). If the order
+   really matters it is a dependency, so `Blocked by` is right; otherwise claim none.
 5. **Hierarchy**: if it is an epic (parent), split it into sub-issues and attach
    agent-ready **only to leaves**. Never attach it to the epic itself.
-6. **Priority**: attach exactly **one** P0/P1/P2 label (without one it is treated as
-   lowest priority). Priority is not scored per leaf — it is set **per topic (epic)**
-   and inherited:
+6. **Priority**: attach exactly **one** P0/P1 label (without one it lands in the same
+   bin as P1). There are only **two** tiers (`P2` was retired 2026-09-13). Priority is
+   not scored per leaf — it is set **per topic (epic)** and inherited:
    - **P0** = outage / blocking — the whole loop is waiting on it.
-   - **P1** = a leaf of the epic you are finishing right now. It inherits the epic's
-     P verbatim (leaves are not scored individually).
-   - **P2** = the default — standalone issues with no epic, and leaves of an epic
-     whose priority has not been decided yet.
+   - **P1** = the default — everything that is not P0. A leaf of an epic inherits the
+     epic's P verbatim (leaves are not scored individually), and standalone issues
+     with no epic land here too.
 
-   **At most two** P1 epics at a time — to raise a third, lower one of them.
+   Order inside one bin is **oldest-first (FIFO)**, so splitting the scale finer would
+   not change anything — never attach P0 because something "looks urgent" (P0 is
+   outage/blocking only). The **cap of two P1 epics** at a time is withdrawn as well —
+   the number of epics in flight is no longer limited through the P labels.
    **The epic itself never gets a P** (an epic carries only the `epic` label — same
    rule as hierarchy item 5). An epic's priority is expressed through its leaves, so
    open leaves of one epic carrying different P values means the inheritance broke
    (`loop-status.sh` reports it as an `에픽 내 P 혼재` warn).
    A **spinoff filed by closeout step 6 inherits its parent** — it takes the parent's
    `Epic #N` line and P verbatim, and when the parent is standalone (no epic) it gets
-   no `Epic` line and P2.
+   no `Epic` line and P1.
 7. **Repo readiness**: does the repo have (a) the label set —
    if not, run `~/.claude/skills/issue-runner/scripts/setup-labels.sh <owner/repo>`;
    (b) build/test commands in CLAUDE.md — without them the worker cannot verify
@@ -107,8 +110,8 @@ context — the issue body is the only spec.
      data-ledger issue and a viewing-UI issue on top of it) → **split, but attach
      `Blocked by` only between pieces that actually depend on each other** (splitting
      ≠ serializing — apply item 4's definition of a dependency). Ordering preference
-     inside one epic is carried by the `Epic #N` line plus finish-first ordering, not
-     by a blocker. Split pieces usually drop to medium or below, and
+     inside one epic is carried by the `Epic #N` line as a topic link only, not by a
+     blocker (dispatch is FIFO). Split pieces usually drop to medium or below, and
      hardware verification (needs:hardware) stays only on the pieces that need it.
    - If the seam runs through the middle of a contract so that either half is
      meaningless alone (e.g. sender/receiver — neither has an observable result by
@@ -200,7 +203,7 @@ label them").
    truncation.
 2. **Classify**: check each issue against the 10 checklist items above and sort it
    into one of three buckets:
-   - **READY** — passes the checklist. Include a proposed priority (P0/P1/P2) to
+   - **READY** — passes the checklist. Include a proposed priority (P0/P1) to
      attach.
    - **FIXABLE** — name the missing items (e.g. no Test plan, vague acceptance
      criteria, missing `Blocked by`, **an unnecessary `Blocked by` (not a real

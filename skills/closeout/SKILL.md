@@ -832,7 +832,7 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 
   ```
   gh issue create --repo <repo> --title "배포 대기: PR #<pr> — <요약>[ (승격만)]" \
-    --body-file <본문파일> --label deploy-wait [--label <P1|P2>]
+    --body-file <본문파일> --label deploy-wait [--label P1]
   ```
 
   `deploy-wait` 는 `loop-status.sh` 가 배포대기와 사람대기를 갈라 세는 버킷 라벨이자
@@ -1032,7 +1032,7 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
     --label agent-ready --label spinoff --label "$priority" [--label <레포 규약 라벨>...]
   ```
 
-  `spinoff-inherit.sh` 는 부모를 **한 번** 읽고 `epic=<N|->` · `priority=<P0|P1|P2>` 두 줄만
+  `spinoff-inherit.sh` 는 부모를 **한 번** 읽고 `epic=<N|->` · `priority=<P0|P1>` 두 줄만
   낸다(읽기 전용 — 부모를 편집하지 않는다). **exit 1(무출력)이면 발행을 멈춘다** — 위 부모
   미상과 같은 BLOCKED 로 올린다. 본문 파일의 `<EPIC_LINE>` 자리는 `epic=N` 이면 `Epic #N`
   한 줄로, `epic=-` 이면 **빈 줄**로 채운다 — 에픽은 sub-issue 링크나 라벨이 아니라 본문
@@ -1047,8 +1047,9 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
   라벨이 박혀 있어 186건 전건 정상이었다 — 당시 그 라벨은 `--label needs-human` 이었고,
   지금은 `--label deploy-wait` 다(#243). 명령이 있는 단계는 안 새고,
   산문뿐인 단계가 샜다). 우선순위(`--label "$priority"`)도 **생략 불가**다 — 없으면 정렬에서
-  최하위로 밀린다(`P0 > P1 > P2 > 없음`). 그 값은 지어내지 말고 위 헬퍼가 낸 것을 그대로
-  쓴다(부모가 P 라벨을 안 달았으면 헬퍼가 `P2` 를 준다).
+  P0 아닌 칸(= P1 과 같은 칸)으로 처리된다(#401 — 축은 `P0` 와 그 밖 둘뿐이고, 같은 칸
+  안의 순서는 생성순 FIFO 다). 그 값은 지어내지 말고 위 헬퍼가 낸 것을 그대로
+  쓴다(부모가 P 라벨을 안 달았거나 과도기의 `P2` 를 달고 있으면 헬퍼가 `P1` 을 준다).
   그 밖의 축(BoDAT 의 `difficulty:*`·`frontend`(UI 를 건드릴 때만)·
   `needs:hardware` — 레포 CLAUDE.md 의 라벨 절이 SSOT)은 **레포 규약을 따라 추가**하되, 규약 라벨을 다느라
   `agent-ready` 를 대체하지 마라 — 위 실측의 실패 형태가 정확히 그것이다.
@@ -1107,7 +1108,7 @@ approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스�
 `stale_reverify` 재디스패치·`held` needs-human 건은 `재디스패치 N` 으로 집계한다.
 
 그 아래 **항목마다 번호를 적는다** — 숫자만으론 어느 PR·이슈가 어디로 갔는지 다음 틱이 못 읽는다:
-`마감: PR #4795(bodat)←#4788 · 파생: #4823(bodat)←PR #4788 (Epic #4968 · P2) · 재디스패치: #4770(bodat, stale_reverify)`.
+`마감: PR #4795(bodat)←#4788 · 파생: #4823(bodat)←PR #4788 (Epic #4968 · P1) · 재디스패치: #4770(bodat, stale_reverify)`.
 `파생` 항목은 6단계 PR 코멘트 마커와 **같은 꼴**로 `#<새번호> (Epic #<N|없음> · <P>)` 를 적는다 —
 에픽을 못 물려받은 파생(`Epic 없음`)이 쌓이는지 매 틱 눈으로 보이게 하려는 것이다.
 레포 짧은 이름 규칙은 `loop-status.sh` 와 같다(`owner/repo` 의 repo 를 소문자로 — bodat·bodac,

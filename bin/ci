@@ -2805,9 +2805,11 @@ echo "[loop-issues] 우선순위=에픽 단위 · 의존 정의 문면 검사 (#
 # 안 깨지므로 아래 토큰이 유일한 방지선이다. `Epic #N` 줄 형식의 SSOT 는 문서가 아니라
 # `scripts/loop-status.sh` 의 `epic_of`(`^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)` —
 # 줄 시작 앵커, 이슈당 첫 매치 하나, 대소문자 무시)이고 문서는 그것을 옮긴 것이다.
-# 축: 에픽 줄 · P1 동시 상한 · 에픽 본체 무 P · 의존의 정의 · 깊이 상한 · 분해≠직렬화.
+# 축: 에픽 줄 · P1 동시 상한 **철회**(#401) · 에픽 본체 무 P · 의존의 정의 · 깊이 상한 ·
+# 분해≠직렬화. 상한 토큰은 "지켜라" 에서 "철회됐다" 로 뒤집혔다 — 옛 문구가 되살아나면
+# 문서가 다시 없는 규칙을 가르친다.
 for tok in 'Epic #N' \
-           '동시에 2개까지' \
+           'P1 에픽 수 상한' \
            '에픽 본체에는 P 를 붙이지 않는다' \
            '컴파일·실행 시점' \
            '2 를 넘으면' \
@@ -2816,7 +2818,7 @@ for tok in 'Epic #N' \
     || { echo "  ✗ skills/loop-issues/SKILL.md 에 '$tok' 문구 없음"; exit 1; }
 done
 for tok in 'Epic #N' \
-           'At most two' \
+           'cap of two P1 epics' \
            'never gets a P' \
            'compile/run time' \
            'more than 2' \
@@ -2858,9 +2860,11 @@ for f in README.ko.md README.md; do
   grep -qE '^\|[[:space:]]*.Epic #N.[[:space:]]*\|' "$f" \
     || { echo "  ✗ $f 라벨 표에 Epic #N 행 없음 (줄머리 표 행이어야 한다)"; exit 1; }
 done
-grep -E '^\|[[:space:]]*.P0. / .P1. / .P2.' README.ko.md | grep -qF '에픽' \
+# 앵커는 **두 칸**이다 (#401 — `P2` 폐지). 에픽 단위 *부착* 규약은 그대로 살아 있으므로
+# 행 본문의 에픽/epic 검사는 유지한다(정렬 키에서만 빠졌다).
+grep -E '^\|[[:space:]]*.P0. / .P1.[[:space:]]*\|' README.ko.md | grep -qF '에픽' \
   || { echo "  ✗ README.ko.md 라벨 표 P 행에 에픽 단위 정의 없음"; exit 1; }
-grep -E '^\|[[:space:]]*.P0. / .P1. / .P2.' README.md | grep -qF 'epic' \
+grep -E '^\|[[:space:]]*.P0. / .P1.[[:space:]]*\|' README.md | grep -qF 'epic' \
   || { echo "  ✗ README.md 라벨 표 P 행에 에픽 단위 정의 없음"; exit 1; }
 
 echo "[#292] loop-status 에픽 닫힌 leaf 조회 — 검색 쿼리 형태·단일 epic_of·헤더 계약"

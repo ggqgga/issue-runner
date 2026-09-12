@@ -94,7 +94,7 @@ ln -s ~/Projects/refs/issue-runner ~/.claude/skills/issue-runner
 4. **Label it and run the loop.** In Claude Code:
 
    ```bash
-   gh issue edit <N> --repo <owner/repo> --add-label agent-ready --add-label P2
+   gh issue edit <N> --repo <owner/repo> --add-label agent-ready --add-label P1
    ```
    ```
    /loop 15m /issue-runner
@@ -233,7 +233,7 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 |---|---|
 | `agent-ready` | The issue is safe to pick up. Attached **last**, after the spec is complete, by a human (or via `/loop-issues`). The dispatcher never adds it on its own |
 | `agent:claimed` | The dispatcher owns it. **Do not add/remove by hand** — the loop manages the lifecycle |
-| `P0` / `P1` / `P2` | Priority — set **per topic (epic)** and inherited by the leaves (never scored per leaf). `P0` outage/blocking (the whole loop waits on it) · `P1` a leaf of the epic you are finishing right now (inherits the epic's P verbatim; **at most two** P1 epics at a time) · `P2` the default (standalone issues, and leaves of an epic whose priority isn't set yet). Missing = lowest. **Never attached to the epic itself** — an epic's priority is expressed through its leaves |
+| `P0` / `P1` | Priority — set **per topic (epic)** and inherited by the leaves (never scored per leaf). There are only **two** tiers (`P2` was retired 2026-09-13). `P0` outage/blocking (the whole loop waits on it) · `P1` the default = everything that is not P0 (a leaf inherits its epic's P verbatim; standalone issues land here too). Missing = the same bin as P1. Order inside one bin is oldest-first (FIFO). **Never attached to the epic itself** — an epic's priority is expressed through its leaves |
 | `blocked-by:<N>` / `Blocked by #N` | Dependency. Either the label or a dedicated body line; a blocker that is still OPEN keeps the issue out of dispatch. `<N>` is an **issue** number, and the gate auto-clears when the blocker closes |
 | `Epic #N` | Topic link. A **dedicated body line** on each leaf of an epic (same shape as `Blocked by #N` — line-anchored, one per issue, case-insensitive). The dispatcher picks from the epic already under way first within the same P, and closeout closes an epic once all of its leaves are closed. It is not a dependency, so it never blocks dispatch |
 | `spinoff` | Provenance mark for an issue filed by closeout step 6. `loop-status.sh`'s spinoff tally counts by this label alone |
@@ -242,7 +242,7 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 | `hold:conflict` · `hold:policy` · `hold:ladder` | A **machine stop** and its reason — attached **alone** by `transition.sh verify-held|closeout-blocked|runner-held --reason <reason>` (#244: `needs-human` is no longer attached alongside, so the human-waiting bucket stops filling with things a human cannot act on). Only `ladder` is auto-resumed by the resume sweep once the `RESUME_AFTER_MIN` window has passed (no human action needed); `policy` gets one loop re-review (#155) and only a "kept" verdict attaches `needs-human` (`transition.sh policy-kept`); `conflict` is a human's job on its own (no auto-resume). The dispatch/verify/closeout gates read this **prefix** directly (#242) — when a human clears a hold, remove it **on the issue and on its open PR** (the sweep's stop-mirror cleanup drops a leftover PR copy, #265). `hold:dup` and `hold:hardware` deliberately do not exist — duplicates are closed by `closeout-dup`, and hardware climbs the ladder |
 | `dup` | A PR closed without merge by `closeout-dup` (already on main / duplicate). `loop-status.sh` counts it as dup-closed, apart from failures |
 
-Eligibility: `open + agent-ready + ¬agent:claimed + all blockers CLOSED`. Sort: `P0 > P1 > P2 > none`, ties oldest-first.
+Eligibility: `open + agent-ready + ¬agent:claimed + all blockers CLOSED`. Sort: **`P0` first, everything else oldest-first (FIFO)** — the epic plays no part in ordering.
 
 **Optional — workflow hooks.** GitHub Actions isn't used. Instead the repo ships a set of Claude Code hooks (in [`hooks/`](hooks/)) that enforce the loop's hygiene — a local CI cache + merge gate, an automatic codex review on every PR, and two guards that keep work on topic branches and traceable to issues. Each is opt-in: symlink it and register it in `~/.claude/settings.json`.
 
