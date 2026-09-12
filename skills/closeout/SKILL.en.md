@@ -1024,7 +1024,7 @@ if it became that tick's Pick), and `stale_reverify` re-dispatches / `held` need
 
 Below that, **name the numbers item by item** — counts alone do not tell the next tick where
 each PR/issue went:
-`closed: PR #4795(bodat)←#4788 · spinoff: #4823(bodat) (Epic #4968 · P2) · re-dispatched: #4770(bodat, stale_reverify)`.
+`closed: PR #4795(bodat)←#4788 · spinoff: #4823(bodat)←PR #4788 (Epic #4968 · P2) · re-dispatched: #4770(bodat, stale_reverify)`.
 Write the spinoff item in the **same shape** as step 6's PR marker comment —
 `#<new number> (Epic #<N|없음> · <P>)` — so spinoffs that failed to inherit an epic
 (`Epic 없음`) are visible as they accumulate, tick by tick.

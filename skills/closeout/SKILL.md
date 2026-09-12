@@ -880,7 +880,7 @@ approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스�
 `stale_reverify` 재디스패치·`held` needs-human 건은 `재디스패치 N` 으로 집계한다.
 
 그 아래 **항목마다 번호를 적는다** — 숫자만으론 어느 PR·이슈가 어디로 갔는지 다음 틱이 못 읽는다:
-`마감: PR #4795(bodat)←#4788 · 파생: #4823(bodat) (Epic #4968 · P2) · 재디스패치: #4770(bodat, stale_reverify)`.
+`마감: PR #4795(bodat)←#4788 · 파생: #4823(bodat)←PR #4788 (Epic #4968 · P2) · 재디스패치: #4770(bodat, stale_reverify)`.
 `파생` 항목은 6단계 PR 코멘트 마커와 **같은 꼴**로 `#<새번호> (Epic #<N|없음> · <P>)` 를 적는다 —
 에픽을 못 물려받은 파생(`Epic 없음`)이 쌓이는지 매 틱 눈으로 보이게 하려는 것이다.
 레포 짧은 이름 규칙은 `loop-status.sh` 와 같다(`owner/repo` 의 repo 를 소문자로 — bodat·bodac,

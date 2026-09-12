@@ -656,12 +656,11 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   [ -n "$s6_line" ]    || { echo "  ✗ $f: 6단계 헤더 앵커 없음"; exit 1; }
   [ -n "$drain_line" ] || { echo "  ✗ $f: ⑤ Drain 헤더 앵커 없음"; exit 1; }
   seg=$(sed -n "${s6_line},${drain_line}p" "$f")
-  # 발행 명령의 4요소 — 헬퍼 eval · agent-ready · spinoff · 상속받은 우선순위.
-  # `--label <P1|P2>`(손으로 고르던 옛 형태)로 되돌아가면 `--label "$priority"` 가 사라져
-  # 여기서 빨개진다.
-  # 세 라벨은 **한 줄 통째로** 문다 — 따로 세면 6단계 산문 어딘가에 같은 토큰이 있는 것만으로
-  # 통과해(ko 는 "우선순위(`--label \"\$priority\"`)도 생략 불가" 문장이 실제로 있다) 명령
-  # 블록에서 라벨이 빠진 회귀를 못 본다.
+  # 발행 명령이 가져야 할 것 — ⑴ 헬퍼 eval ⑵ `--label agent-ready`(기존 계열 가드 유지)
+  # ⑶ 세 라벨이 **한 줄 통째로**. ⑶ 을 토큰별로 따로 세지 않는 이유: 6단계 산문 어딘가에
+  # 같은 토큰이 있는 것만으로 통과한다(ko 에는 "우선순위(`--label \"\$priority\"`)도 생략
+  # 불가" 문장이 실제로 있다) — 그러면 명령 블록에서 라벨이 빠진 회귀를 못 본다. 한 줄
+  # 통째로 물면 `--label "$priority"` 만 지우는 뮤테이션에서 한/영 각각 EXIT=1 이다(실측).
   for tok in 'eval "$($SCRIPTS/spinoff-inherit.sh' \
              '--label agent-ready' \
              '--label agent-ready --label spinoff --label "$priority"'; do

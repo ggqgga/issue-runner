@@ -110,7 +110,7 @@ check "격자: 전대문자 EPIC"                 $'EPIC #4962\n본문' ''      
 check "격자: 대소문자 혼합 EpIc"            $'EpIc #4962\n본문' ''        4962 P2
 check "격자: 앞 공백 2칸"                   $'  Epic #4962\n본문' ''      4962 P2
 check "격자: 앞 탭"                         $'\tEpic #4962\n본문' ''      4962 P2
-check ' 격자: Epic 과 # 사이 공백 2칸'      $'Epic  #4962\n본문' ''       4962 P2
+check '격자: Epic 과 # 사이 공백 2칸'       $'Epic  #4962\n본문' ''       4962 P2
 check "격자: 첫 줄 아닌 셋째 줄"            $'머리말\n\nEpic #4962\n본문' '' 4962 P2
 check "격자: CRLF 본문"                     $'Epic #4962\r\n본문\r\n' ''  4962 P2
 check "격자: 백틱 인용 줄(전용 줄 아님)"    $'`Epic #4962`\n본문' ''      -    P2
