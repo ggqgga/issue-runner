@@ -1195,7 +1195,7 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f: 5단계 green 갈래에 실장비 예외 상호참조('$xref')가 없다 — green 만 읽으면 그대로 닫는다 (#278)"; exit 1; }
 done
 
-echo "[closeout] <LIVE_CHECKS> 실장비 표식 — 형태 강제 + 4·5단계·템플릿 동일 표식 검사 (#309)"
+echo "[closeout] <LIVE_CHECKS> 실장비 표식 — 형태 강제 + 4·5단계·템플릿·실행 프롬프트 동일 표식 검사 (#309)"
 # #298 은 5단계 green 갈래에 "실장비 항목이 `- [ ]` 로 남아 있으면 닫지 않는다" 예외를 넣어
 # **닫는 자리**를 막았다. 그런데 그 예외가 걸리려면 5단계가 **어느 줄이 실장비인지** 알아야
 # 하는데, 당시 근거는 4단계의 산문 한 줄("한 줄 = … (실장비면 TEST 워커 프로필 #18 드라이런)")
@@ -1267,6 +1267,61 @@ t_ph=$(grep -nF '<LIVE_CHECKS>' "$tmpl" | head -1 | cut -d: -f1)
   || { echo "  ✗ $tmpl: '## 라이브/하드웨어 검증 항목' ~ '<LIVE_CHECKS>' 구간을 못 찾음"; exit 1; }
 sed -n "${t_head},${t_ph}p" "$tmpl" | grep -qF '`- [ ] [칸 ③] <동작>` 형태로 적는다' \
   || { echo "  ✗ $tmpl: 형태 안내 주석에 실장비 접두 표식 형태('- [ ] [칸 ③] <동작>')가 없다 — 발행되는 이슈에 표식이 안 붙는다 (#309)"; exit 1; }
+# ⓔ **실행 프롬프트** — 위 ⓐⓑⓒ 는 생산(4단계)·소비(5단계)·템플릿 셋을 묶었지만, 5단계가
+#    실제로 **밟는 주체에게 건네는 문서**는 `references/smoke-prompt*.md` 다: 5단계는
+#    `<LIVE_CHECKS>` 를 그 프롬프트에 통째로 치환하고(placeholder 는 파일 끝), 그 프롬프트의
+#    출력 계약이 항목별 판정 어휘와 `<전체수>` 의 정의를 쥐고 있다. 그래서 표식·분모 규칙이
+#    SKILL 에만 있으면 **같은 에이전트가 모순된 두 계약을 받는다** — SKILL 은 "표식 줄은
+#    밟지 말고 분모에서 빼라" 인데 프롬프트는 "전 항목에 한 줄씩 판정, 끝에 <전체수>" 다.
+#    결말이 둘 다 나쁘다: 표식 줄을 크롬이 시도해 **거짓 fail** 이 되면 fail 갈래가
+#    `needs-human` 후속 이슈를 내고(attempt 1 이 샌 자리), `skip` 으로 찍히면 **분모에 남아
+#    거짓 초록**이 되며 그 `skip` 은 저하 마커 `스모크 skip:` 과 **어휘가 겹친다**(#309 BLOCKER).
+#    처방(ⓐ 갈래): 같은 표식·분모 규칙을 두 프롬프트에 넣고, 항목별 어휘를
+#    `pass`·`fail`·`보류` 로 고정해 `skip` 을 전체-저하 전용으로 돌려준다.
+#    ⓑ(치환 전 필터)를 택하지 않은 이유도 여기서 문다 — 필터는 표식 줄만 지울 수 있고
+#    "크롬이 시도조차 못 한 줄" 은 **밟아 봐야 알기에** 프롬프트 안에서만 갈린다. 두 갈래를
+#    섞으면 실장비를 세는 계산기가 둘이 된다. 그래서 5단계에 "그대로 치환·미리 거르지 마라"
+#    문면이 있는지도 함께 문다(없으면 ⓑ 하이브리드가 슬며시 돌아온다).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) nofilter='substitute that section untouched — do not pre-filter the marked lines out' ;;
+    *)       nofilter='그 절을 손대지 말고 그대로 치환한다 — 표식 줄을 미리 걸러 내지 마라' ;;
+  esac
+  grep -qF -- "$nofilter" "$f" \
+    || { echo "  ✗ $f: 5단계에 '<LIVE_CHECKS> 를 그대로 치환한다(미리 거르지 마라)' 문면('$nofilter')이 없다 — 프롬프트와 치환부가 실장비를 각자 세게 된다 (#309)"; exit 1; }
+done
+for f in skills/closeout/references/smoke-prompt.md \
+         skills/closeout/references/smoke-prompt.en.md; do
+  [ -f "$f" ] || { echo "  ✗ 누락: $f"; exit 1; }
+  case "$f" in
+    *.en.md) p_marker='A line carrying the `[칸 ③]` prefix marker'
+             p_denom='`보류` lines go into neither'
+             p_vocab='vocabulary is `pass`·`fail`·`보류`'
+             p_stale='with `pass`/`fail`/`skip` and a rationale' ;;
+    *)       p_marker='접두 표식 `[칸 ③]` 이 붙은 줄'
+             p_denom='`보류` 줄은 분자에도 분모에도 넣지 않는다'
+             p_vocab='`pass`·`fail`·`보류` **셋뿐이다.**'
+             p_stale='`pass`/`fail`/`skip` 과 근거를 적고' ;;
+  esac
+  # ⑴ 판별 — 프롬프트가 4·5단계와 **같은 표식**으로 실장비 줄을 가려내는가.
+  grep -qF -- "$p_marker" "$f" \
+    || { echo "  ✗ $f: 실행 프롬프트에 실장비 표식('$live_marker') 판별 문면('$p_marker')이 없다 — 5단계 규칙이 밟는 주체에 도달하지 않는다 (#309)"; exit 1; }
+  # ⑵ 분모 — `<전체수>` 정의가 보류 줄을 빼는가. 이게 없으면 보류 줄이 분모에 남아 거짓 초록.
+  grep -qF -- "$p_denom" "$f" \
+    || { echo "  ✗ $f: 출력 계약의 <전체수> 정의가 보류 줄을 분모에서 빼지 않는다('$p_denom' 부재) — 밟지 않은 줄이 통과로 세어진다 (#309)"; exit 1; }
+  # ⑶ 어휘 — 항목별 판정에서 `skip` 을 몰아내야 저하 마커 `스모크 skip:` 과 안 겹친다.
+  grep -qF -- "$p_vocab" "$f" \
+    || { echo "  ✗ $f: 항목별 판정 어휘를 pass·fail·보류 셋으로 고정하는 문면('$p_vocab')이 없다 — 항목 skip 이 저하 마커 '스모크 skip:' 과 겹친다 (#309)"; exit 1; }
+  # ⑷ 재발 지문 — 옛 출력 계약(전 항목 pass/fail/skip)이 되살아나면 빨강. ⑴~⑶ 만으로는
+  #    새 문면을 덧붙이고 옛 계약을 그대로 남기는 회귀를 못 잡는다(두 계약 공존 = BLOCKER 원형).
+  if grep -qF -- "$p_stale" "$f"; then
+    echo "  ✗ $f: 옛 출력 계약('$p_stale')이 남아 있다 — 표식·보류 규칙과 모순된 두 계약을 같은 에이전트가 받는다 (#309)"; exit 1
+  fi
+  # ⑸ 보류 내역 — 5단계가 코멘트로 옮길 내역 줄을 프롬프트가 **같은 문자열**로 낸다.
+  #    (5단계는 뒤에 분류 접미사를 더하므로 공통 접두로 문다.)
+  grep -qF -- '보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건' "$f" \
+    || { echo "  ✗ $f: 보류 내역 출력('보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건')이 없다 — 5단계가 <a>·<b> 를 받을 경로가 없다 (#309)"; exit 1; }
+done
 
 echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4)"
 # 1단계 검증자가 과거 오판 패턴(인용 오판·base 맹점 등)을 반복하지 않도록 lessons 를

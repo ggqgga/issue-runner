@@ -863,7 +863,12 @@ a clear closing moment**.
 reported deployed, without any new detection mechanism (no polling/timing), actively run
 a Chrome smoke to judge it. Parse `## 검증 URL` (`<VERIFY_URL>`) and
 `## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body, fill
-`references/smoke-prompt.en.md`'s placeholders, load the chrome-devtools MCP tools via
+`references/smoke-prompt.en.md`'s placeholders
+(**substitute that section untouched — do not pre-filter the marked lines out.**
+The marker/denominator/held rules below are carried
+in the same wording inside `smoke-prompt.en.md`, so the prompt applies them itself;
+filtering once more before substitution creates a second calculator for real-hardware
+items), load the chrome-devtools MCP tools via
 ToolSearch, then **entry cleanup (idempotent — crash-resume defense): via `list_pages`,
 if a prior tick died before cleanup and left a smoke page, `close_page` it first.** Then
 `navigate_page` to `<VERIFY_URL>`, and compare each item via
@@ -924,12 +929,19 @@ structure/empty-state confirmation from real-data render confirmation in the res
     does not conflict with the no-promotion rule above — there is still one calculator.
   - **Do not backfill the marker in its place.** Not every held line is rung ③ (some only
     need a server shell). Keep the marker string single, but split the breakdown into one
-    comment line: `보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건 — 재고 또는 4단계 표식 누락`.
-  - **Newly filed issues never reach this fail-closed branch.** The step-4 shape
-    discipline forces `[칸 ③]` on real-hardware lines, so an unmarked line is one Chrome
-    can step, and it is decided by the first branch (marker) or the second (step it,
-    pass/fail). Reaching this branch at all is itself the signal that the ticket is
-    **backlog, or that the step-4 shape discipline was violated**.
+    comment line: `보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건 — 재고 · 4단계 표식 누락 · 또는 4단계가 수단을 적어 보낸 비-칸③ 줄`.
+  - **Exactly one category of newly filed line reaches this fail-closed branch.** The
+    step-4 shape discipline forces `[칸 ③]` on real-hardware lines, so an unmarked line is
+    **usually** one Chrome can step, and it is decided by the first branch (marker) or the
+    second (step it, pass/fail). The exception is a line step 4 sent to ⑦ with the means
+    written on it because it **is not rung ③ yet needs a tool outside the browser** (the
+    last sentence of step 4's "an unmarked line must be one Chrome can step" bullet) —
+    that line obeys the discipline and still cannot be stepped by Chrome, so it lands
+    here. Hence the **third category** in the breakdown above: recording such a line as a
+    "missing marker" **misrecords** a step 4 that followed the rule as one that broke it
+    (the verdict is the same; only the record is wrong). Once those two are set aside,
+    anything left in this branch is the signal that the ticket is **backlog, or that the
+    step-4 shape discipline was violated**.
 - **Already-closed deploy issue — skip the smoke.** If the deploy issue is already
   CLOSED and has a verification/deploy-complete comment, treat step 5 as complete —
   do not re-smoke, proceed to the next step (the case where the deploy lane
