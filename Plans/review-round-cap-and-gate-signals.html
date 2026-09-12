@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>리뷰 회차 상한 + 게이트 구조 신호</title>
+<style>
+  :root { color-scheme: light; --ink:#1f2328; --mute:#57606a; --line:#d0d7de; --bg:#ffffff; --card:#f6f8fa; --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; --acc:#0969da; }
+  body { margin:0; padding:32px 24px 64px; font:14px/1.6 -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif; color:var(--ink); background:var(--bg); }
+  main { max-width:1080px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  h2 { font-size:16px; margin:36px 0 12px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+  p.sub { color:var(--mute); margin:0 0 20px; }
+  figure { margin:0; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; overflow-x:auto; }
+  figcaption { color:var(--mute); font-size:12px; margin-top:8px; }
+  svg text { font-family:inherit; font-size:12px; fill:var(--ink); }
+  svg .mute { fill:var(--mute); font-size:11px; }
+  svg .box { fill:#fff; stroke:var(--line); stroke-width:1.2; rx:6; }
+  svg .codex { stroke:var(--acc); }
+  svg .self { stroke:var(--ok); stroke-dasharray:5 3; }
+  svg .bad { stroke:var(--bad); }
+  svg .arrow { stroke:var(--mute); stroke-width:1.4; fill:none; marker-end:url(#a); }
+  svg .arrow.bad { stroke:var(--bad); }
+  svg .arrow.ok { stroke:var(--ok); }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { border:1px solid var(--line); padding:6px 10px; text-align:left; vertical-align:top; }
+  th { background:var(--card); }
+  code { background:var(--card); padding:1px 5px; border-radius:4px; font-size:12px; }
+  .del { color:var(--bad); } .add { color:var(--ok); }
+</style>
+</head>
+<body>
+<main>
+<h1>리뷰 회차 상한 + 게이트 구조 신호</h1>
+<p class="sub">에픽 #372 · codex 는 PR 당 2회, 3회차는 자체 리뷰로 완료 · 계약 줄 폐기 → 구조 신호 (플랜: <code>review-round-cap-and-gate-signals.md</code>)</p>
+
+<h2>① 검증 회차 — 지금 vs 결정</h2>
+<figure>
+<svg width="1020" height="300" viewBox="0 0 1020 300" role="img" aria-label="검증 회차 흐름">
+  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#57606a"/></marker></defs>
+  <!-- 지금 -->
+  <text x="12" y="22" font-weight="600">지금 — 회차당 codex 3회 × 반송 3회, 상한이면 hold:policy</text>
+  <rect class="box codex" x="12" y="36" width="150" height="46"/><text x="22" y="56">verify-runner</text><text x="22" y="72" class="mute">codex 정확성 ×1</text>
+  <rect class="box codex" x="212" y="36" width="170" height="46"/><text x="222" y="56">closeout 1단계</text><text x="222" y="72" class="mute">codex 정확성 + 계획부합 ×2</text>
+  <rect class="box bad" x="432" y="36" width="120" height="46"/><text x="442" y="56">BLOCKER</text><text x="442" y="72" class="mute">회차마다 다른 답</text>
+  <rect class="box" x="602" y="36" width="130" height="46"/><text x="612" y="56">워커 재구현</text><text x="612" y="72" class="mute">최대 5회</text>
+  <rect class="box bad" x="782" y="36" width="220" height="46"/><text x="792" y="56">hold:policy → 사람 결정</text><text x="792" y="72" class="mute">오늘 4건 중 2건은 이미 풀린 건</text>
+  <path class="arrow" d="M162,59 L212,59"/><path class="arrow" d="M382,59 L432,59"/><path class="arrow bad" d="M552,59 L602,59"/>
+  <path class="arrow bad" d="M667,82 C667,110 87,110 87,82"/><text x="300" y="120" class="mute">반송 ×3 (verify) + ×N (closeout) → 상한</text>
+  <path class="arrow bad" d="M732,59 L782,59"/>
+  <!-- 결정 -->
+  <text x="12" y="166" font-weight="600">결정 — codex 2회, 3회차는 자체 리뷰로 완료 · closeout 1단계 codex 0회 · 반송은 hold:policy 아님</text>
+  <rect class="box codex" x="12" y="182" width="170" height="52"/><text x="22" y="202">pass 1 · N=0</text><text x="22" y="220" class="mute">codex 호출 → ✅ 또는 반송</text>
+  <rect class="box codex" x="242" y="182" width="190" height="52"/><text x="252" y="202">pass 2 · N=1</text><text x="252" y="220" class="mute">codex 호출(마지막) → ✅ 또는 반송(최종 회차)</text>
+  <rect class="box self" x="492" y="182" width="230" height="52"/><text x="502" y="202">pass 3 · N=2</text><text x="502" y="220" class="mute">codex 없음 · 자체 리뷰(해소/미해소) → ✅</text>
+  <rect class="box self" x="782" y="182" width="220" height="52"/><text x="792" y="202">closeout 1단계</text><text x="792" y="220" class="mute">general-purpose 계획부합만 · 잔여 → 파생</text>
+  <path class="arrow" d="M182,208 L242,208"/><text x="188" y="200" class="mute">반송</text>
+  <path class="arrow" d="M432,208 L492,208"/><text x="438" y="200" class="mute">반송</text>
+  <path class="arrow ok" d="M722,208 L782,208"/><text x="734" y="200" class="mute">✅</text>
+  <path class="arrow ok" d="M97,234 C97,270 890,270 890,234"/><text x="380" y="262" class="mute">pass 1·2 에서 ✅ 면 곧바로 closeout (codex 는 어느 경로든 ≤2)</text>
+</svg>
+<figcaption>verify-attempt 카운터·마커 문구·transition 전이 표는 그대로. 바뀌는 건 "N=2 에서 codex 대신 자체 리뷰" 와 "held(policy) 의 상한 초과 갈래 삭제" 뿐.</figcaption>
+</figure>
+
+<h2>② 게이트 판정 — 모델 문장에서 codex 구조로</h2>
+<figure>
+<svg width="1020" height="250" viewBox="0 0 1020 250" role="img" aria-label="게이트 판정 트리">
+  <rect class="box" x="12" y="20" width="200" height="46"/><text x="22" y="40">review.md 항목 집계</text><text x="22" y="56" class="mute">- [P1] / [P2] / [P3] (ITEM_P*_RE)</text>
+  <rect class="box codex" x="292" y="20" width="230" height="46"/><text x="302" y="40">항목 ≥ 1 → BLOCKER / WARN / NIT</text><text x="302" y="56" class="mute">파일:줄 달린 항목 = "읽었다" 의 증거</text>
+  <path class="arrow ok" d="M212,43 L292,43"/>
+  <rect class="box" x="12" y="110" width="200" height="46"/><text x="22" y="130">항목 0</text><text x="22" y="146" class="mute">"문제 없음" 은 위험한 칸</text>
+  <path class="arrow" d="M112,66 L112,110"/>
+  <rect class="box bad" x="292" y="96" width="230" height="40"/><text x="302" y="114">REVIEW_STATUS: no-basis 줄 → NONE</text><text x="302" y="128" class="mute">선택 신호(요구 안 함)</text>
+  <rect class="box" x="292" y="150" width="230" height="46"/><text x="302" y="170">events.jsonl 읽기</text><text x="302" y="186" class="mute">command_execution · command 에 "git " 또는 --cd 경로</text>
+  <path class="arrow" d="M212,126 L292,116"/><path class="arrow" d="M212,140 L292,170"/>
+  <rect class="box codex" x="602" y="140" width="160" height="40"/><text x="612" y="158">≥ 1 → CLEAN</text><text x="612" y="172" class="mute">실측 4호출: 8~15개 전부 git</text>
+  <rect class="box bad" x="602" y="192" width="160" height="40"/><text x="612" y="210">0 → NONE(폴백)</text><text x="612" y="224" class="mute">안 읽고 낸 "문제 없음"</text>
+  <path class="arrow ok" d="M522,166 L602,160"/><path class="arrow bad" d="M522,182 L602,212"/>
+  <rect class="box" x="812" y="20" width="196" height="176"/><text x="822" y="40" font-weight="600">삭제</text>
+  <text x="822" y="62" class="mute">· 계약 줄 "reviewed" 요구</text>
+  <text x="822" y="80" class="mute">· "마지막 줄" 파서(contract_re)</text>
+  <text x="822" y="98" class="mute">· 모델 통제 구역(cli_rendered awk)</text>
+  <text x="822" y="116" class="mute">· RENDER_HEADER_* 상수</text>
+  <text x="822" y="134" class="mute">· LEGACY_UNABLE 산문 휴리스틱</text>
+  <text x="822" y="152" class="mute">· 격자 4b-2/2i·2f·2g/2h·4b-3</text>
+  <text x="822" y="170" class="mute">· bin/ci 1039~1083 대부분</text>
+</svg>
+<figcaption>실측(2026-09-13): 정본 프롬프트 실호출 0/4 가 계약 줄을 냈고 4/4 가 판정(BLOCKER 2·WARN 1·CLEAN 1)을 냈다. 버린 쪽은 게이트.</figcaption>
+</figure>
+
+<h2>대상 파일</h2>
+<table>
+<tr><th>부분</th><th>파일</th><th>변경</th></tr>
+<tr><td>②</td><td><code>scripts/codex-review-gate.sh</code></td><td>판정 블록 교체 · 계약문 → 힌트 · <span class="del">LEGACY_UNABLE · cli_rendered · RENDER_HEADER_*</span> · <span class="add">events 판정 함수</span></td></tr>
+<tr><td>②</td><td><code>scripts/tests/codex-review-gate.test.sh</code></td><td>스텁 events.jsonl 실 스키마 · <span class="del">계약 줄 위치/어형/헤더 격자</span> · <span class="add">항목/이벤트/no-basis 격자 5행 + 뮤테이션 3종</span></td></tr>
+<tr><td>②</td><td><code>scripts/codex-review-gate-smoke.sh</code> · <code>bin/ci</code></td><td>exit 3 = 항목 0 · 계약 검사 축소(상수 2개 + 하드코딩 금지)</td></tr>
+<tr><td>②</td><td><code>verifier-prompt.md</code> · closeout <code>SKILL.md/.en.md</code> · <code>Plans/codex-native-review-gate.md</code></td><td>계약 문단 삭제 · 구조 신호 요약 · 착지 기록</td></tr>
+<tr><td>①</td><td><code>skills/verify-runner/SKILL.md</code></td><td><code>CODEX_REVIEW_LIMIT = 2</code> · ③-3 분기 · ④ passed/redispatched · <span class="del">held 상한 초과 갈래</span></td></tr>
+<tr><td>①</td><td>closeout <code>SKILL.md/.en.md</code> · <code>worker-template.md/.en.md</code></td><td>1단계 <code>VERIFIER = general-purpose</code> · ⓑ 사유에서 미산출 제거(앵커 보존) · 최종 회차 9-b 필수</td></tr>
+<tr><td>①</td><td><code>bin/ci</code></td><td><span class="add">불변 가드: closeout 에 codex-review-gate 호출 0 · verify-runner 에 CODEX_REVIEW_LIMIT = 2</span></td></tr>
+</table>
+
+<h2>무접촉</h2>
+<p><code>transition.sh</code> 전이 표 · <code>--reason</code> 값 · <code>setup-labels.sh</code> · 반송/판정 마커 문구 · <code>MAX_REPAIRS_PER_PR</code> · 새 hold 사유 없음.</p>
+</main>
+</body>
+</html>
