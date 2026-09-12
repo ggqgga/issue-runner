@@ -4,7 +4,7 @@
 # 파생 이슈가 부모에게서 **기계적으로** 물려받을 두 값을 stdout 에 정확히 두 줄로 낸다 (#261):
 #
 #   epic=<N|->          부모가 속한 에픽 번호. 없으면 `-`
-#   priority=<P0|P1|P2> 부모의 P 라벨. 없으면 `P2`
+#   priority=<P0|P1>    부모의 P 라벨. 없으면 `P1`
 #
 # 출력은 `eval "$(...)"` 로 그대로 쉘 변수가 되는 형태다 — closeout 6단계 발행 명령이
 # `--label "$priority"` 로 쓰고, `$epic` 으로 본문 첫 줄 `Epic #N` 을 채운다.
@@ -32,7 +32,9 @@
 # ⑶ 둘 다 없으면 `-`.
 #
 # ── priority 판정 ────────────────────────────────────────────────────────────
-# `eligible-issues.sh` 의 정렬 판정과 **같은 순서**(P0 > P1 > P2), 라벨이 없으면 `P2`.
+# `eligible-issues.sh` 의 정렬 판정과 **같은 축**(P0 아니면 전부 같은 칸, #401), 라벨이
+# 없으면 `P1`. 과도기에 남아 있는 부모의 `P2` 도 `P1` 로 접는다 — 디스패치가 이미 그
+# 둘을 한 칸으로 보므로 파생만 옛 등급을 물고 다닐 이유가 없다.
 # P 를 "급해 보여서" 올리지 않는다 — 올리려면 사람이 에픽 단위로 올린다.
 #
 # 읽기 전용이다 — 부모를 편집하지 않는다.
@@ -74,9 +76,7 @@ out=$(printf '%s' "$raw" | jq -r \
        | if length > 0 then .[0] else null end);
     def prio:
       if has_label("P0") then "P0"
-      elif has_label("P1") then "P1"
-      elif has_label("P2") then "P2"
-      else "P2" end;                      # P 라벨 없음 = P2 (남발 방지 기본값)
+      else "P1" end;                      # P0 아니면 전부 P1 (#401 — 과도기 P2·라벨 없음 포함)
     ( if has_label("epic") then $parent    # 부모가 에픽 본체면 파생은 그 에픽의 leaf
       else (epic_of // "-") end ) as $e
     | "epic=\($e)", "priority=\(prio)"

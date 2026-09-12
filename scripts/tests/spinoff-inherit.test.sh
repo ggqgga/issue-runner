@@ -5,7 +5,7 @@
 # 만든 결정론 헬퍼의 SSOT 테스트다. 무는 것:
 #   ⑴ `epic=<N|->` 판정이 `loop-status.sh` 의 `epic_of`(#260) 와 **같은 줄 앵커 규칙**인가
 #      — 산문 속 `… epic #N …`·백틱 인용·공백 없는 `Epic#N` 은 신호가 아니다(전용 줄만).
-#   ⑵ `priority=<P0|P1|P2>` 가 `eligible-issues.sh` 와 같은 우선순위(P0>P1>P2, 없으면 P2)인가
+#   ⑵ `priority=<P0|P1>` 가 `eligible-issues.sh` 와 같은 축(P0 아니면 전부 P1, #401)인가
 #   ⑶ 조회 실패가 **출력 0줄 + exit 1** 로 fail-closed 하는가(상속 없이 발행하지 않는다)
 #   ⑷ 부모를 **한 번만** 읽는가(gh 호출 1회)
 #   ⑸ 출력이 `eval "$(...)"` 로 그대로 쉘 변수가 되는가(6단계 발행 명령의 계약)
@@ -85,17 +85,17 @@ echo "── 수용 기준 5케이스 ①~⑤ ───────────�
 check "① Epic 줄 + P1" \
   $'Epic #4962\n\n## 배경\n어쩌고.' 'P1,difficulty:easy' 4962 P1
 
-# ② 부모 단발(에픽 줄 없음)·P 라벨 없음 → epic=- · priority=P2
+# ② 부모 단발(에픽 줄 없음)·P 라벨 없음 → epic=- · priority=P1
 check "② 단발 + P 없음" \
-  $'## 배경\n에픽 줄이 없는 단발 이슈.' 'difficulty:medium,frontend' - P2
+  $'## 배경\n에픽 줄이 없는 단발 이슈.' 'difficulty:medium,frontend' - P1
 
 # ③ 부모가 `epic` 라벨 이슈 자체 → epic=<부모번호>
 check "③ epic 라벨 부모" \
-  $'## 배경\n이 이슈가 에픽 본체다.' 'epic' "$PARENT" P2
+  $'## 배경\n이 이슈가 에픽 본체다.' 'epic' "$PARENT" P1
 
 # ④ 산문 속 `epic #N` 만 → epic=- (전용 줄만 신호)
 check "④ 산문 속 epic #N" \
-  $'## 배경\n이건 epic #4962 의 하위처럼 보이지만 전용 줄이 아니다.' 'P2' - P2
+  $'## 배경\n이건 epic #4962 의 하위처럼 보이지만 전용 줄이 아니다.' 'P2' - P1
 
 # ⑤ 조회 실패 → 출력 0줄, exit 1 (fail-closed — 상속 없이 발행하지 않는다)
 run "$(mkfx 'Epic #4962' 'P1')" 1
@@ -104,35 +104,38 @@ if [ "$RC" = 1 ] && [ -z "$OUT" ]; then ok; else bad "⑤ 조회 실패 fail-clo
 echo '── epic= 판정 격자 — 전용 줄만 신호(loop-status.sh epic_of 와 동일 규칙) ──'
 
 # want 열을 가진 전수 격자 — 리뷰가 짚은 개별 반례만 막지 말고 규칙 자체를 단언한다(PR#202).
-check "격자: 대문자 Epic, 본문 첫 줄"      $'Epic #4962\n본문' ''        4962 P2
-check "격자: 소문자 epic, 줄 시작"          $'epic #4962\n본문' ''        4962 P2
-check "격자: 전대문자 EPIC"                 $'EPIC #4962\n본문' ''        4962 P2
-check "격자: 대소문자 혼합 EpIc"            $'EpIc #4962\n본문' ''        4962 P2
-check "격자: 앞 공백 2칸"                   $'  Epic #4962\n본문' ''      4962 P2
-check "격자: 앞 탭"                         $'\tEpic #4962\n본문' ''      4962 P2
-check '격자: Epic 과 # 사이 공백 2칸'       $'Epic  #4962\n본문' ''       4962 P2
-check "격자: 첫 줄 아닌 셋째 줄"            $'머리말\n\nEpic #4962\n본문' '' 4962 P2
-check "격자: CRLF 본문"                     $'Epic #4962\r\n본문\r\n' ''  4962 P2
-check "격자: 백틱 인용 줄(전용 줄 아님)"    $'`Epic #4962`\n본문' ''      -    P2
-check "격자: 공백 없는 Epic#4962"           $'Epic#4962\n본문' ''         -    P2
-check "격자: 산문 중간 등장"                $'부모는 Epic #4962 이다\n본문' '' - P2
-check "격자: 줄 앞 불릿(- Epic #N)"         $'- Epic #4962\n본문' ''      -    P2
-check "격자: 숫자 아닌 #abc"                $'Epic #abc\n본문' ''         -    P2
-check "격자: 빈 본문"                       ''                       ''       -    P2
-check "격자: Epic 줄 2개 — 첫 매치만"       $'Epic #4962\nEpic #5001\n본문' '' 4962 P2
-check "격자: Epics #N(접미 s)은 신호 아님"  $'Epics #4962\n본문' ''       -    P2
+check "격자: 대문자 Epic, 본문 첫 줄"      $'Epic #4962\n본문' ''        4962 P1
+check "격자: 소문자 epic, 줄 시작"          $'epic #4962\n본문' ''        4962 P1
+check "격자: 전대문자 EPIC"                 $'EPIC #4962\n본문' ''        4962 P1
+check "격자: 대소문자 혼합 EpIc"            $'EpIc #4962\n본문' ''        4962 P1
+check "격자: 앞 공백 2칸"                   $'  Epic #4962\n본문' ''      4962 P1
+check "격자: 앞 탭"                         $'\tEpic #4962\n본문' ''      4962 P1
+check '격자: Epic 과 # 사이 공백 2칸'       $'Epic  #4962\n본문' ''       4962 P1
+check "격자: 첫 줄 아닌 셋째 줄"            $'머리말\n\nEpic #4962\n본문' '' 4962 P1
+check "격자: CRLF 본문"                     $'Epic #4962\r\n본문\r\n' ''  4962 P1
+check "격자: 백틱 인용 줄(전용 줄 아님)"    $'`Epic #4962`\n본문' ''      -    P1
+check "격자: 공백 없는 Epic#4962"           $'Epic#4962\n본문' ''         -    P1
+check "격자: 산문 중간 등장"                $'부모는 Epic #4962 이다\n본문' '' - P1
+check "격자: 줄 앞 불릿(- Epic #N)"         $'- Epic #4962\n본문' ''      -    P1
+check "격자: 숫자 아닌 #abc"                $'Epic #abc\n본문' ''         -    P1
+check "격자: 빈 본문"                       ''                       ''       -    P1
+check "격자: Epic 줄 2개 — 첫 매치만"       $'Epic #4962\nEpic #5001\n본문' '' 4962 P1
+check "격자: Epics #N(접미 s)은 신호 아님"  $'Epics #4962\n본문' ''       -    P1
 
-echo '── priority= 판정 — eligible-issues.sh 와 같은 순서(P0>P1>P2, 없으면 P2) ──'
+echo '── priority= 판정 — eligible-issues.sh 와 같은 축(P0 아니면 전부 P1, #401) ──'
 
-check "P0 단독"              $'## 배경' 'P0'          - P0
-check "P1 단독"              $'## 배경' 'P1'          - P1
-check "P2 단독"              $'## 배경' 'P2'          - P2
-check "P0+P1 혼재 → P0"      $'## 배경' 'P1,P0'       - P0
-check "P1+P2 혼재 → P1"      $'## 배경' 'P2,P1'       - P1
-check "P 없음 → P2 기본값"   $'## 배경' 'spinoff'     - P2
-check "라벨 0개 → P2 기본값" $'## 배경' ''            - P2
+check "P0 단독"                  $'## 배경' 'P0'          - P0
+check "P1 단독"                  $'## 배경' 'P1'          - P1
+# 재라벨 전 과도기의 `P2` 부모는 `P1` 을 물려준다 — 디스패치가 이미 한 칸으로 보므로
+# 파생만 사라질 등급을 물고 다닐 이유가 없다.
+check "P2 단독 → P1(과도기)"     $'## 배경' 'P2'          - P1
+check "P0+P1 혼재 → P0"          $'## 배경' 'P1,P0'       - P0
+check "P0+P2 혼재 → P0"          $'## 배경' 'P2,P0'       - P0
+check "P1+P2 혼재 → P1"          $'## 배경' 'P2,P1'       - P1
+check "P 없음 → P1 기본값"       $'## 배경' 'spinoff'     - P1
+check "라벨 0개 → P1 기본값"     $'## 배경' ''            - P1
 # 유사 라벨이 P 라벨로 오독되면 안 된다(`P0` 와 `P0-blocked` 는 다른 라벨).
-check "유사 라벨 P0-blocked" $'## 배경' 'P0-blocked'  - P2
+check "유사 라벨 P0-blocked"     $'## 배경' 'P0-blocked'  - P1
 
 echo "── epic 라벨 × Epic 줄 동시 — 라벨이 이긴다(부모 자신이 에픽이다) ──"
 check "epic 라벨 + Epic 줄"  $'Epic #4962\n본문' 'epic,P1' "$PARENT" P1
@@ -184,7 +187,7 @@ printf '%s' "$(mkfx $'## 배경' '')" > "$tmp/fx.json"
 : > "$tmp/calls.log"
 evalout=$(SI_FIXTURE="$tmp/fx.json" SI_CALLS="$tmp/calls.log" SI_RC=0 PATH="$tmp/stub:$PATH" \
   bash -c 'eval "$(bash "$0" ggqgga/BodaT 4979)"; printf "%s|%s\n" "$epic" "$priority"' "$SUT" 2>/dev/null)
-if [ "$evalout" = "-|P2" ]; then ok; else bad "eval 계약(epic=-) — out=[$evalout] want=[-|P2]"; fi
+if [ "$evalout" = "-|P1" ]; then ok; else bad "eval 계약(epic=-) — out=[$evalout] want=[-|P1]"; fi
 
 echo "── 읽기 전용 — 부모를 편집하지 않는다 ──────────────────────────────"
 # 스텁은 `issue view --json body,labels` 외의 호출을 exit 3 으로 거부한다. 위 전 케이스가

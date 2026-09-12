@@ -579,8 +579,9 @@ echo '[]' > "$tmp/fx/ggqgga_Blockers.issues_closed.json"
 #   ────  ──────────────────────────────────────────  ────────────────────────
 #   #100  leaf 열림 2(구현중·대기)+닫힘 1              `1/3 · 진행 1 · 대기 1`
 #   #200  leaf 전부 닫힘(2/2)                          `2/2`, warn `닫아라`
-#   #300  열린 leaf P1+P2 · 닫힌 leaf 는 P0(무시)      `1/3 · 대기 2 · P1 1 P2 1`,
-#                                                       warn `P 혼재 — P1 1 · P2 1`
+#   #300  열린 leaf P1+P0+P2 · 닫힌 leaf 는 P0(무시)   `1/4 · 대기 3 · P0 1 P1 2`,
+#                                                       warn `P 혼재 — P0 1 · P1 2`
+#         (#401: 과도기의 `P2` 라벨은 `P1` 칸으로 접힌다 — 혼재는 P0 × P1 일 때만이다)
 #   #400  leaf 참조 없음                               `leaf 없음(Epic 줄 미부착)`, warn 없음
 #   #500  산문 속 `epic #100`(줄 시작 아님)             leaf 아님 — #100 총합에 안 낀다
 #   #600  파생 + `Epic #999`(에픽 목록에 없어도 병기)  파생 줄 `(Epic #999)`
@@ -594,7 +595,8 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Epics.issues.json" <<'FX'
  {"number":101,"title":"leaf 구현중","createdAt":"@NOW@","body":"Epic #100","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
  {"number":102,"title":"leaf 대기","createdAt":"@NOW@","body":"Epic #100","labels":[{"name":"agent-ready"}]},
  {"number":301,"title":"leaf P1","createdAt":"@NOW@","body":"Epic #300","labels":[{"name":"agent-ready"},{"name":"P1"}]},
- {"number":302,"title":"leaf P2","createdAt":"@NOW@","body":"Epic #300","labels":[{"name":"agent-ready"},{"name":"P2"}]},
+ {"number":302,"title":"leaf P0","createdAt":"@NOW@","body":"Epic #300","labels":[{"name":"agent-ready"},{"name":"P0"}]},
+ {"number":304,"title":"leaf P2(과도기 — P1 칸으로 접힌다)","createdAt":"@NOW@","body":"Epic #300","labels":[{"name":"agent-ready"},{"name":"P2"}]},
  {"number":500,"title":"산문 속 언급 — leaf 아님","createdAt":"@NOW@","body":"본문 첫 줄\n이 문서는 epic #100 이야기를 지나가며 한다","labels":[]},
  {"number":600,"title":"파생 + 에픽 있음","createdAt":"@NOW@","body":"Epic #999","labels":[{"name":"agent-ready"},{"name":"spinoff"}]},
  {"number":601,"title":"파생 + 에픽 없음","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"spinoff"}]}
@@ -1373,10 +1375,10 @@ ck "--json: held 항목에도 repo_short" \
 
 run --repo ggqgga/Epics --since 24h
 ck "epics: exit 0" "$RC" 0
-has_line "epics 헤더 — 열림 6(에픽 이슈 자신은 루프 밖이라 안 낀다)" "$tmp/out" \
-  "파이프라인 epics — 열림 6 · 스코프 epics · 창 24h"
-has_line "epics 대기 5(파생건도 대기엔 남는다)" "$tmp/out" \
-  "  대기      5  #601 #600 #302 #301 #102"
+has_line "epics 헤더 — 열림 7(에픽 이슈 자신은 루프 밖이라 안 낀다)" "$tmp/out" \
+  "파이프라인 epics — 열림 7 · 스코프 epics · 창 24h"
+has_line "epics 대기 6(파생건도 대기엔 남는다)" "$tmp/out" \
+  "  대기      6  #601 #600 #304 #302 #301 #102"
 has_line "epics 구현중 1" "$tmp/out" "  구현중    1  #101"
 # 파생 병기 — 이 레포는 열린 epic 라벨 이슈가 있어 `(Epic #N)`/`(에픽 없음)` 이 붙는다.
 # #999 는 실존하는 에픽 목록에 없어도(참조만 있으면) 그대로 병기된다.
@@ -1387,8 +1389,8 @@ has_sub "① #100 — leaf 열림 2(구현중·대기)+닫힘 1 → 1/3, 버킷 
   "    - #100 1/3 · 진행 1 · 대기 1"
 has_sub "② #200 — leaf 전부 닫힘 → 2/2, 버킷·P 분포 없음" "$tmp/out" \
   "    - #200 2/2"
-has_sub "③ #300 — 열린 leaf P1+P2, 닫힌 leaf(P0)는 무시" "$tmp/out" \
-  "    - #300 1/3 · 대기 2 · P1 1 P2 1"
+has_sub "③ #300 — 열린 leaf P0+P1+과도기 P2(P1 로 접힘), 닫힌 leaf 는 무시" "$tmp/out" \
+  "    - #300 1/4 · 대기 3 · P0 1 P1 2"
 has_sub "④ #400 — leaf 0 → leaf 없음(Epic 줄 미부착), 비율 없음" "$tmp/out" \
   "    - #400 leaf 없음(Epic 줄 미부착)"
 # ⑤ 산문 속 `epic #100`(줄 시작 아님)은 leaf 가 아니다 — #500 이 잡혔다면 #100 이 1/4 로 나온다
@@ -1398,7 +1400,7 @@ has_line "warn 2건(전부 종료·P 혼재)" "$tmp/out" "  warn      2"
 has_sub "② warn 에픽 leaf 전부 종료" "$tmp/out" \
   "    - 에픽 leaf 전부 종료 #200(epics) — 닫아라(에픽 스윕 대상)"
 has_sub "③ warn 에픽 내 P 혼재(닫힌 leaf 의 P0 는 안 낀다)" "$tmp/out" \
-  "    - 에픽 내 P 혼재 #300(epics) — P1 1 · P2 1"
+  "    - 에픽 내 P 혼재 #300(epics) — P0 1 · P1 2"
 no_sub "④ leaf 없는 에픽은 warn 없음" "$tmp/out" "전부 종료 #400"
 no_sub "① 정상 진행 에픽은 warn 없음" "$tmp/out" "전부 종료 #100"
 ck "epics: 추가 gh 호출 0(닫힌 이슈 목록에서 이미 받은 본문으로만 판정)" \
@@ -1410,7 +1412,7 @@ ck "⑦ --json: epics[] 형태 — #100(진행 중)" \
   '{"n":100,"ti":"에픽 A","t":3,"c":1,"b":{"progress":1,"waiting":1},"p":{}}'
 ck "⑦ --json: epics[] 형태 — #300(P 혼재)" \
   "$(jq -c '.repos[0].epics[] | select(.number==300) | {n:.number,t:.total,c:.closed,b:.buckets,p:.priorities}' < "$tmp/out")" \
-  '{"n":300,"t":3,"c":1,"b":{"waiting":2},"p":{"P1":1,"P2":1}}'
+  '{"n":300,"t":4,"c":1,"b":{"waiting":3},"p":{"P1":2,"P0":1}}'
 ck "⑦ --json: epics[] 형태 — #400(leaf 없음)" \
   "$(jq -c '.repos[0].epics[] | select(.number==400) | {n:.number,t:.total,c:.closed,b:.buckets,p:.priorities}' < "$tmp/out")" \
   '{"n":400,"t":0,"c":0,"b":{},"p":{}}'
