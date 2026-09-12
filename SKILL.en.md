@@ -289,12 +289,23 @@ closeout-pick) never remove it. Per event:
   answer as a comment (`재심: <answer> <!-- policy-review: resumed --><!-- bodat:worker -->`) and
   resume with `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr|->` (clears
   needs-human/hold:*, keeps agent-ready → a ③ candidate this tick). If it truly is a human
-  decision, leave `재심: 사람 몫 유지 — <one-line reason> <!-- policy-review: kept --><!-- bodat:worker -->`
-  and run `$SCRIPTS/transition.sh policy-kept <repo> <issue> <pr|->` to attach `needs-human`
-  to the PR and the issue **at that point** (#244 — the only place the loop attaches it;
-  `hold:policy` stays as the reason).
-  Either way a marker remains, so **the same issue is never asked twice** (until a human removes
-  the label). Report it in ④ as `re-reviewed N (resumed n · kept m)`.
+  decision, **the transition comes first** — run
+  `$SCRIPTS/transition.sh policy-kept <repo> <issue> <pr|->` to attach `needs-human` to the PR
+  and the issue (#244 — the only place the loop attaches it; `hold:policy` stays as the reason),
+  and **only after that transition ends with exit 0 `ok`** leave
+  `재심: 사람 몫 유지 — <one-line reason> <!-- policy-review: kept --><!-- bodat:worker -->`.
+  **The order is the contract** (#244): the marker *is* "re-review done", so posting it first
+  means a dead transition still folds the issue to `reviewed` on the next tick — `needs-human`
+  is never attached, the issue keeps only `hold:policy`, and **nobody ever asks again** (a human
+  decision sealed out of the human-waiting column).
+  If the transition exits non-zero, **do not post the marker comment**; leave one line
+  `BLOCKED: 전이 실패 policy-kept #<issue>(exit N)` in ④ Report instead — with no marker the next
+  sweep **emits the same issue again** as `policy_review_due`. `policy-kept` only adds labels and
+  is idempotent, so re-running it *is* the recovery. Transition exit → marker disposition:
+  `0`=attached→post the marker · `1` (readback mismatch) · `2` (gh failure) · `64` (bad call
+  shape)=do not post the marker (the next sweep re-emits the re-review). **Only an issue whose
+  marker remains** is **never asked twice** (until a human removes the label). Report it in ④ as
+  `re-reviewed N (resumed n · kept m)`.
 - `waiting` — still inside the window. Pass over it quietly (no reporting needed).
 - exit 2 — a listing failed for some repos (the rest were processed normally), or the
   account-wide search failed. Leave one warn line `resume-sweep 부분 실패(레포 조회)` in
