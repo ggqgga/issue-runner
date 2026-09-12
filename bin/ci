@@ -24,7 +24,9 @@ echo "[2/5] shellcheck (설치 시)"
 if command -v shellcheck >/dev/null 2>&1; then
   # `scripts/lib/*.sh` 는 source 전용 라이브러리다 — 소비처의 `# shellcheck source=` 지시로
   # 따라 들어가지만, 라이브러리 자체의 문법·경고도 여기서 직접 문다 (#427).
-  shellcheck -S warning scripts/*.sh scripts/lib/*.sh hooks/*.sh bin/ci
+  # `-x` = source 지시(`# shellcheck source=…`)를 따라 들어간다 — 없으면 라이브러리가
+  # 정의하는 변수(`scope_file`)가 소비처에서 SC2154 로 뜬다 (#427).
+  shellcheck -x -S warning scripts/*.sh scripts/lib/*.sh hooks/*.sh bin/ci
 else
   echo "  shellcheck 미설치 — skip"
 fi
