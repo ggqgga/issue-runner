@@ -1734,6 +1734,9 @@ bash scripts/tests/verify-eligible.test.sh
 echo "[test] 네 게이트의 needs-human·hold:* 배제 — 격자 한 벌을 네 SUT 에 전수 적용 (#242)"
 bash scripts/tests/hold-gate.test.sh
 
+echo "[test] verify·closeout 레인 판별 — head 이름 + full-cycle 라벨 두 축을 두 SUT 에 전수 적용 (#246)"
+bash scripts/tests/lane-gate.test.sh
+
 echo "[test] eligible-issues.sh 막힘 stderr 보고·블로커 상태 표기·검색 창 warn·stdout 불변 (#247)"
 echo "       + 에픽 finish-first 정렬·Epic #N 파싱·시작 집합 두 출처·loop-status 정규식 동기 (#257)"
 bash scripts/tests/eligible-issues.test.sh
