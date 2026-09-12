@@ -270,7 +270,8 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    안 만들고 실패한다. `'flow:claimed' not found` 류로 실패하면
    `~/.claude/skills/issue-runner/scripts/setup-labels.sh <REPO>` 를 **1회** 돌린 뒤 같은 명령을
    **1회만** 재시도하라. 재시도도 실패하면 더 반복하지 말고 `--label` 없이 열어라 — PR 유실이 라벨
-   유실보다 나쁘다(다음 전이가 라벨을 정리한다). 이 보강 호출은 아래 "금지"의 좁은 예외다.)
+   유실보다 나쁘다(라벨 보강은 `handoff-verify` 가 다시 시도하고, 그것도 실패하면 exit 2 로 BLOCKED 에
+   드러난다 — 조용히 정리되는 것이 아니다). 이 보강 호출은 아래 "금지"의 좁은 예외다.)
    본문에 반드시 전용 라인 `Closes #<NUM>` 과 `## Test plan` 섹션(수용 기준 기반
    체크박스), 그리고 `## 사전 리뷰` 절(9-b 결과)을 포함하라. PR 생성 직후
    `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: 🔄 진행 중 — 검증(E2E·codex) 전, 머지 보류

@@ -207,7 +207,8 @@ case "$name" in
   runner-held)
     # 디스패처(issue-runner) 자체의 사람 대기 — 죽은 워커 BLOCKED · 보수 상한(#151).
     # PR 이 없을 수 있어 `-` 허용. 사다리 라벨(flow:*·harvesting)은 건드리지 않는다 — 디스패처가
-    # 멈추는 시점의 PR 은 워커 소유 단계(flow:ci/없음)라 뗄 단계 라벨이 없다.
+    # 멈추는 시점의 PR 은 워커 소유 단계(flow:claimed(+flow:ci)/없음)라 뗄 단계 라벨이 없다 —
+    # 미러 라벨은 그대로 두고, 재개 뒤 claim 이 수렴시킨다(#281).
     pr_add="hold:$reason"; pr_rm="$(hold_others "$reason")"
     iss_add="hold:$reason"; iss_rm="agent:claimed $(hold_others "$reason")" ;;
   policy-kept)
