@@ -676,7 +676,7 @@ ck "Ⓔ⑧ 두 파일의 에픽 판정이 갈리지 않는다" "$ei_rx" "$ls_nor
 ck "Ⓔ⑧ eligible 은 grep -oiE(대소문자 무시)" \
   "$(grep -c -- "grep -oiE '\^\[\[:space:\]\]\*epic" "$DIR/eligible-issues.sh")" "1"
 ck "Ⓔ⑧ loop-status 는 capture(...; \"i\")" \
-  "$(grep -c -- 'capture("\^\[\[:space:\]\]\*epic\[\[:space:\]\]+#(?<n>\[0-9\]+)"; "i")' "$DIR/loop-status.sh")" "1"
+  "$(grep -cF -- 'capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)[[:space:]]*$"; "i")' "$DIR/loop-status.sh")" "1"
 # 머지로 계산기가 **셋**이 됐다 (#313 이 `epic-sweep.sh` 를 더했다) — 인벤토리를 파일 목록으로
 # 떠서 전수로 맞댄다. 새 파일이 같은 줄을 또 파싱하면 여기서 개수가 어긋나 빨개진다.
 es_rx=$(grep -oE "\^\[\[:space:\]\]\*epic\[\[:space:\]\]\+#\(\?<n>\[0-9\]\+\)" "$DIR/epic-sweep.sh" | head -n 1)
@@ -684,10 +684,10 @@ es_norm=$(printf '%s' "$es_rx" | sed 's/(?<n>//; s/)$//')
 ck "Ⓔ⑧ epic-sweep 쪽 정규식을 실제로 찾았다" "$es_rx" '^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)'
 ck "Ⓔ⑧ 세 파일의 에픽 판정이 갈리지 않는다" "$es_norm" "$ei_rx"
 ck "Ⓔ⑧ epic-sweep 도 capture(...; \"i\")" \
-  "$(grep -c -- 'capture("\^\[\[:space:\]\]\*epic\[\[:space:\]\]+#(?<n>\[0-9\]+)"; "i")' "$DIR/epic-sweep.sh")" "1"
+  "$(grep -cF -- 'capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)[[:space:]]*$"; "i")' "$DIR/epic-sweep.sh")" "1"
 # 인벤토리 자체를 센다 — `Epic #N` 을 파싱하는 스크립트가 넷째로 늘면 이 줄이 먼저 말한다.
 epic_parsers=$(grep -lE "\^\[\[:space:\]\]\*epic\[\[:space:\]\]\+#" "$DIR"/*.sh | sed "s|.*/||" | sort | tr '\n' ' ')
-ck "Ⓔ⑧ 에픽 판정을 가진 스크립트는 이 셋뿐" "$epic_parsers" "eligible-issues.sh epic-sweep.sh loop-status.sh "
+ck "Ⓔ⑧ 에픽 판정을 가진 스크립트는 이 넷뿐(#329 spinoff-inherit 포함)" "$epic_parsers" "eligible-issues.sh epic-sweep.sh loop-status.sh spinoff-inherit.sh "
 
 # ── Ⓔ⑨ 여러 줄 본문 · 첫 매치 하나만 · 선행 0 ────────────────────────────
 # ⑴ `Epic #N` 이 본문 첫 줄이 아니어도 잡힌다(실제 이슈 본문의 정상형).
@@ -719,13 +719,16 @@ ck "Ⓔ⑨ 시작한 둘이 앞, 그 안에서는 오래된 순" "$(jq -c '[.[].
 # `needs-human` 은 **의도된 차이** — 진행이 아니라 사람 대기라 시작 집합에 안 든다.
 a_line=$(grep -n 'any(\. ==' "$DIR/eligible-issues.sh" | head -n 1)
 a_labels=$(printf '%s' "$a_line" | grep -oE '"[^"]+"' | tr -d '"' | sort -u)
-loop_labels=$(grep -E '^[[:space:]]*case ",\$labels," in .*continue' "$DIR/eligible-issues.sh" \
-  | grep -oE '\*",[^,"]+,"\*' | sed 's/^\*",//; s/,"\*$//' | sort -u)
-loop_prog=$(printf '%s\n' "$loop_labels" | grep -v '^needs-human$' | grep -v '^$' | sort -u)
-ck "Ⓔ⑩ 시작 판정 쪽 진행 라벨 4개를 실제로 찾았다" \
-  "$(printf '%s\n' "$a_labels" | grep -c .)" "4"
-ck "Ⓔ⑩ 후보 제외 쪽에서도 같은 4개를 찾았다" \
-  "$(printf '%s\n' "$loop_prog" | grep -c .)" "4"
+# 후보 제외는 두 자리에 나뉘어 있다 — `agent:claimed` 는 `case` 한 줄, 레인 미러 넷(flow:verify·
+# verifying·flow:ready·harvesting)은 #275 가 옮긴 jq `any(...)`(시작 판정과 다른 두 번째 any). 둘을 합친다.
+loop_case=$(grep -E '^[[:space:]]*case ",\$labels," in .*continue' "$DIR/eligible-issues.sh" \
+  | grep -oE '\*",[^,"]+,"\*' | sed 's/^\*",//; s/,"\*$//')
+loop_any=$(grep -n 'any(\. ==' "$DIR/eligible-issues.sh" | sed -n '2p' | grep -oE '"[^"]+"' | tr -d '"')
+loop_prog=$(printf '%s\n%s\n' "$loop_case" "$loop_any" | grep -v '^needs-human$' | grep -v '^$' | sort -u)
+ck "Ⓔ⑩ 시작 판정 쪽 진행 라벨 5개를 실제로 찾았다" \
+  "$(printf '%s\n' "$a_labels" | grep -c .)" "5"
+ck "Ⓔ⑩ 후보 제외 쪽에서도 같은 5개를 찾았다" \
+  "$(printf '%s\n' "$loop_prog" | grep -c .)" "5"
 ck "Ⓔ⑩ 두 자리의 진행 라벨 집합이 같다" \
   "$(printf '%s' "$a_labels" | tr '\n' ' ')" "$(printf '%s' "$loop_prog" | tr '\n' ' ')"
 
