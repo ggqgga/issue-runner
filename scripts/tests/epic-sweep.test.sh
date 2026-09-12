@@ -85,6 +85,10 @@ if [ "${1:-}" = "api" ]; then
     *search/issues*label:deploy-wait*)
       # ⑫ 배포 대기 이슈 검색 — leaf 검색과 **다른 질의**라 따로 응답한다.
       [ -z "${STUB_DEPLOY_FAIL:-}" ] || { echo "gh: deploy-wait search boom" >&2; exit 1; }
+      # stdin 을 **소진한다** — 진짜 gh 가 그럴 수 있다. SUT 의 묶음 루프가 stdin 히어독으로 돌면
+      # 두 번째 묶음이 여기서 먹혀 ⑫-f 가 빨개진다(fd 4 규약의 뮤테이션 방증). `run` 이 stdin 을
+      # /dev/null 로 주므로 정상 경로에선 즉시 끝난다.
+      cat >/dev/null
       # 질의의 `"#N"` 항에 걸리는 항목만 남긴다(GitHub 처럼 — 묶음 나누기 ⑫-f 가 첫 묶음에서
       # 조기 매치되지 않게). total_count 는 픽스처가 잘림을 흉내 낸 경우(⑫-d-b, items 보다 큼)만
       # 그대로 두고 아니면 남은 개수로 맞춘다.
@@ -161,7 +165,7 @@ reset() {
 run() {
   (cd "$WORKDIR" && PATH="$tmp/bin:$PATH" \
     EPIC_LIST_LIMIT="${LIMIT:-100}" EPIC_SEARCH_PER_PAGE="${PER:-100}" \
-    bash "$sut_dir/epic-sweep.sh" "${ARGS[@]+"${ARGS[@]}"}") >"$tmp/out" 2>"$tmp/err"
+    bash "$sut_dir/epic-sweep.sh" "${ARGS[@]+"${ARGS[@]}"}" </dev/null) >"$tmp/out" 2>"$tmp/err"
   RC=$?
   out=$(cat "$tmp/out")
 }
@@ -585,7 +589,7 @@ check "⑫-b-b 열린 leaf → 배포 대기 검색 0회" \
 # ⓒ 에픽 본문 미체크 체크박스 → note · 쓰기 0
 reset
 epics "$(jq -n '[{number:100, title:"에픽", labels:[{name:"epic"}],
-  body:"## 완료 기준\n- [x] 된 것\n- [ ] 프로덕션 배포 뒤 관측\n  - [ ] 들여쓴 하위\n* [ ] 별표 불릿\n1. [ ] 번호 목록\n`- [ ] 인용은 세지 않는다`"}]')"
+  body:"## 완료 기준\n- [x] 된 것\n- [ ] 프로덕션 배포 뒤 관측\n  - [ ] 들여쓴 하위\n* [ ] 별표 불릿\n1. [ ] 번호 목록\n`- [ ] 백틱으로 시작하는 줄은 불릿이 아니다`"}]')"
 search "$(two_leaves)"
 run
 check "⑫-c closed 없음" "$(no_ev closed)"

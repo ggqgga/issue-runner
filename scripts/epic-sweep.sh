@@ -316,6 +316,8 @@ EOF
   # ── 두 겹 가드 ⓑ — leaf 의 배포 대기 이슈 (#343, 에픽당 검색 1회 이상) ────────
   # leaf 번호를 6건씩 묶어 `"#N" OR "#M" …` 로 묻는다(OR 5개 = GitHub 검색 연산자 상한).
   # 한 묶음이라도 실패·상한이면 그 자리에서 보류 — 나머지 묶음을 묻지 않는다(어차피 안 닫는다).
+  # `_nwise(n)` 은 jq 의 밑줄 접두 내장(1.5~1.7 에 존재, 매뉴얼엔 `splits` 류만 문서화) —
+  # 사라지면 이 jq 가 실패해 warn(fail-closed) 이고, 스위트 ⑫-f 가 7 leaf 로 실제로 태운다.
   if ! dw_terms=$(printf '%s' "$leaves_json" | jq -r '
         [ _nwise(6) | map("\"#" + tostring + "\"") | join(" OR ") ] | .[]' 2>/dev/null) \
      || [ -z "$dw_terms" ]; then
@@ -324,7 +326,9 @@ EOF
     return 0
   fi
   d_hit=""
-  while IFS= read -r dw_q; do
+  # fd 4 로 읽는다 — 아래 에픽 루프(fd 3)와 같은 이유: 안에서 부르는 gh 가 stdin 을 건드리면
+  # 두 번째 묶음부터 조용히 사라져 그 묶음에만 걸리는 배포 대기 이슈를 놓친다(닫는 방향).
+  while IFS= read -r dw_q <&4; do
     [ -n "$dw_q" ] || continue
     if ! dres=$(gh api -X GET search/issues \
           -f q="repo:$repo is:issue is:open label:deploy-wait in:title,body $dw_q" \
@@ -365,7 +369,7 @@ EOF
       return 0
     fi
     [ -z "$d_hit" ] || break
-  done <<EOF
+  done 4<<EOF
 $dw_terms
 EOF
   if [ -n "$d_hit" ]; then
