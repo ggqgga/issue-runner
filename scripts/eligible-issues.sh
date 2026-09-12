@@ -200,13 +200,14 @@ blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
 # finish-first 정렬의 입력. "이미 시작한 에픽"의 leaf 를 같은 P 안에서 먼저 집어
 # 주제가 끝나게 한다 — 새 이슈가 진행 중인 주제의 꼬리를 계속 밀어내지 않도록.
 #
-# ★파싱 규칙은 `scripts/loop-status.sh` 의 `epic_of`(#260)·`scripts/epic-sweep.sh`(#313)와
-#   **같은 판정**이어야 한다(셋 다):
+# ★파싱 규칙은 `scripts/loop-status.sh` 의 `epic_of`(#260)·`scripts/epic-sweep.sh`(#313)·
+#   `scripts/spinoff-inherit.sh` 의 `EPIC_RE`(#261) 와 **같은 판정**이어야 한다(넷 다):
 #   줄 시작(앞 공백 허용)의 `epic\s+#N`, 대소문자 무시, 이슈당 **첫 매치 하나만**.
 #   저쪽은 jq `capture("^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)"; "i")` 를 줄 단위로 걸고,
 #   여기는 같은 문자열을 `grep -oiE` 로 건다(문자 클래스·앵커·대소문자 무시가 동일).
-#   **끝 앵커(`$`)는 양쪽 다 없다** — `Epic #12 (읽기 모델)` 같은 꼬리표를 허용하는 현행
-#   판정이고, 채택 여부는 #259 범위라 여기서 바꾸지 않는다.
+#   **끝 앵커(`[[:space:]]*$`)** 는 `loop-status`·`epic-sweep` 이 붙였고 여기와 `spinoff-inherit`
+#   는 아직 없다 — `Epic #12 (읽기 모델)` 같은 꼬리표를 허용하는 현행 판정이고, 채택 여부는
+#   #259 범위라 여기서 바꾸지 않는다(Ⓔ⑧ 은 줄 시작~번호까지의 앞부분만 맞댄다).
 #   블로커 파싱(`^…blocked[- ]by…`)과 같은 자리·같은 방식이다(둘 다 `-o` 로 매치 구간만).
 #   마지막 `sed` 는 **선행 0 제거**다(`Epic #007` → `7`). 두 이유가 겹친다: ⑴ 아래
 #   `--argjson epic` 이 `007` 을 유효 JSON 으로 못 읽어 jq 가 죽고, 그 대입은 `set -e` 아래라
@@ -228,10 +229,12 @@ started_epics=""
 #     본문은 검색 item 의 `body` 필드를 쓴다(추가 gh 호출 0).
 #
 #     ⚠ 진행 라벨 목록은 이 파일에 **두 자리**다 — 여기(시작 판정)와 후보 루프의
-#     `agent:claimed` / `flow:verify|flow:ready|harvesting` 제외 `case` 두 줄. 둘은 같은
-#     집합이어야 한다: 새 진행 라벨을 **제외 쪽에만** 더하면 그 레인의 leaf 는 후보에서
-#     빠지면서 시작 판정도 못 줘, finish-first 가 조용히 한 출처를 잃는다. 갈리면
-#     `scripts/tests/eligible-issues.test.sh` 의 Ⓔ⑩ 가 양방향으로 빨개진다.
+#     `agent:claimed` 제외 `case` 한 줄 + `flow:verify|verifying|flow:ready|harvesting` 제외
+#     `any(. == …)` 한 줄. 둘은 같은 집합이어야 한다: 새 진행 라벨을 **제외 쪽에만** 더하면
+#     그 레인의 leaf 는 후보에서 빠지면서 시작 판정도 못 줘, finish-first 가 조용히 한 출처를
+#     잃는다(#383 — `verifying`(#275) 이 제외 쪽에만 있어 verify-runner 가 집은 leaf 만 남은
+#     에픽을 "시작 안 함" 으로 셌다). 갈리면 `scripts/tests/eligible-issues.test.sh` 의 Ⓔ⑩ 가
+#     양방향으로 빨개진다.
 #
 #     한 행씩 `jq -c` 로 흘려 받는다 — 인덱스로 되짚으면 행마다 배열 전체를 다시 파싱해
 #     창 상한(#277 이후 실질 250)에서 O(n²) 가 된다.
@@ -245,7 +248,7 @@ while IFS= read -r i_row; do
 done < <(printf '%s' "$cands" | jq -c '
   .[]
   | select([.labels[].name]
-      | any(. == "agent:claimed" or . == "flow:verify" or . == "flow:ready" or . == "harvesting"))')
+      | any(. == "agent:claimed" or . == "flow:verify" or . == "verifying" or . == "flow:ready" or . == "harvesting"))')
 
 # body 는 (a) 에서만 쓴다 — 후보 루프가 도는 `cands` 는 종전 형상으로 되돌린다(행마다
 # 본문을 재파싱하면 창 상한(#277 이후 실질 250)에서 스캔이 눈에 띄게 느려진다).

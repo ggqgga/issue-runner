@@ -27,13 +27,13 @@
 #   Ⓔ① `Epic #N` 이 하나도 없는 입력은 **순서가 종전과 같다**(회귀 0) + 새 필드는 null/false.
 #   Ⓔ② 같은 P 안에서 시작한 에픽의 leaf 가 앞으로 온다(늦게 만들어졌어도).
 #   Ⓔ③ 에픽 축은 P 경계를 넘지 않는다 — P1 단발이 P2 에픽 leaf 보다 앞.
-#   Ⓔ④ 시작 판정 출처 (a) — 진행 라벨(agent:claimed·flow:verify·flow:ready·harvesting) row 의
+#   Ⓔ④ 시작 판정 출처 (a) — 진행 라벨(agent:claimed·flow:verify·verifying·flow:ready·harvesting) row 의
 #       **검색 item body**. 그 row 들에 `gh issue view --json body` 를 부르지 않는다(호출 수 불변).
 #   Ⓔ⑤ 시작 판정 출처 (b) — 최근 닫힌 leaf. 키는 **same-repo**(`repo#N`)라 다른 레포는 안 센다.
 #   Ⓔ⑥ 산문 속 `… epic #N …` 은 안 잡히고, 앞 공백만 있는 줄 시작은 잡힌다.
 #   Ⓔ⑦ (b) 조회 실패 → 정확한 warn 한 줄 + 시작 집합을 통째로 비워 **정렬은 종전**.
-#   Ⓔ⑧ `loop-status.sh`(#260)·`epic-sweep.sh`(#313) 와 정규식이 갈리지 않는다 — 계산기는 셋이고
-#       인벤토리(`scripts/*.sh` 전수)까지 센다(넷째가 생기면 여기서 먼저 말한다).
+#   Ⓔ⑧ `loop-status.sh`(#260)·`epic-sweep.sh`(#313)·`spinoff-inherit.sh`(#261) 와 정규식이 갈리지
+#       않는다 — 계산기는 넷이고 인벤토리(`scripts/*.sh` 전수)까지 센다(다섯째가 생기면 여기서 먼저 말한다).
 #   Ⓔ⑨ 여러 줄 본문 — `Epic #N` 이 둘째 줄 이후여도 잡히고, 줄이 둘이면 **첫 매치 하나만**,
 #       선행 0(`Epic #0700`)은 벗겨 `loop-status.sh` 의 `tonumber` 와 같은 값이 된다.
 #   Ⓔ⑩ 진행 라벨 목록이 이 파일 안 **두 자리**(시작 판정 · 후보 제외)에서 갈리지 않는다.
@@ -588,25 +588,29 @@ ck "Ⓔ③ P2 leaf 는 시작 판정을 받았다(순서만 P 에 졌다)" \
   "$(jq -c '[.[] | select(.number == 61) | .epic_started]' "$OUT")" '[true]'
 
 # ── Ⓔ④ 출처 (a) 만으로 — 진행 라벨 row 의 검색 item body ─────────────────
-# 진행 라벨 네 가지가 모두 시작 판정을 낸다. 그 row 들엔 `gh issue view --json body` 를
-# 부르지 않는다(추가 호출 0 — 그게 이 출처를 고른 이유다).
+# 진행 라벨 다섯 가지가 모두 시작 판정을 낸다. 그 row 들엔 `gh issue view --json body` 를
+# 부르지 않는다(추가 호출 0 — 그게 이 출처를 고른 이유다). `verifying`(#275) 은 verify-runner 가
+# **지금 검증 중**인 leaf — 후보 제외 쪽에는 있었는데 시작 판정에 빠져 있던 라벨이다(#383).
 fx=$(mkfx e4 34)
 add_issue "$fx" 30 '["agent-ready","agent:claimed"]' '구현중 leaf' 'Epic #700'
-add_issue "$fx" 31 '["agent-ready","flow:verify"]'   '검증중 leaf' 'Epic #701'
+add_issue "$fx" 31 '["agent-ready","flow:verify"]'   '검증대기 leaf' 'Epic #701'
 add_issue "$fx" 32 '["agent-ready","flow:ready"]'    '마감대기 leaf' 'Epic #702'
 add_issue "$fx" 33 '["agent-ready","harvesting"]'    '마감중 leaf' 'Epic #703'
+add_issue "$fx" 39 '["agent-ready","verifying"]'     '검증중 leaf' 'Epic #704'
 add_issue "$fx" 34 '["agent-ready","P2"]' '에픽 없음' '본문만 있다'      '2026-01-01T00:00:00Z'
 add_issue "$fx" 35 '["agent-ready","P2"]' 'claimed 에픽 leaf' 'Epic #700' '2026-01-05T00:00:00Z'
 add_issue "$fx" 36 '["agent-ready","P2"]' 'verify 에픽 leaf'  'Epic #701' '2026-01-06T00:00:00Z'
 add_issue "$fx" 37 '["agent-ready","P2"]' 'ready 에픽 leaf'   'Epic #702' '2026-01-07T00:00:00Z'
 add_issue "$fx" 38 '["agent-ready","P2"]' 'harvest 에픽 leaf' 'Epic #703' '2026-01-08T00:00:00Z'
+add_issue "$fx" 40 '["agent-ready","P2"]' 'verifying 에픽 leaf' 'Epic #704' '2026-01-09T00:00:00Z'
 run_sut "$fx"
 ck "Ⓔ④ exit 0" "$RC" "0"
-ck "Ⓔ④ 진행 라벨 네 가지가 모두 시작 판정을 낸다" "$(jq -c '[.[].number]' "$OUT")" '[35,36,37,38,34]'
+ck "Ⓔ④ 진행 라벨 다섯 가지가 모두 시작 판정을 낸다" "$(jq -c '[.[].number]' "$OUT")" '[35,36,37,38,40,34]'
 ck "Ⓔ④ agent:claimed row 본문 조회 0회" "$(count_of "$LOG" 'body 30')" "0"
 ck "Ⓔ④ flow:verify row 본문 조회 0회"   "$(count_of "$LOG" 'body 31')" "0"
 ck "Ⓔ④ flow:ready row 본문 조회 0회"    "$(count_of "$LOG" 'body 32')" "0"
 ck "Ⓔ④ harvesting row 본문 조회 0회"    "$(count_of "$LOG" 'body 33')" "0"
+ck "Ⓔ④ verifying row 본문 조회 0회"     "$(count_of "$LOG" 'body 39')" "0"
 ck "Ⓔ④ 닫힌 leaf 검색은 (a) 와 무관하게 1회" "$(count_of "$LOG" 'closed-scan')" "1"
 
 # ── Ⓔ⑤ 출처 (b) 만으로 · 키는 same-repo ──────────────────────────────────
@@ -662,32 +666,45 @@ no_line "Ⓔ⑦ 빈 큐로 위장하지 않는다" "$OUT" "[]"
 
 # ── Ⓔ⑧ 두 번째 계산기 금지 — `loop-status.sh` 의 `epic_of` 와 **같은 판정** ────────
 # 이 레포는 같은 규칙이 두 파일에 갈라져 사람 눈에 안 보이는 두 번째 계산기가 생기는
-# 형상을 이미 겪었다(#197). 두 정규식을 원문에서 뽑아 **이름 붙은 그룹 표기만 벗기고**
+# 형상을 이미 겪었다(#197). 정규식을 원문에서 뽑아 **이름 붙은 그룹 표기만 벗기고**
 # 문자 그대로 맞댄다 — 한쪽의 앵커·문자 클래스·대소문자 무시가 바뀌면 여기서 빨개진다.
-# (끝 앵커 `$` 채택 여부는 #259 범위다 — 여기서는 "둘이 같다"만 잰다.)
-ei_rx=$(grep -oE "\^\[\[:space:\]\]\*epic\[\[:space:\]\]\+#\[0-9\]\+" "$DIR/eligible-issues.sh" | head -n 1)
-ls_rx=$(grep -oE "\^\[\[:space:\]\]\*epic\[\[:space:\]\]\+#\(\?<n>\[0-9\]\+\)" "$DIR/loop-status.sh" | head -n 1)
+# (끝 앵커 `[[:space:]]*$` 채택 여부는 #259 범위다 — `loop-status`·`epic-sweep` 은 붙였고
+#  `eligible-issues`·`spinoff-inherit` 는 아직이라 여기서는 **앞부분(줄 시작~번호)이 같다**만
+#  잰다. `bin/ci` 의 "#261 Epic 정규식 SSOT 동기화" 도 같은 앞부분 문자열을 `-F` 로 문다.)
+EPIC_HEAD_RE="\^\[\[:space:\]\]\*epic\[\[:space:\]\]\+#"
+ei_rx=$(grep -oE "${EPIC_HEAD_RE}\[0-9\]\+" "$DIR/eligible-issues.sh" | head -n 1)
+ls_rx=$(grep -oE "${EPIC_HEAD_RE}\(\?<n>\[0-9\]\+\)" "$DIR/loop-status.sh" | head -n 1)
 # jq 쪽의 `(?<n>…)` 는 **캡처 이름**일 뿐 판정에 관여하지 않는다 — 표기만 벗긴다.
 ls_norm=$(printf '%s' "$ls_rx" | sed 's/(?<n>//; s/)$//')
 ck "Ⓔ⑧ eligible 쪽 정규식을 실제로 찾았다" "$ei_rx" '^[[:space:]]*epic[[:space:]]+#[0-9]+'
 ck "Ⓔ⑧ loop-status 쪽 정규식을 실제로 찾았다" "$ls_rx" '^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)'
 ck "Ⓔ⑧ 두 파일의 에픽 판정이 갈리지 않는다" "$ei_rx" "$ls_norm"
-# 대소문자 무시도 양쪽 다여야 한다(한쪽만 `-i`/`"i"` 가 빠지면 `Epic`/`epic` 이 갈린다).
+# 대소문자 무시도 전부여야 한다(한쪽만 `-i`/`"i"` 가 빠지면 `Epic`/`epic` 이 갈린다).
+# jq 쪽은 `capture("<정규식>"; "i")` 한 줄에서 정규식 본체와 `"i"` 를 같이 문다 — 끝 앵커가
+# 있든 없든(#259) `; "i")` 가 같은 호출에 붙어 있는지가 요점이다.
 ck "Ⓔ⑧ eligible 은 grep -oiE(대소문자 무시)" \
-  "$(grep -c -- "grep -oiE '\^\[\[:space:\]\]\*epic" "$DIR/eligible-issues.sh")" "1"
+  "$(grep -cE -- "grep -oiE '${EPIC_HEAD_RE}" "$DIR/eligible-issues.sh")" "1"
 ck "Ⓔ⑧ loop-status 는 capture(...; \"i\")" \
-  "$(grep -c -- 'capture("\^\[\[:space:\]\]\*epic\[\[:space:\]\]+#(?<n>\[0-9\]+)"; "i")' "$DIR/loop-status.sh")" "1"
-# 머지로 계산기가 **셋**이 됐다 (#313 이 `epic-sweep.sh` 를 더했다) — 인벤토리를 파일 목록으로
-# 떠서 전수로 맞댄다. 새 파일이 같은 줄을 또 파싱하면 여기서 개수가 어긋나 빨개진다.
-es_rx=$(grep -oE "\^\[\[:space:\]\]\*epic\[\[:space:\]\]\+#\(\?<n>\[0-9\]\+\)" "$DIR/epic-sweep.sh" | head -n 1)
+  "$(grep -cE -- "capture\(\"${EPIC_HEAD_RE}\(\?<n>\[0-9\]\+\)[^\"]*\"; \"i\"\)" "$DIR/loop-status.sh")" "1"
+# 계산기는 **넷**이다 — #313 이 `epic-sweep.sh` 를, #261 이 `spinoff-inherit.sh`(`EPIC_RE` 를
+# `--arg re` 로 jq 에 넘겨 `capture($re; "i")`) 를 더했다. 인벤토리를 파일 목록으로 떠서
+# 전수로 맞댄다. 새 파일이 같은 줄을 또 파싱하면 여기서 개수가 어긋나 빨개진다.
+es_rx=$(grep -oE "${EPIC_HEAD_RE}\(\?<n>\[0-9\]\+\)" "$DIR/epic-sweep.sh" | head -n 1)
 es_norm=$(printf '%s' "$es_rx" | sed 's/(?<n>//; s/)$//')
 ck "Ⓔ⑧ epic-sweep 쪽 정규식을 실제로 찾았다" "$es_rx" '^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)'
 ck "Ⓔ⑧ 세 파일의 에픽 판정이 갈리지 않는다" "$es_norm" "$ei_rx"
 ck "Ⓔ⑧ epic-sweep 도 capture(...; \"i\")" \
-  "$(grep -c -- 'capture("\^\[\[:space:\]\]\*epic\[\[:space:\]\]+#(?<n>\[0-9\]+)"; "i")' "$DIR/epic-sweep.sh")" "1"
-# 인벤토리 자체를 센다 — `Epic #N` 을 파싱하는 스크립트가 넷째로 늘면 이 줄이 먼저 말한다.
-epic_parsers=$(grep -lE "\^\[\[:space:\]\]\*epic\[\[:space:\]\]\+#" "$DIR"/*.sh | sed "s|.*/||" | sort | tr '\n' ' ')
-ck "Ⓔ⑧ 에픽 판정을 가진 스크립트는 이 셋뿐" "$epic_parsers" "eligible-issues.sh epic-sweep.sh loop-status.sh "
+  "$(grep -cE -- "capture\(\"${EPIC_HEAD_RE}\(\?<n>\[0-9\]\+\)[^\"]*\"; \"i\"\)" "$DIR/epic-sweep.sh")" "1"
+si_rx=$(grep -oE "${EPIC_HEAD_RE}\(\?<n>\[0-9\]\+\)" "$DIR/spinoff-inherit.sh" | head -n 1)
+si_norm=$(printf '%s' "$si_rx" | sed 's/(?<n>//; s/)$//')
+ck "Ⓔ⑧ spinoff-inherit 쪽 정규식을 실제로 찾았다" "$si_rx" '^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)'
+ck "Ⓔ⑧ 네 파일의 에픽 판정이 갈리지 않는다" "$si_norm" "$ei_rx"
+ck "Ⓔ⑧ spinoff-inherit 도 capture(\$re; \"i\")" \
+  "$(grep -c -- 'capture($re; "i")' "$DIR/spinoff-inherit.sh")" "1"
+# 인벤토리 자체를 센다 — `Epic #N` 을 파싱하는 스크립트가 다섯째로 늘면 이 줄이 먼저 말한다.
+epic_parsers=$(grep -lE "$EPIC_HEAD_RE" "$DIR"/*.sh | sed "s|.*/||" | sort | tr '\n' ' ')
+ck "Ⓔ⑧ 에픽 판정을 가진 스크립트는 이 넷뿐" "$epic_parsers" \
+  "eligible-issues.sh epic-sweep.sh loop-status.sh spinoff-inherit.sh "
 
 # ── Ⓔ⑨ 여러 줄 본문 · 첫 매치 하나만 · 선행 0 ────────────────────────────
 # ⑴ `Epic #N` 이 본문 첫 줄이 아니어도 잡힌다(실제 이슈 본문의 정상형).
@@ -713,21 +730,28 @@ ck "Ⓔ⑨ 선행 0 은 벗긴다(loop-status 의 tonumber 와 같은 값)" \
 ck "Ⓔ⑨ 시작한 둘이 앞, 그 안에서는 오래된 순" "$(jq -c '[.[].number]' "$OUT")" '[100,102,101]'
 
 # ── Ⓔ⑩ 진행 라벨 목록이 이 파일 안 두 자리에서 갈리지 않는다 ──────────────
-# 시작 판정(`any(. == …)`)과 후보 제외(`case ",$labels," in … continue`)는 같은 집합이어야
-# 한다. 제외 쪽에만 새 진행 라벨이 들어가면 그 레인의 leaf 는 후보에서도 빠지고 시작
-# 판정도 못 줘서 finish-first 가 조용히 한 출처를 잃는다(빨개지는 곳이 없던 자리다).
-# `needs-human` 은 **의도된 차이** — 진행이 아니라 사람 대기라 시작 집합에 안 든다.
-a_line=$(grep -n 'any(\. ==' "$DIR/eligible-issues.sh" | head -n 1)
-a_labels=$(printf '%s' "$a_line" | grep -oE '"[^"]+"' | tr -d '"' | sort -u)
+# 시작 판정(`any(. == …)` 첫 자리)과 후보 제외(`case ",$labels," in *",agent:claimed,"*`
+# 한 줄 + 검증/마감 레인의 `any(. == …)` 둘째 자리)는 같은 집합이어야 한다. 제외 쪽에만
+# 새 진행 라벨이 들어가면 그 레인의 leaf 는 후보에서도 빠지고 시작 판정도 못 줘서
+# finish-first 가 조용히 한 출처를 잃는다(빨개지는 곳이 없던 자리다 — #383 의 `verifying`
+# 이 바로 그 형상이었다). `needs-human`·`hold:*` 는 **의도된 차이** — 진행이 아니라 사람
+# 대기/기계 정지라 시작 집합에 안 든다(둘 다 `any(. == …)` 형태가 아니라 여기 안 잡힌다).
+# 주석은 뺀다 — 계약 설명이 같은 표기를 인용하므로 코드 줄만 센다.
+any_lines=$(grep -n 'any(\. ==' "$DIR/eligible-issues.sh" | grep -vE '^[0-9]+:[[:space:]]*#')
+ck "Ⓔ⑩ any(. == …) 판정은 정확히 두 자리(시작 · 제외)" "$(printf '%s\n' "$any_lines" | grep -c .)" "2"
+a_labels=$(printf '%s\n' "$any_lines" | head -n 1 | grep -oE '"[^"]+"' | tr -d '"' | sort -u)
+x_labels=$(printf '%s\n' "$any_lines" | tail -n 1 | grep -oE '"[^"]+"' | tr -d '"' | sort -u)
 loop_labels=$(grep -E '^[[:space:]]*case ",\$labels," in .*continue' "$DIR/eligible-issues.sh" \
   | grep -oE '\*",[^,"]+,"\*' | sed 's/^\*",//; s/,"\*$//' | sort -u)
-loop_prog=$(printf '%s\n' "$loop_labels" | grep -v '^needs-human$' | grep -v '^$' | sort -u)
-ck "Ⓔ⑩ 시작 판정 쪽 진행 라벨 4개를 실제로 찾았다" \
-  "$(printf '%s\n' "$a_labels" | grep -c .)" "4"
-ck "Ⓔ⑩ 후보 제외 쪽에서도 같은 4개를 찾았다" \
-  "$(printf '%s\n' "$loop_prog" | grep -c .)" "4"
+loop_prog=$(printf '%s\n' "$loop_labels" "$x_labels" | grep -v '^needs-human$' | grep -v '^$' | sort -u)
+ck "Ⓔ⑩ 시작 판정 쪽 진행 라벨 5개를 실제로 찾았다" \
+  "$(printf '%s\n' "$a_labels" | grep -c .)" "5"
+ck "Ⓔ⑩ 후보 제외 쪽에서도 같은 5개를 찾았다" \
+  "$(printf '%s\n' "$loop_prog" | grep -c .)" "5"
 ck "Ⓔ⑩ 두 자리의 진행 라벨 집합이 같다" \
   "$(printf '%s' "$a_labels" | tr '\n' ' ')" "$(printf '%s' "$loop_prog" | tr '\n' ' ')"
+ck "Ⓔ⑩ verifying(#275) 이 두 자리 모두에 있다" \
+  "$(printf '%s\n' "$a_labels" "$loop_prog" | grep -c '^verifying$')" "2"
 
 # ── Ⓔ⑪ (b) 창 절단·창 크기 미상도 말한다 ─────────────────────────────────
 # 이 검색은 한 장(per_page 100)뿐이다 — 닫힌 leaf 가 창을 넘으면 시작 집합이 **부분**이
