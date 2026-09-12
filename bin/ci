@@ -2999,7 +2999,7 @@ unq_files=$(grep -l 'def unquoted:' scripts/*.sh 2>/dev/null | tr '\n' ' ')
   || { echo "  ✗ def unquoted 정의가 scripts/jq-unquote.sh 밖에도 있다: $unq_files"; exit 1; }
 
 echo "[#301] references/reissue.md placeholder 검사"
-for ph in '<PR>' '<ISSUE>' '<EPIC_LINE>' '<BRANCH>' '<HEAD_SHA>' '<LAST_BOUNCE>' '<VERIFIER_FINDINGS>' '<ISSUE_BODY>'; do
+for ph in '<PR>' '<ISSUE>' '<EPIC_LINE>' '<BRANCH>' '<HEAD_SHA>' '<CURRENT_FAILURE>' '<VERIFIER_FINDINGS>' '<ISSUE_BODY>'; do
   grep -qF -- "$ph" skills/verify-runner/references/reissue.md \
     || { echo "  ✗ skills/verify-runner/references/reissue.md 에 $ph 없음"; exit 1; }
 done
