@@ -989,7 +989,7 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   fi
 done
 
-echo "[closeout] ③-1 1단계 worktree 확보 fetch·reset 검사 (#207)"
+echo "[closeout] ③-1 1단계 검증자가 현재 head 를 보는지 — gh pr diff 동봉 또는 worktree fetch·reset (#207·#375)"
 # 1단계 계획 부합 호출의 프롬프트(verifier-prompt.md)가 "이 워크트리는 PR 브랜치의
 # HEAD 로 체크아웃돼 있어 최신이다" 라고 전제한다 — 그 전제가 참이려면 1단계
 # 자신이 worktree 를 fetch·reset 해야 한다(revalidate 절이 이미 같은 이유로 이
@@ -1005,8 +1005,13 @@ check_step1_worktree_sync() {
     echo "  ✗ $f 에 1단계/2단계 앵커 없음"; return 1
   fi
   section=$(sed -n "${start_ln},$((end_ln - 1))p" "$f")
+  # #375 부터 1단계는 워크트리를 안 쓴다 — general-purpose 검증자에 `gh pr diff <pr>`(정의상 PR 의 현재
+  # head)를 동봉한다. 그 갈래면 fetch·reset 요구가 성립하지 않으므로 동봉 문구로 대신 문는다.
+  if printf '%s\n' "$section" | grep -qF 'gh pr diff <pr>'; then
+    return 0
+  fi
   if ! printf '%s\n' "$section" | grep -qF 'fetch origin'; then
-    echo "  ✗ $f 1단계 절에 'fetch origin' 없음 — worktree 가 옛 HEAD 일 수 있다(#207)"; return 1
+    echo "  ✗ $f 1단계 절에 'fetch origin' 도 'gh pr diff <pr>' 동봉도 없음 — 검증자가 옛 HEAD 를 볼 수 있다(#207·#375)"; return 1
   fi
   if ! printf '%s\n' "$section" | grep -qE 'reset --hard origin/agent/issue'; then
     echo "  ✗ $f 1단계 절에 'reset --hard origin/agent/issue-<N>' 없음(#207)"; return 1
@@ -1036,65 +1041,40 @@ grep -qF '<DIFF>' skills/closeout/references/verifier-prompt.md \
 grep -qF '이 워크트리는' skills/closeout/references/verifier-prompt-fallback.md \
   && { echo "  ✗ verifier-prompt-fallback.md 에 네이티브 전용 워크트리 전제 문구가 있음 — general-purpose 는 --cd 로 스코프되지 않아 거짓이다(#207)"; exit 1; }
 
-echo "[closeout] ③-1 응답 계약(구조 줄) 단일 정의 검사 (#207)"
-# 이 이슈의 뿌리는 SKILL 과 템플릿이 같은 계약을 서로 다르게 적은 것이었다. 응답 계약의
-# 형식 문자열도 두 자리에 적히면 같은 방식으로 갈라진다(프롬프트가 요구하는 형식 ≠ 파서가
-# 읽는 형식 = fail-open 재발). 그래서 형식은 codex-review-gate.sh 의 STATUS_* 상수 **한 자리**
-# 에서만 정의하고, 계약문·파서는 그 상수를 참조해야 하며, 문서·템플릿은 리터럴을 적지 않는다.
+echo "[closeout] ③-1 no-basis 신호 단일 정의 검사 (#207 · #375)"
+# 게이트 판정은 codex 구조 신호(발견 항목 · events.jsonl 명령 실행)로 선다(#375) — 모델에게 요구하는
+# 문자열은 선택 신호 `REVIEW_STATUS: no-basis` 하나뿐이고, 그 형식은 codex-review-gate.sh 의 STATUS_*
+# 상수 **한 자리**에서만 정의한다. 문서·템플릿이 리터럴을 적으면 힌트 문구와 파서가 갈라진다(#207 의 뿌리).
 gate=scripts/codex-review-gate.sh
-for v in STATUS_KEY STATUS_REVIEWED STATUS_NO_BASIS; do
+for v in STATUS_KEY STATUS_NO_BASIS; do
   if ! grep -qE "^$v=" "$gate"; then
-    echo "  ✗ $gate 에 $v 정의 없음 — 응답 계약 형식의 단일 정의 자리"; exit 1
+    echo "  ✗ $gate 에 $v 정의 없음 — no-basis 신호 형식의 단일 정의 자리"; exit 1
   fi
 done
 key=$(sed -n "s/^STATUS_KEY='\\(.*\\)'\$/\\1/p" "$gate")
 [ -n "$key" ] || { echo "  ✗ $gate 의 STATUS_KEY 값을 못 읽었다"; exit 1; }
 n=$(grep -c "$key" "$gate")
 if [ "$n" != 1 ]; then
-  echo "  ✗ $gate 에 계약 키('$key') 리터럴이 ${n}곳 — 정의 1곳만 허용(나머지는 \$STATUS_KEY 참조)"; exit 1
+  echo "  ✗ $gate 에 신호 키('$key') 리터럴이 ${n}곳 — 정의 1곳만 허용(나머지는 \$STATUS_KEY 참조)"; exit 1
 fi
-# 프롬프트가 요구하는 형식 · 파서가 읽는 형식이 둘 다 그 상수에서 만들어지는가
-if ! grep -q '\${STATUS_KEY}: \${STATUS_REVIEWED}' "$gate" || ! grep -q '\${STATUS_KEY}: \${STATUS_NO_BASIS}' "$gate"; then
-  echo "  ✗ $gate 의 프롬프트 계약문이 STATUS_* 상수로 만들어지지 않았다"; exit 1
+if grep -qE '^ *STATUS_REVIEWED=' "$gate"; then
+  echo "  ✗ $gate 에 'reviewed' 계약 값이 되살아났다 — 모델이 내지 않는 줄을 요구하면 판정을 버린다(#375, 실호출 0/8)"; exit 1
 fi
-if ! grep -qF 'contract_re="^${STATUS_KEY}:[[:space:]]+(${STATUS_REVIEWED}|${STATUS_NO_BASIS})$"' "$gate"; then
-  echo "  ✗ $gate 의 판정 파서가 STATUS_* 상수로 만들어지지 않았거나 줄 전체(^…\$) 앵커가 아니다 — 같은 줄 선행 텍스트를 받으면 '못 봤다'가 CLEAN 으로 샌다(#283)"; exit 1
-fi
-# 같은 줄 선행 텍스트를 어형으로 가르려던 옛 허용 목록이 되살아나면 빨강 — 그 창이 두 회차
-# 연속 fail-open 을 냈다(부정문 인라인 → CLEAN). 판정은 앵커 하나로만 선다.
-if grep -qE '^ *(PREFIX_SENTENCE_RE|PREFIX_MARKER_RE)=' "$gate"; then
-  echo "  ✗ $gate 에 계약 줄 접두 허용 목록이 되살아났다 — 값 앞 같은 줄 텍스트는 어형 불문 거절이다(#283 재심 ①)"; exit 1
-fi
-# 렌더 경계는 CLI 저작의 증거 한 술어로만 선다(ⓐ 형식 ⓑ 접미 ⓒ 유일). 술어가 사라지거나
-# 유일성 검사가 빠지면 모델이 지어낸 헤더+불릿이 다시 경계로 읽힌다(#283 재심 ②).
-grep -qF 'function cli_rendered(' "$gate" \
-  || { echo "  ✗ $gate 에 cli_rendered() 술어가 없다 — 무엇이 CLI 렌더인가의 단일 정의 자리(#283)"; exit 1; }
-grep -qF 'if (qual != 1) { cut = 0; tail = NR }' "$gate" \
-  || { echo "  ✗ $gate 의 경계 판정에 자격 헤더 유일성(ⓒ) 검사가 없다 — 자격 헤더가 둘 이상이면 모호이므로 자르지 않아야 한다(#283)"; exit 1; }
-# 꼬리 닫는 펜스는 **짝이 맞고 그 짝이 구역 첫 비공백 줄일 때만** artifact 다(#279 짝 · #339 위치).
-# 위치 조건이 빠지면 산문 뒤에 연 펜스 블록 안의 계약 줄(리뷰어가 계약문을 되읊은 응답)이 CLEAN
-# 으로 샌다. 판정 줄은 **끝 공백만** 벗긴다 — 선행 공백까지 지우면 4칸/탭 들여쓴 인용이 맨몸 계약
-# 줄과 같아진다(#339). 격자(4b-2e-2)가 두 뮤테이션을 각각 문다 — 여기서는 술어의 존재를 문다.
-grep -qF 'if (closer[i] == 1 && opener[i] == first) continue' "$gate" \
-  || { echo "  ✗ $gate 의 꼬리 펜스 벗기기에 여는 펜스 위치 조건(opener[i] == first)이 없다 — 산문 뒤 펜스 블록 안의 계약 줄이 CLEAN 으로 샌다(#339)"; exit 1; }
-grep -qF 'last = rtrim(line[i]); break' "$gate" \
-  || { echo "  ✗ $gate 의 판정 줄이 rtrim 이 아니다 — 선행 공백을 지우면 들여쓴 계약 줄 인용이 판정으로 읽힌다(#339)"; exit 1; }
-# 판정 창의 경계(#283) — codex 가 렌더하는 발견 섹션 헤더도 형식 문자열이다. 여기도 정의 1곳으로
-# 묶고 파서가 그 상수를 실제로 참조하는지 문다: 헤더 리터럴이 awk 안에 따로 적히면 codex 가
-# 헤더 문구를 바꿨을 때 한쪽만 고쳐져 게이트가 조용히 옛 동작(발견 있는 리뷰 전부 미산출)으로 돈다.
-# **값까지** 문다 — 빈 값(`RENDER_HEADER_ONE=''`)이면 awk 의 `s == h1` 이 첫 빈 줄에 걸려 구역이
-# 총평 첫 문단에서 잘린다(방향은 fail-closed 지만 게이트가 조용히 쓸모없어진다).
-for v in RENDER_HEADER_ONE RENDER_HEADER_MANY; do
-  grep -qE "^$v='[^']+'\$" "$gate" || { echo "  ✗ $gate 의 $v 가 없거나 값이 비었다 — 판정 창 경계의 단일 정의 자리(#283)"; exit 1; }
-done
-grep -qF 'awk -v h1="$RENDER_HEADER_ONE" -v hn="$RENDER_HEADER_MANY"' "$gate" \
-  || { echo "  ✗ $gate 의 판정 창이 RENDER_HEADER_* 상수를 참조하지 않는다 — 헤더 리터럴이 두 자리로 갈라진다(#283)"; exit 1; }
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md skills/closeout/references/verifier-prompt.md \
          skills/closeout/references/verifier-prompt-fallback.md; do
   if grep -q "$key" "$f"; then
-    echo "  ✗ $f 에 계약 형식('$key')이 하드코딩됨 — 정의 자리는 $gate 뿐(#207)"; exit 1
+    echo "  ✗ $f 에 신호 형식('$key')이 하드코딩됨 — 정의 자리는 $gate 뿐(#207)"; exit 1
   fi
 done
+
+echo "[closeout·verify-runner] codex 호출 상한 불변 가드 (#375)"
+# codex 는 PR 당 2회이고 둘 다 verify-runner 몫이다(사용자 결정 2026-09-13). closeout 1단계가 세 번째로
+# 부르던 호출이 되살아나거나, verify-runner 의 상한 상수가 사라지면 회차 비용이 조용히 되돌아간다.
+if grep -qE 'codex-review-gate\.sh --' skills/closeout/SKILL.md skills/closeout/SKILL.en.md; then
+  echo "  ✗ closeout SKILL 에 codex-review-gate.sh 호출이 있다 — 1단계는 general-purpose 계획 부합 한 번뿐(#375)"; exit 1
+fi
+grep -qF 'CODEX_REVIEW_LIMIT = 2' skills/verify-runner/SKILL.md \
+  || { echo "  ✗ verify-runner SKILL.md 에 'CODEX_REVIEW_LIMIT = 2' 가 없다 — PR 당 codex 2회 상한(#375)"; exit 1; }
 
 echo "[closeout] smoke-prompt 한/영 placeholder 검사 (#69)"
 # 5단계 Chrome 스모크 동봉형 프롬프트(verifier-prompt.md 미러) — 한/영 양쪽이
@@ -2510,14 +2490,17 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md skills/verify-runn
   if grep -nE '`needs-human` *\+ *`hold:' "$f" | grep -q .; then
     echo "  ✗ $f: 기계 정지를 \`needs-human\` + \`hold:*\` 쌍으로 서술 — #244 이후 전이는 사유 라벨 하나만 붙인다"; exit 1; fi
 done
-# (#244 WARN) 같은 파일 안에서 계약이 **두 값**으로 갈리지 않게 — `verify-runner` 의
-# `VERIFY_ATTEMPTS_LIMIT` 노브 설명과 ④ held 절차문은 같은 값이어야 한다. 옛 문구(재디스패치
-# 상한 초과를 `needs-human` 으로 승격)는 `transition.sh verify-held` 가 붙일 수 없는 라벨을
-# 광고해, 읽는 사람과 다음 구현자가 서로 다른 계약을 믿는다(#191 과 같은 자리).
+# (#244 WARN) 같은 파일 안에서 계약이 **두 값**으로 갈리지 않게 — `verify-runner` 의 ④ held 절차문은
+# `transition.sh verify-held` 가 붙일 수 있는 라벨(`hold:<reason>`)만 광고해야 한다. 옛 문구(재디스패치
+# 상한 초과를 `needs-human` 으로 승격)는 붙일 수 없는 라벨이라 읽는 사람과 다음 구현자가 서로 다른
+# 계약을 믿는다(#191 과 같은 자리). #375 부터 리뷰 반송 상한은 held 사유가 아니다(codex 2회 → 3회차
+# 자체 리뷰 완료) — 그 옛 서술(`상한 초과 → hold:policy`)이 되살아나면 여기서 빨강.
 if grep -nE '`needs-human` *으로 승격' skills/verify-runner/SKILL.md | grep -q .; then
-  echo "  ✗ skills/verify-runner/SKILL.md: 재디스패치 상한 초과를 needs-human 승격으로 서술 — 정지는 \`hold:policy\` 다 (#244)"; exit 1; fi
-grep -qF '`hold:policy` 로 정지' skills/verify-runner/SKILL.md \
-  || { echo "  ✗ skills/verify-runner/SKILL.md: 상한 초과 시 \`hold:policy\` 로 정지한다는 서술 없음 (#244)"; exit 1; }
+  echo "  ✗ skills/verify-runner/SKILL.md: 재디스패치 상한 초과를 needs-human 승격으로 서술 — 정지는 \`hold:<reason>\` 다 (#244)"; exit 1; fi
+grep -qF 'verify-held <repo> <issue|-> <pr> --reason' skills/verify-runner/SKILL.md \
+  || { echo "  ✗ skills/verify-runner/SKILL.md: held 가 transition.sh verify-held --reason 으로 정지한다는 서술 없음 (#244)"; exit 1; }
+if grep -qE '상한 초과\*\* → `policy`|재디스패치 상한 초과\(VERIFY_ATTEMPTS_LIMIT\)' skills/verify-runner/SKILL.md; then
+  echo "  ✗ skills/verify-runner/SKILL.md: 리뷰 반송 상한 초과를 hold:policy 사유로 서술 — #375 부터 3회차는 자체 리뷰로 완료한다"; exit 1; fi
 # 루프 현황 대시보드(#163) — 세 루프 ④ Report 가 --post 로 게시해야 깃헙만 보고 현황을 안다.
 for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qE 'loop-status\.sh --post (issue-runner|verify-runner|closeout)' "$f" || { echo "  ✗ $f: loop-status.sh --post 배선 없음"; exit 1; }
