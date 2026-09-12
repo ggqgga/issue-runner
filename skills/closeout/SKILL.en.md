@@ -852,7 +852,10 @@ comment.
   If none, fix it here; if even one, it is a step-6 issue. What the criterion admits —
   comment prose, terminology/notation unification, numbers and coordinates inside
   comments, dead-reference removal, **test names** (the description string in `test "…"`
-  executes but does not flip pass/fail). What it blocks — new assertions·new guards·
+  executes but does not flip pass/fail), and **token top-ups, anchor sync and renames of
+  guards/tests this PR introduced** (the behavior they pin is unchanged — measured 2026-09-13:
+  a bin/ci guard token, a regex end-anchor sync and a comment fix each went a full lap as an
+  issue, #411). What it blocks — assertions or guards that newly pin other behavior,
   added coverage·constant values·execution branches. "While I'm fixing the comment, one
   more assertion" is an issue.
   - State what was fixed in a comment on the original PR:
@@ -1173,9 +1176,25 @@ structure/empty-state confirmation from real-data render confirmation in the res
   an error tab, `close_page` that tab too), and a normal no-op tick (no smoke target)
   likewise opens no browser, so this cleanup is skipped without regression.
 
-**Step 6 — spinoff issues.** Fill `references/spinoff-issue.md` with the worker PR
-body's `follow-up:` items + adjacent work the step-1 diff review flagged, and issue an
-agent-ready issue. **A spinoff inherits its parent's epic and priority mechanically,
+**Step 6 — spinoff issues.** The input is the worker PR body's `follow-up:` items +
+adjacent work the step-1 diff review flagged. **Do not transcribe the input into issues —
+judge every item first; an issue is only the last of five branches, ⓔ** (user decision
+2026-09-13, #411). The reviewer is input, not the decider — "codex said P2, so it's an
+issue" is not a verdict. Measured: re-reading this repo's 10 WARN-residue spinoffs with the
+user, 0 of 10 deserved an issue (guard tokens/anchors/comments 4 · hypothetical scenarios 2 ·
+already rewritten by a sibling PR 2 · noise 1 · a decision request 1).
+
+| Nature of the item | Handling |
+|---|---|
+| ⓐ Ends inside this PR's files and changes no behavior (comments, terms, anchors, guard tokens, test names) | **Absorb** — the class step 3's surface-correction commit should have taken. If it is past the merge and there is no commit to ride, do not issue it; write `흡수 누락:` in the verdict comment below |
+| ⓑ A scenario outside the loop's normal operation (a human rewriting history · settings outside the docs · a limit set past its cap) | **Reject** — `기각: <reason>` in the verdict comment |
+| ⓒ The target code is being changed by a sibling PR, or the line is no longer in `origin/<default>` at issuance time (check with `git grep`) | If the sibling PR is open, **to that PR** (bounce it to rebase); if it already merged and the code is gone, **reject** |
+| ⓓ A fork only a human can settle ("one of the two") | One **needs-human comment** — on the parent epic if there is one, else on this PR. No issue |
+| ⓔ A real defect in code outside this PR (the verifier raised P1 and downgraded it to WARN as out of scope) · worker `follow-up:` items | **Issue** — fill `references/spinoff-issue.md` and issue an agent-ready issue with the command below. The body's second line `Spinoff of PR #<pr> (issue #<parent>)` is mandatory |
+
+Leave the verdict as one comment on the original PR — `파생 판정: ⓐ N · ⓑ N · ⓒ N · ⓓ N · ⓔ N — <branch and one-line reason per item>`
+(ending with `<!-- bodat:worker -->`). If ⓔ is 0, step 6 ends with that comment — zero issuance is the normal case.
+**A spinoff inherits its parent's epic and priority mechanically,
 every time** (#261) — `$SCRIPTS/spinoff-inherit.sh` emits `epic=` for the body's first
 line `Epic #N` and `priority=` for the P label. Record the created number in a comment
 on the original PR (a duplicate-issuance marker).
@@ -1243,6 +1262,10 @@ on the original PR (a duplicate-issuance marker).
   **immediately** with `gh issue edit <number> --repo <repo> --body-file <corrected body file>`
   (right alongside the label top-up). Skip this and the spinoff stays an orphan outside the
   epic, invisible forever to `loop-status.sh`'s leaf rollup.
+  ⑶ **Check the origin line in the same place** — the body must contain exactly one dedicated
+  line `Spinoff of PR #<pr> (issue #<parent>)` (the template's `<ORIGIN_LINE>` slot, #411). If
+  missing, fix it immediately the same way as ⑵ — a spinoff without this line makes a human dig
+  through prose to learn where it came from (measured 2026-09-13: only 12 of the last 30 had it).
 - **Marker comment on the original PR.** After issuing, comment
   `파생: #<new number> (Epic #<N|없음> · <P>)` on the original PR — the inheritance result is
   readable at a glance, and ④ Report's `파생` item uses the **same shape** (so spinoffs leaking

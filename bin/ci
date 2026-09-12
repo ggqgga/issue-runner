@@ -907,7 +907,7 @@ for f in skills/closeout/references/verifier-prompt.md \
     *deploy-check-issue.md) phs="<PR> <SHA> <SUMMARY> <DEPLOY_CMD> <LIVE_CHECKS> <VERIFY_URL>" ;;
     # <EPIC_LINE>: 파생이 부모의 에픽을 본문 **첫 줄**(`Epic #N`)로 물려받는 자리 (#261).
     # 지우면 파생이 에픽 밖 고아가 되고 loop-status 에픽 절의 leaf 집계에서 사라진다.
-    *spinoff-issue.md)      phs="<EPIC_LINE> <BACKGROUND> <REASON> <PLAN> <TEST_PLAN> <RELATED>" ;;
+    *spinoff-issue.md)      phs="<EPIC_LINE> <ORIGIN_LINE> <BACKGROUND> <REASON> <PLAN> <TEST_PLAN> <RELATED>" ;;
   esac
   # shellcheck disable=SC2086
   for ph in $phs; do
@@ -1493,6 +1493,38 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   awk 'BEGIN{RS="";ok=0} /lessons(-verifier)?\.md/ && (/스모크/ || /smoke/) {ok=1} END{exit ok?0:1}' "$f" \
     || { echo "  ✗ $f: 코드무관 스모크 실패 시 lessons 기록 지시(같은 단락) 없음"; exit 1; }
 done
+
+echo "[#411] closeout 6단계 판정 표(ⓐ~ⓔ)·파생 판정 코멘트·출처 줄 — 검증자 잔여를 필사하지 않는다 (한/영)"
+# 6단계가 리뷰어 항목을 그대로 이슈로 옮겨 WARN 잔여 파생이 33건+ 쌓였다(2026-09-13 실측, 사람과 다시
+# 읽으니 이슈가 맞는 것 0/10). 판정 표 다섯 갈래·판정 코멘트·출처 줄이 6단계 구간에, 템플릿엔
+# <ORIGIN_LINE> 슬롯이, 3단계·verify ⓪ 엔 "이 PR 이 도입한 가드" 흡수 문장이 있어야 한다.
+# 만료 조건: 6단계 판정이 스크립트(플랜 loop-restructure 2단계 spinoff-issue.sh)로 옮겨 가면 이 블록은 그 테스트로 대체한다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in *.en.md) s6='^\*\*Step 6 —' ;; *) s6='^\*\*6단계 —' ;; esac
+  s6_line=$(grep -nE "$s6" "$f" | head -1 | cut -d: -f1)
+  d_line=$(grep -nE '^## ⑤' "$f" | head -1 | cut -d: -f1)
+  [ -n "$s6_line" ] && [ -n "$d_line" ] || { echo "  ✗ $f: 6단계/⑤ 앵커 없음"; exit 1; }
+  seg=$(sed -n "${s6_line},${d_line}p" "$f")
+  for tok in '| ⓐ ' '| ⓑ ' '| ⓒ ' '| ⓓ ' '| ⓔ ' '파생 판정:' 'Spinoff of PR #'; do
+    printf '%s\n' "$seg" | grep -qF -- "$tok" \
+      || { echo "  ✗ $f: 6단계 구간에 '$tok' 없음 (판정 표·판정 코멘트·출처 줄)"; exit 1; }
+  done
+  n=$(printf '%s\n' "$seg" | grep -cF 'Spinoff of PR #')
+  [ "$n" -ge 2 ] || { echo "  ✗ $f: 6단계 구간의 'Spinoff of PR #' ${n}회 (기대 2회 이상 — 표 ⓔ + 발행 직후 확인)"; exit 1; }
+done
+# 슬롯은 **줄 전체**로 문다 — 머리 주석에도 같은 문자열이 있어 -F 부분 일치는 슬롯을 지워도 초록이다(뮤테이션 실측).
+# 자리도 문다: <EPIC_LINE> 슬롯 바로 다음 줄이어야 6단계 '발행 직후 확인' ⑶ 의 "둘째 줄" 이 참이다.
+grep -qxF '<ORIGIN_LINE>' skills/closeout/references/spinoff-issue.md \
+  || { echo "  ✗ spinoff-issue.md: <ORIGIN_LINE> 슬롯(줄 전체) 없음"; exit 1; }
+origin_slot=$(grep -A1 -xF '<EPIC_LINE>' skills/closeout/references/spinoff-issue.md | tail -1)
+[ "$origin_slot" = "<ORIGIN_LINE>" ] \
+  || { echo "  ✗ spinoff-issue.md: <EPIC_LINE> 다음 줄이 <ORIGIN_LINE> 이 아니다 (실제=[$origin_slot])"; exit 1; }
+for f in skills/closeout/SKILL.md skills/verify-runner/SKILL.md; do
+  grep -qF '이 PR 이 도입한 가드' "$f" \
+    || { echo "  ✗ $f: 표면 교정 허용 목록에 '이 PR 이 도입한 가드' 없음"; exit 1; }
+done
+grep -qF 'guards/tests this PR introduced' skills/closeout/SKILL.en.md \
+  || { echo "  ✗ closeout SKILL.en.md: 'guards/tests this PR introduced' 미러 없음"; exit 1; }
 
 echo "[표면교정] 3단계 흡수·6단계 비발행·verify ⓪ 이 같은 한 줄 기준을 쓰는지 검사"
 # 표면 교정(주석·용어·수치·테스트 이름)을 이슈로 내보내면 한 줄 고치자고 디스패치→구현→
