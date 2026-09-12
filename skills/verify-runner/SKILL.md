@@ -223,13 +223,14 @@ N < 2 면 `$SCRIPTS/codex-review-gate.sh --base origin/<default>
 **3′. 3회차 자체 리뷰 — codex 없이 (N = 2).** codex 는 이 PR 에 이미 두 번 답했고 워커가 두 번 고쳤다.
 세 번째 판정은 `general-purpose` 서브에이전트(read-only)가 낸다 — 입력은 **직전 `재검증 실패:` 코멘트**
 (2회차 codex 의 P1 제목들)와 `git diff origin/<default>...HEAD`, 출력은 **지적별 `해소`/`미해소` + 한 줄 근거**.
-이 리뷰는 게이트가 아니다 — E2E(③-2)·결정적 CI(③-1)만 게이트다. 결과를 PR 코멘트로 남긴다:
-`gh pr comment <pr> --repo <repo> --body "검증자 리뷰: 자체 리뷰(codex 2회 소진) · 해소 n / 미해소 m
+이 리뷰는 게이트가 아니다 — E2E(③-2)·결정적 CI(③-1)만 게이트다. 결과를 PR 코멘트로 남긴다 —
+**closeout 2단계 머지 게이트가 읽는 형식 그대로**(`검증자 리뷰:` 접두 + `BLOCKER 0`; 미해소는 WARN 으로 센다):
+`gh pr comment <pr> --repo <repo> --body "검증자 리뷰: BLOCKER 0 / WARN <m> · 자체 리뷰(codex 2회 소진 · 3회차) · 해소 <n> / 미해소 <m>
 <지적별 해소/미해소 + 근거>
 <!-- bodat:worker -->"`
-미해소가 남아도 ④ **passed** 로 간다(아래 `잔여:`) — 남은 지적은 closeout 6단계가 파생 이슈로 받는다.
-`검증자 리뷰:` 접두는 그대로다(closeout 2단계가 이 코멘트에서 `BLOCKER` 0 을 읽는다 — 자체 리뷰 코멘트는
-그 단어를 쓰지 않는다).
+미해소가 남아도 ④ **passed** 로 간다. 남은 지적은 **PR 본문에 `follow-up:` 줄로 적는다**(한 지적 한 줄,
+`follow-up: <지적 제목> — 3회차 자체 리뷰 미해소`, `gh pr edit --body` 로 본문 끝에 추가) — closeout 6단계는
+PR 본문의 `follow-up:` 항목만 파생 이슈 입력으로 읽으므로 이 줄이 없으면 지적이 조용히 버려진다.
 
 **3-b. 보조 리뷰 (`AUX_REVIEWERS`, 비게이트).** ③-3 의 Codex 스폰과 **같은 시점**에, 같은 동봉
 diff·이슈 본문으로 `AUX_REVIEWERS` 두 타입을 각각 `run_in_background: true` 로 스폰한다(직렬 레인의
@@ -256,8 +257,8 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 2. 최종 그린라이트:
    `gh pr comment <pr> --repo <repo> --body "머지 판정: ✅ 머지 가능 — 결정적 CI pass · E2E <pass 또는 '해당 없음'> · 검증자 <CLEAN 또는 'BLOCKER 0 / WARN n'> · 미해결 없음
 <!-- bodat:worker -->"`
-   3′ 경로면 검증자 칸을 `자체 리뷰(codex 2회 소진 · 3회차)` 로, 미해소가 있으면 `미해결 없음` 대신
-   `잔여: <지적 제목들>` 로 쓴다 — closeout 6단계가 그 줄을 파생 이슈 입력으로 읽는다(조용히 버리지 않는다).
+   3′ 경로면 검증자 칸을 `BLOCKER 0 / WARN <m> · 자체 리뷰(codex 2회 소진 · 3회차)` 로, 미해소가 있으면
+   `미해결 없음` 대신 `잔여: <지적 제목들>` 로 쓴다(사람용 요약 — 기계 입력은 3′ 가 PR 본문에 적은 `follow-up:` 줄이다).
 3. 라벨 인계: `$SCRIPTS/transition.sh verify-pass <repo> <issue|-> <pr>` — PR 과 원 이슈를
    한 호출로 옮긴다(전이 표 SSOT = `transition.sh` 상단 주석). **closeout 계약 무변경**
    (기존 `머지 판정: ✅` 마커 재사용 — `closeout-eligible.sh` 가 그걸로 집는다) + 이슈
@@ -267,11 +268,13 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
      라벨이 반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적이다(조용히 넘어가지 않는다).
 
 **redispatched** — E2E 진짜 실패 / codex BLOCKER(검증자 데드라인 초과 포함) / 결정적 CI 실패:
-1. `<!-- verify-attempt: N -->` 를 PR 본문에서 읽는다(없으면 0). codex BLOCKER 반송은 N+1 ≤
-   `CODEX_REVIEW_LIMIT` 에서만 일어난다(N = 2 면 ③-3′ 가 codex 를 부르지 않았으니 codex BLOCKER 자체가
-   없다). E2E·결정적 CI 실패는 회차와 무관하게 반송한다 — 그건 게이트다.
+1. `<!-- verify-attempt: N -->` 를 PR 본문에서 읽는다(없으면 0). **N 은 codex BLOCKER 반송 수만 센다.**
+   codex BLOCKER 반송은 N+1 ≤ `CODEX_REVIEW_LIMIT` 에서만 일어난다(N = 2 면 ③-3′ 가 codex 를 부르지
+   않았으니 codex BLOCKER 자체가 없다). E2E·결정적 CI 실패는 회차와 무관하게 반송한다 — 그건 게이트다 —
+   **그리고 N 을 올리지 않는다**(카운터를 같이 올리면 E2E 실패 두 번에 codex 를 한 번도 못 받고 3′ 로 간다).
 2. 재디스패치: 실패 사유 코멘트(멱등 마커) —
-   `$SCRIPTS/bounce-comment.sh reverify-fail <repo> <pr> <issue> <N+1> "<사유>"`
+   codex BLOCKER 면 `$SCRIPTS/bounce-comment.sh reverify-fail <repo> <pr> <issue> <N+1> "<사유>"`,
+   E2E·CI 실패면 같은 명령에 `<N>`(현재 값 그대로 — 마커의 attempt 번호는 codex 회차다).
    **N+1 = 2(마지막 codex 반송)면 `<사유>` 끝에 `최종 회차: 다음 검증은 codex 없이 자체 리뷰로
    완료된다` 를 붙인다** — 워커가 이 문구를 보면 9-b 사전 리뷰를 건너뛰지 않는다(worker-template).
    문구는 인자로만 간다(스크립트·마커 형식 무변경).
@@ -279,7 +282,7 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    안전망이 놓친다, #212. 생성되는 본문은
    `재검증 실패: #<issue> — <사유> (attempt N+1)\n<!-- bodat:worker -->`).
    **이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지 않는다**
-   (/loop 스팸 방지). PR 본문 주석을 `<!-- verify-attempt: N+1 -->` 로 갱신
+   (/loop 스팸 방지). **codex BLOCKER 반송일 때만** PR 본문 주석을 `<!-- verify-attempt: N+1 -->` 로 갱신
    (`gh pr edit <pr> --repo <repo> --body ...` — 나머지 본문 보존).
 3. 라벨·반송: `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr>` — PR 의
    `flow:verify` 를 떼고 원 이슈를 `agent-ready`(+`flow:verify`·`agent:claimed` 제거)로 되돌린다.

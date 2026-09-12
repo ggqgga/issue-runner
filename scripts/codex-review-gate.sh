@@ -207,6 +207,7 @@ review_read_commands() {
     {
       if (index($0, "\"type\":\"item.completed\"") == 0) next   # 완료된 이벤트 봉투(codex 저작)만
       if (index($0, "\"type\":\"command_execution\"") == 0) next
+      if (index($0, "\"exit_code\":0") == 0) next        # 실패한 명령(잘못된 경로·리비전)은 읽은 증거가 아니다
       c = index($0, "\"command\":\"")                    # 한 줄의 첫 command 필드만 본다
       if (c == 0) next
       cmd = json_str($0, c + 11)                         # 11 = `"command":"` 길이

@@ -103,6 +103,8 @@ cp "${UNABLE:?}" "${out:?}"
 case "${STUB_EVENTS:-none}" in
   git)    printf '%s\n' '{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc \"git diff --stat base...HEAD\"","aggregated_output":"f | 2 +-","exit_code":0,"status":"completed"}}' ;;
   none)   : ;;
+  # 실패한 git 명령(잘못된 리비전) — command 에 `git ` 이 있어도 exit_code≠0 이면 읽은 증거가 아니다
+  gitfail) printf '%s\n' '{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc \"git diff --stat nope...HEAD\"","aggregated_output":"fatal: bad revision","exit_code":128,"status":"completed"}}' ;;
   absent) rm -f "$(dirname "$out")/events.jsonl" ;;   # 게이트가 리다이렉션으로 만들어 둔 파일을 지운다
   # 보조 경로 — `git ` 이 없고 `--cd` 로 준 경로만 담은 명령(codex 가 cwd 를 안 옮긴 런)
   cdpath) printf '%s\n' '{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc \"rg --files '"$STUB_CD"'\"","aggregated_output":"f","exit_code":0,"status":"completed"}}' ;;
@@ -162,6 +164,8 @@ srow "② 항목 0 · git 명령 기록 1건 = CLEAN(옛 '볼 수 없음' 산문
   git "--base base"
 srow "③ 항목 0 · 명령 기록 0 = NONE(읽지 않은 '문제 없음' 은 판정이 아니다)" NONE \
   '변경 전체를 읽고 대조했습니다. 이 변경은 계획에 부합합니다. 결함 없음. CLEAN'
+srow "③-b 항목 0 · git 명령은 있으나 exit_code 128 = NONE(실패한 읽기는 증거가 아니다)" NONE \
+  "CLEAN. 문제 없음." gitfail
 srow "④ 항목 0 · events.jsonl 자체가 없음 = NONE(파일 부재도 기록 0 과 같다)" NONE \
   '결함 없음.' absent
 srow "⑤ 항목 0 · no-basis 줄 · git 명령 기록 1건 = NONE(명령을 돌렸어도 리뷰어가 근거 없음을 밝혔다)" NONE \
