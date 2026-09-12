@@ -11,7 +11,8 @@
 #      유실이 난다). PR 이 마지막인 이유: 원 이슈 닫기가 실패해도 PR 이 열린 채 큐에 남아
 #      다음 틱이 같은 PR 로 재진입해 마저 닫는다(①-e).
 #   ③ `blocked-by:<구>` 라벨을 단 이슈는 새 번호로 옮긴다(옮기기 전엔 원 이슈를 안 닫는다 —
-#      닫힌 블로커는 eligible 게이트가 해제로 읽어 하위가 조기 풀린다).
+#      닫힌 블로커는 eligible 게이트가 해제로 읽어 하위가 조기 풀린다). 조회가 상한(500)에
+#      닿으면 절단 가능 → 옮기지도 닫지도 않는다(③-e).
 #   ④ `회차 허용: +1 — 범위: <한 줄>` 1회 → PR 본문 verify-attempt 를 LIMIT-1 로 갱신 +
 #      `<!-- round-granted -->` 마커 코멘트(갱신 **성공 뒤에만** — 마커 = 적용 완료, ④-f).
 #   ⑤ 2회(마커가 이미 있음) → 무시 + warn. 예외는 이슈당 한 번.
@@ -327,6 +328,19 @@ touch "$tmp/state/fail-issue-edit"
 run "$REPO" "$PR" "$OLD"
 check "③-b exit 비0" "$([ "$(rc)" != 0 ] && echo ok || echo no)"
 want_not_in "③-b 원 이슈를 닫지 않았다" "$STUB_LOG" "issue close"
+
+echo "── ③-e blocked-by:<구> 조회가 상한에 닿으면(절단 가능) 원 이슈를 닫지 않는다 ──"
+# 100건에서 잘리면 나머지 하위 이슈는 닫힌 블로커를 가리킨 채 남아 조기 해제된다(#318 재심 P2-5).
+# 조회는 --limit 500 이고, 500건이 돌아오면 절단 가능 → fail-closed(아무것도 옮기지도 닫지도 않는다).
+setup
+jq -n '[range(1000; 1500) | {number: .}]' > "$tmp/state/blocked-list.json"
+run "$REPO" "$PR" "$OLD"
+check "③-e exit 비0"                        "$([ "$(rc)" != 0 ] && echo ok || echo no)"
+want_in "③-e 조회에 --limit 500"              "$STUB_LOG" "--limit 500"
+want_not_in "③-e 원 이슈를 닫지 않았다"        "$STUB_LOG" "issue close"
+want_not_in "③-e PR 을 닫지 않았다"            "$STUB_LOG" "pr close"
+want_not_in "③-e 일부만 옮기지도 않는다"        "$STUB_LOG" "add-label blocked-by:900"
+want_in "③-e 사유가 stderr 에"                "$tmp/state/err.txt" "상한"
 
 echo "── ①-d 상속은 spinoff-inherit.sh(#261) 한 자리 — P 없는 부모는 P2, 소문자 epic 줄도 Epic #N ──"
 # 이슈 본문의 상속 규칙("`spinoff-inherit.sh` #261 이 있으면 그것으로") — 손으로 옮긴 규칙은

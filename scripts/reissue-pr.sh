@@ -436,13 +436,17 @@ else
 fi
 
 # blocked-by 이전 — **원 이슈를 닫기 전**에.
-blocked=$(gh issue list --repo "$repo" --state open --label "blocked-by:$issue" --json number --limit 100 2>/dev/null) || blocked="__FAIL__"
+# 조회 상한은 500 이고, 상한에 닿으면 **잘렸을 수 있다** — 잘린 나머지는 닫힌 블로커를 가리킨
+# 채 남아 조기 해제되므로(재심 P2-5) 일부만 옮기고 닫는 경로를 두지 않는다: 옮기지도 닫지도
+# 않고 exit 4(다음 틱도 같은 자리에서 멈춘다 — 500건 넘게 한 이슈에 막힌 상태는 사람이 볼 일).
+BLOCKED_LIMIT=500
+blocked=$(gh issue list --repo "$repo" --state open --label "blocked-by:$issue" --json number --limit "$BLOCKED_LIMIT" 2>/dev/null) || blocked="__FAIL__"
 [ "$blocked" != "__FAIL__" ] || die 4 "blocked-by:$issue 조회 실패 — 원 이슈를 닫지 않는다(닫힌 블로커는 해제로 읽힌다)"
-# 상한(100)에 닿았으면 **잘렸을 수 있다** — 잘린 나머지는 닫힌 블로커를 가리킨 채 남으므로
-# 조용히 넘기지 않고 알린다(이 레포의 목록 조회가 상한을 warn 으로 드러내는 규약과 같다).
 n_blocked=$(printf '%s' "$blocked" | jq -r 'length') \
   || die 4 "blocked-by:$issue 목록 파싱 실패 — 원 이슈를 닫지 않는다(빈 목록과 구분한다)"
-[ "$n_blocked" != "100" ] || warn "warn: blocked-by:$issue 가 조회 상한 100 에 닿았다 — 나머지는 손으로 옮겨야 한다 (#$issue → #$new)"
+_int "$n_blocked" || die 4 "blocked-by:$issue 목록 길이 판정 실패('$n_blocked') — 원 이슈를 닫지 않는다"
+[ "$n_blocked" -lt "$BLOCKED_LIMIT" ] \
+  || die 4 "blocked-by:$issue 가 조회 상한 $BLOCKED_LIMIT 에 닿았다(절단 가능) — 아무것도 옮기지 않고 원 이슈를 닫지 않는다 (#$issue → #$new, 사람이 확인)"
 blocked_nums=$(printf '%s' "$blocked" | jq -r '.[]?.number // empty') \
   || die 4 "blocked-by:$issue 번호 파싱 실패 — 원 이슈를 닫지 않는다"
 for b in $blocked_nums; do
@@ -456,9 +460,14 @@ done
 # 위 라벨 조회에 안 잡히는데, 원 이슈가 닫히면 그 줄은 "해제" 로 읽혀 하위가 조기에 풀린다.
 # 남의 본문을 고치지는 않고(사람의 글이다) **새 번호 라벨을 얹어** 막힘을 잇고 warn 한다.
 body_blocked=$(gh issue list --repo "$repo" --state open --search "\"Blocked by #$issue\" in:body" \
-  --json number,body --limit 100 2>/dev/null) || body_blocked="__FAIL__"
+  --json number,body --limit "$BLOCKED_LIMIT" 2>/dev/null) || body_blocked="__FAIL__"
 [ "$body_blocked" != "__FAIL__" ] \
   || die 4 "본문 'Blocked by #$issue' 조회 실패 — 원 이슈를 닫지 않는다(닫힌 블로커는 해제로 읽힌다)"
+n_body_blocked=$(printf '%s' "$body_blocked" | jq -r 'length') \
+  || die 4 "본문 블로커 목록 파싱 실패 — 원 이슈를 닫지 않는다(빈 목록과 구분한다)"
+_int "$n_body_blocked" || die 4 "본문 블로커 목록 길이 판정 실패('$n_body_blocked') — 원 이슈를 닫지 않는다"
+[ "$n_body_blocked" -lt "$BLOCKED_LIMIT" ] \
+  || die 4 "본문 'Blocked by #$issue' 조회가 상한 $BLOCKED_LIMIT 에 닿았다(절단 가능) — 원 이슈를 닫지 않는다 (사람이 확인)"
 body_blocked_nums=$(printf '%s' "$body_blocked" | jq -r --arg n "$issue" '
   .[]? | select((.body // "") | test("(^|\n)[ \t]*[Bb]locked[- ][Bb]y[ \t]+#" + $n + "([^0-9]|$)")) | .number') \
   || die 4 "본문 블로커 파싱 실패 — 원 이슈를 닫지 않는다"
