@@ -234,6 +234,10 @@ case "${1:-} ${2:-}" in
     # 검사 대상은 **질의 인자 하나**($3)다 — 전 인자를 훑으면 나중에 jq 표현식이나
     # 필드명에 `is:` 가 섞였을 때 코드가 멀쩡한데 스텁이 빈손을 돌려 가짜 실패가 난다.
     case "${3:-}" in *"is:"*) exit 0 ;; esac
+    # (#331 반송) 라벨별 갈래 — `$STUB_SEARCH.<라벨>` 이 있으면 **그 라벨 질의만** 그 파일로
+    # 답한다(기본 픽스처는 라벨과 무관하게 같은 목록). 탐색 집합에 어떤 라벨이 드는지를
+    # 실측하려면 "그 라벨을 물었을 때만 나오는 레포" 를 만들 수 있어야 한다.
+    if [ -f "$STUB_SEARCH.${3#label:}" ]; then cat "$STUB_SEARCH.${3#label:}"; exit 0; fi
     cat "$STUB_SEARCH"; exit 0 ;;
   "search prs")
     # (#331) 계정 전체 모드의 **PR 축** — ④ 정지 미러가 겨누는 상태(이슈는 깨끗하고 PR 에만
@@ -241,6 +245,7 @@ case "${1:-} ${2:-}" in
     # 낸다(한쪽만 죽는 픽스처를 만들 수 있어야 "각각 구분한다" 가 실측된다).
     [ -z "${STUB_SEARCH_PRS_FAIL:-}" ] || { echo "gh: search prs boom" >&2; exit 1; }
     case "${3:-}" in *"is:"*) exit 0 ;; esac
+    if [ -f "$STUB_SEARCH_PRS.${3#label:}" ]; then cat "$STUB_SEARCH_PRS.${3#label:}"; exit 0; fi
     cat "$STUB_SEARCH_PRS"; exit 0 ;;
 esac
 exit 1
@@ -299,6 +304,7 @@ setup() {
   printf '' > "$tmp/pr.labels"
   printf 'owner/repo\n' > "$tmp/search"
   : > "$tmp/search.prs"          # (#331) 기본: PR 축 탐색 0건 — 합집합의 이슈 축만 남는다
+  rm -f "$tmp"/search.needs-human "$tmp"/search.prs.needs-human "$tmp"/search.hold:* "$tmp"/search.prs.hold:*
   echo '[]' > "$tmp/mirror.prs.json"   # (#265) 기본: 정지 미러 정리 대상 없음
   : > "$tmp/mirror.issues"
   : > "$tmp/mirror.events"            # (#265 ⑷) 기본: 이력 픽스처 없음(스텁이 정상 해제로 답한다)
@@ -658,11 +664,11 @@ check "스코프 갈래: search 미호출"       "$(none 'search issues')"
 check "스코프 갈래: search prs 도 미호출" "$(none 'search prs')"
 check "스코프 갈래: 재개까지 간다"       "$(has_ev resumed)"
 
-# ── ㉒-d (#244) 계정 전체 탐색은 세 정지 라벨을 전부 훑는다 ───────────────
+# ── ㉒-d (#244) 계정 전체 탐색은 정지 라벨을 전부 훑는다(#331 반송으로 hold:conflict 까지 넷) ──
 # 스코프 탐색이 `label:needs-human` 하나였던 것은 "기계 정지엔 needs-human 이 늘 붙는다" 는
 # 전제 위에 서 있었다. 그 전제를 이 이슈가 없앴으므로, `hold:ladder`/`hold:policy` 만 달린
 # 레포는 탐색에서 통째로 빠져 **영영 안 스윕된다**(재개가 조용히 죽는 경로).
-# 부정 라벨은 넣지 않는다(#21) — 긍정 라벨 세 번을 합집합(sort -u)한다. 세 쿼리 모두
+# 부정 라벨은 넣지 않는다(#21) — 긍정 라벨을 라벨마다 한 번씩 합집합(sort -u)한다. 모든 쿼리가
 # `is:` 한정자 없이 `--state open` 플래그다(#236 — ㉒-b 와 같은 형태).
 setup "hold:ladder,agent-ready" 200 0
 WORKDIR="$tmp/noscope"
@@ -674,7 +680,7 @@ check "탐색: hold:ladder 도 훑는다"    "$(some 'search issues label:hold:l
 check "탐색: hold:policy 도 훑는다"    "$(some 'search issues label:hold:policy .*--state open')"
 check "탐색: 부정 라벨은 안 쓴다(#21)" "$(none 'search issues .*-label:')"
 check "탐색: is: 한정자 없음(#236)"    "$(none 'search issues .*is:')"
-# 세 쿼리가 같은 레포를 돌려줘도 스윕은 한 번이다(sort -u) — ① 목록 조회 횟수로 실측한다.
+# 여러 쿼리가 같은 레포를 돌려줘도 스윕은 한 번이다(sort -u) — ① 목록 조회 횟수로 실측한다.
 check "탐색: 중복 레포는 한 번만 스윕" "$([ "$(counts 'issue list --repo owner/repo .*--label hold:ladder')" = 1 ] && echo ok || echo no)"
 check "탐색: exit 0"                   "$([ "$RC" = 0 ] && echo ok || echo no)"
 
@@ -1897,12 +1903,16 @@ mirror_prs '[{"number":401,"headRefName":"agent/issue-501",
 mirror_issue 501 OPEN "agent-ready,flow:verify"
 run
 check "㉒-d 합집합: PR 축만 있는 레포를 순회한다" "$(some 'pr list --repo owner/prsonly')"
+# PR 축도 이슈 축 ㉒-b 와 같은 형태다 — `is:` 대신 `--state open` **플래그**(#236). 회귀하면
+# "레포를 못 찾는다" 가 아니라 이 줄이 먼저 빨개져 원인(#236 재발)이 보인다.
+check "㉒-d 합집합: PR 축도 --state open 플래그"  "$(some 'search prs label:needs-human .*--state open')"
+check "㉒-d 합집합: PR 축도 is: 한정자 없음(#236)" "$(none 'search prs .*is:')"
 check "㉒-d 합집합: ④ 교정까지 간다"              "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==401) | .number==501 and .removed=="hold:policy,needs-human"' >/dev/null 2>&1 && echo ok || echo no)"
 check "㉒-d 합집합: PR 정지 라벨이 실제로 빠진다" "$([ "$(mpl 401)" = "flow:verify" ] && echo ok || echo no)"
 check "㉒-d 합집합: exit 0"                       "$([ "$RC" = 0 ] && echo ok || echo no)"
 
 # 대조 단언(뮤테이션 방증) — **합집합을 빼면** 같은 픽스처에서 아무 것도 안 난다. 이 사본은
-# 라벨 루프(세 라벨 × 두 축, #244 와 합쳐진 형태)에서 PR 축 결과를 `search.raw` 에 붙이는
+# 라벨 루프(네 라벨 × 두 축, #244 와 합쳐진 형태)에서 PR 축 결과를 `search.raw` 에 붙이는
 # 줄(`pr_hits=` 바로 다음 `cat`)만 버린 것(= #331 이전의 동작)이다. 픽스처와 단언이
 # 그대로인 채 **코드만** 갈리므로, 새 테스트가 빨개지는 이유가 합집합 그 자체임을 고정한다.
 mut="$sut_dir/resume-sweep.no-union.sh"
@@ -1951,15 +1961,70 @@ run
 check "둘 다 0건: 실패가 아니다(exit 0)"  "$([ "$RC" = 0 ] && echo ok || echo no)"
 check "둘 다 0건: 탐색 실패 문구 없음"    "$(grep -q '탐색 실패' "$tmp/err" && echo no || echo ok)"
 check "둘 다 0건: 두 축을 다 부른다"      "$([ "$(counts 'search issues')" != 0 ] && [ "$(counts 'search prs')" != 0 ] && echo ok || echo no)"
-# #244 의 세 라벨과 곱해져 세 라벨 × 두 축 = 6 쿼리다 — PR 축도 세 라벨 각각을 묻는다.
-check "둘 다 0건: 세 라벨 × 두 축 = 6 쿼리" "$([ "$(counts 'search issues')" = 3 ] && [ "$(counts 'search prs')" = 3 ] && echo ok || echo no)"
+# #244 의 세 라벨 + `hold:conflict`(#331 반송) = 네 라벨 × 두 축 = 8 쿼리다 — PR 축도 네 라벨
+# 각각을 묻는다.
+check "둘 다 0건: 네 라벨 × 두 축 = 8 쿼리" "$([ "$(counts 'search issues')" = 4 ] && [ "$(counts 'search prs')" = 4 ] && echo ok || echo no)"
 check "둘 다 0건: PR 축도 hold:ladder 를 묻는다" "$(some 'search prs label:hold:ladder .*--state open')"
 check "둘 다 0건: PR 축도 hold:policy 를 묻는다" "$(some 'search prs label:hold:policy .*--state open')"
+check "둘 다 0건: PR 축도 hold:conflict 를 묻는다" "$(some 'search prs label:hold:conflict .*--state open')"
 check "둘 다 0건: PR 축도 is: 한정자 없음(#236)" "$(none 'search prs .*is:')"
+
+# ── (#331 반송) 탐색 집합의 4번째 라벨 = `hold:conflict` — 이슈 축 · PR 축 각 1건 ────
+# `closeout-blocked --reason conflict` 등은 #244 이후 `hold:conflict` **하나만** 붙인다(`needs-human`
+# 동반 없음). 그래서 그 레포에 다른 정지가 0건이면 `needs-human`·`hold:ladder`·`hold:policy`
+# 어느 질의로도 안 잡혀 계정 전체 모드에서 **영구 배제**였다 — main #244 의 선재 사각을 PR 축이
+# 그대로 복제한 것(마감 검증 codex P1, 사람 결정 (a): 이 PR 에서 4번째 라벨로 같이 닫는다).
+# 스텁을 라벨별로 갈라 `hold:conflict` 질의에만 레포를 돌려준다 — 그 라벨을 묻지 않으면 못 찾는다.
+# 이슈 축: `hold:conflict` 만 달린 이슈가 있는 레포(사람이 결정할 충돌 — ①②③ 어느 갈래도 아니지만
+# 그 레포의 열린 PR 정지 미러(④)는 봐야 한다).
+setup "hold:conflict,agent-ready" 200 0
+WORKDIR="$tmp/noscope"
+echo '[]' > "$tmp/ladder.json"; echo '[]' > "$tmp/human.json"; echo '[]' > "$tmp/policy.json"
+: > "$tmp/search"; : > "$tmp/search.prs"
+printf 'owner/conflictonly\n' > "$tmp/search.hold:conflict"
+run
+check "hold:conflict 이슈 축: 그 라벨을 묻는다"       "$(some 'search issues label:hold:conflict .*--state open')"
+check "hold:conflict 이슈 축: 레포가 순회 집합에 든다" "$(some 'pr list --repo owner/conflictonly')"
+check "hold:conflict 이슈 축: exit 0"                 "$([ "$RC" = 0 ] && echo ok || echo no)"
+# PR 축: 이슈는 깨끗하고 PR 에만 `hold:conflict` 가 남은 레포(사람이 이슈 쪽만 풀었다) — ④ 가
+# 실제로 떼는 모양(격자 ⑦·⑩)이라, 탐색이 못 찾으면 교정이 영영 안 돈다.
+setup "agent-ready" 200 0
+WORKDIR="$tmp/noscope"
+echo '[]' > "$tmp/ladder.json"; echo '[]' > "$tmp/human.json"; echo '[]' > "$tmp/policy.json"
+: > "$tmp/search"; : > "$tmp/search.prs"
+printf 'owner/prconflict\n' > "$tmp/search.prs.hold:conflict"
+mirror_prs '[{"number":402,"headRefName":"agent/issue-502",
+  "labels":[{"name":"hold:conflict"},{"name":"flow:verify"}],
+  "closingIssuesReferences":[{"number":502}]}]'
+mirror_issue 502 OPEN "agent-ready,flow:verify"
+run
+check "hold:conflict PR 축: 그 라벨을 묻는다"          "$(some 'search prs label:hold:conflict .*--state open')"
+check "hold:conflict PR 축: 레포가 순회 집합에 든다"    "$(some 'pr list --repo owner/prconflict')"
+check "hold:conflict PR 축: ④ 교정까지 간다"           "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==402) | .number==502 and .removed=="hold:conflict"' >/dev/null 2>&1 && echo ok || echo no)"
+check "hold:conflict PR 축: PR 정지 라벨이 실제로 빠진다" "$([ "$(mpl 402)" = "flow:verify" ] && echo ok || echo no)"
+check "hold:conflict PR 축: exit 0"                    "$([ "$RC" = 0 ] && echo ok || echo no)"
+
+# ── (#331 반송) 합집합의 두 축이 **동시에** 비어있지 않을 때 — dedupe 와 양쪽 순회 ────
+# 앞 절들은 전부 한쪽 축을 비운 채 돌아, 운영에서 가장 흔한 모양(같은 레포가 양축에 잡힘)의
+# dedupe 와 서로 다른 두 레포가 둘 다 순회되는지가 무가드였다(`sort -u`→`cat` 회귀에도 초록).
+# 픽스처: 이슈 축 `[owner/both, owner/issonly]` · PR 축 `[owner/both, owner/pronly]`.
+#   · owner/both  — 양축에 잡힘 → **한 번만** 순회(① 목록 조회 횟수로 실측)
+#   · owner/issonly · owner/pronly — 한쪽에만 → 둘 다 순회
+setup "hold:ladder,agent-ready" 200 0
+WORKDIR="$tmp/noscope"
+echo '[]' > "$tmp/ladder.json"; echo '[]' > "$tmp/human.json"; echo '[]' > "$tmp/policy.json"
+printf 'owner/both\nowner/issonly\n' > "$tmp/search"
+printf 'owner/both\nowner/pronly\n'  > "$tmp/search.prs"
+run
+check "양축 동시: 양축에 잡힌 레포는 한 번만 순회" "$([ "$(counts 'issue list --repo owner/both .*--label hold:ladder')" = 1 ] && echo ok || echo no)"
+check "양축 동시: 이슈 축에만 있는 레포도 순회"   "$([ "$(counts 'issue list --repo owner/issonly .*--label hold:ladder')" = 1 ] && echo ok || echo no)"
+check "양축 동시: PR 축에만 있는 레포도 순회"     "$([ "$(counts 'issue list --repo owner/pronly .*--label hold:ladder')" = 1 ] && echo ok || echo no)"
+check "양축 동시: 순회 레포 수 = 3"               "$([ "$(counts 'issue list --repo .*--label hold:ladder')" = 3 ] && echo ok || echo no)"
+check "양축 동시: exit 0"                         "$([ "$RC" = 0 ] && echo ok || echo no)"
 
 # ── (#331) PR 쪽 상한 도달도 기존 `탐색 상한 도달` 규율 그대로 ─────────────
 # 라벨과 축을 문구에 밝힌다 — 여럿이 닿으면 같은 줄이 겹쳐 어느 질의가 잘렸는지 못 가른다.
-# (스텁은 라벨과 무관하게 같은 목록을 돌려주므로 세 라벨이 모두 닿아 warn 이 셋 난다 —
+# (스텁은 라벨과 무관하게 같은 목록을 돌려주므로 네 라벨이 모두 닿아 warn 이 넷 난다 —
 #  단언은 `needs-human` 줄로 대표한다.)
 setup "needs-human,hold:ladder,agent-ready" 200 0
 WORKDIR="$tmp/noscope"
