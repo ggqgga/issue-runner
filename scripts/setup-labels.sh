@@ -48,7 +48,7 @@ gh label create "flow:verify" --repo "$repo" --color 79C0FF \
   --description "결정적 CI 통과 — verify-runner 검증(E2E·codex) 대기·진행 중" --force
 # verify-runner 점유(#275) — 집는 순간 flow:verify 를 이것으로 바꾼다(harvesting 동형, PR+이슈).
 # 색은 flow:verify 계열(B 티어 한색) — 루프가 도는 중이라 사람이 볼 일이 없다.
-gh label create "verifying" --repo "$repo" --color 58A6FF \
+gh label create verifying --repo "$repo" --color 58A6FF \
   --description "verify-runner 검증 진행 중 (E2E·codex) — closeout 제외" --force
 gh label create "flow:codex" --repo "$repo" --color D8DEE4 \
   --description "(레거시) 워커 인라인 검증 단계 — verify-runner 도입 후 flow:verify 로 대체" --force
