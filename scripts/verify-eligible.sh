@@ -37,11 +37,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 me=$(gh api user -q .login 2>/dev/null); [ -n "$me" ] || exit 0
 
-scope_file="$PWD/.loop/repos"
-in_scope() {
-  [ -f "$scope_file" ] || return 0
-  grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' | grep -qxF "$1"
-}
+# shellcheck source=scripts/lib/scope.sh
+. "$SCRIPT_DIR/lib/scope.sh"   # in_scope · scope_file 기본값 — 판정은 한 자리 (#427)
 
 # 두 갈래를 임시 파일에 모아 마지막에 고아 → FIFO 순으로 합친다(bash 3.2 — 배열 누적 대신
 # 파일. 파이프라인 안의 while 은 서브셸이라 변수 누적이 부모로 안 온다).

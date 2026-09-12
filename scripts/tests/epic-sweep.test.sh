@@ -50,6 +50,8 @@ check() {
 sut_dir="$tmp/scripts"
 mkdir -p "$sut_dir" "$tmp/bin" "$tmp/work/.loop" "$tmp/noscope"
 cp "$DIR/epic-sweep.sh" "$sut_dir/epic-sweep.sh"
+# SUT 는 `$SCRIPT_DIR/lib/` 를 source·include 한다 — 사본 옆에 라이브러리도 나란히 둔다 (#427·#426).
+cp -R "$DIR/lib" "$sut_dir/lib"
 cp "$DIR/pr-comments.sh" "$sut_dir/pr-comments.sh"
 chmod +x "$sut_dir"/*.sh
 echo 'owner/repo' > "$tmp/work/.loop/repos"

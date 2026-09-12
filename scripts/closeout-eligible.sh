@@ -20,11 +20,8 @@ me=$(gh api user -q .login 2>/dev/null); [ -n "$me" ] || exit 0
 fc_comments_file=$(mktemp "${TMPDIR:-/tmp}/closeout-eligible-comments.XXXXXX") || exit 0
 trap 'rm -f "$fc_comments_file"' EXIT
 
-scope_file="$PWD/.loop/repos"
-in_scope() {
-  [ -f "$scope_file" ] || return 0
-  grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' | grep -qxF "$1"
-}
+# shellcheck source=scripts/lib/scope.sh
+. "$SCRIPT_DIR/lib/scope.sh"   # in_scope · scope_file 기본값 — 판정은 한 자리 (#427)
 
 # sort=created·order=asc — 미지정 시 search API 는 best-match(관련도) 순이라
 # ② Pick 의 "첫 후보" 가 사실상 랜덤이 된다. 오래된 PR 먼저 = FIFO 마감.

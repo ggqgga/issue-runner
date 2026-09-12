@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 
 echo "[1/5] bash 문법 검사 (bash -n)"
 fail=0
-for f in scripts/*.sh hooks/*.sh bin/ci; do
+for f in scripts/*.sh scripts/lib/*.sh hooks/*.sh bin/ci; do
   if ! bash -n "$f"; then
     echo "  ✗ $f"
     fail=1
@@ -22,7 +22,9 @@ done
 
 echo "[2/5] shellcheck (설치 시)"
 if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck -S warning scripts/*.sh hooks/*.sh bin/ci
+  # `scripts/lib/*.sh` 는 source 전용 라이브러리다 — 소비처의 `# shellcheck source=` 지시로
+  # 따라 들어가지만, 라이브러리 자체의 문법·경고도 여기서 직접 문다 (#427).
+  shellcheck -S warning scripts/*.sh scripts/lib/*.sh hooks/*.sh bin/ci
 else
   echo "  shellcheck 미설치 — skip"
 fi
@@ -31,7 +33,7 @@ echo "[lint] 인용 안 한 heredoc 본문의 미이스케이프 백틱·\$( 검
 # 구분자를 인용하지 않은 heredoc 은 본문의 백틱·$( 를 **바깥 셸이 전개**한다 — 스텁 주석에
 # 백틱을 쓰면 그 안이 실행되고 그 자리가 빈 문자열로 치환돼 주석이 조용히 지워진다.
 # bin/ci 자신도 검사 대상이다(그 결함이 실제로 여기 있었다).
-scripts/lint-heredoc.sh scripts/*.sh hooks/*.sh bin/ci \
+scripts/lint-heredoc.sh scripts/*.sh scripts/lib/*.sh hooks/*.sh bin/ci \
   || { echo "  ↑ 백틱은 \\\` 로, 명령치환은 \\\$( 로 이스케이프하거나 <<'DELIM' 로 인용하라"; exit 1; }
 
 echo "[3/5] repo-dir.sh 스모크 테스트"

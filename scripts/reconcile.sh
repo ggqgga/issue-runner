@@ -33,11 +33,8 @@ fi
 # 세션 레포 스코프 (#40): 실행 cwd 의 .loop/repos 가 있으면 그 목록(owner/repo,
 # 줄당 하나, # 주석·빈 줄 허용)의 레포만 점검한다. 없으면 계정 전체(기존 동작).
 # eligible-issues.sh 와 일관 적용 — 다른 세션 워커의 claim 에 불간섭.
-scope_file="$PWD/.loop/repos"
-in_scope() {
-  [ -f "$scope_file" ] || return 0
-  grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' | grep -qxF "$1"
-}
+# shellcheck source=scripts/lib/scope.sh
+. "$SCRIPT_DIR/lib/scope.sh"   # in_scope · scope_file 기본값 — 판정은 한 자리 (#427)
 
 # 머지 감지 레저 (아래 ②-보강 스윕이 소비). 아래 agent:claimed 루프는 issue 가 그
 # 라벨을 유지할 때만 머지를 본다 — closeout·verify-runner·미러가 머지 시점에

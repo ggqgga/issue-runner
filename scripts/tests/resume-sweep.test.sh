@@ -55,6 +55,8 @@ ts() {  # ts <분 전> → RFC3339 UTC
 sut_dir="$tmp/scripts"
 mkdir -p "$sut_dir" "$tmp/bin" "$tmp/work/.loop"
 cp "$DIR/resume-sweep.sh" "$sut_dir/resume-sweep.sh"
+# SUT 는 `$SCRIPT_DIR/lib/` 를 source·include 한다 — 사본 옆에 라이브러리도 나란히 둔다 (#427·#426).
+cp -R "$DIR/lib" "$sut_dir/lib"
 # (#397) 코멘트 전량 조회는 **진짜 헬퍼**를 쓴다 — 스텁으로 바꾸면 "첫 100건 상한을 벗어났다"
 # 는 이 회차의 고침이 테스트에 안 물린다(gh 스텁이 `api …/issues/N/comments` 를 답한다).
 cp "$DIR/pr-comments.sh" "$sut_dir/pr-comments.sh"

@@ -66,6 +66,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/scope.sh
+. "$SCRIPT_DIR/lib/scope.sh"   # scope_lines · scope_file 기본값 — 판정은 한 자리 (#427)
 
 RESUME_AFTER_MIN="${RESUME_AFTER_MIN:-120}"
 LADDER_RESUME_LIMIT="${LADDER_RESUME_LIMIT:-2}"
@@ -1100,10 +1102,9 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄>
 # ── 스코프 레포 목록 ───────────────────────────────────────────────────────
 # 파이프 대신 파일로 받는다 — `cmd | while` 은 서브셸이라 루프 안에서 올린 exit 상태가
 # 밖으로 안 나온다(조회 실패의 fail-loud 가 조용히 삼켜진다).
-scope_file="$PWD/.loop/repos"
 repos_file="$tmp/repos"
 if [ -f "$scope_file" ]; then
-  grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' > "$repos_file"
+  scope_lines "$scope_file" > "$repos_file"   # 줄 필터는 lib/scope.sh 한 자리 (#427)
 else
   # ── 계정 전체 모드의 레포 탐색 = 이슈 축 ∪ PR 축 (#331) ────────────────────
   # **순회 대상을 정하는 입력 전수** — 각 입력이 어떤 상태를 놓치는지 함께 적는다.

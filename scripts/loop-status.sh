@@ -372,6 +372,9 @@
 set -uo pipefail
 
 SELF=$(basename "$0")
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/scope.sh
+. "$SCRIPT_DIR/lib/scope.sh"   # scope_lines · scope_file 기본값 — 판정은 한 자리 (#427)
 
 usage() {
   {
@@ -587,12 +590,13 @@ if [ "${#repos[@]}" -eq 0 ]; then
       exit 64
     fi
   else
-    repos_file="$PWD/.loop/repos"
+    repos_file="$scope_file"
     [ -f "$repos_file" ] || usage
   fi
+  # 주석·빈 줄 제거와 공백 처리는 `lib/scope.sh` 한 자리다 (#427 로 한 자리로).
+  # 파이프가 아니라 프로세스 치환으로 먹인다 — `cmd | while` 은 서브셸이라
+  # `repos+=(…)` 누적이 부모로 안 온다(bash 3.2).
   while IFS= read -r line; do
-    line=$(printf '%s' "$line" | tr -d ' \t')
-    case "$line" in ""|"#"*) continue ;; esac
     # owner/repo 형식이 아닌 줄은 조용히 버리지 않는다 — 오타 한 글자가 레포 하나를
     # 스코프에서 통째로 지우고도 아무 흔적이 없으면 "그 레포엔 아무것도 없다" 로 읽힌다.
     case "$line" in
@@ -600,7 +604,7 @@ if [ "${#repos[@]}" -eq 0 ]; then
       *) echo "$SELF: $repos_file 무시된 줄: $line" >&2; continue ;;
     esac
     repos+=("$line")
-  done < "$repos_file"
+  done < <(scope_lines "$repos_file")
 fi
 [ "${#repos[@]}" -gt 0 ] || usage
 

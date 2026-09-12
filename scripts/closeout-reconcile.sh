@@ -3,9 +3,8 @@
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 me=$(gh api user -q .login 2>/dev/null); [ -n "$me" ] || exit 0
-scope_file="$PWD/.loop/repos"
-in_scope() { [ -f "$scope_file" ] || return 0
-  grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' | grep -qxF "$1"; }
+# shellcheck source=scripts/lib/scope.sh
+. "$SCRIPT_DIR/lib/scope.sh"   # in_scope · scope_file 기본값 — 판정은 한 자리 (#427)
 
 # `hh` = 이 PR 에 `needs-human` 이 붙어 있는가 (#271 WARN). 같은 검색 응답의 labels 를
 # 쓰므로 조회 한 번 그대로다. **모양이 어긋나면 true/false 가 아니라 `unknown`** 이다 —
