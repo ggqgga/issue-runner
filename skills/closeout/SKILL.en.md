@@ -189,15 +189,18 @@ event:
 - `closed` — the epic was closed (rationale comment + `--reason completed`). Report it in
   ④ Report as `에픽 종료: #N(<repo short name>, leaf K)` (K = the length of `leaves`).
 - `note` — a line that **touched nothing** and is a normal state (an old epic with no
-  `Epic #N` lines · an epic carrying `deploy-wait`). **Do not report it** — the same line
-  every tick buries the real signals.
+  `Epic #N` lines · an epic carrying `deploy-wait` · an epic the sweep closed and a **human
+  reopened** — marker present but open means never close it again, #377). **Do not report
+  it** — the same line every tick buries the real signals.
 - `warn` — the judgment was **deferred** (the leaf search hit its cap) or a read/write
   failed. Copy `why` verbatim into ④ Report's warn lines. A deferral is not a failure, so
   exit 0 is possible alongside it.
 
 exit 1 means this tick had a read/write **failure** — leave it alone, the next tick retries
 (the `<!-- epic-sweep -->` marker in the rationale comment keeps it idempotent, so comments
-never pile up). exit 64 means no scope (`.loop/repos` missing): call it once more naming the
+never pile up). One exception: the `에픽 close 실패(N회 시도)` warn is **not** retried next
+tick (the marker stays and reads as a human revert) — copy its why into Report verbatim so a
+human closes it. exit 64 means no scope (`.loop/repos` missing): call it once more naming the
 repos touched this tick with `--repo <owner/repo>`, and if there are none, leave one warn line
 `epic-sweep: 스코프 없음`.
 

@@ -13,7 +13,11 @@
 #      이제 안 붙잡는다(= 닫는 쪽으로 움직인다). 닫는 방향이라 조용히 두지 않고 못 박는다.
 #   ⑤ 검색이 상한에 닿으면 **닫지 않고** warn(조용한 오판 금지) — rc 는 0(실패 아님, 보류).
 #   ⑥ `--dry-run` 은 쓰기 0 으로 같은 이벤트를 `dry_run:true` 로 낸다.
-#   ⑦ 마커(`<!-- epic-sweep -->`)가 이미 있으면 코멘트를 다시 안 달고 close 만 한다(멱등).
+#   ⑦ (#377) 마커(`<!-- epic-sweep -->`)가 이미 있는데 에픽이 **열려 있으면** 사람이 되돌린 것이다 —
+#      코멘트도 close 도 하지 않는다(note). `--dry-run` 도 같은 판정을 낸다(실측 재현 경로가 dry-run).
+#   ⑦-b (#377) 코멘트 성공·close 실패의 중간 상태는 **같은 틱 안에서** close 를 재시도해 살린다
+#      (다음 틱은 마커를 보고 사람 되돌림으로 읽으므로 이월할 수 없다) — 재시도 상한을 다 쓰면
+#      warn + rc 1 이고 그 why 가 "다음 틱이 재시도하지 않는다" 를 말한다.
 #   ⑧ `deploy-wait` 에픽은 건드리지 않는다 · `full-cycle`·`needs-human` 에픽은 닫는다.
 #   ⑨ 조회·쓰기 실패는 "해당 없음" 으로 위장되지 않는다(warn + exit 1) — 코멘트가 실패하면
 #      close 까지 가지 않는다(다음 틱이 코멘트부터 다시 시도).
@@ -72,6 +76,12 @@ case "${1:-} ${2:-}" in
     exit 0 ;;
   "issue close")
     [ -z "${STUB_CLOSE_FAIL:-}" ] || exit 1
+    # 처음 N 번만 실패 — 같은 틱 재시도(⑦-b)가 실제로 재시도하는지 센다.
+    if [ "${STUB_CLOSE_FAIL_TIMES:-0}" -gt 0 ]; then
+      n=$(cat "$STUB_CLOSE_CNT" 2>/dev/null || echo 0)
+      n=$((n + 1)); printf '%s' "$n" > "$STUB_CLOSE_CNT"
+      [ "$n" -gt "$STUB_CLOSE_FAIL_TIMES" ] || exit 1
+    fi
     exit 0 ;;
 esac
 
@@ -128,7 +138,9 @@ reset() {
   search '[]'
   comments '[]'
   : > "$tmp/gh.log"
+  : > "$tmp/close.cnt"
   STUB_EPICS_FAIL=""; STUB_SEARCH_FAIL=""; STUB_COMMENT_FAIL=""; STUB_CLOSE_FAIL=""
+  STUB_CLOSE_FAIL_TIMES=0
   STUB_COMMENTS_FAIL=""; STUB_JQ_FAIL_PAT=""
   WORKDIR="$tmp/work"; LIMIT=100; PER=100; ARGS=()
 }
@@ -136,14 +148,16 @@ reset() {
 run() {
   (cd "$WORKDIR" && PATH="$tmp/bin:$PATH" \
     EPIC_LIST_LIMIT="${LIMIT:-100}" EPIC_SEARCH_PER_PAGE="${PER:-100}" \
+    EPIC_CLOSE_RETRIES=3 EPIC_CLOSE_RETRY_SLEEP=0 \
     bash "$sut_dir/epic-sweep.sh" "${ARGS[@]+"${ARGS[@]}"}") >"$tmp/out" 2>"$tmp/err"
   RC=$?
   out=$(cat "$tmp/out")
 }
 
 export STUB_LOG="$tmp/gh.log" STUB_EPICS="$tmp/epics.json" STUB_SEARCH="$tmp/search.json"
-export STUB_COMMENTS="$tmp/comments.json"
+export STUB_COMMENTS="$tmp/comments.json" STUB_CLOSE_CNT="$tmp/close.cnt"
 export STUB_EPICS_FAIL="" STUB_SEARCH_FAIL="" STUB_COMMENT_FAIL="" STUB_CLOSE_FAIL=""
+export STUB_CLOSE_FAIL_TIMES=0
 export STUB_COMMENTS_FAIL="" STUB_JQ_FAIL_PAT=""
 RC=0
 out=""
@@ -350,26 +364,53 @@ run
 check "closed 이벤트" "$(has_ev closed)"
 check "dry_run:true" "$([ "$(ev closed | jq -r '.dry_run')" = 'true' ] && echo ok || echo no)"
 check "쓰기 0" "$(no_writes)"
-# 위치 무관으로 센다 — `^api repos` 는 pr-comments.sh 가 인자 순서를 바꾸면(예 `--paginate`
-# 를 앞으로) 조용히 매치 0 이 되어 단언이 영구 참이 된다(사전 리뷰 WARN).
-check "코멘트 조회조차 안 한다" "$([ "$(count_cmd 'api .*comments')" = 0 ] && echo ok || echo no)"
+# 코멘트 조회는 **읽기**라 dry-run 에서도 한다(#377) — 마커 게이트(⑦)를 같은 판정으로 내야
+# dry-run 이 "다시 닫겠다" 고 거짓 예측하지 않는다. 위치 무관으로 센다 — `^api repos` 는
+# pr-comments.sh 가 인자 순서를 바꾸면(예 `--paginate` 를 앞으로) 조용히 매치 0 이 된다.
+check "코멘트 조회 1회(읽기 — 마커 게이트도 dry-run 에서 같은 판정)" \
+  "$([ "$(count_cmd 'api .*comments')" = 1 ] && echo ok || echo no)"
 reset
 ARGS=(--dry-run)
 search '[]'
 run
 check "note 도 dry_run:true" "$([ "$(ev note | jq -r '.dry_run')" = 'true' ] && echo ok || echo no)"
 
-echo "── ⑦ 마커가 이미 있으면 코멘트 안 달고 close 만 ──"
+echo "── ⑦ 마커가 있는데 열려 있다 = 사람이 되돌렸다 → note · 쓰기 0 (#377) ──"
+# 스윕이 닫은 에픽을 사람이 재오픈한 다음 틱. 마커가 코멘트만 막고 close 는 안 막으면 여기서
+# 다시 닫힌다(그리고 새 코멘트가 없어 흔적도 없다) — 이슈 #377 실측 그 자체.
 reset
 search "$(jq -n --argjson a "$(leaf 101 100 closed)" '[$a]')"
 comments '[{"body":"이전 틱 — leaf 전부 종료로 자동 종료 <!-- epic-sweep -->","created_at":"2026-09-11T00:00:00Z"}]'
 run
-check "closed 이벤트" "$(has_ev closed)"
-check "코멘트 0회" "$([ "$(count_cmd 'issue comment')" = 0 ] && echo ok || echo no)"
-check "close 1회" "$([ "$(count_cmd 'issue close')" = 1 ] && echo ok || echo no)"
-# 양성 짝 — ⑥ 의 "조회조차 안 한다"(0건) 가 한쪽으로만 걸리지 않게, 실제 경로에선 1건인지 센다.
+check "closed 없음(회귀 단언 — 게이트 없으면 여기서 다시 닫혔다)" "$(no_ev closed)"
+check "note 이벤트" "$(has_ev note)"
+check "why 가 '다시 닫지 않는다' 를 말한다" \
+  "$(ev note | jq -r '.why' | grep -q '다시 닫지 않는다' && echo ok || echo no)"
+check "쓰기 0(코멘트도 close 도)" "$(no_writes)"
+check "rc 0 — 실패가 아니라 정상 상태" "$([ "$RC" = 0 ] && echo ok || echo no)"
 check "마커 확인을 위해 코멘트를 조회한다(1회)" \
   "$([ "$(count_cmd 'api .*comments')" = 1 ] && echo ok || echo no)"
+# dry-run 도 같은 판정 — 이슈의 실측이 `--dry-run` 으로 "다시 닫겠다" 를 봤다.
+reset
+ARGS=(--dry-run)
+search "$(jq -n --argjson a "$(leaf 101 100 closed)" '[$a]')"
+comments '[{"body":"이전 틱 — leaf 전부 종료로 자동 종료 <!-- epic-sweep -->","created_at":"2026-09-11T00:00:00Z"}]'
+run
+check "dry-run: closed 예측 없음" "$(no_ev closed)"
+check "dry-run: note dry_run:true" "$([ "$(ev note | jq -r '.dry_run')" = 'true' ] && echo ok || echo no)"
+check "dry-run: 쓰기 0" "$(no_writes)"
+
+echo "── ⑦-b 코멘트 성공·close 실패는 같은 틱에서 재시도한다 (#377) ──"
+# 다음 틱은 마커를 보고 사람 되돌림으로 읽으므로 이 중간 상태는 이월할 수 없다.
+reset
+search "$(jq -n --argjson a "$(leaf 101 100 closed)" '[$a]')"
+STUB_CLOSE_FAIL_TIMES=1
+run
+check "첫 close 실패 → 재시도로 닫힘(closed 이벤트)" "$(has_ev closed)"
+check "close 2회(실패 1 + 성공 1)" "$([ "$(count_cmd 'issue close')" = 2 ] && echo ok || echo no)"
+check "코멘트는 1회뿐" "$([ "$(count_cmd 'issue comment')" = 1 ] && echo ok || echo no)"
+check "warn 없음" "$(no_ev warn)"
+check "rc 0" "$([ "$RC" = 0 ] && echo ok || echo no)"
 
 echo "── ⑧ deploy-wait 에픽은 건드리지 않는다 ──"
 reset
@@ -424,6 +465,11 @@ run
 check "close 실패 → warn" "$(has_ev warn)"
 check "close 실패 → rc 1" "$([ "$RC" = 1 ] && echo ok || echo no)"
 check "close 실패 → closed 이벤트 없음" "$(no_ev closed)"
+check "close 실패 → 상한(3)까지 같은 틱에서 재시도" \
+  "$([ "$(count_cmd 'issue close')" = 3 ] && echo ok || echo no)"
+# closeout SKILL 이 "다음 틱이 재시도하지 않는 warn" 의 식별자로 지정한 접두다.
+check "close 실패 → why 접두 '에픽 close 실패(3회 시도)'(closeout SKILL 계약)" \
+  "$(ev warn | jq -r '.why' | grep -q '^에픽 close 실패(3회 시도)' && echo ok || echo no)"
 
 reset
 search "$(jq -n --argjson a "$(leaf 101 100 closed)" '[$a]')"
