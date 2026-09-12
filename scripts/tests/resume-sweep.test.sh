@@ -146,6 +146,17 @@ case "${1:-} ${2:-}" in
     esac
     exit 0 ;;
   "issue view")
+    # (#421) ③-b 축 판정 — PR 의 참조 이슈가 열렸나(`--json state` 단독). `--json labels,state`
+    # (미러 정리)와 **인자로** 갈린다. 픽스처 줄이 없으면 OPEN 이 기본이라 종전 격자는 불변.
+    case "$*" in
+      *"--json state"*)
+        sline=$(grep "^${3:-} " "${STUB_LINKED_STATE:-/dev/null}" 2>/dev/null || true)
+        [ -n "$sline" ] || { echo '{"state":"OPEN"}'; exit 0; }
+        sval=${sline#* }
+        [ "$sval" = "__FAIL__" ] && exit 1
+        jq -n --arg s "$sval" '{state: $s}'
+        exit 0 ;;
+    esac
     # (#265) 정지 미러 정리 갈래는 **다른 이슈 번호**를 읽는다 — 미러 픽스처에 등록된
     # 번호면 그 라벨을 돌려준다(기존 42번 픽스처와 번호로 갈린다). `__FAIL__` 은 조회 실패.
     if [ -f "${STUB_MIRROR_ISSUES:-/dev/null}" ]; then
@@ -357,6 +368,7 @@ setup() {
   : > "$tmp/mirror.events"            # (#265 ⑷) 기본: 이력 픽스처 없음(스텁이 정상 해제로 답한다)
   echo '[]' > "$tmp/pr.comments.json"  # (#395) 기본: PR 코멘트 0건
   rm -f "$tmp"/mirror.comments.*       # (#397) 기본: 재시도 마커 0개
+  : > "$tmp/linked.state"              # (#421) 기본: 참조 이슈 상태 픽스처 없음 = 스텁이 OPEN 으로 답한다
   MRL=3
   STUB_PR_COMMENTS_FAIL=""
   : > "$tmp/gh.log"
@@ -402,6 +414,7 @@ export STUB_MIRROR_RACE="" STUB_MIRROR_EDITED="$tmp/mirror.edited"
 export STUB_MIRROR_EVENTS="$tmp/mirror.events" STUB_MIRROR_EVENTS_FAIL=""
 export STUB_PR_COMMENTS="$tmp/pr.comments.json" STUB_PR_COMMENTS_FAIL=""
 export STUB_MIRROR_COMMENTS="$tmp/mirror.comments"
+export STUB_LINKED_STATE="$tmp/linked.state"
 WORKDIR="$tmp/work"
 RC=0
 out=""
@@ -1695,10 +1708,12 @@ check "미러: 안 달린 정지 라벨은 remove 인자에 없다" \
 # `issue=-` 로 붙은 정상 홀드를 루프가 벗겨낸다.
 check "미러 ⑧(Closes 링크 없음): 무편집"     "$(none 'pr edit 208')"
 check "미러 ⑧: PR 라벨 그대로"               "$([ "$(mpl 208)" = "needs-human,hold:policy" ] && echo ok || echo no)"
-check "미러 ⑧: 이슈 조회조차 안 한다"        "$(none 'issue view 308')"
+check "미러 ⑧: 이슈 조회조차 안 한다"        "$(none 'issue view 308 .*json labels,state')"
 check "미러 ⑨(사람 세션 head): 무편집"       "$(none 'pr edit 209')"
 check "미러 ⑨: PR 라벨 그대로"               "$([ "$(mpl 209)" = "needs-human,hold:policy" ] && echo ok || echo no)"
-check "미러 ⑨: 이슈 조회조차 안 한다"        "$(none 'issue view 309')"
+# (#421) 패턴이 **미러 레인의 조회**(`--json labels,state`)로 좁혀져 있다 — ③-b 가 같은 PR 의
+# 참조 이슈에 거는 축 판정(`--json state`)은 다른 갈래의 정당한 조회라 이 가드의 대상이 아니다.
+check "미러 ⑨: 이슈 조회조차 안 한다"        "$(none 'issue view 309 .*json labels,state')"
 # 열거가 아니라 접두 — 네 게이트(#242)가 `hold:` 접두로 보므로 사유가 늘어도 안 깨져야 한다.
 check "미러 ⑩(hold:<새사유>): 접두로 잡는다" "$([ "$(mpl 210)" = "" ] && echo ok || echo no)"
 check "미러 ⑩: removed 에 새 사유"           "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==210) | .removed=="hold:manual"' >/dev/null 2>&1 && echo ok || echo no)"
@@ -1749,8 +1764,8 @@ check "미러 ⑪: 이벤트 없음"                     "$([ -z "$(mev 220)" ] 
 # ② 브랜치의 N 이 closes 에 없다 → 짝이 성립 안 함(무편집·무조회). `Refs #N` 전용 PR 과
 #    같은 자리다 — 짝이 증명 안 된 채 남은 정지는 정상일 수 있다.
 check "미러 ⑫(브랜치 N 이 closes 밖): 무편집"   "$(none 'pr edit 221')"
-check "미러 ⑫: 이슈 조회조차 안 한다(343)"      "$(none 'issue view 343')"
-check "미러 ⑫: 다른 closes 도 조회 안 한다(395)" "$(none 'issue view 395')"
+check "미러 ⑫: 이슈 조회조차 안 한다(343)"      "$(none 'issue view 343 .*json labels,state')"
+check "미러 ⑫: 다른 closes 도 조회 안 한다(395)" "$(none 'issue view 395 .*json labels,state')"
 # ③ 전부 깨끗하면 종전대로 정리된다 — 짝은 `[0]`(#398)이 아니라 **브랜치의 이슈 #344** 다
 check "미러 ⑬(둘 다 깨끗): 정리된다"            "$([ "$(mpl 222)" = "flow:verify" ] && echo ok || echo no)"
 check "미러 ⑬: 이벤트의 짝은 [0] 이 아니라 344" "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==222) | .number==344' >/dev/null 2>&1 && echo ok || echo no)"
@@ -2274,6 +2289,36 @@ pr_comments "$pp_note"
 run
 check "⑩ 연결 이슈 있는 PR: PR 축 이벤트 0" \
   "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .pr != null' >/dev/null 2>&1 && echo no || echo ok)"
+
+# (#421) 참조가 **전부 닫힌** PR — 이슈 축은 열린 이슈 목록이라 못 보고, 옛 판정(참조 개수)은
+# PR 축에서도 접었다. 두 축 모두에서 빠지던 칸이라 PR 단독으로 본다.
+setup "" 200 0
+pr_policy_rows '[{"number":333},{"number":334}]' 200
+pr_comments "$pp_note"
+printf '333 CLOSED\n334 CLOSED\n' > "$tmp/linked.state"
+run
+check "⑩ 참조가 전부 닫힘: PR 축 이벤트 발행" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .pr == 701 and .number == null' >/dev/null 2>&1 && echo ok || echo no)"
+check "⑩ 참조가 전부 닫힘: 상태를 실제로 물었다" \
+  "$(grep -q 'issue view 333 .*json state' "$tmp/gh.log" && echo ok || echo no)"
+
+# 하나라도 열려 있으면 이슈 축 소관 — 닫힌 참조가 섞여 있어도 발행 안 한다(중복 금지).
+setup "" 200 0
+pr_policy_rows '[{"number":333},{"number":334}]' 200
+pr_comments "$pp_note"
+printf '333 CLOSED\n334 OPEN\n' > "$tmp/linked.state"
+run
+check "⑩ 참조 하나가 열림: PR 축 이벤트 0" \
+  "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .pr != null' >/dev/null 2>&1 && echo no || echo ok)"
+
+# 상태 조회 실패는 "닫혔다"로 접지 않는다 — 축을 확정 못 하면 안 낸다(이 파일의 규율).
+setup "" 200 0
+pr_policy_rows '[{"number":333}]' 200
+pr_comments "$pp_note"
+printf '333 __FAIL__\n' > "$tmp/linked.state"
+run
+check "⑩ 참조 상태 조회 실패: due 안 냄" "$(no_ev policy_review_due)"
+check "⑩ 참조 상태 조회 실패: warn"      "$(saysl '연결 이슈 상태 조회 실패')"
 
 # 창 안이면 조용히 넘긴다(코멘트 조회조차 안 한다 — 이슈 축과 같은 규율).
 setup "" 10 0

@@ -20,9 +20,12 @@
 #   escalated — 재개 상한 초과 → hold:policy 로 승격. 사람 호출(needs-human)이 되는 것은
 #               그 뒤 재심(③)이 "사람 몫 유지" 로 끝났을 때뿐이다(#244 — 디스패처가 판정).
 #   policy_review_due — `hold:policy` 재심 1회 대상(#155). **두 축**이 낸다(#395):
-#               연결 이슈가 있으면 종전대로 **이슈 축**(`number`=이슈 · `pr`=null),
-#               `closingIssuesReferences` 가 빈 **PR 단독** 홀드면 PR 축(`number`=null ·
-#               `pr`=그 PR). 같은 건을 두 번 내지 않는다 — 연결 이슈가 있는 PR 은 이슈 축만.
+#               **열린** 연결 이슈가 있으면 종전대로 **이슈 축**(`number`=이슈 · `pr`=null),
+#               참조가 없거나 **전부 닫힌** PR 단독 홀드면 PR 축(`number`=null · `pr`=그 PR).
+#               같은 건을 두 번 내지 않는다 — 열린 연결 이슈가 있는 PR 은 이슈 축만(닫힌
+#               참조만 남은 PR 은 이슈 축이 열린 이슈 목록이라 못 본다 — #421).
+#               PR 축의 처분은 재개가 아니라 `policy-kept` 하나다(#421 — 소비자 없는
+#               `flow:agent-ready` 를 만들지 않는다. 전문은 SKILL ① 의 같은 이벤트 불릿).
 #   waiting   — 아직 창(RESUME_AFTER_MIN) 안. minutes = 마지막 갱신 후 경과 분.
 #   warn      — **아무것도 안 건드린** 채 넘긴 사유(사유 라벨 부재 · 경합 · 첫 쓰기 실패).
 #   warn_after_edit — 쓰기가 **이미 반영된 뒤** 후속 단계가 실패했다(라벨·PR 미러·readback).
@@ -448,6 +451,30 @@ read_pr_labels() {  # read_pr_labels <repo> <pr>
   printf '%s' "$out" | jq -r '[.labels[].name] | join(",")'
 }
 
+# ── PR 의 참조 이슈가 **열려 있나** — ③-b 의 축 판정 (#421) ──────────────────
+# `closingIssuesReferences` 는 **닫힌 이슈도 계속 들고 있다**. 그래서 "참조가 있으면 이슈 축"
+# 이라는 옛 판정은, 참조가 전부 닫힌 PR 을 **두 축 모두에서 빠뜨렸다** — 이슈 축은
+# `gh issue list --state open` 이라 닫힌 이슈를 애초에 안 보고, PR 축은 참조가 있다고 접었다.
+# 그래서 열림 여부를 직접 묻는다. 참조 하나라도 OPEN 이면 그 건은 이슈 축 소관(중복 금지)이고,
+# 전부 CLOSED 면 사실상 PR 단독이다.
+# 왜 목록 재사용이 아니라 건별 조회인가: 이 함수를 부르는 건 `hold:policy` 가 붙은 열린 PR
+# 뿐이고(④ 가 같은 PR 들에 이미 `read_labels_state` 를 건별로 쓴다), 이슈 목록(③)은
+# `--label hold:policy` 로 좁혀 있어 "열려 있지만 라벨이 없는 참조" 를 못 가른다.
+# 조회 실패·미열거 상태는 `none` 으로 접지 않는다(이 파일의 규율) — return 1 로 호출부가 warn.
+linked_open_state() {  # linked_open_state <repo> <참조 번호 공백목록> → open|closed / 조회 실패 1
+  local repo="$1" nums="$2" n out st
+  for n in $nums; do
+    out=$(gh issue view "$n" --repo "$repo" --json state 2>/dev/null) || return 1
+    st=$(printf '%s' "$out" | jq -r '.state // ""' 2>/dev/null) || return 1
+    case "$st" in
+      OPEN|open)     printf 'open'; return 0 ;;   # 하나라도 열려 있으면 더 볼 것 없다
+      CLOSED|closed) ;;
+      *)             return 1 ;;                  # 빈 값·미열거 상태 = 조회 실패와 같은 처분
+    esac
+  done
+  printf 'closed'
+}
+
 # ── 라벨 **이력** — "붙은 적이 있나" 를 묻는 유일한 출처 (④ 의 양성 증거) ────────
 # 현재 라벨(`read_labels_state`)은 *부재*만 말한다. 부재는 ⓐ 사람이 뗐다 ⓑ 기계가 뗐다
 # ⓒ **애초에 못 붙었다** 를 구분하지 못하는데, ④ 가 편집해도 되는 것은 ⓐ·ⓑ 뿐이다.
@@ -658,17 +685,20 @@ mirror_retry() {  # mirror_retry <repo> <이슈> <PR> <사유 한 줄>
 #
 # 판정은 이슈 축과 **같은 자리**를 쓴다(`policy_window_min`·`policy_review_state`) — 축마다
 # 다른 판정을 두면 같은 형상이 어느 축에 걸리느냐로 갈린다. 다른 것은 두 가지뿐이다:
-#   ⑴ **연결 이슈가 있으면 내지 않는다** — 그 건은 이슈 축이 이미 낸다(중복 이벤트 금지).
+#   ⑴ **열린 연결 이슈가 있으면 내지 않는다** — 그 건은 이슈 축이 이미 낸다(중복 이벤트 금지).
+#      참조가 **전부 닫힌** PR 은 이슈 축(열린 이슈 목록)이 못 보므로 여기서 본다(#421 — 옛
+#      판정은 참조 **개수**만 봐서 그 형상을 두 축 모두에서 빠뜨렸다). 판정은 `linked_open_state`.
 #   ⑵ 마커·라벨을 PR 에서 읽는다(`transition.sh` 가 질문 코멘트를 PR 에도 남기므로 가능하다).
 # 배포 대기(deploy-wait) 갈래는 여기 없다 — 그 라벨은 이슈 축의 것이고, PR 단독 홀드에는
 # 붙는 자리가 없다(붙으면 그때 이슈 축이 본다).
 # 무편집 갈래다 — 이벤트만 낸다(재심 코멘트·해제는 디스패처 ①).
 sweep_pr_policy() {  # sweep_pr_policy <repo> <열린 PR row-json>
-  local repo="$1" row="$2" tsv prnum pupd labels closes pmin pout pstate pcur
+  local repo="$1" row="$2" tsv prnum pupd labels closes lstate pmin pout pstate pcur
+  # 넷째 칸은 참조 **번호 목록**이다(옛 개수 대신) — 열림 여부를 물어야 축이 갈린다(#421).
   tsv=$(printf '%s' "$row" | jq -r '
     [(.number|tostring), (.updatedAt // ""),
      ([.labels[]?.name] | join(",")),
-     ([((.closingIssuesReferences // [])[].number)] | length | tostring)] | @tsv' 2>/dev/null) || tsv=""
+     ([((.closingIssuesReferences // [])[].number | tostring)] | join(" "))] | @tsv' 2>/dev/null) || tsv=""
   if [ -z "$tsv" ]; then
     emit_warn "$repo" 0 "열린 PR 행 파싱 실패 — PR 단독 재심 판정 못 해 건드리지 않는다"
     return 0
@@ -679,7 +709,15 @@ sweep_pr_policy() {  # sweep_pr_policy <repo> <열린 PR row-json>
   closes=$(printf '%s' "$tsv" | cut -f4)
 
   has_label "$labels" "hold:policy" || return 0   # 대다수 PR — 조회도 하지 않는다
-  [ "$closes" = 0 ] || return 0                   # ⑴ 연결 이슈가 있으면 이슈 축만
+  # ⑴ 참조가 있으면 **열려 있는 것이 하나라도 있는지** 를 묻고 그때만 이슈 축에 넘긴다(#421).
+  #    참조 0개는 조회 없이 PR 단독이다(종전 경로 — 왕복 증가 없음).
+  if [ -n "$closes" ]; then
+    if ! lstate=$(linked_open_state "$repo" "$closes"); then
+      emit_warn "$repo" 0 "PR #$prnum 연결 이슈 상태 조회 실패 — 어느 축 소관인지 확정 못 해 재심을 내지 않는다"
+      return 0
+    fi
+    [ "$lstate" = closed ] || return 0            # 열린 참조가 있다 → 이슈 축만(중복 금지)
+  fi
   # `needs-human` 동존은 **사람이 직접 세운 정지**다(#244) — 이슈 축과 같은 낱말, 같은 처분.
   if has_label "$labels" "needs-human"; then
     emit_note "$repo" 0 "PR #$prnum 사람이 세운 needs-human 동존 — 재심 안 함, 정상 상태라 warn 아님"
