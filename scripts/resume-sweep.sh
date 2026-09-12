@@ -71,8 +71,6 @@ LADDER_RESUME_LIMIT="${LADDER_RESUME_LIMIT:-2}"
 # 두 벌을 허용하고 주석으로 상호 참조한다. 회차는 상태 파일이 아니라 **이슈 코멘트 마커**
 # (`<!-- mirror-retry: <사유> -->`)의 개수가 SSOT 다(`ladder-resume` 과 같은 규약).
 MIRROR_RETRY_LIMIT="${MIRROR_RETRY_LIMIT:-3}"
-# 마커 정규식은 `count_markers` 의 인자로 간다 — 세는 자리와 쓰는 자리가 한 짝이어야 한다.
-MIRROR_RETRY_RE='<!--\s*mirror-retry:[^>]*-->'
 # 목록·탐색 조회 상한. 기본 200 — 기본 limit(30)은 조용히 잘라 그 이슈들이 영영 안 보인다.
 # 테스트가 상한 도달 경로를 200건짜리 픽스처 없이 재현하도록 env 로 낮출 수 있게 열어 뒀다
 # (운영에서 내리는 값이 아니다 — 내리면 그만큼 잘린다. 잘림 자체는 warn 으로 드러난다).
@@ -369,15 +367,29 @@ read_state() {  # read_state <repo> <num> <updatedAt 저장파일> — 라벨 �
 # 재개 횟수 = 마커를 품은 코멘트의 **개수**. 창을 넘긴 후보에만 부른다(코멘트 조회는
 # 이슈당 한 번의 왕복이라, 대기 중인 건까지 훑으면 틱마다 큰 레포를 헛돈다).
 # 세 번째 인자로 **마커 정규식**을 받는다(#397) — 기본값은 재개 마커라 기존 호출은 그대로다.
-# 정규식을 인자로 두는 이유: `mirror-retry` 마커의 꼬리는 숫자가 아니라 사유 문자열이라
-# 재개 마커의 `[0-9]+` 형식을 공유할 수 없다. 세는 규칙(인용 제거·코멘트 개수)은 한 자리다.
+# 조회는 `fetch_comments`(페이지네이션 전량) 한 자리다 — 첫 100건 상한을 쓰면 코멘트가 많은
+# 이슈에서 회차가 늘 0으로 보여 상한이 안 걸린다(그 함수 주석).
 count_markers() {  # count_markers <repo> <num> [마커 정규식]
   local out re="${3:-}"
   [ -n "$re" ] || re='<!--\s*ladder-resume:\s*[0-9]+\s*-->'
-  out=$(gh issue view "$2" --repo "$1" --json comments 2>/dev/null) || return 1
-  printf '%s' "$out" | jq -e 'type=="object"' >/dev/null 2>&1 || return 1
+  out=$(fetch_comments "$1" "$2") || return 1
   printf '%s' "$out" \
-    | jq --arg re "$re" "$JQ_UNQUOTE"'[.comments[]? | select(.body | unquoted | test($re))] | length'
+    | jq --arg re "$re" "$JQ_UNQUOTE"'[.[]? | select(.body | unquoted | test($re))] | length'
+}
+
+# ── 코멘트 전량 조회 한 자리 (#397) ────────────────────────────────────────────
+# 마커를 세는 자리도 재심 마커를 읽는 자리도 **페이지네이션**된 전량을 봐야 한다.
+# `gh issue view --json comments` 는 **첫 100건**만 준다 — 코멘트가 100건을 넘는 이슈에서는
+# 마커가 늘 0으로 보여 ⑴ 재개/재시도 상한이 영영 안 걸리고(무한 재시도) ⑵ 재심 마커가 안
+# 보여 같은 건이 매 틱 `due` 로 되돌아온다. `finish-classify`·`closeout-eligible` 이 이미
+# 같은 함정을 `pr-comments.sh` 로 없앴고(#171), 그 헬퍼는 REST `issues/{n}/comments` 를 쓰므로
+# **이슈 번호를 그대로 넘기면 된다**(PR 은 이슈의 부분집합 — 그 파일 주석 참조).
+# 출력은 `[{body,createdAt},...]` 배열이고 순서는 created 오름차순(에피소드 경계 계산의 전제).
+fetch_comments() {  # fetch_comments <repo> <이슈|PR 번호> → 코멘트 배열 JSON / 조회 실패 return 1
+  local out
+  out=$("$SCRIPT_DIR/pr-comments.sh" "$1" "$2" 2>/dev/null) || return 1
+  printf '%s' "$out" | jq -e 'type=="array"' >/dev/null 2>&1 || return 1
+  printf '%s' "$out"
 }
 
 # ── ③ 재심의 두 판정 — **이슈 축과 PR 축이 같은 자리를 쓴다** (#395) ──────────────
@@ -395,12 +407,13 @@ policy_window_min() {  # policy_window_min <updatedAt> → 경과 분 / 해석 �
 # 에피소드 단위 재심 판정. 마지막 `hold-note: policy` 코멘트(=이번 홀드의 질문) **이후**에
 # 재심 마커가 있어야 "이번 홀드는 재심됨" 이다. 옛 홀드의 마커가 새 홀드의 재심을 막지 않게.
 # 질문(hold-note) 자체가 없으면 재심할 대상이 없다(`no-note`).
-# 입력은 `gh issue view --json comments` / `gh pr view --json comments` 응답 **그대로**다 —
-# 두 응답의 모양이 같아서 한 판정이 두 축에 그대로 선다(`transition.sh` 는 질문 코멘트를
-# 이슈와 PR **양쪽**에 남긴다 — 그래서 PR 단독 홀드에도 마커가 PR 에 있다).
-policy_review_state() {  # policy_review_state <comments 응답 JSON> → reviewed|due|no-note|parse-fail
+# 입력은 `fetch_comments` 의 배열이다(#397) — 두 축이 같은 페이지네이션 소스를 쓰므로 한
+# 판정이 그대로 선다(`transition.sh` 는 질문 코멘트를 이슈와 PR **양쪽**에 남긴다 — 그래서
+# PR 단독 홀드에도 마커가 PR 에 있다). 첫 100건 상한을 쓰면 옛 홀드의 마커만 보여 재심이
+# 영원히 `due` 로 되돌아온다.
+policy_review_state() {  # policy_review_state <코멘트 배열 JSON> → reviewed|due|no-note|parse-fail
   printf '%s' "$1" | jq -r "$JQ_UNQUOTE"'
-    [.comments[]? | .body | unquoted] as $b
+    [.[]? | .body | unquoted] as $b
     | ([range(0; $b|length)] | map(select($b[.] | test("<!--\\s*hold-note:\\s*policy"))) | last) as $q
     | if $q == null then "no-note"
       else ([range($q+1; $b|length)] | map(select($b[.] | test("<!--\\s*policy-review:"))) | length) as $r
@@ -582,7 +595,7 @@ mirror_row() {  # mirror_row <PR row-json> — "<PR><TAB><짝 이슈|빈값><TAB
 # 다시 시도하는 주체가 없어 불일치가 영구히 남고 **매 틱 같은 줄**이 반복됐다(#397 배경).
 # 여기서 회차를 세어 ⑴ 진행이 보이게 하고(`N/상한`) ⑵ 상한에 닿으면 사람 몫으로 올린다.
 #
-# 회차의 SSOT 는 **이슈 코멘트에 붙은 마커**(`<!-- mirror-retry: <사유> -->`)의 개수다 —
+# 회차의 SSOT 는 **이슈 코멘트에 붙은 마커**(`<!-- mirror-retry: <사유> pr=<n> -->`)의 개수다 —
 # `ladder-resume` 과 같은 규약이고 같은 이유다: 상태 파일을 만들지 않고, 본문을 쓰지 않으며
 # (남의 글을 덮어쓰지 않는다), append-only 라 경합에 안전하다. 본문 카운터는 산문 전용이라
 # 쓰지 않는다.
@@ -593,9 +606,30 @@ mirror_row() {  # mirror_row <PR row-json> — "<PR><TAB><짝 이슈|빈값><TAB
 # 이슈에 정지 라벨이 생겨 ⑶ 가 먼저 막는다(자연 종료).
 #
 # 조회·게시 실패는 회차를 올리지 않는다 — 회차를 못 기록한 채 올리면 상한이 조용히 앞당겨진다.
+# 회차 카운트 — **이 PR 의, 이번 에피소드의** 마커만 센다(#397 리뷰 P2-2).
+# 마커에 번호가 없고 경계도 없으면 ⑴ 한 이슈에 걸린 **다른 PR** 의 회차가 섞이고 ⑵ 한 번
+# 3회를 채워 사람이 풀어 준 뒤 같은 이슈에 **새 불일치**가 생기면 첫 틱에 바로 상한이 난다
+# (옛 마커를 물려받는다). 그래서 마커에 `pr=<n>` 을 싣고, **사람이 개입한 경계**
+# (마지막 `<!-- policy-review: … -->` 또는 `<!-- hold-note: … -->` 코멘트) **이후**의 것만 센다 —
+# 그 두 마커는 정지/재심이 한 번 돌았다는 뜻이라 그 앞은 지난 에피소드다.
+# 판별선은 `bounce-state.sh`·`policy_review_state` 와 같은 **마지막 매칭 인덱스** 규율이다
+# (존재가 아니라 위치 — 같은 축이 두 번 도는 이슈에서 옛 에피소드가 새 판정을 덮지 않게).
+count_mirror_retry() {  # count_mirror_retry <repo> <이슈> <PR> → 개수 / 조회 실패 return 1
+  local out
+  out=$(fetch_comments "$1" "$2") || return 1
+  printf '%s' "$out" | jq -r --arg pr "$3" "$JQ_UNQUOTE"'
+    [.[]? | .body | unquoted] as $b
+    | ([range(0; $b|length)]
+       | map(select($b[.] | test("<!--\\s*(policy-review|hold-note):"))) | last) as $q
+    | (if $q == null then 0 else $q + 1 end) as $from
+    | [range($from; $b|length)]
+      | map(select($b[.] | test("<!--\\s*mirror-retry:[^>]*pr=" + $pr + "\\s*-->")))
+      | length'
+}
+
 mirror_retry() {  # mirror_retry <repo> <이슈> <PR> <사유 한 줄>
   local repo="$1" issue="$2" prnum="$3" reason="$4" n body
-  if ! n=$(count_markers "$repo" "$issue" "$MIRROR_RETRY_RE"); then
+  if ! n=$(count_mirror_retry "$repo" "$issue" "$prnum"); then
     emit_warn "$repo" "$issue" "PR #$prnum 정지 미러 — $reason · 재시도 회차 조회 실패, 이번 틱은 넘긴다"
     return 0
   fi
@@ -606,8 +640,9 @@ mirror_retry() {  # mirror_retry <repo> <이슈> <PR> <사유 한 줄>
     return 0
   fi
   # 마커는 코멘트가 **스스로 품는다** — 카운터와 알림이 한 번의 append 로 끝난다(재개 코멘트 동형).
-  body=$(printf '정지 미러 재시도 %s/%s: PR #%s — %s\n<!-- mirror-retry: %s --><!-- bodat:worker -->' \
-    "$((n + 1))" "$MIRROR_RETRY_LIMIT" "$prnum" "$reason" "$reason")
+  # 마커에 **PR 번호**가 든다(위 count_mirror_retry 주석) — 세는 자리와 쓰는 자리가 한 짝이다.
+  body=$(printf '정지 미러 재시도 %s/%s: PR #%s — %s\n<!-- mirror-retry: %s pr=%s --><!-- bodat:worker -->' \
+    "$((n + 1))" "$MIRROR_RETRY_LIMIT" "$prnum" "$reason" "$reason" "$prnum")
   if ! gh issue comment "$issue" --repo "$repo" --body "$body" >/dev/null 2>&1; then
     emit_warn "$repo" "$issue" "PR #$prnum 정지 미러 — $reason · 재시도 마커 코멘트 실패(회차 미기록)"
     return 0
@@ -653,7 +688,7 @@ sweep_pr_policy() {  # sweep_pr_policy <repo> <열린 PR row-json>
   pmin=$(policy_window_min "$pupd") \
     || { emit_warn "$repo" 0 "PR #$prnum updatedAt 해석 불가($pupd) — 재심 창 판정 못 함"; return 0; }
   [ "$pmin" -ge "$RESUME_AFTER_MIN" ] || return 0
-  pout=$(gh pr view "$prnum" --repo "$repo" --json comments 2>/dev/null) \
+  pout=$(fetch_comments "$repo" "$prnum") \
     || { emit_warn "$repo" 0 "PR #$prnum 재심 마커 조회 실패 — 이번 틱은 건너뛴다"; return 0; }
   pstate=$(policy_review_state "$pout")
   case "$pstate" in
@@ -1266,7 +1301,7 @@ while IFS= read -r repo; do
         emit_note "$repo" "$pnum" "사람이 세운 needs-human 동존 — 재심 안 함, 정상 상태라 warn 아님"
         continue
       fi
-      pout=$(gh issue view "$pnum" --repo "$repo" --json comments 2>/dev/null) \
+      pout=$(fetch_comments "$repo" "$pnum") \
         || { emit_warn "$repo" "$pnum" "재심 마커 조회 실패 — 이번 틱은 건너뛴다"; continue; }
       # 에피소드 단위: 마지막 `hold-note: policy` 코멘트(=이번 홀드의 질문) **이후**에 재심 마커가
       # 있어야 "이번 홀드는 재심됨" 이다. 옛 홀드의 마커가 새 홀드의 재심을 막지 않게.

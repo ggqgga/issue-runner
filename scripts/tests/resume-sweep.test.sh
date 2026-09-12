@@ -55,6 +55,9 @@ ts() {  # ts <분 전> → RFC3339 UTC
 sut_dir="$tmp/scripts"
 mkdir -p "$sut_dir" "$tmp/bin" "$tmp/work/.loop"
 cp "$DIR/resume-sweep.sh" "$sut_dir/resume-sweep.sh"
+# (#397) 코멘트 전량 조회는 **진짜 헬퍼**를 쓴다 — 스텁으로 바꾸면 "첫 100건 상한을 벗어났다"
+# 는 이 회차의 고침이 테스트에 안 물린다(gh 스텁이 `api …/issues/N/comments` 를 답한다).
+cp "$DIR/pr-comments.sh" "$sut_dir/pr-comments.sh"
 cat > "$sut_dir/gh-login.sh" <<'STUB'
 #!/bin/sh
 echo tester
@@ -92,6 +95,25 @@ case "${1:-} ${2:-}" in
     # 기존 격자 칸들이 이 관문이 아니라 각자의 이유로 갈린다. 픽스처에 줄이 있으면 그것만
     # 쓴다(부분 실패·옛 에피소드 재현). 줄 형식: `<번호> <ev>|<라벨>|<시각>;<ev>|…`
     enum=${2#*/issues/}; enum=${enum%%/*}
+    # (#397) `pr-comments.sh` 의 페이지네이션 코멘트 조회 — 라벨 이벤트와 **경로로** 갈린다.
+    # gh 의 `--jq` 를 스텁이 대신 적용한다(events 축과 같은 관행): 한 줄에 오브젝트 하나.
+    case "$2" in
+      */comments*)
+        if [ -f "$STUB_MIRROR_COMMENTS.$enum" ]; then
+          [ -z "${STUB_COMMENTS_FAIL:-}" ] || exit 1
+          jq -c '.[] | {body: (.body // ""), createdAt: (.createdAt // "")}' "$STUB_MIRROR_COMMENTS.$enum"
+        elif [ -f "${STUB_MIRROR_PRS:-/dev/null}" ] \
+             && jq -e --arg n "$enum" 'any(.number == ($n|tonumber))' "$STUB_MIRROR_PRS" >/dev/null 2>&1; then
+          [ -z "${STUB_PR_COMMENTS_FAIL:-}" ] || exit 1
+          jq -c '.[] | {body: (.body // ""), createdAt: (.createdAt // "")}' "$STUB_PR_COMMENTS"
+        elif [ -f "${STUB_MIRROR_ISSUES:-/dev/null}" ] && grep -q "^$enum " "$STUB_MIRROR_ISSUES"; then
+          [ -z "${STUB_COMMENTS_FAIL:-}" ] || exit 1   # 미러 이슈의 마커 0개(파일 없음)
+        else
+          [ -z "${STUB_COMMENTS_FAIL:-}" ] || exit 1
+          jq -c '.[] | {body: (.body // ""), createdAt: (.createdAt // "")}' "$STUB_COMMENTS"
+        fi
+        exit 0 ;;
+    esac
     case ",${STUB_MIRROR_EVENTS_FAIL:-}," in *",$enum,"*) echo "gh: events boom" >&2; exit 1 ;; esac
     eline=$(grep "^$enum " "${STUB_MIRROR_EVENTS:-/dev/null}" 2>/dev/null || true)
     if [ -n "$eline" ]; then
@@ -408,7 +430,7 @@ check "창 전: minutes 가 실린다"         "$(printf '%s' "$out" | jq -e '.m
 check "창 전: resumed 없음"              "$(no_ev resumed)"
 check "창 전: 편집 0회"                  "$(none 'issue edit')"
 check "창 전: 코멘트 0회"                "$(none 'issue comment')"
-check "창 전: 코멘트 조회조차 안 한다"    "$(none 'json comments')"
+check "창 전: 코멘트 조회조차 안 한다"    "$(none 'issues/42/comments')"
 
 # ── ② 마커 0개 → 1번째 재개 ────────────────────────────────────────────────
 setup "hold:ladder,agent-ready" 200 0
@@ -957,8 +979,13 @@ check "빈 번호 note: 기존 문구 그대로"         "$(evq note '.msg | tes
 check "빈 번호 note: 번호 미상·원본 토큰이 앞머리에" "$(unknown_prefix note '')"
 
 # (다) emit_warn_after_edit — 쓰기 뒤 readback 조회가 실패한 줄.
+# 이 블록부터는 **코멘트 조회(마커 카운트)를 타는** 경로다. 조회 헬퍼(`pr-comments.sh`)는
+# 빈 번호를 `${2:?}` 로 즉시 거절하므로(실제 gh 도 빈 번호로는 못 묻는다) 빈 문자열로는 여기까지
+# 오지 못한다 — 이 절이 무는 것은 **번호가 이상할 때의 방출 형식**이지 조회 가능성이 아니라서,
+# 조회를 통과하는 **정수 아닌 토큰**(`abc`)으로 같은 길을 낸다. 위 warn·note 블록은 조회 전에
+# 갈리므로 빈 문자열 그대로 둔다(두 축을 다 문다).
 setup "hold:ladder,agent-ready" 200 0
-bad_num_rows "$tmp/ladder.json" "" "hold:ladder,agent-ready" "$(ts 200)"
+bad_num_rows "$tmp/ladder.json" "abc" "hold:ladder,agent-ready" "$(ts 200)"
 echo '[]' > "$tmp/human.json"
 STUB_READBACK_LABELS="__FAIL__"
 run
@@ -966,7 +993,7 @@ check "빈 번호 warn_after_edit: 모든 줄이 유효 JSON" "$(lines_all_json)
 check "빈 번호 warn_after_edit: 줄을 삼키지 않는다"   "$([ "$(nlines '"event":"warn_after_edit"')" = 1 ] && echo ok || echo no)"
 check "빈 번호 warn_after_edit: number 는 0"         "$(evq warn_after_edit '.number == 0')"
 check "빈 번호 warn_after_edit: 기존 문구 그대로"     "$(evq warn_after_edit '.msg | test("재개 readback 조회 실패")')"
-check "빈 번호 warn_after_edit: 번호 미상·토큰 앞머리" "$(unknown_prefix warn_after_edit '')"
+check "빈 번호 warn_after_edit: 번호 미상·토큰 앞머리" "$(unknown_prefix warn_after_edit 'abc')"
 
 # (라) 정상 경로 무회귀 — 번호가 있으면 표식이 붙지 않는다(문구가 한 바이트도 안 바뀐다).
 setup "needs-human,agent-ready" 200 0
@@ -997,9 +1024,9 @@ check "빈 번호 waiting(창 재판정): 유효 JSON"   "$(lines_all_json)"
 check "빈 번호 waiting(창 재판정): number 는 0" "$(evq waiting '.number == 0')"
 check "빈 번호 waiting(창 재판정): 무편집"      "$(none 'issue edit')"
 
-# 재개(resumed) — 번호가 비어도 줄은 유효 JSON 이어야 한다.
+# 재개(resumed) — 번호가 정수가 아니어도 줄은 유효 JSON 이어야 한다(토큰 사유는 (다) 주석).
 setup "hold:ladder,agent-ready" 200 0
-bad_num_rows "$tmp/ladder.json" "" "hold:ladder,agent-ready" "$(ts 200)"
+bad_num_rows "$tmp/ladder.json" "abc" "hold:ladder,agent-ready" "$(ts 200)"
 echo '[]' > "$tmp/human.json"
 run
 check "빈 번호 resumed: 유효 JSON"      "$(lines_all_json)"
@@ -1008,16 +1035,16 @@ check "빈 번호 resumed: attempt 유지"   "$(evq resumed '.attempt == 1')"
 
 # 승격(escalated) — 마커 2개로 상한 초과.
 setup "hold:ladder,agent-ready" 200 2
-bad_num_rows "$tmp/ladder.json" "" "hold:ladder,agent-ready" "$(ts 200)"
+bad_num_rows "$tmp/ladder.json" "abc" "hold:ladder,agent-ready" "$(ts 200)"
 echo '[]' > "$tmp/human.json"
 run
 check "빈 번호 escalated: 유효 JSON"        "$(lines_all_json)"
 check "빈 번호 escalated: number 는 0"      "$(evq escalated '.number == 0')"
 check "빈 번호 escalated: attempt·limit 유지" "$(evq escalated '.attempt == 2 and .limit == 2')"
 
-# policy 재심 due — ③ 의 pnum 이 빈 경우.
+# policy 재심 due — ③ 의 pnum 이 정수가 아닌 경우(토큰 사유는 (다) 주석).
 setup "hold:policy,agent-ready" 200 0
-bad_num_rows "$tmp/policy.json" "" "hold:policy,agent-ready" "$(ts 200)"
+bad_num_rows "$tmp/policy.json" "abc" "hold:policy,agent-ready" "$(ts 200)"
 echo '[]' > "$tmp/ladder.json"
 echo '[]' > "$tmp/human.json"
 note "사람 확인(policy): A인가 B인가 <!-- hold-note: policy --><!-- bodat:worker -->"
@@ -2155,6 +2182,43 @@ check "⑨-r 상한 도달: 마커를 더 쌓지 않는다"  "$([ "$(mr_markers 
 check "⑨-r 상한 도달: 라벨은 끝까지 무편집"   "$(none 'pr edit 241')"
 check "⑨-r 상한 도달: 전이는 스크립트가 걸지 않는다" "$(none 'issue edit 341')"
 
+# 회차 조회는 **페이지네이션 소스**(pr-comments.sh → REST issues/N/comments)를 탄다 —
+# `gh issue view --json comments` 는 첫 100건 상한이라 코멘트가 많은 이슈에서 회차가 늘 0이었다.
+check "⑨-r 회차 조회가 페이지네이션 경로를 탄다" \
+  "$(grep -q 'api repos/owner/repo/issues/341/comments' "$tmp/gh.log" && echo ok || echo no)"
+check "⑨-r 옛 첫-100건 경로(issue view --json comments)를 안 쓴다" \
+  "$(grep -q 'issue view 341 .*json comments' "$tmp/gh.log" && echo no || echo ok)"
+
+# 마커에 **PR 번호**가 든다 — 한 이슈에 걸린 다른 PR 의 회차와 섞이지 않는다.
+mr_setup
+mr_seed() { printf '%s' "$1" > "$tmp/mirror.comments.341"; }
+mr_seed '[{"body":"정지 미러 재시도 1/3: PR #999 — x\n<!-- mirror-retry: x pr=999 -->"},
+          {"body":"정지 미러 재시도 2/3: PR #999 — x\n<!-- mirror-retry: x pr=999 -->"},
+          {"body":"정지 미러 재시도 3/3: PR #999 — x\n<!-- mirror-retry: x pr=999 -->"}]'
+run
+check "⑨-r 다른 PR 의 마커는 안 센다: 상한 이벤트 없음" "$(no_ev mirror_retry_exhausted)"
+check "⑨-r 다른 PR 의 마커는 안 센다: 1/3 으로 시작"     "$(saysl '(재시도 1/3)')"
+
+# **에피소드 경계** — 사람이 개입한 뒤(마지막 policy-review·hold-note 코멘트)의 마커만 센다.
+# 한 번 상한을 채우고 사람이 풀어 준 뒤 같은 이슈에 새 불일치가 나면 첫 회차부터여야 한다.
+mr_setup
+mr_seed '[{"body":"정지 미러 재시도 1/3: PR #241 — x\n<!-- mirror-retry: x pr=241 -->"},
+          {"body":"정지 미러 재시도 2/3: PR #241 — x\n<!-- mirror-retry: x pr=241 -->"},
+          {"body":"정지 미러 재시도 3/3: PR #241 — x\n<!-- mirror-retry: x pr=241 -->"},
+          {"body":"사람 확인(policy): 미러 불일치 확인해 주세요 <!-- hold-note: policy -->"}]'
+run
+check "⑨-r 경계 뒤 0개: 상한 이벤트 없음"  "$(no_ev mirror_retry_exhausted)"
+check "⑨-r 경계 뒤 0개: 첫 회차(1/3)부터"  "$(saysl '(재시도 1/3)')"
+check "⑨-r 경계 뒤 0개: 마커가 4개로 쌓인다" \
+  "$([ "$(jq '[.[] | select(.body | test("mirror-retry"))] | length' "$tmp/mirror.comments.341")" = 4 ] && echo ok || echo no)"
+# 대조군 — 같은 마커 3개인데 **경계가 없으면** 종전대로 상한이다(경계가 진짜로 갈랐음을 실증).
+mr_setup
+mr_seed '[{"body":"정지 미러 재시도 1/3: PR #241 — x\n<!-- mirror-retry: x pr=241 -->"},
+          {"body":"정지 미러 재시도 2/3: PR #241 — x\n<!-- mirror-retry: x pr=241 -->"},
+          {"body":"정지 미러 재시도 3/3: PR #241 — x\n<!-- mirror-retry: x pr=241 -->"}]'
+run
+check "⑨-r 경계 없음·마커 3개: 상한 이벤트" "$(has_ev mirror_retry_exhausted)"
+
 # 증거가 서면 종전대로 정리된다 — 재시도 관문이 정상 경로를 막지 않는다(대조군).
 mr_setup
 : > "$tmp/mirror.events"   # 이력 픽스처 없음 = 스텁이 정상 해제로 답한다
@@ -2195,6 +2259,11 @@ check "⑩ PR 단독: pr 필드로 축이 갈린다(number 는 null)" \
   "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .pr == 701 and .number == null' >/dev/null 2>&1 && echo ok || echo no)"
 check "⑩ PR 단독: minutes 가 실린다" \
   "$(printf '%s' "$out" | jq -e 'select(.event=="policy_review_due") | .minutes >= 199' >/dev/null 2>&1 && echo ok || echo no)"
+# P2-1 — PR 축의 마커 조회도 페이지네이션 소스다(첫 100건 상한 탈출).
+check "⑩ PR 단독: 재심 마커를 페이지네이션 경로로 읽는다" \
+  "$(grep -q 'api repos/owner/repo/issues/701/comments' "$tmp/gh.log" && echo ok || echo no)"
+check "⑩ PR 단독: 옛 첫-100건 경로(pr view --json comments)를 안 쓴다" \
+  "$(grep -q 'pr view 701 .*json comments' "$tmp/gh.log" && echo no || echo ok)"
 check "⑩ PR 단독: 무편집(라벨·코멘트 안 건드린다)" \
   "$([ "$(counts 'pr edit')" = 0 ] && [ "$(counts 'pr comment')" = 0 ] && echo ok || echo no)"
 

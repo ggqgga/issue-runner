@@ -53,8 +53,10 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 - `LADDER_RESUME_LIMIT = 2` — 이슈 1건당 자동 재개 상한. 초과하면 재개 대신
   `hold:policy` 승격 — 그때만 사람이다(무한 재시도 금지).
 - `MIRROR_RETRY_LIMIT = 3` — ① 재개 스윕의 **정지 미러 정리**가 양성 증거를 못 얻었을 때
-  같은 건을 다시 시도하는 상한(#397). 회차는 짝 이슈 코멘트의 `<!-- mirror-retry: … -->`
-  마커 개수이고, 상한에 닿으면 스크립트가 `mirror_retry_exhausted` 를 낸다(전이는 아래
+  같은 건을 다시 시도하는 상한(#397). 회차는 짝 이슈 코멘트의 `<!-- mirror-retry: <사유> pr=<n> -->`
+  마커 개수이고 — **그 PR 의 것만**, **사람이 개입한 경계**(마지막 `policy-review`·`hold-note` 코멘트)
+  **이후**의 것만 센다(옛 에피소드를 물려받지 않는다) —
+  상한에 닿으면 스크립트가 `mirror_retry_exhausted` 를 낸다(전이는 아래
   이벤트 처리 참조). 값은 `resume-sweep.sh` 의 동명 상수와 **같아야 한다** — 그 파일이
   이 절을 가리키고 있다(플랜 1단계 전이라 두 벌 허용).
 - `STALE_FINISH_MIN = 30` — 완결 유실 판별 시간버퍼(분). `finish-classify.sh` 의

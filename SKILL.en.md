@@ -59,7 +59,9 @@ maintenance must come before new work).
   retries).
 - `MIRROR_RETRY_LIMIT = 3` — cap on retries when ①'s resume sweep **stop-mirror cleanup**
   cannot obtain positive evidence (#397). The round count is the number of
-  `<!-- mirror-retry: … -->` marker comments on the paired issue; at the cap the script emits
+  `<!-- mirror-retry: <reason> pr=<n> -->` marker comments on the paired issue — counting only that
+  PR's markers, and only those **after the last human-intervention boundary** (the latest
+  `policy-review`/`hold-note` comment), so a new episode never inherits the old rounds; at the cap the script emits
   `mirror_retry_exhausted` (see the event handling below for the transition). The value must
   match the constant of the same name in `resume-sweep.sh`, which points back at this section
   (two copies are allowed until plan step 1).
