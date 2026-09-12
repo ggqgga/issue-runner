@@ -989,7 +989,7 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   fi
 done
 
-echo "[closeout] ③-1 1단계 worktree 확보 fetch·reset 검사 (#207)"
+echo "[closeout] ③-1 1단계 검증자가 현재 head 를 보는지 — gh pr diff 동봉 또는 worktree fetch·reset (#207·#375)"
 # 1단계 계획 부합 호출의 프롬프트(verifier-prompt.md)가 "이 워크트리는 PR 브랜치의
 # HEAD 로 체크아웃돼 있어 최신이다" 라고 전제한다 — 그 전제가 참이려면 1단계
 # 자신이 worktree 를 fetch·reset 해야 한다(revalidate 절이 이미 같은 이유로 이
@@ -1005,8 +1005,13 @@ check_step1_worktree_sync() {
     echo "  ✗ $f 에 1단계/2단계 앵커 없음"; return 1
   fi
   section=$(sed -n "${start_ln},$((end_ln - 1))p" "$f")
+  # #375 부터 1단계는 워크트리를 안 쓴다 — general-purpose 검증자에 `gh pr diff <pr>`(정의상 PR 의 현재
+  # head)를 동봉한다. 그 갈래면 fetch·reset 요구가 성립하지 않으므로 동봉 문구로 대신 문는다.
+  if printf '%s\n' "$section" | grep -qF 'gh pr diff <pr>'; then
+    return 0
+  fi
   if ! printf '%s\n' "$section" | grep -qF 'fetch origin'; then
-    echo "  ✗ $f 1단계 절에 'fetch origin' 없음 — worktree 가 옛 HEAD 일 수 있다(#207)"; return 1
+    echo "  ✗ $f 1단계 절에 'fetch origin' 도 'gh pr diff <pr>' 동봉도 없음 — 검증자가 옛 HEAD 를 볼 수 있다(#207·#375)"; return 1
   fi
   if ! printf '%s\n' "$section" | grep -qE 'reset --hard origin/agent/issue'; then
     echo "  ✗ $f 1단계 절에 'reset --hard origin/agent/issue-<N>' 없음(#207)"; return 1
