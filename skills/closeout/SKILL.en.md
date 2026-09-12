@@ -731,8 +731,24 @@ for out-of-merge-scope verification the step-1 verifier excluded from the merge 
 - If there is **nothing at all** to step through after deploy, exactly the one word
   `없음`. Do not append an explanation after it.
 - Otherwise a **`- [ ]` checkbox list**. One line = one action deploy-cycle ⑦ performs
-  once (on real hardware, a TEST-worker profile #18 dry run).
-  Background·rationale·caveats go in `## 변경 요약`; leave only the actions here.
+  once. Background·rationale·caveats go in `## 변경 요약`; leave only the actions here.
+- **A real-hardware line REQUIRES the `[칸 ③]` prefix marker** — write it as
+  `- [ ] [칸 ③] <action>`. Saying in prose that real hardware means an action only
+  ladder rung ③ (a TEST-worker profile #18 dry run) can step **does not substitute for
+  the marker**: the marker is **shape enforcement of the same grade** as `없음` and
+  `- [ ]`. Step 5 identifies real-hardware items by this marker alone, so a line missing
+  it is counted as an ordinary Chrome item, passed, and the ticket closes without the
+  TEST worker ever running (#309). Even when rungs ①② failed and the carried-over line
+  never says "TEST worker", **if the rung it steps is ③, attach the marker** — the basis
+  for the decision is the marker, not the meaning of the sentence. The marker is a
+  **literal**: write `[칸 ③]` exactly, never a translation ("[rung ③]" and the like) —
+  step 5 and the `bin/ci` guard both match one fixed string.
+- **An unmarked line must be one Chrome can step.** Step 5 steps unmarked lines with
+  Chrome, and when the means lives outside the browser (a worker box · `ssh` · a server
+  shell) so Chrome cannot even try, it prints no pass and **counts the line as held**
+  (the fail-closed branch in step 5 below) — which keeps this ticket open. If a line is
+  not rung ③ but still needs a means outside the browser, write that means into the line
+  so ⑦ can step it directly.
 
 Why the shape is enforced: the branch below reads this section to decide whether an issue
 is filed at all, and free prose leaves that decision to per-tick interpretation, which
@@ -847,7 +863,12 @@ a clear closing moment**.
 reported deployed, without any new detection mechanism (no polling/timing), actively run
 a Chrome smoke to judge it. Parse `## 검증 URL` (`<VERIFY_URL>`) and
 `## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body, fill
-`references/smoke-prompt.en.md`'s placeholders, load the chrome-devtools MCP tools via
+`references/smoke-prompt.en.md`'s placeholders
+(**substitute that section untouched — do not pre-filter the marked lines out.**
+The marker/denominator/held rules below are carried
+in the same wording inside `smoke-prompt.en.md`, so the prompt applies them itself;
+filtering once more before substitution creates a second calculator for real-hardware
+items), load the chrome-devtools MCP tools via
 ToolSearch, then **entry cleanup (idempotent — crash-resume defense): via `list_pages`,
 if a prior tick died before cleanup and left a smoke page, `close_page` it first.** Then
 `navigate_page` to `<VERIFY_URL>`, and compare each item via
@@ -861,18 +882,66 @@ structure/empty-state confirmation from real-data render confirmation in the res
   comment instead: `스모크 생략: 밟을 항목 0`. That issue is a container the deploy-cycle
   lane closes once the promotion is done, not a verification subject.
 - **Real-hardware items still open — do not close even on green (Chrome cannot step rung ③).**
-  Among the `- [ ]` lines in `## 라이브/하드웨어 검증 항목`, a line **whose action is
-  ladder rung ③ (a TEST-worker profile #18 dry run)** is a real-hardware item — step 4
-  writes those lines exactly that way (the `<LIVE_CHECKS>` shape discipline above), so
-  reuse that predicate here instead of inventing a second one. **Drop such lines from the
-  `<n>/<n>` denominator** — pretending Chrome compared them makes both a pass and a fail
-  a lie (the same false green as "no items" above). If dropping them leaves zero items to
+  Among the `- [ ]` lines in `## 라이브/하드웨어 검증 항목`, a line **carrying the
+  `[칸 ③]` prefix marker** is a real-hardware item — step 4 enforces that marker as shape,
+  of the same grade as `없음` and `- [ ]` (the `<LIVE_CHECKS>` shape discipline above), so
+  reuse that marker here instead of inventing a second predicate. The rationale (why such
+  a line is real hardware) is that the action the marker points at is ladder rung ③ (a
+  TEST-worker profile #18 dry run), which Chrome cannot step — but keep the rationale as
+  rationale and **decide by the marker**. Interpreting the sentence lets the same line
+  read as real hardware in one tick and as an ordinary item in the next (#309).
+  **Drop marked lines from the `<n>/<n>` denominator** — pretending Chrome compared
+  them makes both a pass and a fail a lie (the same false green as "no items" above). If dropping them leaves zero items to
   compare, do not open Chrome — skip the smoke exactly like the "no items" bullet above.
   And if **even one** such line remains, **do not close the deploy issue even when
   everything else passes** — rung ③ is deploy-cycle ⑦'s job, so closing here finalizes a
   ticket whose real-hardware items never met the TEST worker once. Leave the reason as a
   comment instead: `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦`. That issue is a
   container the deploy-cycle lane's ⑦ closes after it steps rung ③.
+  **Unmarked lines — do not catch them by a string; hand them to rung ③ fail-closed.**
+  Deploy issues filed before this discipline and still open carry no `[칸 ③]` at all
+  (anything filed before #309 merged). And **no fixed string exists** that picks the
+  real-hardware lines out of that backlog — a full census of the 27 open `- [ ]` lines
+  across the 10 open backlog tickets (bodat #5119·#5115·#5110·#5108·#5107·#5105·#5095·
+  #5094·#5078·#5065) on 2026-09-12: `TEST 워커 프로필 #18` matches **0 lines** (it is
+  nowhere in any body) · `TEST 워커` matches 1 (of 6 real-hardware lines) · `워커` matches
+  7, dragging in non-hardware lines such as a `/pcs` screen check and a server-log grep
+  while still missing the line stepped over `ssh test`. Every candidate is wrong in
+  **both directions**, and an approximation that errs toward erasing more is worse than
+  the original bug. So decide by **what stepping it produced**, not by a string:
+  - Unmarked lines are **stepped with Chrome first.** Never promote one to real hardware
+    by reading the sentence's meaning — that is the moment a second calculator for
+    "real-hardware items" is born.
+  - **Stepped, and the value differed from the expectation → fail** → the fail branch
+    below (file the follow-up issue). Chrome actually saw the screen or the value, so
+    this is a genuine defect.
+  - **The means of stepping it lives outside the browser, so Chrome could not even try**
+    (a worker box · `ssh` · driving the AdsPower client · a server shell `bin/rails
+    runner` · a `log/*.out` grep — anything needing a tool the production console screen
+    does not have) → **print it as neither a pass nor a fail; count it as held, exactly
+    like a marked line** — drop it from the denominator and **add it to** the marked
+    count in `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦`, leaving the issue open.
+    **Do not file a follow-up issue** — it is not a defect, only a different lane, and
+    dropping it into fail files a `needs-human` follow-up whose recorded reason is a
+    false "smoke failure" (#309 attempt 1 leaked exactly this way).
+  - The basis for this branch is **whether Chrome actually stepped the line**, not what
+    the line means. "Could not step it" is an observation, not an interpretation, so it
+    does not conflict with the no-promotion rule above — there is still one calculator.
+  - **Do not backfill the marker in its place.** Not every held line is rung ③ (some only
+    need a server shell). Keep the marker string single, but split the breakdown into one
+    comment line: `보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건 — 재고 · 4단계 표식 누락 · 또는 4단계가 수단을 적어 보낸 비-칸③ 줄`.
+  - **Exactly one category of newly filed line reaches this fail-closed branch.** The
+    step-4 shape discipline forces `[칸 ③]` on real-hardware lines, so an unmarked line is
+    **usually** one Chrome can step, and it is decided by the first branch (marker) or the
+    second (step it, pass/fail). The exception is a line step 4 sent to ⑦ with the means
+    written on it because it **is not rung ③ yet needs a tool outside the browser** (the
+    last sentence of step 4's "an unmarked line must be one Chrome can step" bullet) —
+    that line obeys the discipline and still cannot be stepped by Chrome, so it lands
+    here. Hence the **third category** in the breakdown above: recording such a line as a
+    "missing marker" **misrecords** a step 4 that followed the rule as one that broke it
+    (the verdict is the same; only the record is wrong). Once those two are set aside,
+    anything left in this branch is the signal that the ticket is **backlog, or that the
+    step-4 shape discipline was violated**.
 - **Already-closed deploy issue — skip the smoke.** If the deploy issue is already
   CLOSED and has a verification/deploy-complete comment, treat step 5 as complete —
   do not re-smoke, proceed to the next step (the case where the deploy lane
@@ -893,13 +962,17 @@ structure/empty-state confirmation from real-data render confirmation in the res
   re-smoke). Then remove the `needs-human` label from the deploy issue and close the
   deploy issue (the only remaining gate was verification and it passed, so closeout
   finalizes — the recommended option of the open decision).
-  **Unless the real-hardware exception above applies** — if even one rung-③ item is
+  **Unless the real-hardware exception above applies** — if even one rung-③ item
+  (a marked line, or a line held unstepped by the fail-closed branch above) is
   still `- [ ]`, stop at the label cleanup, leave the issue open, and finish with the
   `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦` comment (verification was not the only
   remaining gate — rung ③ is). Since #243 a step-4 issue
   never carries `needs-human` in the first place — this removal is harmless leftover
   cleanup for issues filed before that (`--remove-label` is a no-op for an absent label).
-- **fail (any item fails)** → do not fix it directly; use the existing publish path: an
+- **fail (any item fails)** — **only lines Chrome actually stepped reach here.** Lines
+  held unstepped by the fail-closed branch above are not failures, so drop them from the
+  publish targets below (filing a follow-up with a "smoke failure" reason for a line that
+  was never stepped records a non-defect as a defect — #309). → do not fix it directly; use the existing publish path: an
   agent-ready issue via `references/spinoff-issue.md` if auto-fixable (**use step 6's
   "issuance command" form verbatim** — `--label agent-ready --label spinoff --label <P1|P2>`;
   no prose substitute here either), a `--label needs-human` issue if live verification is needed.
