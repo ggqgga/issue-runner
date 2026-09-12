@@ -6,6 +6,9 @@
 #   ② 실패·파생의 `--since` 창 필터 — 창 밖 1건씩은 빠진다.
 #   ③ warn 5종 검출(미러 불일치는 양방향 — 이슈에만 단계 / PR 에만 단계)과,
 #      깨끗한 픽스처면 `warn 0`.
+#   ③-b (#265) **정지** 라벨(needs-human·hold:*) 미러 불일치 — 단계 미러와 **별도 판정**이다
+#      (단계 배열에 섞으면 정지 라벨이 단계 일치 판정을 깨뜨린다). 해제 방향만 warn:
+#      이슈에 정지 라벨이 0개인데 연결된 **열린** PR 에 남은 칸. 4격자로 오탐 0 을 단언한다.
 #   ④ 레포 짧은 이름 — issue-runner → runner 특례.
 #   ⑤ 레포 하나 조회 실패 → 그 블록만 실패 줄, 나머지 정상, exit 1.
 #   ⑥ `--json` 의 모든 항목·warn 에 `repo_short`.
@@ -621,8 +624,16 @@ has_line "승격 대기 — release 없는 레포" "$tmp/out" \
 # 루프 밖 이슈는 어디에도 안 센다
 no_sub "루프 밖 이슈 #4900 미집계" "$tmp/out" "#4900"
 
-# ③ warn 5종 + 사유 없음 + 인계 지연(+ #188 회귀 대조 PR #4991 1건 추가)
-has_line "warn 11건(질문 유무 미확인 1 포함 + #188 회귀 대조 #4991)" "$tmp/out" "  warn      11"
+# ③ warn 5종 + 사유 없음 + 인계 지연(+ #188 회귀 대조 PR #4991 1건 + #265 정지 미러 1건)
+has_line "warn 11건(질문 유무 미확인 1 · #188 대조 #4991)" "$tmp/out" "  warn      11"
+# (#265) PR #4852 는 `needs-human` 을 **맨몸으로**(= `hold:` 접두 0개) 단 채 열려 있고 연결
+# 이슈 #4832 는 깨끗하다. 기계는 이 모양을 만들 수 없다 — `needs-human` 을 붙이는 자리는
+# `transition.sh` 하나뿐이고 기계 정지 세 전이는 `--reason` 이 필수라 언제나 `hold:<사유>`
+# 와 쌍으로 붙인다. 그러니 사람이 손으로 세운 브레이크이고, 교정 갈래(resume-sweep ④)도
+# 떼지 않는다 → 교정 못 하는 후보를 경보에 얹으면 상시 잡음이다(#190 의 warn 정의).
+# 기계 미러(=`hold:*` 동반) 쪽 양성 커버리지는 아래 `ggqgga/Mirror` 격자가 전담한다.
+no_sub "(#265) 맨몸 needs-human PR #4852 는 정지 미러 warn 이 아니다" "$tmp/out" \
+  "정지 미러 불일치 #4832"
 has_sub "warn 무소속 PR" "$tmp/out" \
   "    - 무소속 PR #4850(bodat) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #4832 는 needs-human 아님"
 has_sub "warn 단계 라벨 중복" "$tmp/out" \
@@ -1110,6 +1121,127 @@ run --repo ggqgga/BodaT --since 24h
 has_line "무회귀: bodat 에픽 0줄" "$tmp/out" "  에픽      0"
 has_line "무회귀: 파생 줄은 에픽 병기 없이 종전 그대로(레포에 열린 에픽이 없다)" \
   "$tmp/out" "  파생      1  #4832"
+# ── ③-b (#265) 정지 라벨 미러 불일치 — 4격자 ───────────────────────────────
+
+# 픽스처는 **단계 라벨(flow:verify)을 이슈·PR 양쪽에 깔아** 단계 미러·무소속·좌초형 warn 을
+# 전부 끈 상태다 — 그래서 `warn 2` 가 곧 "새 판정이 낸 줄이 정확히 둘" 이라는 실측이고,
+# 나머지 두 칸이 조용하다는 것이 오탐 0 의 증거다(격자를 딴 warn 이 가리지 않는다).
+#
+#   이슈 정지 / PR 정지   want
+#   ───────────────────   ───────────────────────────────────────────────
+#   #10 無 / PR #110 無   warn 없음 (둘 다 없음 = 일치)
+#   #20 無 / PR #120 有   **warn** — 사람이 이슈에서만 뗀 잔재(이 이슈가 잡으려는 상태)
+#   #30 有 / PR #130 有   warn 없음 (둘 다 있음 = 일치, 살아 있는 사람 게이트)
+#   #40 有 / PR #140 無   warn 없음 — **부착 방향**은 이 축 밖(#244)이고 루프에 교정
+#                          수단이 없다(#190: warn 은 루프가 교정 가능한 위반일 때만)
+#   #50 無 / PR #150 有   **warn** — `hold:*` 만 남아도(needs-human 없이) 성립해야 한다
+#                          (#244 가 needs-human 을 기계 정지에서 빼는 날의 대비)
+#   (이슈 미연결) PR #160 warn 없음 — 대조할 이슈가 없다(transition.sh 의 `issue=-` 홀드)
+#   #70 無 / PR #170 有   warn 없음 — head 가 `feat/*`(사람 세션 PR). 사람이 직접 붙였을 수
+#                          있어 루프가 뗄 것이 아니다 → 교정 못 하니 warn 도 아니다(#188)
+#   #80 無 / PR #180 有   warn 없음 — head 는 `agent/issue-80` 인데 `closingIssuesReferences`
+#                          가 비었다(`Refs #N` 전용). 짝이 **증명되지 않았으므로** 대상 밖 —
+#                          그 PR 의 홀드는 `issue=-` 로 붙은 정상 상태일 수 있다
+#
+# 짝짓기는 `closingIssuesReferences[0]` 이 아니라 **head 의 `agent/issue-N` ∩ closes** 다
+# (이 레포 실데이터: PR #113 head=`agent/issue-109` refs=`[108,109]` — `[0]` 은 #108 이다).
+# 그리고 경보는 **closes 전건이 깨끗할 때만** 낸다 — 교정(resume-sweep ④)이 그 조건에서만
+# 편집하므로, 여기서 더 울리면 조치 불가능한 잡음이고 덜 울리면 교정이 몰래 돈다.
+#   #90 無 / PR #190 有   **warn** — closes 가 `[99, 90]`(순서 역전). 짝은 `[0]`(#99)이
+#                          아니라 브랜치의 이슈 #90 이다
+#   #91 無 / PR #191 有   warn 없음 — 같은 PR 이 닫는 #98 에 `hold:policy` 가 살아 있다
+#                          (묶음 디스패치 — 전이는 이슈 인자를 하나만 받는다)
+#
+# 맨몸 `needs-human`(= `hold:` 접두가 **하나도 없음**)은 짝짓기·전건 게이트를 다 통과해도
+# 대상 밖이다. 기계는 그 모양을 만들 수 없다 — `needs-human` 을 붙이는 자리는
+# `transition.sh` 하나뿐이고 기계 정지 세 전이는 `--reason` 이 **필수**라 언제나
+# `hold:<사유>` 와 쌍으로 붙인다. 그러니 PR 에만 맨몸으로 있다 = 사람이 머지 직전에 손으로
+# 세운 브레이크이고, 교정 갈래(resume-sweep ④)는 그것을 떼지 않는다. 여기서만 울리면
+# "고쳐 준다" 고 말해 놓고 안 고치는 줄이 상시로 남는다(#190).
+#   #92 無 / PR #192 有   warn 없음 — 짝도 서고 closes 전건도 깨끗한데 PR 정지가 맨몸
+#                          `needs-human` 뿐이다. 위 #170 과 달리 head 는 `agent/issue-92` 라
+#                          **이 관문 하나만** 이 칸을 조용하게 만든다(짝짓기로는 안 걸린다)
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.issues.json" <<'FX'
+[
+ {"number":10,"title":"둘 다 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":20,"title":"PR 에만 정지 라벨이 남았다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":30,"title":"양쪽 다 정지","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":40,"title":"이슈에만 정지","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:ladder"}]},
+ {"number":50,"title":"PR 에 hold 만 남았다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":70,"title":"사람 세션 PR 이 달린 이슈","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":80,"title":"Refs 전용 PR 이 달린 이슈","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":90,"title":"closes 순서 역전 PR 의 브랜치 이슈","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":99,"title":"같은 PR 이 닫는 딴 이슈 — 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"}]},
+ {"number":91,"title":"묶음 디스패치의 브랜치 이슈 — 정지 없음","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":98,"title":"묶음 디스패치의 딴 이슈 — 사람 게이트가 살아 있다","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"hold:policy"}]},
+ {"number":92,"title":"맨몸 needs-human 이 PR 에만 — 사람이 손으로 세운 브레이크","createdAt":"@NOW@","labels":[{"name":"agent-ready"},{"name":"flow:ready"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror.pr_open.json" <<'FX'
+[
+ {"number":110,"headRefName":"agent/issue-10","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":10}],"labels":[{"name":"flow:verify"}]},
+ {"number":120,"headRefName":"agent/issue-20","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":20}],"labels":[{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":130,"headRefName":"agent/issue-30","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":30}],"labels":[{"name":"flow:verify"},{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":140,"headRefName":"agent/issue-40","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":40}],"labels":[{"name":"flow:verify"}]},
+ {"number":150,"headRefName":"agent/issue-50","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":50}],"labels":[{"name":"flow:verify"},{"name":"hold:conflict"}]},
+ {"number":160,"headRefName":"feat/이슈-없는-정지","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[],"labels":[{"name":"needs-human"},{"name":"hold:policy"}]},
+ {"number":170,"headRefName":"feat/사람이-연-정지","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":70}],"labels":[{"name":"flow:verify"},{"name":"needs-human"}]},
+ {"number":180,"headRefName":"agent/issue-80","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]},
+ {"number":190,"headRefName":"agent/issue-90","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":99},{"number":90}],"labels":[{"name":"flow:verify"},{"name":"hold:policy"}]},
+ {"number":191,"headRefName":"agent/issue-91","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":91},{"number":98}],"labels":[{"name":"flow:verify"},{"name":"needs-human"}]},
+ {"number":192,"headRefName":"agent/issue-92","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":92}],"labels":[{"name":"flow:ready"},{"name":"needs-human"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_Mirror.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_Mirror.issues_closed.json"
+
+run --repo ggqgga/Mirror --since 24h
+ck "(#265) 격자: exit 0" "$RC" 0
+has_line "(#265) 새 판정이 낸 줄은 정확히 3건(오탐 0)" "$tmp/out" "  warn      3"
+has_line "(#265) PR 에만 정지 라벨 → warn" "$tmp/out" \
+  "    - 정지 미러 불일치 #20(mirror) ↔ PR #120(mirror) — 이슈 없음 · PR hold:policy needs-human"
+has_line "(#265) needs-human 없이 hold:* 만 남아도 warn (#244 대비)" "$tmp/out" \
+  "    - 정지 미러 불일치 #50(mirror) ↔ PR #150(mirror) — 이슈 없음 · PR hold:conflict"
+no_sub "(#265) 둘 다 없음(#10)은 조용하다" "$tmp/out" "정지 미러 불일치 #10"
+no_sub "(#265) 둘 다 있음(#30)은 조용하다 — 살아 있는 사람 게이트" "$tmp/out" "정지 미러 불일치 #30"
+no_sub "(#265) 이슈에만 있음(#40)은 이 축 밖(#244)" "$tmp/out" "정지 미러 불일치 #40"
+no_sub "(#265) 연결 이슈 없는 held PR #160 은 대조 상대가 없다" "$tmp/out" "PR #160"
+# 짝짓기는 교정 갈래(resume-sweep ④)와 같은 규칙으로 좁힌다 — 경보가 교정보다 넓으면
+# "고쳐 준다" 고 말해 놓고 안 고치는 줄이 상시로 남는다.
+no_sub "(#265) 사람 세션 PR #170 은 루프가 뗄 것이 아니라 warn 도 아니다" "$tmp/out" "↔ PR #170"
+no_sub "(#265) Refs 전용(closes 링크 없음) PR #180 은 짝이 증명 안 됐다" "$tmp/out" "↔ PR #180"
+# 짝은 `closes[0]` 이 아니라 **head 의 N** 이다 — 순서가 역전된 PR 에서 갈린다.
+has_line "(#265) closes 순서 역전 — 짝은 브랜치의 이슈(#90)" "$tmp/out" \
+  "    - 정지 미러 불일치 #90(mirror) ↔ PR #190(mirror) — 이슈 없음 · PR hold:policy"
+no_sub "(#265) [0] 쪽(#99)을 짝으로 고르지 않는다" "$tmp/out" "불일치 #99"
+# 묶음 디스패치 — 짝(#91)이 깨끗해도 같은 PR 이 닫는 #98 의 사람 게이트가 살아 있다.
+# 여기서 울리면 교정(resume-sweep ④)이 안 하는 일을 경보가 하라고 말하는 꼴이다.
+no_sub "(#265) 묶음 디스패치의 딴 이슈에 정지가 있으면 조용하다" "$tmp/out" "불일치 #91"
+no_sub "(#265) 정지가 남은 #98 자신도 후보가 아니다" "$tmp/out" "불일치 #98"
+# 맨몸 `needs-human` — 짝짓기(⑴⑵)·전건 게이트(⑶)를 다 통과하는 칸이라 **이 관문만**이
+# 조용하게 만든다. 교정 갈래가 안 떼는 것을 경보만 울리면 상시 잡음이다(#190).
+no_sub "(#265) 맨몸 needs-human(PR #192)은 warn 이 아니다 — 기계가 못 만드는 모양" \
+  "$tmp/out" "불일치 #92"
+# 단계 미러 판정은 정지 라벨에 오염되지 않는다 — 정지 라벨을 mirror_labels 에 밀어 넣었다면
+# #20·#50 이 **단계** 미러 불일치로도 울렸을 자리다(별도 판정이라는 것의 실측).
+no_sub "(#265) 정지 라벨이 단계 미러 판정을 깨뜨리지 않는다" "$tmp/out" "- 미러 불일치 #20"
+no_sub "(#265) 정지 라벨이 단계 미러 판정을 깨뜨리지 않는다(#50)" "$tmp/out" "- 미러 불일치 #50"
+# `--json` 면에도 같은 사실이 실린다(후속 도구가 문자열 파싱을 안 하게)
+run --repo ggqgga/Mirror --since 24h --json
+ck "(#265) --json: kind·issue·pr·labels" \
+  "$(jq -c '[.repos[0].warns[] | select(.kind=="hold_mirror_mismatch") | {i:.issue, p:.pr, l:.labels}]' < "$tmp/out")" \
+  '[{"i":20,"p":120,"l":["hold:policy","needs-human"]},{"i":50,"p":150,"l":["hold:conflict"]},{"i":90,"p":190,"l":["hold:policy"]}]'
 
 # ── --post 대시보드(#163) ──────────────────────────────────────────────────
 fx="$tmp/fx/ggqgga_issue-runner"

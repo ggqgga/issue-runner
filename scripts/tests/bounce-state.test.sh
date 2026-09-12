@@ -385,7 +385,20 @@ bounced| attempt 4 — #193 회귀 재발(이전 해소분이 되돌아왔다)|�
 bounced| attempt 3 — 마감 검증 BLOCKER 2건, 이전 1건만 해소|① 회귀7-7 부분 해소 인용
 bounced| 3건을 검토했습니다|⒜ 공백+숫자가 산문보다 먼저 — 옛 규칙 그대로 정체(안전 방향, 못박는다)
 bounced|(재검토) 여부를 묻는다|⒜ 괄호 부착도 산문보다 먼저 — 옛 규칙 그대로 정체
+bounced| : E2E 실패|#299 ⒜ 콜론 앞 공백 1칸(손 반송의 흔한 타이핑) — 옛 ' ?' 는 콜론 앞 공백을 아예 안 받았다
+bounced|  : codex BLOCKER|#299 ⒜ 콜론 앞 공백 2칸 — 공백 칸 수로 갈리지 않는다
+bounced|  (round 2) 사유|#299 ⒜ 공백 2칸+괄호 — 공백 1칸 행(위 '⑴+공백 (괄호')과 같은 판정
+bounced|  3건을 검토했습니다|#299 경계 — 공백 2칸+숫자는 공백 1칸 행(' 3건을 검토했습니다')과 같은 판정이어야 한다
+bounced| [round 2] E2E 빨강|#299 ⒜ 공백+대괄호 — '[' 를 구분자 목록에 넣었다(옛 열거엔 없었다)
+bounced|  [round 2] E2E 빨강|#299 ⒜ 공백 2칸+대괄호
+ok|  필요 여부를 검토합니다|#299 걸러선 안 되는 것 — 넓힌 ⒜ 는 공백 몇 칸이든 뒤가 한글 산문이면 안 먹는다
 GRID
+  # **탭**도 공백류다(#299). heredoc 에 리터럴 탭을 두면 편집기·린터가 조용히 공백으로
+  # 바꿔 행이 아무것도 안 재게 되므로 $'\t' 로 박아 둔다. jq(oniguruma)의 `\s` 는 탭을
+  # 포함한다 — 그 사실 자체를 여기서 실측한다.
+  grid_case "격자[$gm]+탭 구분자" bounced "$gm$(printf '\t')(round 2) 사유"
+  # 걸러선 안 되는 쪽도 탭 축으로 함께 못박는다 — 탭 뒤가 표식 없는 한글 산문이면 `ok`.
+  grid_case "격자[$gm]+탭 뒤 표식 없는 산문" ok "$gm$(printf '\t')필요 여부를 검토합니다"
   # 마커 바로 뒤 **개행** 도 구분자다(첫 줄이 마커 하나로만 이뤄진 반송).
   grid_case "격자[$gm]+개행" bounced "$gm
 둘째 줄 — 사유"
@@ -401,14 +414,14 @@ GRID
 done
 
 # 격자가 **실제로 다 돌았는지** 를 센다 — 행이 조용히 사라져도 스위트가 초록이면 격자는
-# 아무것도 못 막는다(PR#219: 안 돌린 테스트는 CI 를 못 빨갛게 한다). 마커당 40행
-# (heredoc 37 + 개행 1 + 중간 인용 1 + 제목형 개행 1).
-grid_expected=$((grid_markers * 40))
+# 아무것도 못 막는다(PR#219: 안 돌린 테스트는 CI 를 못 빨갛게 한다). 마커당 49행
+# (heredoc 44 + 탭 2 + 개행 1 + 중간 인용 1 + 제목형 개행 1).
+grid_expected=$((grid_markers * 49))
 if [ "$grid_ran" = "$grid_expected" ]; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
-  echo "  ✗ 격자 실행 건수 — 기대=$grid_expected(마커 $grid_markers × 40) 실제=$grid_ran"
+  echo "  ✗ 격자 실행 건수 — 기대=$grid_expected(마커 $grid_markers × 49) 실제=$grid_ran"
 fi
 # ── 리터럴 절 — 조립 없이 **완성된 첫 줄 그대로** 먹인다 ──────────────────
 # 격자 행은 마커를 파라미터로 조립하므로 원문 그대로는 아니다(조립 과정에서 형태를
@@ -425,6 +438,10 @@ fi
 #     ② 축이 여기서 닫힌다: 아무도 반송하지 않은 PR 이 마감 후보에서 빠지지 않는다.
 #  ⑶ **회귀 7형태** — 검증자·독립 소스가 main 대조로 실측한, 직전 회차가 `ok` 로
 #     흘린 진짜 반송들(want=bounced). 전부 "표식 + 해소/완료 어휘" 조합이다.
+#  ⑷ **#299 재현 표 6형태**(+ 대조용 `ok` 1건) — closeout 이 PR#296 마감 때 main·PR
+#     두 벌에 같은 스텁을 물려 실측한 표 그대로다. 전부 main 에선 `bounced` 였는데
+#     PR#296 의 ⒜ 구분자 앞 공백 `' ?'`(0~1칸) 때문에 `ok` 로 샜다 — 공백 여러 칸·탭·
+#     `' :'`·`' ['` 네 축. 이 회차가 `\s*` 로 넓혀 닫는다.
 lit_ran=0
 lit_case() {
   local want="$1" body="$2"
@@ -455,8 +472,18 @@ bounced|재디스패치 attempt 4 — #193 회귀 재발(이전 해소분이 되
 bounced|재디스패치 attempt 3 — 마감 검증 BLOCKER 2건, 이전 1건만 해소
 ok|재디스패치 필요 여부를 검토합니다
 ok|재검증 실패를 분석합니다
+ok|재디스패치가 필요한지 확인했습니다
+bounced|재디스패치 : E2E 실패
+bounced|재디스패치  (round 2) 사유
+bounced|재디스패치  3건을 검토했습니다
+bounced|재검증 실패 : codex BLOCKER
+bounced|재검증 실패 [round 2] E2E 빨강
 LIT
-lit_expected=16
+# 탭 형태(#299 재현 표 3행)는 heredoc 리터럴 탭이 편집 중 공백으로 뭉개질 수 있어
+# $'\t' 로 박는다. 두 마커 모두에 대해 실측한다.
+lit_case bounced "재디스패치$(printf '\t')(round 2) 사유"
+lit_case bounced "재검증 실패$(printf '\t')(round 2) 사유"
+lit_expected=24
 if [ "$lit_ran" = "$lit_expected" ]; then
   pass=$((pass + 1))
 else
@@ -535,10 +562,13 @@ ax_run() {
 # 읽는 법 — 한 줄에서 원본과 다른 칸이 그 뮤턴트가 **혼자 무는** 자리다:
 #   · MUT-1 = ① 축(조사·어미가 붙은 진짜 반송) 4칸
 #   · MUT-2 = ② 축(공백 뒤 산문 중 표식 없는 것) 1칸
-#   · MUT-A = ⒜ 가 **혼자** 지키는 1칸(` 3건을 검토했습니다` — 숫자 구분자). 나머지 ⒜
-#     형태(`: #193 —`·` #193 —`·` — 사유`)는 ⒞ `else true` 와 ⒝ 의 표식이 두 겹으로
-#     받아 MUT-A 로도 안 뒤집힌다 — 그 사실 자체를 want 열에 못박는다(직전 회차 NIT ⑵:
-#     "⒜ 를 무력화해도 2건만 빨개진다" 는 관측을 여기서 칸별로 설명한다).
+#   · MUT-A = ⒜ 가 **혼자** 지키는 4칸 — ` 3건을 검토했습니다`(숫자 구분자) 와 #299 가
+#     더한 세 형태(`  3건을…` 공백 2칸 · ` : E2E 실패` 콜론 앞 공백 · ` [round 2] …`
+#     대괄호). 넷 다 꼬리에 반송 표식(`#N`·`attempt`·대시·`반송`)이 하나도 없어 ⒝ 의
+#     둘째 겹이 못 받는다 — **⒜ 를 넓힌 것이 실제로 유일한 방벽**이라는 방증이다.
+#     나머지 ⒜ 형태(`: #193 —`·` #193 —`·` — 사유`)는 ⒞ `else true` 와 ⒝ 의 표식이
+#     두 겹으로 받아 MUT-A 로도 안 뒤집힌다 — 그 사실 자체를 want 열에 못박는다
+#     (직전 회차 NIT ⑵: "⒜ 를 무력화해도 2건만 빨개진다" 는 관측을 칸별로 설명한다).
 #   · MUT-V = 직전 회차의 어휘 거부권 8칸(회귀 7형태 + 옛 보고 문안 1건)
 while IFS='|' read -r a_base a_m1 a_m2 a_ma a_mv a_body <&3; do
   [ -n "$a_base" ] || continue
@@ -569,13 +599,16 @@ bounced|bounced|bounced|bounced|ok|재디스패치 attempt 4 — #193 회귀 재
 bounced|bounced|bounced|bounced|ok|재디스패치 attempt 3 — 마감 검증 BLOCKER 2건, 이전 1건만 해소
 bounced|bounced|bounced|bounced|ok|재디스패치 attempt 2 — 마감 검증 BLOCKER(계획 부합) 해소.
 ok|ok|ok|ok|ok|반송 반영: 마감 검증 BLOCKER(계획 부합) 해소 — 재푸시·로컬 CI pass
+bounced|bounced|bounced|ok|bounced|재디스패치  3건을 검토했습니다
+bounced|bounced|bounced|ok|bounced|재디스패치 : E2E 실패
+bounced|bounced|bounced|ok|bounced|재검증 실패 [round 2] E2E 빨강
 AX
-if [ "$ax_fail" = 0 ] && [ "$ax_pass" = 105 ]; then
+if [ "$ax_fail" = 0 ] && [ "$ax_pass" = 120 ]; then
   pass=$((pass + 1))
-  echo "  ✓ 뮤테이션 방증(#251): MUT-1 ①4칸 · MUT-2 ②1칸 · MUT-A ⒜단독1칸 · MUT-V 어휘거부권8칸 — 축이 겹치지 않는다(ax_pass=$ax_pass)"
+  echo "  ✓ 뮤테이션 방증(#251·#299): MUT-1 ①4칸 · MUT-2 ②1칸 · MUT-A ⒜단독4칸 · MUT-V 어휘거부권8칸 — 축이 겹치지 않는다(ax_pass=$ax_pass)"
 else
   fail=$((fail + 1))
-  echo "  ✗ 뮤테이션 방증(#251) 실패 — ax_pass=$ax_pass ax_fail=$ax_fail (기대 ax_pass=105)"
+  echo "  ✗ 뮤테이션 방증(#251·#299) 실패 — ax_pass=$ax_pass ax_fail=$ax_fail (기대 ax_pass=120)"
 fi
 
 # ── held(#218 attempt 2 — codex BLOCKER) ─────────────────────────────────
