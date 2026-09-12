@@ -11,7 +11,7 @@
 #   실측(ggqgga/BodaT): #2600 이 42시간 좌초해 사람이 라벨 없는 이슈를 손으로 훑다 발견,
 #   #3447·#3444 도 각각 1분·3분 39초 만에 같은 방식으로 떨어졌다.
 #
-# 실행 흔적 라벨(agent:claimed·flow:verify·flow:ready·harvesting)은 **언제나** 뗀다 —
+# 실행 흔적 라벨(agent:claimed·flow:verify·verifying·flow:ready·harvesting)은 **언제나** 뗀다 —
 # 머지는 그 실행이 끝났다는 영구 사실이고, 남겨 두면 다음 틱이 진행 중으로 오판한다.
 #
 # 이슈가 CLOSED 면 종전대로 전부 뗀다(무해 — 어차피 eligible-issues.sh 가 `is:open` 이라
@@ -31,6 +31,7 @@ num=${2:?issue number}
 # 실행 흔적 — 머지됐으면 무조건 정리
 args=(--remove-label "agent:claimed"
       --remove-label "flow:verify"
+      --remove-label "verifying"
       --remove-label "flow:ready"
       --remove-label "harvesting")
 

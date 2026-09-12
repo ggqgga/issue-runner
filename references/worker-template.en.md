@@ -63,6 +63,15 @@ Procedure:
    - Write a failing test first, and implement **only after confirming it fails
      for the right reason**.
    - Map at least one test to each acceptance-criteria checkbox.
+   - **There is a ceiling too** — one test per acceptance criterion is the default; to add
+     more you must be able to name, in one line of the PR body, the regression it catches.
+     At most **one** regression test per review finding (fold same-cause findings into one;
+     never put round numbers, BLOCKER/WARN, or reviewer names in test names). Do not write
+     tests that read source/script/doc text and assert on strings, nor tests that restate
+     code structure ("exactly two subclasses") — they catch no regression and only cause
+     round-trips on every refactor. Grids: one case per equivalence class plus one per
+     boundary; sample instead of enumerating. A test-discipline section in the repo's
+     CLAUDE.md, if present, takes precedence.
    - After it passes, finish behavior-preserving refactoring before committing.
      Commit in small units. (If edits pile up while you wait for green, follow the
      **WIP commit discipline** inside step 8 — do not die with zero commits.)
@@ -264,7 +273,11 @@ Procedure:
      changes).
    - Required contract: spec conformance against the issue's acceptance criteria +
      correctness (edge cases, swallowed exceptions, unjustified fallbacks, whether tests
-     verify real behavior). One line per finding: `BLOCKER/WARN/NIT` + `file:line — what`;
+     verify real behavior) + **test excess** (the step-5 ceiling — source/doc string
+     assertions, structure restating, several regression tests per finding; excess never
+     exceeds WARN). If `git diff --numstat origin/<DEFAULT_BRANCH>...HEAD` shows test/ additions
+     above **3×** the rest, state that figure in the prompt and make the excess check mandatory.
+     One line per finding: `BLOCKER/WARN/NIT` + `file:line — what`;
      exactly `CLEAN` when there are none; `undecided: <reason>` when the embedded diff is
      truncated or cannot be judged (never collapse that into CLEAN).
    - **Wait blocking**: call `TaskOutput(task_id, block: true, timeout: 600000)` with the

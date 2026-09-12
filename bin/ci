@@ -116,8 +116,8 @@ done
 rm -rf "$tmp"
 [ "$fail" = 0 ] || exit 1
 
-echo "[closeout] setup-labels.sh 에 harvesting·epic 라벨 정의 존재 검사"
-for lbl in harvesting epic; do
+echo "[closeout] setup-labels.sh 에 harvesting·epic·verifying 라벨 정의 존재 검사"
+for lbl in harvesting epic verifying; do
   grep -qF "gh label create $lbl " scripts/setup-labels.sh || {
     echo "  ✗ setup-labels.sh 에 $lbl 라벨 정의 누락"; exit 1; }
 done
@@ -1740,6 +1740,9 @@ bash scripts/tests/finish-classify.test.sh
 echo "[test] closeout-eligible.sh 후보 필터 — ✅ 를 head SHA 와 대조 (#171)"
 bash scripts/tests/closeout-eligible.test.sh
 
+echo "[test] verify-eligible.sh 큐 순서 — verifying(고아, orphan:true) 먼저 · flow:verify FIFO · harvesting 제외 (#275)"
+bash scripts/tests/verify-eligible.test.sh
+
 echo "[test] 네 게이트의 needs-human·hold:* 배제 — 격자 한 벌을 네 SUT 에 전수 적용 (#242)"
 bash scripts/tests/hold-gate.test.sh
 
@@ -2481,6 +2484,19 @@ awk 'BEGIN{RS="";ok=0} /\*\*대상\*\*:/ && /`hold:` 접두 미부착/ {ok=1} EN
   || { echo "  ✗ skills/closeout/SKILL.md: ①-b 대상 문단에 \`hold:\` 접두 미부착 필터 없음 (#244)"; exit 1; }
 awk 'BEGIN{RS="";ok=0} /\*\*Targets\*\*:/ && /no `hold:`-prefixed label/ {ok=1} END{exit ok?0:1}' skills/closeout/SKILL.en.md \
   || { echo "  ✗ skills/closeout/SKILL.en.md: ①-b Targets 문단에 no \`hold:\`-prefixed label 필터 없음 (#244)"; exit 1; }
+# (#275) 같은 대상 문단이 verify-runner **점유** 라벨 `verifying` 도 제외해야 한다 — `flow:verify`
+# 는 검증대기이고 `verifying` 은 verify-runner 가 집는 순간 flow:verify 를 떼고 붙이는 점유
+# 라벨(harvesting 동형)이라, 이 문단이 `flow:verify` 만 보면 검증이 **지금 도는** PR 이
+# 스윕의 입양·재디스패치 대상이 된다(closeout-eligible.sh 는 둘 다 제외한다 — 스윕 문단만
+# 빠지면 두 필터가 갈린다). 문단 스코프로 잰다 — 파일 아무 데나 `verifying` 이 있다고 통과하지 않는다.
+awk 'BEGIN{RS="";ok=0} /\*\*대상\*\*:/ && /`verifying` 미부착/ {ok=1} END{exit ok?0:1}' skills/closeout/SKILL.md \
+  || { echo "  ✗ skills/closeout/SKILL.md: ①-b 대상 문단에 \`verifying\` 미부착 필터 없음 (#275)"; exit 1; }
+awk 'BEGIN{RS="";ok=0} /\*\*Targets\*\*:/ && /not labeled `verifying`/ {ok=1} END{exit ok?0:1}' skills/closeout/SKILL.en.md \
+  || { echo "  ✗ skills/closeout/SKILL.en.md: ①-b Targets 문단에 not labeled \`verifying\` 필터 없음 (#275)"; exit 1; }
+# issue-runner ② Maintain 규칙0(단계 라벨 보정)·소유 규칙도 `verifying` PR 을 건드리지 않아야 한다 —
+# 보정이 `🔄` 만 보고 `flow:verify` 를 되붙이면 검증 중인 PR 에 단계 라벨이 둘이 된다.
+awk 'BEGIN{RS="";ok=0} /\*\*0\. 단계 라벨 보정/ && /`verifying`/ {ok=1} END{exit ok?0:1}' SKILL.md \
+  || { echo "  ✗ SKILL.md: ② Maintain 규칙0 문단이 \`verifying\` PR 을 건너뛰지 않는다 (#275)"; exit 1; }
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md skills/verify-runner/SKILL.md; do
   if grep -nE '`needs-human` *\+ *`hold:' "$f" | grep -q .; then
     echo "  ✗ $f: 기계 정지를 \`needs-human\` + \`hold:*\` 쌍으로 서술 — #244 이후 전이는 사유 라벨 하나만 붙인다"; exit 1; fi
@@ -2901,6 +2917,60 @@ if grep -nF -- 'what: "닫힌 이슈"' scripts/loop-status.sh; then
   echo "  ✗ 최근 닫힌 200건이 절단 warn 후보 목록에 되살아났다 — bodat 에서 매 틱 뜨는 상시 소음이다(#292/#190)"
   exit 1
 fi
+
+echo "[setup-labels] full-cycle 정의 + needs-human·hold:policy·spinoff 설명이 새 축 (#245)"
+# 플랜 4단계(label-taxonomy-cleanup) — 3단계(#244)가 축을 바꾼 뒤 라벨 *설명* 이 옛 뜻을
+# 가리키면 라벨 목록만 보는 사람이 옛 계약을 믿는다. 설명은 `gh label create "<이름>"` 줄의
+# **다음 줄**(`--description`)에 있으므로 `-A1` 구간에서 찾는다(P1 가드와 같은 이유).
+# ⑴ full-cycle — 지금까지 스크립트가 만들지 않아 새로 옵트인하는 레포에서 `--add-label
+#    full-cycle` 편집이 통째로 실패했다(`transition.sh` 의 "레포에 없는 라벨" 계열).
+grep -qF 'gh label create "full-cycle"' scripts/setup-labels.sh \
+  || { echo "  ✗ scripts/setup-labels.sh: full-cycle 라벨 정의 누락 (#245)"; exit 1; }
+for tok in '레인' 'agent-ready' '배타'; do
+  grep -A1 -F 'gh label create "full-cycle"' scripts/setup-labels.sh | grep -qF -- "$tok" \
+    || { echo "  ✗ scripts/setup-labels.sh: full-cycle 설명에 '$tok' 없음 — 레인 소유 축(agent-ready 와 배타)임을 밝혀야 한다"; exit 1; }
+done
+# ⑵ needs-human = 사람이 직접 세운 정지(기계 정지는 hold:*). 옛 "루프가 한계 도달" 은 #244
+#    이전 축(기계 정지에도 needs-human 을 겹쳐 붙이던 시절)의 문구다.
+for tok in '사람이 직접 세운 정지' 'hold:'; do
+  grep -A1 -F 'gh label create "needs-human"' scripts/setup-labels.sh | grep -qF -- "$tok" \
+    || { echo "  ✗ scripts/setup-labels.sh: needs-human 설명에 '$tok' 없음 (#245)"; exit 1; }
+done
+if grep -nF -- '루프가 한계 도달' scripts/setup-labels.sh; then
+  echo "  ✗ scripts/setup-labels.sh: needs-human 옛 설명('루프가 한계 도달')이 되살아남 (#245)"; exit 1
+fi
+# ⑶ hold:policy — 재심 1회는 루프가 답한다(#155). "사람 대기 사유" 로만 적으면 재심 전
+#    정지가 사람 몫으로 읽힌다.
+for tok in '재심' '#155'; do
+  grep -A1 -F 'gh label create "hold:policy"' scripts/setup-labels.sh | grep -qF -- "$tok" \
+    || { echo "  ✗ scripts/setup-labels.sh: hold:policy 설명에 '$tok' 없음 — 재심 1회(#155)를 적어라 (#245)"; exit 1; }
+done
+# ⑷ spinoff — 출처 표시지 상태가 아니다. flow:*·hold:* 사이에 놓여 상태처럼 읽히던 것.
+for tok in '출처' '상태 아님'; do
+  grep -A1 -F 'gh label create "spinoff"' scripts/setup-labels.sh | grep -qF -- "$tok" \
+    || { echo "  ✗ scripts/setup-labels.sh: spinoff 설명에 '$tok' 없음 — 출처 축(상태 아님)임을 못박아라 (#245)"; exit 1; }
+done
+# ⑸ 이 이슈는 **추가와 설명 변경만** 한다 — 기존 라벨 정의가 하나라도 사라지면 빨강
+#    (이름 변경·삭제는 다중 레포 마이그레이션이라 범위 밖).
+for lbl in agent-ready agent:claimed needs-human P0 P1 P2 harvesting epic flow:ci flow:verify \
+           flow:codex flow:ready spinoff deploy-wait loop-dashboard hold:conflict hold:policy hold:ladder dup; do
+  grep -qE "gh label create \"?${lbl}\"? " scripts/setup-labels.sh \
+    || { echo "  ✗ scripts/setup-labels.sh: 기존 라벨 '$lbl' 정의가 사라짐 — 이 축 정리는 삭제·이름변경을 하지 않는다 (#245)"; exit 1; }
+done
+# ⑹ resume-sweep.sh 머리 주석(set 줄 이전)이 hold:policy 재심(#155)을 말해야 한다 — 옛말
+#    ("hold:policy 는 사람이 결정해야 하는 것")이 되살아나면 주석이 코드(③ 재심 이벤트)와 어긋난다.
+rs_head=$(sed -n '1,/^set -/p' scripts/resume-sweep.sh)
+printf '%s\n' "$rs_head" | grep -F 'hold:policy' | grep -F '재심' | grep -qF '#155' \
+  || { echo "  ✗ scripts/resume-sweep.sh 머리 주석에 'hold:policy … 재심 … #155' 줄이 없다 (#245)"; exit 1; }
+#    ④ 미러 문단의 옛 꼴("`hold:policy`·`hold:conflict` 는 정의상 사람이 푸는데")도 같은 되돌림이다.
+if printf '%s\n' "$rs_head" | grep -nE 'hold:policy.*사람이 결정해야|그 둘은 무편집|hold:policy.*정의상.*사람이 푸'; then
+  echo "  ✗ scripts/resume-sweep.sh 머리 주석이 hold:policy 를 사람 결정으로 되돌렸다 (#155 재심 1회는 루프 몫, #245)"; exit 1
+fi
+# ⑺ README 라벨 표(한/영)에 full-cycle 행 — 스크립트가 만드는 라벨은 표에도 있어야 한다.
+for f in README.ko.md README.md; do
+  grep -qE '^\|[[:space:]]*.full-cycle.[[:space:]]*\|' "$f" \
+    || { echo "  ✗ $f 라벨 표에 full-cycle 행 없음 (#245)"; exit 1; }
+done
 
 # ── [#301] 재디스패치 상한 처방 = 재발행 · 예외 회차는 사람 문형 하나 ──────────────
 echo "[#301] reissue-pr.sh 재발행·회차 허용 픽스처 + 실행비트"

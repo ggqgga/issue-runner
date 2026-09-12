@@ -6,8 +6,10 @@ base 보다 뒤처져 있을 수 있어 이미 제거된 참조를 "살아있다
 오직 아래 텍스트만으로 판정하라.
 
 검토 항목: (1) correctness 버그(race·off-by-one·nil/empty 미처리 등) (2) 빠진 엣지
-케이스(검증 누락·잘못된 파라미터 신뢰) (3) 테스트 적정성(assertion 이 실제 동작을
-검증하는지·mock 우회 없는지) (4) 명백한 over-engineering·backwards-compat 잔재.
+케이스(검증 누락·잘못된 파라미터 신뢰) (3) 테스트 적정성 — **부족**(assertion 이 실제 동작을
+검증하는지·mock 우회 없는지)과 **과잉**(소스·문서 본문의 문자열을 단언하는 테스트·코드 구조를
+되적는 테스트·지적 1건에 회귀 테스트 여럿) 둘 다. 과잉은 WARN 을 넘기지 않는다 (4) 명백한
+over-engineering·backwards-compat 잔재.
 read-only(코드 변경 금지), 한국어, 발견마다 BLOCKER/WARN/NIT 분류. 발견 없으면 'CLEAN'.
 
 이슈 Test plan 중 "배포 후 라이브 검증"·하드웨어/실장비 검증처럼 **머지 후에만 수행
