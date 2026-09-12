@@ -94,7 +94,7 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # createdAt 이 아니라 배열 인덱스다(`bounce-state.sh` 와 같은 규율 — 동초 선후 문제).
   vi=$(printf '%s' "$comments" | jq -r '[ to_entries[]
     | select(.value.body | startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))
-    | .key ] | last // empty' 2>/dev/null)
+    | .key ] | last // empty')
   [ -n "$vi" ] || continue
 
   # 결정론 재사용 — finish-classify.sh 의 head-SHA 대조 판정을 그대로 쓴다(#171 개발계획
@@ -180,7 +180,14 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
     | select((contains("<!-- bodat:worker -->")
               or startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
     | length')
-  if [ "${unresolved:-0}" -gt 0 ]; then
+  # 계산 자체가 실패해 빈 값이면 "0건" 으로 접지 않는다 — 판정 실패는 통과가 아니다
+  # (fail-closed, 위 ✅ 갈래와 같은 방향). 종전 `${unresolved:-0}` 는 이 실패를 조용히
+  # 통과시키는 구멍이었다(#384 보조 리뷰). jq 의 stderr 는 그대로 흘려 원인이 보이게 둔다.
+  if [ -z "$unresolved" ]; then
+    echo "blocked: PR #$pr($repo) — 미해결 코멘트 판정 실패(jq 빈 출력) — fail-closed" >&2
+    continue
+  fi
+  if [ "$unresolved" -gt 0 ]; then
     echo "blocked: PR #$pr($repo) — ✅ 이후 미해결 코멘트 ${unresolved}건(마커 없음 = 사람 리뷰 대기)" >&2
     continue
   fi
