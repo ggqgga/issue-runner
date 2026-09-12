@@ -459,17 +459,20 @@ N 도 디스패치당 1만 올린다.
       재개인지다(본문에는 마커가 없다 — 스윕은 본문을 건드리지 않는다):
       (인용은 세지 않는다 — 백틱 인라인 코드·코드펜스 안의 마커는 신호가 아니라 신호를
       *설명하는 글*이라, `resume-sweep.sh` 의 `JQ_UNQUOTE` 와 **같은 정의**로 먼저 걷어낸다.
-      두 곳이 갈라지면 사람 눈에 안 보이는 두 번째 계산기가 다른 수를 센다 — #197)
+      두 곳이 갈라지면 사람 눈에 안 보이는 두 번째 계산기가 다른 수를 센다 — #197.
+      **조회도 같은 자리다**(#397): `gh issue view --json comments` 는 첫 100건만 줘서 코멘트가
+      많은 이슈에선 스윕(페이지네이션)과 이 자리가 다른 수를 센다 — `pr-comments.sh` 로 전량을
+      읽는다. 출력이 `{comments:[…]}` 가 아니라 **배열**이라 `.[]` 다.)
 
       ````sh
-      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+      $SCRIPTS/pr-comments.sh <repo> <num> | jq 'def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
       ````
 
       채운 템플릿 뒤에 ⓐ 사다리 문서 경로
       `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (어느 칸을 어떤
       명령으로 올라가는지 워커가 읽을 곳) 와 ⓑ **직전 시도의 실패 출력** — 이슈의 마지막
       사다리 관련 코멘트 본문 — 을 덧붙인다:
-      `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body|test("사다리|ladder")) and ((.body|test("^재개 "))|not))] | last.body // ""'`
+      `$SCRIPTS/pr-comments.sh <repo> <num> | jq -r '[.[] | select((.body|test("사다리|ladder")) and ((.body|test("^재개 "))|not))] | last.body // ""'`
       (스윕이 남긴 `재개 N/…` 코멘트는 제외한다 — 그게 시간상 마지막이라 안 거르면 실패
       출력 대신 그 줄을 물려준다). 그리고 한 줄로 지시하라: **"같은 칸에서 같은 실패를
       반복하지 말고 다음 칸부터 시도하라(N번째 재개다). 그래도 못 오르면 시도한 칸과 실패

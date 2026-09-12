@@ -498,17 +498,20 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       (quoted markers do not count — a marker inside inline backticks or a code fence is not
       the signal but prose *about* the signal, so it is stripped first, with the **same
       definition** as `JQ_UNQUOTE` in `resume-sweep.sh`. If the two drift apart, a second
-      invisible counter counts a different number — #197)
+      invisible counter counts a different number — #197. **The lookup is shared too** (#397):
+      `gh issue view --json comments` returns only the first 100, so on a chatty issue this spot
+      would count differently from the (paginated) sweep — read the full set with
+      `pr-comments.sh`. Its output is an **array**, not `{comments:[…]}`, hence `.[]`.)
 
       ````sh
-      gh issue view <num> --repo <repo> --json comments --jq 'def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.comments[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
+      $SCRIPTS/pr-comments.sh <repo> <num> | jq 'def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
       ````
 
       After the filled template, append ⓐ the ladder document's path
       `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (where the
       worker reads which rung is climbed with which command) and ⓑ **the previous attempt's
       failure output** — the body of the issue's last ladder-related comment:
-      `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body|test("사다리|ladder")) and ((.body|test("^재개 "))|not))] | last.body // ""'`
+      `$SCRIPTS/pr-comments.sh <repo> <num> | jq -r '[.[] | select((.body|test("사다리|ladder")) and ((.body|test("^재개 "))|not))] | last.body // ""'`
       (exclude the sweep's own `재개 N/…` comment — it is the most recent one, so without the
       filter you would hand the worker that line instead of the failure output). Then state
       in one line: **"Do not repeat the same failure on the same rung — start from the next
