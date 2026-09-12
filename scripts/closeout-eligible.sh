@@ -69,7 +69,8 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   printf '%s' "$meta" | jq -e '[.labels[].name]|index("verifying")' >/dev/null && continue
   # needs-human = 사람이 직접 세운 정지(#244 — 기계 정지는 아래 hold:* 가 문다). 마감이 집으면
   # 방금 건 사람 대기를 자동으로 되돌린다(#151). 사람이 라벨을 뗄 때까지 후보가 아니다.
-  printf '%s' "$meta" | jq -e '[.labels[].name]|index("needs-human")' >/dev/null && continue
+  printf '%s' "$meta" | jq -L "$SCRIPT_DIR/lib" -e \
+    'include "loop"; [.labels[].name] | any(is_human_stop_label)' >/dev/null && continue
   # hold:* = 기계 정지 그 자체 (#242). `needs-human` 부착이 사유별로 걷혔으므로(#244)
   # 이제 이 줄만이 기계 정지를 지킨다 — 위 needs-human 필터는 사람이 직접 세운 정지용이다.
   # **접두사** 판별이라 사유가 늘어도(`hold:<새사유>`) 안 깨지고, `hold:` 로 시작하지 않는
@@ -78,7 +79,8 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   #
   # 해제는 **붙어 있는 정지 라벨을 다** 떼는 것이다 — `hold:*` 만 남아도 후보로
   # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
-  printf '%s' "$meta" | jq -e '[.labels[].name]|any(startswith("hold:"))' >/dev/null && continue
+  printf '%s' "$meta" | jq -L "$SCRIPT_DIR/lib" -e \
+    'include "loop"; [.labels[].name] | any(is_hold_label)' >/dev/null && continue   # 술어는 lib/loop.jq (#426)
   # mergeable 은 GitHub 이 지연 계산한다 — UNKNOWN 은 아직 미판정이므로 CONFLICTING 과
   # 함께 skip 하고 다음 틱에 재시도한다(미판정 PR 을 머지 도크로 넘기지 않는다).
   case "$(printf '%s' "$meta" | jq -r '.mergeable')" in

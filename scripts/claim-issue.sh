@@ -66,7 +66,8 @@ if printf '%s' "$pre" | jq -e '.labels | map(.name) | index("agent:claimed")' >/
 fi
 # needs-human 재확인 — eligible-issues.sh 이후 사람이 붙였거나 인덱스 지연으로
 # 후보에 남아 있어도, 사람이 라벨을 떼기 전에는 claim 금지
-if printf '%s' "$pre" | jq -e '.labels | map(.name) | index("needs-human")' >/dev/null; then
+if printf '%s' "$pre" | jq -L "$CLAIM_SCRIPT_DIR/lib" -e \
+     'include "loop"; .labels | map(.name) | any(is_human_stop_label)' >/dev/null; then
   echo "skip: $repo#$num needs-human" >&2; exit 1
 fi
 # hold:* 재확인 (#242) — 기계 정지(verify-held·closeout-blocked·runner-held). 위
@@ -76,7 +77,8 @@ fi
 # (`holding`·`on-hold`·`area:hold`)은 걸리지 않는다(과잉 제외 = 정상 후보 소실).
 # 해제는 **붙어 있는 정지 라벨을 다** 떼는 것이다 — `hold:*` 만 남아도 후보로
 # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
-if printf '%s' "$pre" | jq -e '.labels | map(.name) | any(startswith("hold:"))' >/dev/null; then
+if printf '%s' "$pre" | jq -L "$CLAIM_SCRIPT_DIR/lib" -e \
+     'include "loop"; .labels | map(.name) | any(is_hold_label)' >/dev/null; then   # 술어는 lib/loop.jq (#426)
   echo "skip: $repo#$num hold:*" >&2; exit 1
 fi
 # 검증/마감 레인 재확인 (#275) — eligible-issues.sh 가 같은 네 라벨(flow:verify·verifying·
@@ -84,8 +86,8 @@ fi
 # 가 집어(`verify-pick` 이 이슈에 `verifying` 을 미러) 소유가 넘어간 이슈를 직전에 다시 본다.
 # 특히 `verifying` 은 **검증이 지금 도는 중**이라 여기서 claim 하면 워커와 verify-runner 가
 # 같은 브랜치를 동시에 만진다. 판별은 정확 일치(`verified`·`verifying-x` 는 안 걸린다).
-if printf '%s' "$pre" | jq -e '.labels | map(.name)
-    | any(. == "flow:verify" or . == "verifying" or . == "flow:ready" or . == "harvesting")' >/dev/null; then
+if printf '%s' "$pre" | jq -L "$CLAIM_SCRIPT_DIR/lib" -e 'include "loop";
+    .labels | map(.name) | any(is_downstream_label)' >/dev/null; then
   echo "skip: $repo#$num 검증/마감 레인 소유(flow:verify·verifying·flow:ready·harvesting)" >&2; exit 1
 fi
 

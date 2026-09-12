@@ -15,6 +15,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 # SUT 는 sibling 경로로 gh-login.sh 를 부른다 — SUT 사본과 가짜를 tmp 에 나란히 둔다.
 cp "$SUT" "$tmp/claim-issue.sh"
+cp -R "$DIR/lib" "$tmp/lib"   # SUT 사본이 include 하는 라이브러리 (#426)
 SUT="$tmp/claim-issue.sh"
 printf '#!/usr/bin/env bash\necho tester\n' > "$tmp/gh-login.sh"
 chmod +x "$tmp/gh-login.sh"

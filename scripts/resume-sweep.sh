@@ -607,14 +607,15 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate>
 #      붙었다" 를 구분하지 못한다 — 상세는 같은 함수 안의 ⑷ 주석.
 # ⑴⑵ 중 하나라도 아니면 이슈 칸이 빈 값으로 나가고, 호출부가 그대로 넘긴다(무편집·무이벤트).
 mirror_row() {  # mirror_row <PR row-json> — "<PR><TAB><짝 이슈|빈값><TAB><closes 공백목록><TAB><정지라벨 공백목록>"
-  printf '%s' "$1" | jq -r '
+  printf '%s' "$1" | jq -L "$SCRIPT_DIR/lib" -r '
+    include "loop";
     [.labels[]?.name] as $ln
     | [((.closingIssuesReferences // [])[].number)] as $closes
     | (if ((.headRefName // "") | test("^agent/issue-[0-9]+"))
        then ((.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber)) else null end) as $hn
     | (if $hn != null and (($closes | index($hn)) != null) then ($hn | tostring) else "" end) as $issue
     | [(.number|tostring), $issue, ($closes | map(tostring) | join(" ")),
-       ($ln | map(select(. == "needs-human" or startswith("hold:"))) | sort | join(" "))]
+       ($ln | stop_labels | sort | join(" "))]   # 집합 정의는 lib/loop.jq (#426)
     | @tsv' 2>/dev/null
 }
 
@@ -1281,7 +1282,8 @@ while IFS= read -r repo; do
     while IFS= read -r row <&3; do
       [ -n "$row" ] || continue
       if ! printf '%s' "$row" \
-           | jq -e '[.labels[].name | select(startswith("hold:"))] | length > 0' >/dev/null 2>&1; then
+           | jq -L "$SCRIPT_DIR/lib" -e \
+               'include "loop"; [.labels[].name | select(is_hold_label)] | length > 0' >/dev/null 2>&1; then
         # 사유 라벨 없는 `needs-human` 은 **정상 상태**다(#244) — 라벨 하나에 뜻 하나를 준
         # 뒤로 그것은 "사람이 직접 세운 정지" 하나만 뜻하고, 루프가 교정할 불변식 위반이
         # 아니다(warn 은 **루프가 교정 가능한 불변식 위반일 때만** — #188/#190 이 세운 정의).

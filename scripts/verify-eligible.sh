@@ -110,8 +110,10 @@ fi
   #
   # 해제는 **붙어 있는 정지 라벨을 다** 떼는 것이다 — `hold:*` 만 남아도 후보로
   # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
-  printf '%s' "$meta" | jq -e '[.labels[].name]|index("needs-human")' >/dev/null && continue
-  printf '%s' "$meta" | jq -e '[.labels[].name]|any(startswith("hold:"))' >/dev/null && continue
+  printf '%s' "$meta" | jq -L "$SCRIPT_DIR/lib" -e \
+    'include "loop"; [.labels[].name] | any(is_human_stop_label)' >/dev/null && continue
+  printf '%s' "$meta" | jq -L "$SCRIPT_DIR/lib" -e \
+    'include "loop"; [.labels[].name] | any(is_hold_label)' >/dev/null && continue   # 술어는 lib/loop.jq (#426)
 
   # 결정적 CI 상태를 분류해 실어보낸다(탈락 아님 — flow:verify 는 전부 소유).
   "$SCRIPT_DIR/closeout-ci-pass.sh" "$repo" "$pr"; cp=$?
