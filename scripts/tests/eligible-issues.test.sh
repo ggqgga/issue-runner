@@ -22,6 +22,8 @@
 #      합친 전체 후보를 센다. 창 안(34)이면 호출은 **1회 그대로**다(비용 회귀).
 #      상한 소진·임박 경계·빈 페이지 정지·페이지 조회 실패는 상수를 env 로 줄여(창 5×3=15) 문다.
 #   ⑦ 스캔 끝 요약 `blocked-summary: 막힘 N건 (사람대기 블로커 M건)` 의 N·M 이 정확하다.
+#   ⑩ 본문 조회 실패 (#330) — 한 건이 죽어도 **그 후보만** 빠지고 나머지 판정·stdout 은
+#      살아남는다(수정 전: `set -e` 로 스크립트가 비0 종료해 목록이 통째로 증발).
 #
 # 에픽 finish-first 정렬 (#257) — Ⓔ 로 시작하는 절:
 #   Ⓔ① `Epic #N` 이 하나도 없는 입력은 **순서가 종전과 같다**(회귀 0) + 새 필드는 null/false.
@@ -143,6 +145,11 @@ if [ "${1:-} ${2:-}" = "issue view" ]; then
     *"--json body"*)
       printf 'body %s\n' "$num" >> "$STUB_CALL_LOG"
       [ -n "$jqf" ] || { echo "gh stub: 본문 조회는 -q 로 불러야 한다: $args" >&2; exit 1; }
+      # 블로커 조회와 같은 이음매 — `body.<num>.fail` 이 있으면 그 내용을 stderr 로 내고 실패한다.
+      if [ -f "$STUB_DIR/body.$num.fail" ]; then
+        cat "$STUB_DIR/body.$num.fail" >&2
+        exit 1
+      fi
       [ -f "$STUB_DIR/body.$num.json" ] || { echo "gh stub: 본문 픽스처 없음: #$num" >&2; exit 1; }
       jq -r "$jqf" "$STUB_DIR/body.$num.json" || exit 1
       exit 0 ;;
@@ -238,6 +245,8 @@ set_closed_total() {  # set_closed_total <fx> <total_count(JSON — 숫자 또�
 }
 set_closed_fail() {  # set_closed_fail <fx> <에러문>
   printf '%s\n' "$2" > "$1/closed.fail"
+add_body_fail() {  # add_body_fail <fx> <num> <에러문(여러 줄 가능)>
+  printf '%s\n' "$3" > "$1/body.$2.fail"
 }
 
 OUT=""; ERR=""; LOG=""; RC=0
@@ -839,6 +848,33 @@ ck "Ⓔ⑭ 2페이지 후보가 실제로 있다" \
   "$(jq -c '[.[].number] | map(select(. >= 305)) | sort' "$OUT")" '[305,306]'
 ck "Ⓔ⑭ 2페이지를 이어 받았다" "$(count_of "$LOG" 'search page=2')" "1"
 no_line "Ⓔ⑭ 큰 본문이 진단을 만들지 않는다" "$ERR" "warn:"
+# ── ⑩ 본문 조회 실패는 **그 후보만** 접는다 (#330) ────────────────────────
+# 수정 전: `body=$(gh issue view …)` 에 가드가 없어 `set -euo pipefail`(:15) 아래서
+# 단 한 건의 502 가 스크립트를 비0 종료시켰다 — **앞서 정상 판정한 후보까지** stdout 째로
+# 버려져 디스패처가 그 틱을 "후보 0" 으로 읽는다(창이 250 으로 커진 뒤 호출 수가 5배라
+# 같은 단건 실패 확률에서 틱 사망 확률도 5배). 자세는 바로 아래 블로커 조회와 같다.
+fx=$(mkfx bodyfail 34)
+add_issue "$fx" 30 '["agent-ready"]' '앞 후보' ''
+add_issue "$fx" 31 '["agent-ready"]' '본문 조회가 죽는 후보' '' '2026-01-01T00:00:31Z'
+add_issue "$fx" 32 '["agent-ready"]' '뒤 후보' '' '2026-01-01T00:00:32Z'
+# 실제 gh 오류문은 여러 줄로 온다 — warn 은 ④ Report 가 옮기는 **한 줄**이어야 한다.
+add_body_fail "$fx" 31 'gh: HTTP 502 Bad Gateway
+try again later'
+run_sut "$fx"
+ck "⑩ 한 건이 실패해도 스크립트는 끝까지 간다(exit 0)" "$RC" "0"
+ck "⑩ 앞·뒤 후보가 stdout 에 남는다(목록 전체를 버리지 않는다)" \
+  "$(jq -c '[.[].number]' "$OUT")" '[30,32]'
+ck "⑩ 실패한 후보는 이번 틱 후보에서 빠진다" "$(count_of "$OUT" '31')" "0"
+ck "⑩ 실패 다음 후보도 판정한다(루프가 안 끊긴다)" "$(count_of "$LOG" 'body 32')" "1"
+has_line "⑩ 실패를 한 줄 warn 으로 말한다(여러 줄 오류문은 접는다)" "$ERR" \
+  "warn: owner/repo#31 본문 조회 실패 — 블로커 미상이라 이번 틱 후보에서 제외(다음 틱 재시도): gh: HTTP 502 Bad Gateway try again later"
+ck "⑩ warn 은 한 줄뿐" "$(count_of "$ERR" 'owner/repo#31')" "1"
+# 빈 본문으로 이어 가지 않는다(PR#139: 빈 결과 ≠ 실패) — 본문을 못 읽으면 "Blocked by #N"
+# 유무가 **미상**이라, 통과시키면 블로커 0건으로 읽혀 게이트가 증명 없이 열린다.
+no_line "⑩ 실패 후보를 빈 본문으로 통과시키지 않는다" "$OUT" '"number": 31'
+# `막힘` 은 **OPEN 블로커로 탈락한 수**라는 정의를 그대로 둔다(SKILL.md ③-2 계약) —
+# 조회 실패는 그 정의가 아니라 `warn:` 줄로 Report 에 실린다.
+has_line "⑩ blocked-summary 정의는 안 바뀐다(OPEN 블로커 0건)" "$ERR" "blocked-summary: 막힘 0건"
 
 echo "eligible-issues.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]
