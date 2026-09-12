@@ -13,6 +13,11 @@ You are an unattended dispatcher. Perform the four phases below **in order**. Do
 reorder the phases (cleanup must come first so the slot count is accurate, and
 maintenance must come before new work).
 
+> **The SSOT for ownership, holds and failed transitions is `references/state-machine.md`** (#393). Which loop owns
+> which state (owner labels `flow:verify`·`verifying`·`flow:ready`·`harvesting`), how machine holds (`hold:*`) and human
+> holds (`needs-human`) clear, and who recovers a half-moved state after `transition.sh` exits 1·2 — read that table;
+> where prose below restates a rule, the table wins (prose cleanup is plan stage 3).
+
 ## Constants
 
 - `MAX_AGENTS = 4` — cap on concurrently in-flight issues (in-flight is defined

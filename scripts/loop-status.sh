@@ -15,6 +15,7 @@
 #   --json : 사람용 블록 대신 같은 내용의 JSON 한 덩어리(테스트·후속 도구용).
 #
 # ★버킷 정의 — 이 주석이 SSOT★ (스킬 문서가 산문 대신 여기를 가리킨다)
+#   버킷은 `references/state-machine.md`(#393) 의 상태 행을 대시보드 칸으로 접은 것이다 — 상태·소유·회수는 그 표, 여기는 판별식.
 #
 #   `agent-ready` 는 사다리 전체에서 유지되는 **자격** 라벨이고, 사다리(단계) 라벨은
 #   `agent:claimed` → `flow:verify` → `flow:ready` → `harvesting` 중 **정확히 하나 이하**다

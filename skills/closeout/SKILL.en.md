@@ -15,6 +15,11 @@ deploy prep, and follow-up issuance. issue-runner never merges, so merging is th
 loop's monopoly. Conflict between the two loops is prevented by `harvesting` label
 occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
 
+> **The SSOT for ownership, holds and failed transitions is `references/state-machine.md`** (#393). Which loop owns
+> which state (owner labels `flow:verify`·`verifying`·`flow:ready`·`harvesting`), how machine holds (`hold:*`) and human
+> holds (`needs-human`) clear, and who recovers a half-moved state after `transition.sh` exits 1·2 — read that table;
+> where prose below restates a rule, the table wins (prose cleanup is plan stage 3).
+
 ## Constants
 
 - `MAX_CLOSEOUT = 1` — **concurrency 1** (only 1 PR closed out to completion at a

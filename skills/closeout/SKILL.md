@@ -10,6 +10,11 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 절대 머지하지 않으므로, 머지는 이 루프의 독점이다. 두 루프의 충돌은 `harvesting`
 라벨 점유로 막는다 (issue-runner ② Maintain 은 `harvesting` PR 을 건드리지 않는다).
 
+> **소유권·정지·전이 실패 규칙의 SSOT 는 `references/state-machine.md` 다**(#393). 어느 상태를 어느 루프가 들고
+> 있고(소유 라벨 `flow:verify`·`verifying`·`flow:ready`·`harvesting`), 기계 정지(`hold:*`)와 사람 정지(`needs-human`)가
+> 어떻게 풀리며, `transition.sh` 가 exit 1·2 로 끝난 반쯤 이동 상태를 누가 회수하는지는 그 표를 본다 — 아래 산문에
+> 같은 규칙이 남아 있으면 표가 이긴다(산문 정리는 플랜 3단계).
+
 ## 상수
 
 - `MAX_CLOSEOUT = 1` — **동시성 1**(한 번에 1 PR 만 끝까지 직렬 마감). 틱당 상한이

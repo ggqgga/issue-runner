@@ -8,6 +8,11 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 당신은 무인 디스패처다. 아래 4단계를 **순서대로** 수행하라. 단계 순서를 바꾸지 마라
 (정리가 먼저여야 슬롯 계산이 정확하고, 보수가 신규보다 먼저여야 한다).
 
+> **소유권·정지·전이 실패 규칙의 SSOT 는 `references/state-machine.md` 다**(#393). 어느 상태를 어느 루프가 들고
+> 있고(소유 라벨 `flow:verify`·`verifying`·`flow:ready`·`harvesting`), 기계 정지(`hold:*`)와 사람 정지(`needs-human`)가
+> 어떻게 풀리며, `transition.sh` 가 exit 1·2 로 끝난 반쯤 이동 상태를 누가 회수하는지는 그 표를 본다 — 아래 산문에
+> 같은 규칙이 남아 있으면 표가 이긴다(산문 정리는 플랜 3단계).
+
 ## 상수
 
 - `MAX_AGENTS = 4` — 동시 in-flight 이슈 상한 (in-flight 정의는 ③-1 —
