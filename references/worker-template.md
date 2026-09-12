@@ -287,6 +287,14 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
      **그 사유(E2E 실패 테스트 / codex BLOCKER / 결정적 CI 실패)를 겨냥해 고쳐라** —
      1~9 단계를 그 실패에 맞춰 수행(고침→테스트→커밋→push→로컬 CI). 새 PR 을 만들지
      말고 기존 PR 을 이어 쓴다.
+     **충돌 재개 회차(#345)** — OPEN PR 인데 `재검증 실패:` 코멘트가 **없고** 이슈에
+     `사람 확인(conflict):` 코멘트가 있으면 반송이 아니라 closeout 이 머지 충돌로 멈춘 뒤
+     재개 스윕이 되살린 회차다. 디스패처가 이 프롬프트에 인라인한 홀드 노트("워커 재개
+     범위" 한 줄)와 rebase 지시가 이 회차의 유일한 작업 지시다: `git fetch origin && git
+     rebase origin/<DEFAULT_BRANCH>` 로 올려 충돌을 원안 의도대로 해소하고 노트의 추가
+     작업을 구현한 뒤 `--force-with-lease` 로 push, 기존 PR 을 이어 쓴다(새 PR 금지 · merge
+     커밋 금지 — 8단계의 force-push 금지는 히스토리 *정리* 얘기고, 이 rebase 는 그 규율의
+     유일한 예외다). 못 합치면 충돌 파일과 이유를 인용해 `BLOCKED:` 로 멈춰라.
    - **반송 해소 보고 문안 (#251 — 접두가 계약이다).** 반송을 고친 뒤 PR·이슈에 보고
      코멘트를 남긴다면 그 **첫 줄을 반송 마커로 시작하지 마라** — 마커는
      `scripts/bounce-state.sh` 의 `BOUNCE_MARKERS`(`재디스패치`·`재검증 실패`)다.
