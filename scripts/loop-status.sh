@@ -149,6 +149,25 @@
 #   · 단계 라벨 중복 — 이슈에 사다리 라벨 2개 이상.
 #   · 미러 불일치    — 이슈와 **열린** 연결 PR 의 {flow:verify, flow:ready, harvesting}
 #                      집합이 다름. 연결 PR 이 없으면 대조할 상대가 없으니 warn 아님.
+#   · 정지 미러 불일치 (#265)
+#                    — 이슈엔 정지 라벨(`needs-human` ∪ `hold:` **접두** — SSOT 는 BUILD_JQ 의
+#                      `stops_of`)이 **하나도 없는데** 짝이 되는 **열린** PR 에 남아 있음.
+#                      사람이 이슈에서만 홀드를 푼 잔재이고, 그 PR 은 네 게이트(#242·#262)에서
+#                      확정적으로 빠진 채 이슈도 깨끗해 어느 칸에도 안 뜬다.
+#                      **해제 방향만** 본다 — 반대(이슈에 있고 PR 에 없음)는 부착 축이라
+#                      이 루프에 교정 수단이 없어 warn 정의(#190)를 벗어난다.
+#                      짝은 **head `agent/issue-N` 의 그 `N` 이 `closingIssuesReferences` 안에
+#                      있을 때**뿐이다(사람 세션 PR·`Refs` 전용 PR 은 대상 밖 — 근거는 BUILD_JQ
+#                      주석). 그리고 그 PR 이 닫는 이슈가 **전부** 깨끗할 때만 낸다 — 묶음
+#                      디스패치(`Closes #A`·`Closes #B`)는 정지가 한쪽에만 붙을 수 있다.
+#                      맨몸 `needs-human`(= `hold:` 접두가 하나도 없음)만 남은 PR 은 대상
+#                      밖이다 — 기계가 만들 수 없는 모양이라 사람이 손으로 세운 브레이크이고
+#                      교정 갈래도 떼지 않는다(교정 못 하는 후보는 잡음, #190).
+#                      단계 미러와 달리 짝이 되는 열린 PR 을 **전부** 대조한다(교정 갈래가
+#                      전부를 고치므로). 교정: `resume-sweep.sh` 의 정지 미러 정리 갈래.
+#                      교정 갈래엔 여기 **없는** 관문이 하나 더 있다(라벨 이벤트 이력으로
+#                      "사람이 뗐다" 를 증명) — 경보는 부재만으로 참인 사실을 말하고 교정은
+#                      증명을 요구한다. 이 비대칭의 근거는 `resume-sweep.sh` 의 ④ 머리 주석.
 #   · 좌초형(#117)   — 이슈에 사다리 라벨은 있는데 `agent-ready` 가 없음(디스패치 자격 상실).
 #   · 목록 절단      — 열린 이슈·닫힌 이슈(#260)·열린 PR·닫힌 PR 중 어느 목록이 `--limit 200` 상한에 닿음.
 #                      창 안의 실패·파생이 조용히 잘렸을 수 있다는 신호(수를 믿지 말 것).
@@ -499,11 +518,19 @@ def key_of($s):
   else "none" end;
 def ko_of($k):
   {"none":"대기","claimed":"구현중","verify":"검증대기","ready":"마감대기","harvesting":"마감중"}[$k];
+# head 의 `agent/issue-N` 은 **먼저 교차 검증**에 쓴다(#265 재검증): 닫는 이슈가 둘 이상인
+# PR 에서 `[0]` 이 브랜치의 이슈가 아닐 수 있다(이 레포 실데이터 — PR #113
+# head=`agent/issue-109` refs=`[108,109]`). head 의 N 이 목록 안에 있으면 그것이 짝이고,
+# 없을 때만 종전 순서(`[0]` → head 폴백)로 내려간다.
 def linked($p):
-  if ($p.closingIssuesReferences | length) > 0 then $p.closingIssuesReferences[0].number
-  elif ($p.headRefName | test("^agent/issue-[0-9]+")) then
-    ($p.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber)
-  else null end;
+  ([(($p.closingIssuesReferences // [])[].number)]) as $c
+  | (if (($p.headRefName // "") | test("^agent/issue-[0-9]+"))
+     then ($p.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber)
+     else null end) as $hn
+  | if $hn != null and (($c | index($hn)) != null) then $hn
+    elif ($c | length) > 0 then $c[0]
+    elif $hn != null then $hn
+    else null end;
 def epoch($t): if $t == null then null else ($t | fromdateiso8601) end;
 def mins_since($t): (($now - epoch($t)) / 60 | floor);
 # 이슈 번호 → 가장 최근 `agent:claimed` 부착 시각(ISO) 또는 null (#177).
@@ -521,6 +548,22 @@ def stage_labels_of($l): $l | map(select(. as $x | pr_stage_labels | index($x) !
 # 금지 사유(`hold:dup`·`hold:hardware`)는 라벨을 아예 안 만드는 것으로 막는 게 SSOT
 # (setup-labels.sh) 이고, 여기서 또 걸러 내면 실수로 붙은 라벨이 화면에서 사라진다.
 def holds_of($l): $l | map(select(startswith("hold:")) | ltrimstr("hold:")) | sort;
+# 정지 라벨 — 기계 정지(transition.sh 의 verify-held·closeout-blocked·runner-held)가 이슈와
+# PR **양쪽**에 붙이는 집합이다(#244 가 보존 대상으로 적어 둔 규약). 이슈·PR 양쪽에 같은
+# 함수를 쓴다 — 한쪽만 다른 식으로 세면 두 번째 계산기가 생긴다(blockers_of 주석과 같은 규율).
+#
+# 열거가 아니라 **접두** 판별이다: 네 게이트(eligible-issues·claim-issue·verify-eligible·
+# closeout-eligible)가 전부 `any(startswith("hold:"))` 로 보므로(#242), 사유가 하나 늘면
+# (`hold:<새사유>`) 게이트는 그 PR 을 제외하는데 여기만 못 봐서 **이 이슈가 고치려는 조용한
+# 좌초가 그대로 재현된다**. 허용 목록으로 거르지 않는 이유는 holds_of 주석과 같다 —
+# 금지 사유는 라벨을 안 만드는 것(setup-labels.sh)이 SSOT 이고, 여기서 또 거르면 실수로
+# 붙은 라벨이 화면에서 사라진다. `needs-human` 이 #244 로 기계 정지에서 빠져도 나머지
+# 절반(`hold:*`)이 그대로 판정을 이어받는다.
+#
+# 단계 미러(mirror_labels)와 **일부러 다른 함수**다: 단계는 "정확히 하나 이하" 인 사다리
+# 위치라 sort 후 완전 일치로 판정하는데, 정지는 그와 직교하는 플래그라 같은 배열에 섞으면
+# 정지 라벨 하나가 단계 일치 판정을 통째로 깨뜨린다.
+def stops_of($l): $l | map(select(. == "needs-human" or startswith("hold:"))) | sort;
 # 블로커 번호 (#248) — 규칙의 SSOT 는 `eligible-issues.sh`(body_blockers/label_blockers).
 # 거기의 `grep -oiE '^[[:space:]]*blocked[- ]by[[:space:]]+#[0-9]+'` 를 줄 단위로 옮긴 것이다:
 #   · `split("\n")` 로 먼저 줄을 가른다 — jq(Oniguruma)의 `^` 는 grep 과 달리 **문자열 시작**만
@@ -646,7 +689,11 @@ def prio_of($l):
     ($iss | map(select(.number == $n)) | if length > 0 then bucket_ko(.[0].bucket) else null end);
   def blk_label($b):
     if $b.state == "OPEN PR" then "PR #\($b.n)" else "#\($b.n)(\(blocker_bucket($b.n)))" end;
-  ($prs_open | map({number, headRefName, createdAt, ln: [.labels[].name], issue: linked(.)})) as $po
+  # `closes` 는 **증명된** 링크(`closingIssuesReferences`)만 담는다 — `issue` 는 `linked()`
+  # 라 head 폴백이 섞여 있어 "이 PR 이 저 이슈와 한 쌍으로 전이됐다" 를 증명하지 못한다.
+  # 정지 미러 판정(#265)만 이 좁은 쪽을 쓴다(근거는 그 warn 블록 주석).
+  ($prs_open | map({number, headRefName, createdAt, ln: [.labels[].name], issue: linked(.),
+                    closes: [((.closingIssuesReferences // [])[].number)]})) as $po
 | ($prs_closed | map({number, headRefName, mergedAt, closedAt, ln: [.labels[].name], issue: linked(.)})) as $pc
 # 인계 전 창의 판정축은 `agent:claimed` **라벨**이 아니라 **구현중 버킷**이다.
 # 라벨로 걸면 `agent:claimed` 이 붙은 채 더 뒤 버킷으로 간 이슈(deploy-wait·flow:*·
@@ -805,6 +852,74 @@ def orphan_base:
                              + (if ($b | length) == 0 then "단계 없음" else ($b | join(" ")) end))}
                 end
             end))
+      # 정지 미러 불일치 (#265) — 이슈엔 정지 라벨이 **하나도 없는데** 연결된 열린 PR 에
+      # 남아 있다. 사람이 이슈에서만 홀드를 풀면 생기는 상태이고, 그때 네 게이트
+      # (verify-eligible·closeout-eligible·claim-issue·eligible-issues)가 `hold:` 접두를
+      # 직접 보므로(#242·#262) 그 PR 은 어느 루프에도 확정적으로 안 잡힌다. 이슈는 이미
+      # 라벨이 깨끗해 사람대기 칸에도 안 떠서, 이 줄이 없으면 관측에서 통째로 사라진다.
+      #
+      # **해제 방향만** 본다. 반대(이슈에 있고 PR 에 없음)는 부착 축의 문제이고 이 루프에
+      # 교정 수단이 없어 warn 의 정의(#190: 루프가 교정 가능한 불변식 위반)를 벗어난다 —
+      # 조치 불가능한 후보를 얹으면 상시 잡음이 되어 진짜 신호를 죽인다(#188 과 같은 규율).
+      # 이 방향의 교정 수단은 `resume-sweep.sh` 의 정지 미러 정리 갈래다.
+      #
+      # 단계 미러(위)와 달리 `pr_of`(첫 PR)가 아니라 **짝이 되는 열린 PR 전부**를 본다 —
+      # 교정 갈래도 전부를 고치므로, 여기서 첫 건만 보면 고쳐질 PR 이 경보에 안 뜨는
+      # 비대칭이 생긴다(실측: 한 이슈에 PR 두 개인 픽스처에서 정지 라벨이 남은 쪽이
+      # 두 번째였다).
+      #
+      # ★짝짓기 규칙 — `linked()` 보다 **좁다**(교정 갈래 `resume-sweep.sh` 의 ④ 와 한 글자도
+      # 다르지 않아야 한다. 경보와 교정의 대상 집합이 갈리면 한쪽이 거짓말을 한다)★
+      #   ⑴ head 가 `agent/issue-*` — 루프가 판 브랜치만. 사람이 연 `feat/*` PR 에 사람이
+      #      직접 붙인 `needs-human`·`hold:*` 는 루프가 뗄 것이 아니다(같은 파일 무소속
+      #      warn 이 #188 로 세운 경계, resume-sweep ②갈래의 "사람이 붙였을 수 있으니
+      #      손대지 않는다" 와 같은 규율). 그래서 warn 도 안 낸다 — 교정 못 하는 후보를
+      #      얹으면 조치 불가능한 잡음이다.
+      #   ⑵ `closingIssuesReferences` 로 **증명된** 링크 **이면서** head 의 `agent/issue-N` 의
+      #      그 `N` 이 그 목록 안에 있을 때만. `linked()` 의 head 폴백(refs 가 비었을 때)은
+      #      여기서 쓰지 않는다: 브랜치 이름이 `agent/issue-N` 이라는 사실만으로는 "이 홀드가
+      #      이슈 #N 과 한 쌍으로 붙었다" 를 증명하지 못한다. `Refs #N`(Closes 아님) PR 은
+      #      전이가 `issue=-` 로 걸려 **PR 에만** 정지가 남는 것이 정상인데, head 로 이으면
+      #      그 정상 상태가 불일치로 둔갑해 사람 게이트를 벗겨내는 교정을 부른다.
+      #      하지만 **교차 검증**에는 쓴다 — `closes[0]` 을 무조건 짝으로 보면 닫는 이슈가
+      #      둘 이상인 PR 에서 브랜치의 이슈가 아닌 쪽을 본다(이 레포 실데이터: PR #113
+      #      head=`agent/issue-109` refs=`[108,109]`). 둘의 교집합이라 `Refs` 전용 PR 은
+      #      종전대로 짝이 안 선다.
+      #   ⑵-b PR 의 정지 라벨에 `hold:` 접두가 **하나도 없으면**(맨몸 `needs-human`) 대상
+      #      밖이다 — 기계가 만들 수 없는 모양이라 사람이 손으로 세운 브레이크이고, 교정
+      #      갈래도 떼지 않는다(근거는 아래 그 `select` 옆 주석).
+      #   ⑶ 그 PR 이 닫는 이슈가 **전부** 깨끗할 때만 낸다. 묶음 디스패치(`Closes #A`·
+      #      `Closes #B`)는 전이가 이슈 인자를 하나만 받아 정지가 #B 에만 붙을 수 있고,
+      #      교정 갈래는 그 경우 편집하지 않는다 — 여기서만 울리면 "고쳐 준다" 고 말해 놓고
+      #      안 고치는 줄이 상시로 남는다. 판정은 **이미 받은 열린 이슈 목록 안에서만**
+      #      한다(추가 gh 호출 0). 그래서 닫는 이슈 중 열린 목록에 없는 것(CLOSED·목록
+      #      절단)이 있으면 "못 봤다" 이므로 warn 을 내지 않는다 — 그 조합의 정리는 스윕이
+      #      맡고(위 `연결 이슈 종료` warn 이 이미 한 줄로 말한다), 경보는 조용한 쪽으로
+      #      틀린다(조치 불가능한 잡음을 안 만든다).
+      #
+      # 이슈가 CLOSED 인 경우는 여기 안 걸린다 — `$iss` 는 OPEN 이슈 목록이다. 그 조합은
+      # 기존 `연결 이슈 종료` warn 이 이미 한 줄로 말하고, 교정은 스윕이 한다.
+      + ([$iss[] | select((stops_of(.ln) | length) == 0) | . as $i
+          | $po[] | . as $p
+          | select(($p.headRefName // "") | test("^agent/issue-[0-9]+"))
+          | select(($p.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber) == $i.number)
+          | select((($p.closes // []) | index($i.number)) != null)
+          | select([$p.closes[] | . as $cn
+                    | ($iss | map(select(.number == $cn))
+                       | if length > 0 then (stops_of(.[0].ln) | length) == 0 else false end)] | all)
+          | stops_of($p.ln) as $b
+          | select(($b | length) > 0)
+          # ⑷ 맨몸 `needs-human`(=`hold:` 접두가 **하나도 없음**)은 대상 밖이다. 기계는 그
+          #    모양을 만들 수 없다 — `needs-human` 을 붙이는 자리는 `transition.sh` 하나뿐이고
+          #    기계 정지 세 전이는 `--reason` 이 필수라 언제나 `hold:<사유>` 와 쌍으로 붙인다.
+          #    그러니 PR 에만 맨몸으로 있다 = 사람이 머지 직전에 손으로 세운 브레이크이고,
+          #    교정 갈래(resume-sweep ④)는 그것을 떼지 않는다(②갈래와 같은 규율). 여기서만
+          #    울리면 "고쳐 준다" 고 말해 놓고 안 고치는 줄이 상시로 남는다(#190 의 warn 정의).
+          | select($b | any(startswith("hold:")))
+          | {kind: "hold_mirror_mismatch", repo_short: $rs, issue: $i.number, pr: $p.number,
+             labels: $b,
+             text: ("정지 미러 불일치 #\($i.number)(\($rs)) ↔ PR #\($p.number)(\($rs))"
+                    + " — 이슈 없음 · PR " + ($b | join(" ")))}])
       # 좌초형 (#117)
       + ($iss | map(select((.ladder | length) > 0 and (has(.ln; "agent-ready") | not)))
         | map({kind: "stranded", repo_short: $rs, issue: .number,
