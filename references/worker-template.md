@@ -265,7 +265,12 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    `gh pr create --repo <REPO> --head agent/issue-<NUM> --base <DEFAULT_BRANCH> --label flow:claimed ...`
    (cd 를 앞에 붙이면 PR 관련 hook 의 if 매칭이 빠져 이슈 참조 검사가 누락된다.
    `--label flow:claimed` 는 PR 이 이슈의 구현중 칸을 미러하는 라벨이다(#281) — 라벨 없는 열린
-   agent PR 을 만들지 않는다. 인계(11b)가 이것을 `flow:verify` 로 바꾼다.)
+   agent PR 을 만들지 않는다. 인계(11b)가 이것을 `flow:verify` 로 바꾼다.
+   **라벨 부재 fail-closed** — `gh pr create` 는 `--label` 에 레포에 없는 라벨이 있으면 PR 자체를
+   안 만들고 실패한다. `'flow:claimed' not found` 류로 실패하면
+   `~/.claude/skills/issue-runner/scripts/setup-labels.sh <REPO>` 를 **1회** 돌린 뒤 같은 명령을
+   **1회만** 재시도하라. 재시도도 실패하면 더 반복하지 말고 `--label` 없이 열어라 — PR 유실이 라벨
+   유실보다 나쁘다(다음 전이가 라벨을 정리한다). 이 보강 호출은 아래 "금지"의 좁은 예외다.)
    본문에 반드시 전용 라인 `Closes #<NUM>` 과 `## Test plan` 섹션(수용 기준 기반
    체크박스), 그리고 `## 사전 리뷰` 절(9-b 결과)을 포함하라. PR 생성 직후
    `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: 🔄 진행 중 — 검증(E2E·codex) 전, 머지 보류

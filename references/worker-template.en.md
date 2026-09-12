@@ -304,7 +304,13 @@ Procedure:
    (Prefixing cd breaks the PR hooks' if-matching, so the issue-reference check gets
    skipped. `--label flow:claimed` is the PR mirror of the issue's in-progress rung (#281) —
    never leave an open agent PR without a label; the handoff in 11b swaps it for
-   `flow:verify`.) The body must include a dedicated line `Closes #<NUM>`, a
+   `flow:verify`. **Missing label is fail-closed** — `gh pr create` refuses to create the PR
+   at all when a `--label` does not exist in the repo. If it fails with something like
+   `'flow:claimed' not found`, run `~/.claude/skills/issue-runner/scripts/setup-labels.sh <REPO>`
+   **once**, then retry the same command **once**. If the retry also fails, stop retrying and
+   open the PR without `--label` — losing the PR is worse than losing the label (the next
+   transition tidies labels). That repair call is a narrow exception to "Forbidden" below.)
+   The body must include a dedicated line `Closes #<NUM>`, a
    `## Test plan` section (checkboxes based on the acceptance criteria), and a
    `## Pre-review` section (the step 9-b outcome). Immediately
    after creating the PR, leave the comment

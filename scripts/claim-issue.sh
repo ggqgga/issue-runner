@@ -182,7 +182,7 @@ printf '%s' "$post" | jq -e '.labels | map(.name) | index("agent:claimed")' >/de
 # head 브랜치 정확 일치(`--head`)로 찾는다 — `agent/issue-5` 가 `agent/issue-50` 을 물지 않는다.
 # 조회 실패와 "PR 없음" 을 섞지 않는다: 조회 실패면 편집을 시도하지 않고 그 사실을 남긴다.
 pr_json=""
-if pr_json=$(gh pr list --repo "$repo" --head "agent/issue-$num" --state open --json number 2>/dev/null); then
+if pr_json=$(gh pr list --repo "$repo" --head "agent/issue-$num" --state open --json number 2>&1); then
   pr_num=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null || true)
   if printf '%s' "$pr_num" | grep -qE '^[0-9]+$'; then
     if ! mirror_out=$(gh pr edit "$pr_num" --repo "$repo" \
@@ -191,7 +191,7 @@ if pr_json=$(gh pr list --repo "$repo" --head "agent/issue-$num" --state open --
     fi
   fi
 else
-  echo "note: $repo#$num PR 조회 실패(best-effort — 열린 agent/issue-$num PR 이 있어도 flow:claimed 미러 안 됨, 다음 전이가 정리)" >&2
+  echo "note: $repo#$num PR 조회 실패(best-effort — 열린 agent/issue-$num PR 이 있어도 flow:claimed 미러 안 됨, 다음 전이가 정리) — $(printf '%s\n' "$pr_json" | grep -v '^$' | tail -1)" >&2
 fi
 
 # stale blocked-by 라벨 청소(#85 should): 이 이슈가 eligible 게이트를 통과해 claim 됐다는
