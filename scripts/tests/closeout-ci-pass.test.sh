@@ -94,7 +94,7 @@ STUB_SHA="$SHA"
 chmod -x "$PROJ/bin/ci"
 STUB_ROLLUP='{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}'
 run_case "bin/ci 실행 비트 없음 → GitHub 폴백으로 판정" 0
-rm -rf "$PROJ/bin"
+rm -rf "${PROJ:?}/bin"
 clear_result
 
 # ── GitHub statusCheckRollup 폴백(SUCCESS-only allowlist) ───────────────

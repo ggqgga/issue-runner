@@ -32,8 +32,7 @@ iso_ago() {  # iso_ago <초> → NOW 보다 그만큼 이전의 ISO8601 (음수�
   date -u -j -f %s "$e" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$e" +%Y-%m-%dT%H:%M:%SZ
 }
 
-SHA=505c5f0e1234567890abcdef1234567890abcdef    # short = 505c5f0e (우리 티켓)
-OTHER=abcd1234ffffffffffffffffffffffffffffffff  # short = abcd1234 (남의 티켓)
+SHA=505c5f0e1234567890abcdef1234567890abcdef  # short = 505c5f0e (우리 티켓 · 남의 티켓은 abcd1234)
 
 pass=0
 fail=0
