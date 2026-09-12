@@ -152,11 +152,36 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 제약일 뿐(마커가 "머지 판정: ✅" 앞에 오면 startswith 가 깨진다) 이 필터의
   # 요구사항이 아니다. 마지막-줄을 jq 로 강제하면 마커 오배치가 사람 코멘트로
   # 오인돼 #72 false-positive 가 재발하므로 그렇게 바꾸지 마라.
-  unresolved=$(printf '%s' "$comments" | jq '[.[].body
-    | select((contains("<!-- bodat:worker -->")
-              or startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
+  # **세는 범위는 최신 `머지 판정: ✅` 이후뿐이다**(#379). ✅ 이전의 무마커 코멘트는
+  # verify-runner 가 **보고 나서** ✅ 를 찍은 것이라 이미 해소된 사실이다 — 그걸 다시
+  # 세는 건 같은 사실을 두 번 세는 것이고, 재심·리베이스를 여러 번 거친 PR 일수록
+  # 무마커 보고가 쌓여 **더 잘 걸리는 역방향**이었다(실측 #5106: 워커 리베이스 보고 2건
+  # + 사람 세션 재심 1건이 "미해결 사람 리뷰 3건" 으로 집계돼 조용히 큐에서 사라졌다).
+  # 선후는 createdAt 이 아니라 **코멘트 배열의 마지막 매칭 인덱스**로 잰다 —
+  # `bounce-state.sh` 와 같은 규율이다(초 단위 시각으로는 동초 선후를 못 가린다).
+  # ✅ 술어는 위 긍정 게이트와 **같은 startswith 둘**이고, 그 게이트가 이미 ✅ 존재를
+  # 보장하므로 여기선 항상 잡힌다 — 그래도 `// -1`(= 전량을 센다) 로 방어한다.
+  #
+  # fail-open 이 아니다: ✅ **뒤**의 사람 코멘트는 종전 그대로 후보를 막는다. 좁힌 것은
+  # "언제부터 세는가" 뿐이고, 판정 이후 들어온 진짜 새 리뷰는 하나도 놓치지 않는다.
+  #
+  # 탈락은 stderr 한 줄로 **드러낸다** — `continue` 만 하면 큐에서 조용히 사라져
+  # 아무도 눈치 못 챈다(조용한 큐 사망 금지, SKILL #206 원칙). 꼴은 `eligible-issues.sh`
+  # 의 `warn: ` 관례와 같고, ④ Report 가 그대로 한 줄로 옮긴다.
+  unresolved=$(printf '%s' "$comments" | jq '[.[].body] as $bodies
+    | ([ $bodies | to_entries[]
+         | select(.value | startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))
+         | .key ] | last // -1) as $vi
+    | [ $bodies | to_entries[]
+        | select(.key > $vi)
+        | .value
+        | select((contains("<!-- bodat:worker -->")
+                  or startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
     | length')
-  [ "${unresolved:-0}" -gt 0 ] && continue
+  if [ "${unresolved:-0}" -gt 0 ]; then
+    echo "warn: PR #$pr($repo) — ✅ 이후 미해결 코멘트 ${unresolved}건(마커 없음 = 사람 리뷰 대기)" >&2
+    continue
+  fi
 
   # ci-pass exit code 분기 (#70): 0=캐시 pass(revalidate:false)·2=로컬 CI HEAD 미실행
   # (rebase 등 — revalidate:true 로 머지 도크가 재검증)·그 외=종전대로 탈락(fail/조회불가).
