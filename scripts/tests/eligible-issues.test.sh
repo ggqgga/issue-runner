@@ -24,6 +24,10 @@
 #   ⑦ 스캔 끝 요약 `blocked-summary: 막힘 N건 (사람대기 블로커 M건)` 의 N·M 이 정확하다.
 #   ⑩ 본문 조회 실패 (#330) — 한 건이 죽어도 **그 후보만** 빠지고 나머지 판정·stdout 은
 #      살아남는다(수정 전: `set -e` 로 스크립트가 비0 종료해 목록이 통째로 증발).
+#   ⑪ page=1 조회 실패 (#330) — `rc≠0` 이고 stdout 이 **비어 있다**. 빈 목록 + rc=0 으로
+#      둔갑하면 디스패처가 "신규 0" 으로 읽어 빈 큐와 구분 없이 지나간다(레이트리밋 사고).
+#   ⑫ 창 상수 env 방어 (#330) — 비숫자·선행 0·하한·per_page 클램프·임박선 바닥이
+#      **요청(per_page)과 상한 산술에 실제로 반영**된다.
 #
 # 에픽 finish-first 정렬 (#257) — Ⓔ 로 시작하는 절:
 #   Ⓔ① `Epic #N` 이 하나도 없는 입력은 **순서가 종전과 같다**(회귀 0) + 새 필드는 null/false.
@@ -122,7 +126,17 @@ case "$args" in
       esac
       pprev="$a"
     done
-    printf 'search page=%s\n' "$page" >> "$STUB_CALL_LOG"
+    # per_page 도 남긴다 — env 방어(비숫자 정규화 · 하한 · per_page≤100 클램프)가
+    # **실제로 요청에 반영됐는지**는 warn 문구만으로는 안 보인다(⑫).
+    pp=""
+    pprev2=""
+    for a in "$@"; do
+      case "$pprev2" in
+        -f|--field|-F|--raw-field) case "$a" in per_page=*) pp="${a#per_page=}" ;; esac ;;
+      esac
+      pprev2="$a"
+    done
+    printf 'search page=%s per_page=%s\n' "$page" "$pp" >> "$STUB_CALL_LOG"
     if [ -f "$STUB_DIR/search.p$page.fail" ]; then
       cat "$STUB_DIR/search.p$page.fail" >&2
       exit 1
@@ -875,6 +889,70 @@ no_line "⑩ 실패 후보를 빈 본문으로 통과시키지 않는다" "$OUT"
 # `막힘` 은 **OPEN 블로커로 탈락한 수**라는 정의를 그대로 둔다(SKILL.md ③-2 계약) —
 # 조회 실패는 그 정의가 아니라 `warn:` 줄로 Report 에 실린다.
 has_line "⑩ blocked-summary 정의는 안 바뀐다(OPEN 블로커 0건)" "$ERR" "blocked-summary: 막힘 0건"
+
+# ── ⑪ page=1 조회 실패는 fail-closed — 빈 목록으로 둔갑시키지 않는다 (#330) ──
+# search 2차 레이트리밋은 이 레포가 이미 사고로 기록한 모양이다: stdout `[]` + rc=0 이면
+# 디스패처가 "신규 0" 으로 읽어 **빈 큐와 구분 없이** 조용히 지나간다. 그래서 단언은
+# `rc≠0` 과 `stdout 이 비어 있음`(부분/빈 목록 미채택)을 **함께** 물어야 한다.
+fx=$(mkfx p1fail 13)
+bulk_issues "$fx" search.json 150 1
+printf 'gh: HTTP 403 API rate limit exceeded\n' > "$fx/search.p1.fail"
+run_sut_small "$fx"
+ck "⑪ page=1 조회 실패 → exit 1" "$RC" "1"
+ck "⑪ 빈 후보 목록을 stdout 으로 내지 않는다(빈 큐와 구분)" "$(cat "$OUT")" ""
+has_line "⑪ 어느 페이지에서 끊겼는지 말한다" "$ERR" \
+  "eligible-issues: 검색 page=1 조회 실패 — 후보 목록 없이 진행하지 않는다(이번 틱 중단): gh: HTTP 403 API rate limit exceeded"
+ck "⑪ 2페이지를 부르지 않는다" "$(count_of "$LOG" 'search page=2')" "0"
+
+# ── ⑫ env 방어 — 정규화·하한·클램프가 **요청에 실제로 반영**된다 (#330) ──────
+# 창 상수는 테스트 격자용 이음매라 임의 문자열이 들어올 수 있다. warn 문구만 보면
+# 값이 어떻게 정규화됐는지 안 보이므로 스텁이 남긴 `per_page=` 를 함께 문다.
+
+# ⑫-a `0` → 하한(≥1)에 걸려 기본값 50 으로 되돌린다. per_page=0 은 창이 없는 요청이다.
+fx=$(mkfx env0 51)
+bulk_issues "$fx" search.json 160 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=0 ELIGIBLE_SEARCH_MAX_PAGES=1
+ck "⑫-a exit 0" "$RC" "0"
+has_line "⑫-a 0 → per_page 는 기본값 50" "$LOG" "search page=1 per_page=50"
+has_line "⑫-a 0 → 실질 상한도 50(페이지 1 × 50)" "$ERR" \
+  "warn: 검색 창 절단 — agent-ready 후보 51건 > 창 50(페이지 1 × 50), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+
+# ⑫-b `abc` → 비숫자는 기본값으로. 정규화를 지우면 `[ abc -ge 1 ]` 이 셸 오류를 stderr 로
+# 흘려 ④ Report 가 옮기는 진단이 오염된다.
+fx=$(mkfx envabc 51)
+bulk_issues "$fx" search.json 161 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=abc ELIGIBLE_SEARCH_MAX_PAGES=1
+ck "⑫-b exit 0" "$RC" "0"
+has_line "⑫-b abc → per_page 는 기본값 50" "$LOG" "search page=1 per_page=50"
+no_line "⑫-b 셸 산술 오류가 stderr 로 새지 않는다" "$ERR" "integer expression"
+
+# ⑫-c `200` → search API 의 per_page 상한은 100 이다. 안 깎으면 1페이지부터 422 로 틱이 죽는다.
+fx=$(mkfx env200 101)
+bulk_issues "$fx" search.json 162 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=200 ELIGIBLE_SEARCH_MAX_PAGES=1
+ck "⑫-c exit 0" "$RC" "0"
+has_line "⑫-c 200 → per_page 는 100 으로 깎인다" "$LOG" "search page=1 per_page=100"
+has_line "⑫-c 깎인 값이 상한 산술에도 반영된다(페이지 1 × 100)" "$ERR" \
+  "warn: 검색 창 절단 — agent-ready 후보 101건 > 창 100(페이지 1 × 100), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+
+# ⑫-d `010` → 10진수로 읽는다. `$((010))` 은 8진수 8 이라 창이 조용히 좁아진다.
+fx=$(mkfx env010 11)
+bulk_issues "$fx" search.json 163 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=010 ELIGIBLE_SEARCH_MAX_PAGES=1
+ck "⑫-d exit 0" "$RC" "0"
+has_line "⑫-d 010 → per_page 는 10(8진수 8 이 아니다)" "$LOG" "search page=1 per_page=10"
+has_line "⑫-d 상한 산술도 10 기준" "$ERR" \
+  "warn: 검색 창 절단 — agent-ready 후보 11건 > 창 10(페이지 1 × 10), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+
+# ⑫-e 상한이 아주 작으면 80% 임박선이 0 으로 깎인다 — 바닥이 없으면 후보 1건에도 임박
+# warn 이 상시 켜져 진짜 상한 신호가 묻힌다(경고가 늘 켜져 있으면 신호가 아니다).
+fx=$(mkfx envsoft 1)
+bulk_issues "$fx" search.json 164 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=1 ELIGIBLE_SEARCH_MAX_PAGES=1
+ck "⑫-e exit 0" "$RC" "0"
+no_line "⑫-e 상한과 같은 후보 수에 임박 warn 이 켜지지 않는다" "$ERR" "검색 창 임박"
+no_line "⑫-e 절단도 아니다(1 > 1 이 아니다)" "$ERR" "검색 창 절단"
+ck "⑫-e 후보는 그대로 낸다" "$(jq -c '[.[].number]' "$OUT")" '[164]'
 
 echo "eligible-issues.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]
