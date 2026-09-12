@@ -44,15 +44,7 @@
 #   단계라 이슈 미러가 없다(=미러 불일치 판정에 참여하지 않는다).
 #
 #   이슈는 OPEN 기준. **한 이슈는 한 버킷** — 위에서 아래로 첫 매칭:
-#     1. 배포대기 — `deploy-wait` 라벨, 또는 **사다리 라벨이 0개일 때만** 제목이
-#                  `배포 대기`/`배포 검증` 으로 시작(라벨 도입 전 폴백).
-#                  실측 BoDAT 은 두 형식이 섞여 있고 콜론 앞 공백도 들쭉날쭉이라
-#                  `^배포 (대기|검증)` 로 본다 — 콜론을 앵커로 걸지 않는다
-#                  (`배포 대기 (승격만) — …` 형태가 실존). `배포 검증:` 을 놓치면 그
-#                  이슈가 needs-human 을 달고 있어 needs-human 으로 오분류된다.
-#                  사다리 게이트가 필요한 이유: 제목만 보면 아직 구현·검증이 도는
-#                  이슈(`flow:verify` 등)가 배포대기로 새어 "배포만 기다린다"로 읽힌다.
-#     2. needs-human — `needs-human` ∪ `hold:conflict` (#244 — 사람이 직접 세운 정지, 재심이
+#     1. needs-human — `needs-human` ∪ `hold:conflict` (#244 — 사람이 직접 세운 정지, 재심이
 #                  "사람 몫 유지" 로 끝나 `needs-human` 이 붙은 `hold:policy`, 그리고 충돌:
 #                  충돌은 그 자체가 사람 몫이라 `needs-human` 을 겹치지 않는다).
 #                  (괄호는 `<사다리 위치>, <사유>[, 질문 없음][, PR #n]` —
@@ -68,6 +60,21 @@
 #                  무엇을 답할지 모른다. 옛 전이가
 #                  라벨만 붙이고 코멘트에 실패해 남긴 잔여물이거나(#157 이전), 사람이 손으로
 #                  붙인 홀드다. `ladder` 는 `--note` 가 선택이라 대상이 아니다.)
+#                  **가장 앞이다**(2026-09-13, BoDAT #5197): deploy-cycle 이 승격·배포 실패에
+#                  `needs-human` 을 붙이게 됐고(숨은 정지 파일 폐지 — 사람 몫은 이 라벨 하나),
+#                  사용자는 이 라벨만 보기로 했으므로 배포대기·테스트 이슈에 붙은 것도 여기로
+#                  온다. 옛 순서(배포대기가 이김, #243)는 그 실패 표식을 배포대기 칸에 숨겼다.
+#     2. 테스트   — `테스트` 라벨. deploy-cycle ⑤ 가 배포를 끝내고 남은 배포 뒤 검증 항목을 옮겨
+#                  발행한 이슈(BoDAT #5197). 사람 결정이 아니라 **밟을 비용**(TEST 워커 런·시간 창·
+#                  프로덕션 관측)이 남은 것 — 사용자가 `e2e-test` 스킬을 부를 때 비운다. 어느 루프도
+#                  안 집는다.
+#     3. 배포대기 — `deploy-wait` 라벨, 또는 **사다리 라벨이 0개일 때만** 제목이
+#                  `배포 대기`/`배포 검증` 으로 시작(라벨 도입 전 폴백).
+#                  실측 BoDAT 은 두 형식이 섞여 있고 콜론 앞 공백도 들쭉날쭉이라
+#                  `^배포 (대기|검증)` 로 본다 — 콜론을 앵커로 걸지 않는다
+#                  (`배포 대기 (승격만) — …` 형태가 실존).
+#                  사다리 게이트가 필요한 이유: 제목만 보면 아직 구현·검증이 도는
+#                  이슈(`flow:verify` 등)가 배포대기로 새어 "배포만 기다린다"로 읽힌다.
 #     3. 보류     — `hold:*` 가 하나 이상인데 `needs-human` 이 없다(#244 — 사다리 재개
 #                  대기 `hold:ladder` · 재심 전 `hold:policy`). **단계 라벨보다 앞이다**:
 #                  기계가 멈춘 건은 그 단계를 들고 있는 루프가 없다. 이 칸이 없으면 그
@@ -242,8 +249,10 @@
 #   · 사람이 직접 세운 정지
 #                    — **needs-human 버킷** 이슈에 `hold:*` 라벨이 하나도 없음(#244). 기계 정지가
 #                      사유 라벨만 붙이게 된 뒤로 맨 `needs-human` 은 "사람이 직접 세웠다"
-#                      하나만 뜻하는 **정상 상태**라 warn 이 아니다. 버킷 기준인 이유:
-#                      `deploy-wait` 가 이겨 배포대기로 가는 needs-human 이슈는 이 축 밖이다.
+#                      하나만 뜻하는 **정상 상태**라 warn 이 아니다. deploy-cycle 이 승격·배포
+#                      실패에 붙인 것(BoDAT #5197)도 같은 모양·같은 취급 — 사람이 볼 것이다.
+#                      버킷 기준인 이유: needs-human 이 가장 앞이라(2026-09-13) 배포대기·테스트
+#                      제목이어도 그 라벨이면 여기로 온다 — 판별을 여기 되적지 않는다.
 #   · 사람 세션 PR   — 무소속 PR 의 나머지 조건은 다 맞는데 head 가 `agent/issue-*` 가 아니거나
 #                      PR 라벨에 `full-cycle` 이 붙은 열린 PR(사람 세션이 판 `feat/*` 등, 또는
 #                      사람 세션이 라벨로 소유를 밝힌 PR — #246). warn 에서 빼되 존재는 남긴다 —
@@ -442,7 +451,7 @@ post_dashboard() {  # post_dashboard <owner/repo> <short> <블록 텍스트>
     printf '# 루프 현황 — %s\n\n' "$short"
     printf '세 루프가 매 틱 이 본문을 덮어쓴다(직접 편집하지 마라). 읽는 법: 이슈 라벨 `agent-ready` 는 자격(사다리 내내 유지),\n'
     printf '단계 라벨(`agent:claimed`→`flow:verify`→`verifying`→`flow:ready`→`harvesting`)이 "지금 누가 들고 있나", `needs-human`+`hold:*` 는 사람(사유·질문은 코멘트).\n'
-    printf '줄 이름은 누가 들고 있나다 — 대기(`agent-ready` 만) · issue-runner(`agent:claimed`) · 검증대기(`flow:verify`) · verify-runner(`verifying`) · 마감대기(`flow:ready`) · closeout(`harvesting`) · 보류(`hold:*`, 루프가 재개) · needs-human(`needs-human`/`hold:conflict`) · 배포대기(`deploy-wait`).\n\n'
+    printf '줄 이름은 누가 들고 있나다 — 대기(`agent-ready` 만) · issue-runner(`agent:claimed`) · 검증대기(`flow:verify`) · verify-runner(`verifying`) · 마감대기(`flow:ready`) · closeout(`harvesting`) · 보류(`hold:*`, 루프가 재개) · needs-human(`needs-human`/`hold:conflict`) · 테스트(`테스트`, 배포 뒤 검증 — e2e-test 가 비운다) · 배포대기(`deploy-wait`).\n\n'
     printf '**각 루프의 마지막 틱·델타는 아래 코멘트**(루프당 1개, 자기 것만 편집)에 있다.\n\n'
     printf '## 스냅샷 (%s 가 %s 에 게시)\n\n```\n%s\n```\n' "$post_loop" "$now" "$block"
   } > "$tmpb"
@@ -715,7 +724,7 @@ def blockers_of($body; $l):
       | select(test("^[0-9]+$"))])
   | map(tonumber) | unique | reverse;
 def bucket_ko($k):
-  {"deploy_wait":"배포대기","human_wait":"needs-human","held":"보류","harvesting":"closeout",
+  {"test_wait":"테스트","deploy_wait":"배포대기","human_wait":"needs-human","held":"보류","harvesting":"closeout",
    "ready":"마감대기","verifying":"verify-runner","verify":"검증대기","claimed":"issue-runner",
    "waiting":"대기","blocked":"막힘","outside":"루프 밖"}[$k];
 # 에픽 번호 (#260) — 본문의 **전용 줄**(줄 시작의 `epic\s+#N` 뒤가 줄 끝까지 공백뿐,
@@ -787,9 +796,10 @@ def prio_of($l):
   | map(. + {ladder: ladder_of(.ln), holds: holds_of(.ln)})
   | map(. + {stage: (if (.ladder | length) == 0 then "none" else key_of(.ladder[-1]) end)})
   | map(. + {bucket:
-      (if has(.ln; "deploy-wait")
+      (if has(.ln; "needs-human") or has(.ln; "hold:conflict") then "human_wait"
+       elif has(.ln; "테스트") then "test_wait"
+       elif has(.ln; "deploy-wait")
           or ((.ladder | length) == 0 and (.title | test("^배포 (대기|검증)"))) then "deploy_wait"
-       elif has(.ln; "needs-human") or has(.ln; "hold:conflict") then "human_wait"
        elif (.holds | length) > 0 then "held"
        elif .stage == "harvesting" then "harvesting"
        elif .stage == "ready" then "ready"
@@ -822,13 +832,13 @@ def prio_of($l):
     then "progress" else $b end;
   def epic_bucket_ko($k):
     {"progress":"진행","blocked":"막힘","waiting":"대기","human_wait":"needs-human",
-     "held":"보류","deploy_wait":"배포대기","outside":"루프 밖"}[$k];
+     "held":"보류","test_wait":"테스트","deploy_wait":"배포대기","outside":"루프 밖"}[$k];
   def bucket_counts($leaves):
     reduce $leaves[] as $x ({}; .[epic_bucket_key($x.bucket)] += 1);
   def priority_counts($leaves):
     reduce $leaves[] as $x ({}; if $x.prio == null then . else .[$x.prio] += 1 end);
   def epic_bucket_segment($bc):
-    (["progress","blocked","waiting","human_wait","held","deploy_wait","outside"]
+    (["progress","blocked","waiting","human_wait","held","test_wait","deploy_wait","outside"]
      | map(select(($bc[.] // 0) > 0) | "\(epic_bucket_ko(.)) \($bc[.])")
      | join(" · "));
   def epic_prio_segment($pc):
@@ -977,6 +987,9 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
                      | (item($i; "#\($i.number)(" + ($i.holds | join(", "))
                                  + (if $p then ", PR #\($p.number)" else "" end) + ")")
                         + {holds: $i.holds, pr: (if $p then $p.number else null end)})),
+      # 테스트 — deploy-cycle ⑤ 가 배포 뒤 검증 항목을 옮겨 발행한 `테스트` 라벨 이슈(BoDAT #5197).
+      # 사람 호출이 아니다(`e2e-test` 스킬이 사용자 호출로 비운다) — needs-human 뒤·배포대기 앞.
+      test_wait:   bucket("test_wait";   item(.; "#\(.number)")),
       deploy_wait: bucket("deploy_wait"; item(.; "#\(.number)")),
       # 실패 ⊎ 중복종료 = 창 안의 미머지 agent PR. `dup` 라벨이 둘을 가른다(겹치지 않는다).
       failed: (closed_agent_in_window
@@ -1171,7 +1184,7 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
       + ($po | map(select(. as $p | $p.issue != null and (($onums | index($p.issue)) == null)))
         | map({kind: "closed_issue_open_pr", repo_short: $rs, pr: .number, issue: .issue,
                text: "연결 이슈 종료 PR #\(.number)(\($rs)) — 연결 이슈 #\(.issue) 가 CLOSED(Refs 부분착지면 정상)"}))
-      # 블로커가 사람 게이트(needs-human·배포대기) — **블로커 기준으로 묶는다** (#248).
+      # 블로커가 사람 게이트(needs-human·테스트·배포대기) — **블로커 기준으로 묶는다** (#248).
       # 하위마다 한 줄이면 사람이 답할 것은 하나인데 같은 질문이 N번 울린다.
       # 루프가 처리 중인 블로커(issue-runner·검증대기·verify-runner·마감대기·closeout)와 PR 블로커는 여기 없다 —
       # 사람이 할 일이 없는 후보를 warn 에 얹으면 조치 불가능한 잡음이 된다(#188 과 같은 규율).
@@ -1180,7 +1193,7 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
           | {b: .n, bk: blocker_bucket(.n), bkey: blocker_bucket_key(.n), sub: $i.number}]
          # 판정은 **키**로 — 표시 이름(#276 에서 바뀐 `needs-human`)에 문자열로 걸면 이름을
          # 바꾸는 날 사람 게이트 warn 이 조용히 사라진다.
-         | map(select(.bkey == "human_wait" or .bkey == "deploy_wait"))
+         | map(select(.bkey == "human_wait" or .bkey == "test_wait" or .bkey == "deploy_wait"))
          | group_by(.b)
          | map(([.[].sub] | sort | reverse) as $subs
              | {kind: "blocker_human_wait", repo_short: $rs,
@@ -1213,7 +1226,7 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
   }
 | . + {open_total: ([.buckets.waiting, .buckets.blocked, .buckets.claimed, .buckets.verify,
                      .buckets.verifying, .buckets.ready, .buckets.harvesting, .buckets.human_wait,
-                     .buckets.held, .buckets.deploy_wait]
+                     .buckets.held, .buckets.test_wait, .buckets.deploy_wait]
                     | map(length) | add)}
 JQ
 )
@@ -1227,7 +1240,7 @@ def padded($k):
   {"waiting":"대기           ","blocked":"막힘           ","claimed":"issue-runner   ",
    "verify":"검증대기       ","verifying":"verify-runner  ","ready":"마감대기       ",
    "harvesting":"closeout       ","held":"보류           ","human_wait":"needs-human    ",
-   "deploy_wait":"배포대기       ","failed":"실패           ","dup_closed":"중복종료       ",
+   "test_wait":"테스트         ","deploy_wait":"배포대기       ","failed":"실패           ","dup_closed":"중복종료       ",
    "spinoff":"파생           "}[$k];
 def row($k):
   (.buckets[$k]) as $b
@@ -1238,7 +1251,7 @@ if .ok == false then
 else
   ([ "파이프라인 \(.repo_short) — 열림 \(.open_total) · 스코프 \($scope) · 창 \(.since)",
      row("waiting"), row("blocked"), row("claimed"), row("verify"), row("verifying"), row("ready"),
-     row("harvesting"), row("held"), row("human_wait"), row("deploy_wait"),
+     row("harvesting"), row("held"), row("human_wait"), row("test_wait"), row("deploy_wait"),
      row("failed"), row("dup_closed"), row("spinoff"),
      "  에픽           \((.epics // []) | length)" ]
    + ((.epics // []) | map("    - " + .label))

@@ -10,7 +10,8 @@ repo="${1:?usage: setup-labels.sh <owner/repo>}"
 #   A 사람 차례 = needs-human · hold:conflict · hold:policy
 #   B 루프 진행 = agent-ready · agent:claimed · flow:agent-ready · flow:claimed(#281) · flow:ci
 #                · flow:verify · verifying(#275) · flow:ready
-#                · harvesting · hold:ladder · deploy-wait(#243 — "사람 정지 아님" 으로
+#                · harvesting · hold:ladder · 테스트(BoDAT #5197 — 배포 뒤 검증 비용, 사람 정지 아님)
+#                · deploy-wait(#243 — "사람 정지 아님" 으로
 #                재정의된 뒤 A 에서 이리로 옮겼다. 사람이 볼 일이 없다는 점에서 hold:ladder
 #                와 같은 처지: 루프(deploy-cycle)가 스스로 집어가는 레인이라 목록을 훑는
 #                사람이 "내 차례" 로 읽으면 안 된다)
@@ -76,8 +77,8 @@ gh label create "flow:ready" --repo "$repo" --color 2DA44E \
 # closeout 파생·배포 대기 표식 (#144) — 지금까지 산문으로만 구분하던 두 종류의 이슈를
 # 목록에서 바로 가른다. `deploy-wait` 는 **단독으로** 붙는다(#243) — needs-human 과 병행하던
 # 것을 멈췄다. 그 라벨을 배포 대기 이슈에서 읽는 소비자가 하나도 없었기 때문이다(디스패치
-# 게이트는 agent-ready 를 요구 · loop-status 버킷은 deploy-wait 가 이김 · deploy-bodat 수집은
-# 제목 정규식). 배포 대기는 `deploy-wait` 하나로 needs-human 과 갈린다.
+# 게이트는 agent-ready 를 요구 · deploy-bodat 수집은 제목 정규식). 붙이는 주체는 deploy-cycle 뿐 —
+# 승격·배포 실패에(BoDAT #5197), 그래서 loop-status 버킷은 needs-human 이 deploy-wait 보다 앞이다.
 # 색은 B 티어(한색)로 옮겼다(#243 2회차) — 옛 색 BF3989 는 난색 고채도라 위 A/B 축 주석과
 # 모순이었다(설명은 "사람 정지 아님" 인데 색은 "사람 차례" 티어). 새 색 17A2B8 은 팔레트
 # 안에서 아직 안 쓴 청록 계열 — flow:verify(79C0FF)·hold:ladder(B6E3FF) 같은 파랑 계열과도
@@ -88,6 +89,12 @@ gh label create "spinoff" --repo "$repo" --color D0D7DE \
   --description "출처 표시(상태 아님) — closeout 6단계가 부모 PR/이슈에서 갈라 낸 파생 이슈" --force
 gh label create "deploy-wait" --repo "$repo" --color 17A2B8 \
   --description "closeout 4단계·full-cycle §7 배포 대기 이슈 — deploy-cycle 레인 (사람 정지 아님)" --force
+# 배포 뒤 검증 레인(BoDAT #5197) — deploy-cycle ⑤ 가 배포 대기 이슈에 남은 `- [ ]` 를 옮겨 발행하는
+# 이슈의 라벨. 사람 정지가 아니라 **밟을 비용**(TEST 워커 런·시간 창·프로덕션 관측)이 남은 것 —
+# 사용자가 `e2e-test` 스킬을 부를 때 비운다. 없는 레포에서 `gh issue create --label 테스트` 는
+# 이슈를 안 만들고 통째로 실패한다(deploy-wait 와 같은 계열).
+gh label create "테스트" --repo "$repo" --color 5319E7 \
+  --description "배포 뒤 검증 항목(프로덕션 화면·실장비·시간 창) — deploy-cycle 발행, e2e-test 스킬이 밟는다. needs-human 과 축이 다름" --force
 # 레인 소유 표시(플랜 4단계) — 사람 세션 스킬 full-cycle 이 들고 있는 산출물(구현 이슈·PR·
 # 배포 대기)에 붙는다. 상태가 아니라 "누구 레인인가" 라 `agent-ready` 와 **배타**다(루프가
 # 집지 않는다). 지금까지 여기 없어서 issue-runner·BodaT 엔 손으로 생겨 있었고, 새로 옵트인
