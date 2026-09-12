@@ -187,6 +187,26 @@ for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md; do
     echo "  ✗ $f: 회차 카운터를 산문으로 직접 읽거나 쓴다 — attempt-counter.sh 를 부르라 (#444)"; exit 1; fi
 done
 
+echo "[#449] 규칙0 은 pr-state.sh 한 자리 — 판정→목표 라벨 매핑 산문 0"
+# `references/state-machine.md` 가 표 SSOT 이고 `pr-state.sh` 가 그 표를 기계가 읽는 진입점이다.
+# 산문이 "마지막 판정 → flow:<칸>" 매핑을 다시 들면 표와 두 벌이 되고, 그 차이는 라벨이
+# 어긋난 뒤에야 보인다(#281 미러가 갈리는 자리).
+# 만료 조건: 한/영 ② Maintain 규칙0 이 매핑을 스크립트에 위임하는 형태를 유지하는 한
+# 이 가드가 그 형태의 강제자다.
+[ -x scripts/pr-state.sh ] || { echo "  ✗ scripts/pr-state.sh 실행 비트 없음 — SKILL 이 직접 exec 한다"; exit 1; }
+for f in SKILL.md SKILL.en.md; do
+  grep -qF 'pr-state.sh' "$f" \
+    || { echo "  ✗ $f: 규칙0 에 pr-state.sh 배선 없음 (#449)"; exit 1; }
+  grep -qF 'mismatch' "$f" \
+    || { echo "  ✗ $f: 규칙0 이 pr-state.sh 의 mismatch 를 처분하지 않는다 (#449)"; exit 1; }
+  # 산문 회귀 — 판정 기호에서 목표 flow 라벨을 직접 유도하는 매핑 화살표.
+  if grep -nE '(머지 판정|Merge verdict): (✅|🔄)[^\n]*→ *`?flow:' "$f" | grep -q .; then
+    echo "  ✗ $f: 규칙0 의 판정→flow 라벨 매핑 산문이 되살아났다 — pr-state.sh 의 mismatch 를 쓰라 (#449)"; exit 1; fi
+done
+# 표(SSOT)가 이 진입점을 가리키는지 — 표만 고치고 스크립트를 안 고치는 드리프트 방지.
+grep -qF 'pr-state.sh' references/state-machine.md \
+  || { echo "  ✗ references/state-machine.md 가 기계 진입점(pr-state.sh)을 가리키지 않는다 (#449)"; exit 1; }
+
 echo "[#426] 판정 술어는 scripts/lib/loop.jq 한 자리 — 인라인 사본 0"
 # 접두(`머지 판정`/`Merge verdict`/`검증자 리뷰`/`마감 검증`/반송)·센티널·정지 라벨 술어를
 # 스크립트가 자기 벌로 들면 한쪽만 고쳐져 열한 소비처의 판정이 갈린다 — #171·#196·#218·
@@ -943,6 +963,9 @@ bash scripts/tests/loop-jq.test.sh
 
 echo "[test] attempt-counter.sh 회차 카운터 — 읽기·bump·본문 무손상·fail-closed (#444)"
 bash scripts/tests/attempt-counter.test.sh
+
+echo "[test] pr-state.sh 상태 판정 격자 — 사다리 6칸·정지 4종·반송·종료·mismatch 4축 (#449)"
+bash scripts/tests/pr-state.test.sh
 
 echo "[test] finish-classify.sh 분류 픽스처 테스트 (#88)"
 bash scripts/tests/finish-classify.test.sh

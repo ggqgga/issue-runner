@@ -388,26 +388,24 @@ so it is a brake a human put there by hand. Per event:
 
 For each `pr_open` event:
 
-**0. Flow-label correction (best-effort, applied while scanning).** Read the PR's last verdict
-comment (`gh pr view <pr> --repo <repo> --json comments`) and align its `flow:*` stage label with
-the real state — the worker and verify-runner attach these themselves at each stage, but crashes
-and misses happen, so the scan is a safety net. **Skip PRs labeled `flow:verify`, `verifying` or
-`harvesting`** (owned by verify-runner / closeout — same as the ownership rule below; `verifying`
-is the occupancy label verify-runner swaps in for `flow:verify` the moment it picks (#275), so the
-last comment is still `🔄` while verification runs — re-attaching `flow:verify` here would leave two
-stage labels). **Also skip PRs labeled `flow:claimed` or `flow:agent-ready`** (#420 — these are the
-PR mirrors of the issue rungs `agent:claimed`·`agent-ready` (#281) and belong to the worker lane.
-The only exits from those rungs are `claim-issue.sh` (`flow:agent-ready`→`flow:claimed`) and the
-worker's `handoff-verify` (`flow:claimed`→`flow:verify`); a dead worker is recovered by ① Reconcile
-and the closeout ①-b sweep (`finish-classify.sh`). Promoting on `🔄` alone would hand a **live
-worker's PR** or a **just-bounced, waiting PR** to verify-runner first and split the issue rung
-from its PR mirror — so those two labels are never part of "the other `flow:*`"). Correct only
-the remaining PRs: last comment `Merge verdict: ✅` → `flow:ready` (closeout picks it up),
-`Merge verdict: 🔄` (before ✅) → `flow:verify` (handed to verify-runner — the safety net for
-legacy PRs opened without a mirror label), `Merge verdict: ⚠ hold` → remove `flow:*`
-(needs-human path). Only when the target differs from the current label, swap with
-`gh issue edit <pr> --repo <repo> --add-label <target> --remove-label <the other flow:*>`
-(idempotent — skip when equal; `--remove-label` is harmless on a missing label). The initial
+**0. Flow-label correction (best-effort, applied while scanning).** One line decides it:
+`$SCRIPTS/pr-state.sh <repo> <pr>` (#449) — it reads the three axes (PR labels, linked-issue
+labels, last verdict comment) and returns the row name from `references/state-machine.md` as
+`{state, owner, mismatch}`. This prose no longer restates that table.
+**When `mismatch` is non-empty, the loop that owns the row fixes it with a transition** — and
+**only the `verdict:` axis is this loop's share** (the safety net for legacy PRs opened without a
+mirror label). That item reads `verdict: pr=<row> target=<label>` and **hands you the label to
+attach** (the verdict-symbol → label mapping lives in the script alone — do not restate it here):
+`gh issue edit <pr> --repo <repo> --add-label <the item's target> --remove-label <the other flow:*>`
+(idempotent — skip when equal; `--remove-label` is harmless on a missing label). **Leave the other
+axes alone** (`rung`·`stage`·`stop`) and raise one warn line in ④ Report,
+`mismatch PR #<pr>(<repo_short>) — <item>`: the `owner` field names who owns that row
+(verify-runner / closeout / resume-sweep / a human).
+Where the script does **not** emit a `verdict:` axis is exactly the old skip list —
+PRs labeled `flow:verify`, `verifying`, `harvesting`, `flow:claimed` or `flow:agent-ready`
+(#275·#420 — owned by verify-runner / closeout / the worker lane, so promoting on `🔄` alone
+would take a live worker's PR away), plus the stop (H:*) and terminal (E) rows.
+**On exit 2 (lookup failed) skip this PR's correction** — never guess the state. The initial
 CI/implementation stage has no PR yet and is visible only as the issue's `agent:claimed`
 (`flow:ci` appears only on PRs whose local CI is being re-run).
 

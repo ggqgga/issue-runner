@@ -346,25 +346,21 @@ PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·
 
 `pr_open` 이벤트 각각에 대해:
 
-**0. 단계 라벨 보정 (best-effort, 스캔할 때 붙인다).** 이 PR 의 마지막 판정 코멘트를
-읽어(`gh pr view <pr> --repo <repo> --json comments`) 단계 라벨 `flow:*` 를 실제 상태에
-맞춘다 — 워커·verify-runner 가 각 단계에서 직접 붙이지만 크래시·놓침이 있을 수 있어
-스캔이 안전망이다. **단, `flow:verify`·`verifying` 또는 `harvesting` 라벨이 붙은 PR 은 이 보정을
-건너뛴다**(각각 verify-runner·closeout 소유 — 아래 소유 규칙과 동일. `verifying` 은 verify-runner 가
-집는 순간 `flow:verify` 를 떼고 붙이는 점유 라벨이라(#275) 마지막 코멘트가 `🔄` 인 채로 검증이 도는
-중이다 — 여기서 `flow:verify` 를 되붙이면 단계 라벨이 둘이 된다). **`flow:claimed`·`flow:agent-ready`
-가 붙은 PR 도 건너뛴다**(#420 — 이슈 칸 `agent:claimed`·`agent-ready` 의 PR 미러(#281)라 워커 레인
-소유다. 그 칸의 출구는 `claim-issue.sh`(`flow:agent-ready`→`flow:claimed`)와 워커의 `handoff-verify`
-(`flow:claimed`→`flow:verify`)뿐이고, 워커 사망은 ① Reconcile 과 closeout ①-b 스윕(`finish-classify.sh`)이
-회수한다. 여기서 `🔄` 만 보고 `flow:verify` 로 올리면 **살아있는 워커의 PR** 이나 **반송 직후 대기 중인 PR**
-이 verify-runner 에 먼저 집히고, 이슈 칸과 PR 미러가 갈린다 — 그래서 "나머지 `flow:*`" 에 이 둘은
-결코 들지 않는다). 그 외 PR 만 보정:
-마지막 코멘트가 `머지 판정: ✅` → `flow:ready`(closeout 이 집는다), `머지 판정: 🔄`(✅ 전)
-→ `flow:verify`(verify-runner 에 넘김 — 미러 라벨 없이 열린 옛 PR 의 안전망),
-`머지 판정: ⚠ 보류` → flow:* 제거(needs-human 경로). 목표 라벨과 현재가 다를 때만
-`gh issue edit <pr> --repo <repo> --add-label <목표> --remove-label <나머지 flow:*>` 로
-교체한다(멱등 — 같으면 skip, `--remove-label` 은 없는 라벨에 무해). 최초 CI·구현 단계는
-PR 이 아직 없어 이슈 `agent:claimed` 로만 보인다(`flow:ci` 는 재-CI 도는 PR 에만 뜬다).
+**0. 단계 라벨 보정 (best-effort, 스캔할 때 붙인다).** `$SCRIPTS/pr-state.sh <repo> <pr>` 한 줄이
+판정한다(#449) — PR 라벨·이슈 라벨·마지막 판정 세 축을 `references/state-machine.md` 의 행 이름
+(`{state, owner, mismatch}`)으로 낸다. 이 산문은 그 표를 다시 적지 않는다.
+**`mismatch` 가 비어 있지 않으면 표의 소유 루프가 전이로 맞춘다** — 그중 **이 루프 몫은
+`verdict:` 축 하나**다(미러 라벨 없이 열린 옛 PR 의 안전망). 그 항목은 `verdict: pr=<행> target=<라벨>`
+꼴로 **붙일 라벨을 그대로 준다**(판정 기호 → 라벨 매핑은 스크립트 한 자리다 — 여기서 다시 외우지 마라):
+`gh issue edit <pr> --repo <repo> --add-label <항목의 target> --remove-label <나머지 flow:*>`
+한 번(멱등 — 같으면 skip, `--remove-label` 은 없는 라벨에 무해). 나머지 축(`rung`·`stage`·`stop`)은
+**건드리지 말고** ④ Report warn 에 `mismatch PR #<pr>(<repo_short>) — <항목>` 한 줄로 올려라:
+그 칸의 소유는 `owner` 필드가 말한다(verify-runner·closeout·resume-sweep·사람).
+스크립트가 `verdict:` 축을 **안 내는** 자리가 곧 종전 산문의 건너뛰기 목록이다 —
+`flow:verify`·`verifying`·`harvesting`·`flow:claimed`·`flow:agent-ready` 가 붙은 PR(#275·#420 —
+각각 verify-runner·closeout·워커 레인 소유라 `🔄` 만 보고 올리면 살아있는 워커의 PR 을 뺏는다)과
+정지(H:*)·종료(E) 행. **exit 2(조회 실패)면 이 PR 의 보정을 건너뛴다** — 상태를 추측하지 않는다.
+최초 CI·구현 단계는 PR 이 아직 없어 이슈 `agent:claimed` 로만 보인다(`flow:ci` 는 재-CI 도는 PR 에만 뜬다).
 
 **서킷 브레이커 — 아래 1~3 의 모든 보수 디스패치 전 공통**:
 `N=$($SCRIPTS/attempt-counter.sh <repo> <pr> repair-count)` 로 회차를 읽는다(마커 없으면 `0`,
