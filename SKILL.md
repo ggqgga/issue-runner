@@ -367,14 +367,14 @@ PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·
 PR 이 아직 없어 이슈 `agent:claimed` 로만 보인다(`flow:ci` 는 재-CI 도는 PR 에만 뜬다).
 
 **서킷 브레이커 — 아래 1~3 의 모든 보수 디스패치 전 공통**:
-PR 본문에서 `<!-- repair-count: N -->` HTML 주석을 읽어라
-(`gh pr view <pr> --repo <repo> --json body`; 주석이 없으면 N = 0).
+`N=$($SCRIPTS/attempt-counter.sh <repo> <pr> repair-count)` 로 회차를 읽는다(마커 없으면 `0`,
+**exit 2 = 조회 실패 → 이번 틱엔 이 PR 의 보수를 건너뛴다**. 0 으로 읽으면 상한이 리셋된다, #444).
 N ≥ `MAX_REPAIRS_PER_PR` 이면 **보수를 디스패치하지 않는다** — 이슈에
 `$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy --note "<질문 한 줄>"` 로 `hold:policy`
 를 PR·이슈 양쪽에 부착하고 warn 으로 ④ Report 에 올려라(기계 정지는 사유 라벨 하나만, #244). N 이 상한 미만이면 보수 에이전트를
-디스패치하면서 PR 본문의 주석을 `<!-- repair-count: N+1 -->` 로 갱신하라
-(`gh pr edit <pr> --repo <repo> --body ...` — 주석이 없었으면 본문 끝에 새로 추가,
-나머지 본문은 그대로 유지). 같은 PR 에 1~3 의 사유가 여러 개 겹쳐도 **틱당 같은 PR
+디스패치하면서 `$SCRIPTS/attempt-counter.sh <repo> <pr> repair-count --bump` 로 회차를 올린다
+(마커 갱신·부재 시 본문 끝 추가·나머지 본문 무손상은 스크립트가 한다. **exit 2 면 회차가
+안 올라갔다** — 그 디스패치는 하지 말고 ④ Report warn 에 한 줄). 같은 PR 에 1~3 의 사유가 여러 개 겹쳐도 **틱당 같은 PR
 의 보수 에이전트는 1개** — 모든 수리 지시를 그 한 에이전트의 프롬프트에 합치고,
 N 도 디스패치당 1만 올린다.
 

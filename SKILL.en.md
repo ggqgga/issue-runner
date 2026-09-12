@@ -412,15 +412,18 @@ CI/implementation stage has no PR yet and is visible only as the issue's `agent:
 (`flow:ci` appears only on PRs whose local CI is being re-run).
 
 **Circuit breaker — common to every maintenance dispatch in 1–3 below**:
-read the `<!-- repair-count: N -->` HTML comment from the PR body
-(`gh pr view <pr> --repo <repo> --json body`; if the comment is absent, N = 0).
+read the attempt count with `N=$($SCRIPTS/attempt-counter.sh <repo> <pr> repair-count)`
+(`0` when the marker is absent; **exit 2 = lookup failed → skip this PR's repair for
+this tick**, since reading it as 0 would reset the cap, #444).
 If N ≥ `MAX_REPAIRS_PER_PR`, **do not dispatch a repair** — attach the
 `hold:policy` label to the PR and the issue with
 `$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy --note "<one-line question>"` and surface it as a
 warn in ④ Report (a machine stop carries the reason label only, #244). If N is below the cap, dispatch the maintenance agent and at
-the same time update the comment in the PR body to `<!-- repair-count: N+1 -->`
-(`gh pr edit <pr> --repo <repo> --body ...` — if the comment was absent, append
-it at the end of the body, keeping the rest of the body unchanged). Even when
+the same time bump the counter with
+`$SCRIPTS/attempt-counter.sh <repo> <pr> repair-count --bump`
+(the script rewrites the marker, appends it at the end when absent, and leaves the
+rest of the body untouched. **On exit 2 the count did not go up** — skip that dispatch
+and leave one warn line in ④ Report). Even when
 several of the causes 1–3 apply to the same PR, dispatch **one maintenance agent
 per PR per tick** — merge all repair instructions into that single agent's
 prompt, and increment N by exactly 1 per dispatch.

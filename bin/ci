@@ -173,6 +173,20 @@ echo "[closeout] 반송 마커 집합은 bounce-state.sh 한 자리 (#171 · #19
 dup=$(grep -l 'BOUNCE_MARKERS' scripts/*.sh | grep -v '^scripts/bounce-state.sh$' || true)
 [ -z "$dup" ] || { echo "  ✗ 반송 마커 집합 정의가 bounce-state.sh 밖에도 있다: $dup"; exit 1; }
 
+echo "[#444] 회차 카운터는 scripts/attempt-counter.sh 한 자리 — 산문 읽기/쓰기 0"
+# `<!-- repair-count: N -->`(issue-runner ②)·`<!-- verify-attempt: N -->`(verify-runner ③④)의
+# 읽기-증가-쓰기가 SKILL 산문으로 되살아나면 두 레인의 회차 규칙이 갈리고(한쪽만 고쳐진다)
+# 그 차이는 출력에 안 보인다 — 상한 비교만 SKILL 노브로 남는다.
+# 만료 조건: 두 SKILL 이 회차를 스크립트로만 읽는 형태를 유지하는 한 이 가드가 그 형태의 강제자다.
+[ -x scripts/attempt-counter.sh ] || { echo "  ✗ scripts/attempt-counter.sh 실행 비트 없음 — SKILL 이 직접 exec 한다"; exit 1; }
+for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md; do
+  grep -qF 'attempt-counter.sh' "$f" \
+    || { echo "  ✗ $f: attempt-counter.sh 배선 없음 (#444)"; exit 1; }
+  # 산문 회귀 — 본문 주석을 손으로 읽거나(`--json body`) 손으로 쓰는(`gh pr edit … --body`) 형태.
+  if grep -nE 'gh pr (view|edit) <pr> --repo <repo> --(json body|body )' "$f" | grep -q .; then
+    echo "  ✗ $f: 회차 카운터를 산문으로 직접 읽거나 쓴다 — attempt-counter.sh 를 부르라 (#444)"; exit 1; fi
+done
+
 echo "[#426] 판정 술어는 scripts/lib/loop.jq 한 자리 — 인라인 사본 0"
 # 접두(`머지 판정`/`Merge verdict`/`검증자 리뷰`/`마감 검증`/반송)·센티널·정지 라벨 술어를
 # 스크립트가 자기 벌로 들면 한쪽만 고쳐져 열한 소비처의 판정이 갈린다 — #171·#196·#218·
@@ -926,6 +940,9 @@ echo "[test] loop.jq 판정 술어 격자 — 한/영·마커 위치·빈 배열
 # 열한 소비처가 같은 술어를 부르므로 술어가 조용히 넓어지면 전부 같은 방향으로 틀어진다.
 # 만료 조건: 없음(라이브러리 자체의 행동 테스트 — 이 파일이 그 SSOT 의 가드다).
 bash scripts/tests/loop-jq.test.sh
+
+echo "[test] attempt-counter.sh 회차 카운터 — 읽기·bump·본문 무손상·fail-closed (#444)"
+bash scripts/tests/attempt-counter.test.sh
 
 echo "[test] finish-classify.sh 분류 픽스처 테스트 (#88)"
 bash scripts/tests/finish-classify.test.sh
