@@ -687,15 +687,17 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 - **rebase된 HEAD 재검증 (`revalidate:true` 선행 게이트, #70).** ② Pick 이 집은
   후보의 `revalidate` 가 true 면(= `closeout-ci-pass.sh` 가 exit 2 — rebase 등으로
   현재 HEAD 의 로컬 CI 캐시가 비어 "fail 이 아니라 미실행"), 위 exit 0 게이트를
-  판정하기 **전에** 현재 HEAD 를 재검증한다: `$SCRIPTS/make-worktree.sh <repo> <N>`
-  로 worktree 확보(`<N>`=PR head `agent/issue-N` 파싱, 3단계와 동일) → **그 worktree 를
-  rebase된 원격 head 로 동기화**(`make-worktree.sh` 는 기존 worktree 가 있으면 그대로
-  반환해 rebase 전 SHA 가 체크아웃된 채일 수 있다 — 3단계와 달리 이 경로는 새 커밋을
-  안 만들어 동기화가 freshness 의 유일한 보장이다): `git -C <wt> fetch origin` 후
-  `git -C <wt> reset --hard origin/agent/issue-<N>` 으로 worktree HEAD 를 PR 의 현재
-  (rebased) head SHA 에 맞춘다(이 SHA 가 `closeout-ci-pass.sh` 가 `gh pr view headRefOid`
-  로 조회하는 바로 그 SHA — 안 맞추면 run-local-ci 가 옛 SHA 를 캐시해 영구 exit 2 로
-  남는다) → `$SCRIPTS/run-local-ci.sh <repo> <N>` 로 **현재 HEAD** 캐시를 채운다. `run-local-ci.sh`
+  판정하기 **전에** 현재 HEAD 를 재검증한다: `$SCRIPTS/make-worktree.sh --sync <repo> <N>`
+  한 호출로 worktree 를 확보하고 **rebase된 원격 head 로 강제 동기화**한다
+  (`<N>`=PR head `agent/issue-N` 파싱, 3단계와 동일. `fetch` + `reset --hard origin/<branch>`
+  절차와 "기존 worktree 는 그대로 반환되어 rebase 전 SHA 가 체크아웃된 채일 수 있다" 는
+  함정은 그 스크립트 머리 주석이 SSOT 다 — #445). 3단계와 달리 이 경로는 새 커밋을 안 만들어
+  **동기화가 freshness 의 유일한 보장**이다: 맞추는 SHA 가 `closeout-ci-pass.sh` 가
+  `gh pr view headRefOid` 로 조회하는 바로 그 SHA 이고, 안 맞추면 run-local-ci 가 옛 SHA 를
+  캐시해 영구 exit 2 로 남는다. `--sync` 가 **exit 3(worktree 에 미커밋 변경 — 덮지 않았다)**·
+  **exit 4(원격에 그 head 브랜치 없음)** 면 머지하지 말고 이 PR 을 skip 해 ④ Report 에
+  `BLOCKED: worktree 동기화 실패 PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
+  이어 `$SCRIPTS/run-local-ci.sh <repo> <N>` 로 **현재 HEAD** 캐시를 채운다. `run-local-ci.sh`
   가 비0(새 base 와의 통합이 깨짐)이면 머지하지 말고 fail-closed 로 보류 종료한다
   (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` +
   `blocked` 종료, 새 종료 상태 안 만듦 — 이 전이가 exit 1·2 면 ④ Report 에

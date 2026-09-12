@@ -779,18 +779,22 @@ hook queried the cwd repo). Gate conditions: `$SCRIPTS/closeout-ci-pass.sh <repo
 (exit 0) + the worker's `검증자 리뷰:` comment shows BLOCKER 0 + recheck
 `gh pr view <pr> --repo <repo> --json mergeable` ≠ CONFLICTING.
 - **Revalidate the rebased HEAD (`revalidate:true` precondition gate, #70).** If the
-  candidate ② Pick took has `revalidate` true (= `closeout-ci-pass.sh` returned exit 2 —
-  the current HEAD's local-CI cache is empty due to a rebase etc., i.e. "not run, not
-  fail"), then **before** evaluating the exit-0 gate above, revalidate the current HEAD:
-  obtain a worktree via `$SCRIPTS/make-worktree.sh <repo> <N>` (`<N>` parsed from the PR
-  head `agent/issue-N`, same as step 3) → **sync that worktree to the rebased remote
-  head** (`make-worktree.sh` returns an existing worktree as-is, so it may still have the
-  pre-rebase SHA checked out — unlike step 3, this path makes no new commit, so the sync
-  is the only freshness guarantee): `git -C <wt> fetch origin` then
-  `git -C <wt> reset --hard origin/agent/issue-<N>` to align the worktree HEAD to the PR's
-  current (rebased) head SHA (this is exactly the SHA `closeout-ci-pass.sh` looks up via
-  `gh pr view headRefOid` — without the sync, run-local-ci caches the old SHA and it stays
-  permanently exit 2) → fill the **current HEAD** cache with
+  candidate ② Pick took has `revalidate` true (= `closeout-ci-pass.sh` exited 2 — the
+  current HEAD's local-CI cache is empty due to a rebase etc., i.e. "not run, not fail"),
+  then **before** evaluating the exit-0 gate above, revalidate the current HEAD: a single
+  call to `$SCRIPTS/make-worktree.sh --sync <repo> <N>` obtains the worktree **and forces
+  it to the rebased remote head** (`<N>` parsed from the PR head `agent/issue-N`, same as
+  step 3;
+  the `fetch` + `reset --hard origin/<branch>` procedure and the trap that "an existing
+  worktree is returned as-is, so the pre-rebase SHA may still be checked out" are owned by
+  that script's header comment — #445). Unlike step 3, this path makes no new commit, so
+  **the sync is the only freshness guarantee**: the SHA it aligns to is exactly the one
+  `closeout-ci-pass.sh` looks up via `gh pr view headRefOid`, and without it run-local-ci
+  caches the old SHA and stays permanently exit 2. If `--sync` exits **3 (uncommitted
+  changes in the worktree — it refused to overwrite)** or **4 (no such head branch on the
+  remote)**, do not merge: skip this PR and report
+  `BLOCKED: worktree 동기화 실패 PR #<pr>(<repo_short>) — <one stderr line>` in ④ Report.
+  Then fill the **current HEAD** cache with
   `$SCRIPTS/run-local-ci.sh <repo> <N>`. If `run-local-ci.sh` exits nonzero (integration
   with the new base is broken), do not merge: exit on hold fail-closed
   (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` +
