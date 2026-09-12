@@ -181,8 +181,12 @@ printf '%s' "$post" | jq -e '.labels | map(.name) | index("agent:claimed")' >/de
 # 실패는 stderr 한 줄로 남기고 진행한다 — 다음 전이(handoff-verify 의 ⊘wk)가 정리한다.
 # head 브랜치 정확 일치(`--head`)로 찾는다 — `agent/issue-5` 가 `agent/issue-50` 을 물지 않는다.
 # 조회 실패와 "PR 없음" 을 섞지 않는다: 조회 실패면 편집을 시도하지 않고 그 사실을 남긴다.
+# stderr 는 stdout(JSON)과 **갈라** 받는다(#420) — `2>&1` 로 합치면 성공 시 gh 가 stderr 에 찍는
+# 한 줄(업데이트 알림 등)이 JSON 을 오염시켜 jq 가 비고 미러가 **조용히** 생략된다. 실패했을 때만
+# 그 stderr 의 마지막 줄을 note 에 합친다.
 pr_json=""
-if pr_json=$(gh pr list --repo "$repo" --head "agent/issue-$num" --state open --json number 2>&1); then
+pr_err=$(mktemp)
+if pr_json=$(gh pr list --repo "$repo" --head "agent/issue-$num" --state open --json number 2>"$pr_err"); then
   pr_num=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null || true)
   if printf '%s' "$pr_num" | grep -qE '^[0-9]+$'; then
     if ! mirror_out=$(gh pr edit "$pr_num" --repo "$repo" \
@@ -191,8 +195,9 @@ if pr_json=$(gh pr list --repo "$repo" --head "agent/issue-$num" --state open --
     fi
   fi
 else
-  echo "note: $repo#$num PR 조회 실패(best-effort — 열린 agent/issue-$num PR 이 있어도 flow:claimed 미러 안 됨, 다음 전이가 정리) — $(printf '%s\n' "$pr_json" | grep -v '^$' | tail -1)" >&2
+  echo "note: $repo#$num PR 조회 실패(best-effort — 열린 agent/issue-$num PR 이 있어도 flow:claimed 미러 안 됨, 다음 전이가 정리) — $(grep -v '^$' "$pr_err" | tail -1)" >&2
 fi
+rm -f "$pr_err"
 
 # stale blocked-by 라벨 청소(#85 should): 이 이슈가 eligible 게이트를 통과해 claim 됐다는
 # 것은 남아 있는 blocked-by:<N> 중 CLOSED 인 블로커의 라벨이 이제 무의미하다는 뜻이다.

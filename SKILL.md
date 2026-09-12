@@ -262,6 +262,9 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 읽지도 쓰지도 않는다(append-only 라 남의 편집을 덮어쓸 일이 없다). 정지 라벨은 이슈와
 **연결된 열린 PR 양쪽**에 미러돼 있으므로 재개·승격은 PR 라벨까지 함께 되돌린다 — 안 그러면
 PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·closeout-pick)가 그걸 안 뗀다.
+재개는 PR 의 홀드(`hold:ladder`·`hold:conflict`)를 떼는 그 편집에서 이슈 칸에 맞는 미러(`flow:agent-ready`, 이슈가
+`agent:claimed` 면 `flow:claimed`)도 되붙인다(#420, PR 에 칸 라벨이 이미 있으면 겹치지 않는다) — 정지
+전이가 PR 의 단계 라벨을 이미 뗀 뒤라, 안 붙이면 그 PR 은 다음 claim 까지 무라벨이다(#281 불변식 위반).
 그 되돌림은 스윕이 **스스로 재개·승격할 때**뿐이라, 사람이 `hold:policy`(또는 상한을 넘긴
 홀드)를 푸는 경로엔 PR 사본을 지우는 자리가 없었다 — 그래서 같은 실행이 **정지 미러 정리**(#265)도
 한다: 이슈에 정지 라벨이 하나도 없는데 짝이 되는 열린 PR 에 남아 있으면 **PR 쪽만** 뗀다
@@ -368,9 +371,15 @@ PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·
 스캔이 안전망이다. **단, `flow:verify`·`verifying` 또는 `harvesting` 라벨이 붙은 PR 은 이 보정을
 건너뛴다**(각각 verify-runner·closeout 소유 — 아래 소유 규칙과 동일. `verifying` 은 verify-runner 가
 집는 순간 `flow:verify` 를 떼고 붙이는 점유 라벨이라(#275) 마지막 코멘트가 `🔄` 인 채로 검증이 도는
-중이다 — 여기서 `flow:verify` 를 되붙이면 단계 라벨이 둘이 된다). 그 외 PR 만 보정:
+중이다 — 여기서 `flow:verify` 를 되붙이면 단계 라벨이 둘이 된다). **`flow:claimed`·`flow:agent-ready`
+가 붙은 PR 도 건너뛴다**(#420 — 이슈 칸 `agent:claimed`·`agent-ready` 의 PR 미러(#281)라 워커 레인
+소유다. 그 칸의 출구는 `claim-issue.sh`(`flow:agent-ready`→`flow:claimed`)와 워커의 `handoff-verify`
+(`flow:claimed`→`flow:verify`)뿐이고, 워커 사망은 ① Reconcile 과 closeout ①-b 스윕(`finish-classify.sh`)이
+회수한다. 여기서 `🔄` 만 보고 `flow:verify` 로 올리면 **살아있는 워커의 PR** 이나 **반송 직후 대기 중인 PR**
+이 verify-runner 에 먼저 집히고, 이슈 칸과 PR 미러가 갈린다 — 그래서 "나머지 `flow:*`" 에 이 둘은
+결코 들지 않는다). 그 외 PR 만 보정:
 마지막 코멘트가 `머지 판정: ✅` → `flow:ready`(closeout 이 집는다), `머지 판정: 🔄`(✅ 전)
-→ `flow:verify`(verify-runner 에 넘김 — 워커가 라벨을 못 붙이고 죽은 경우 안전망),
+→ `flow:verify`(verify-runner 에 넘김 — 미러 라벨 없이 열린 옛 PR 의 안전망),
 `머지 판정: ⚠ 보류` → flow:* 제거(needs-human 경로). 목표 라벨과 현재가 다를 때만
 `gh issue edit <pr> --repo <repo> --add-label <목표> --remove-label <나머지 flow:*>` 로
 교체한다(멱등 — 같으면 skip, `--remove-label` 은 없는 라벨에 무해). 최초 CI·구현 단계는

@@ -289,7 +289,12 @@ marker) — the body is neither read nor written (append-only, so it can
 never overwrite someone's edit). Stop labels are mirrored onto the issue **and its open
 linked PR**, so a resume/escalation reverts the PR's labels too — otherwise the PR stays
 permanently human-blocked and the downstream transitions (handoff-verify, verify-pass,
-closeout-pick) never remove it. That revert only ever happened when the sweep itself
+closeout-pick) never remove it. In the same edit that drops the PR's hold (`hold:ladder` /
+`hold:conflict`), a resume
+also re-attaches the mirror matching the issue rung (`flow:agent-ready`, or `flow:claimed` when
+the issue carries `agent:claimed`; never stacked on a PR that already has a rung label) (#420) — the hold transition already stripped the PR's stage
+label, so without it the PR would sit unlabeled until the next claim (breaking the #281
+invariant). That revert only ever happened when the sweep itself
 resumed or escalated, so the path where a **human** clears `hold:policy` (or a hold past
 its cap) had nowhere to drop the PR copy — the same run therefore also does a **stop-mirror
 cleanup** (#265): when the issue carries no stop label at all but its paired open PR still
@@ -407,6 +412,29 @@ so it is a brake a human put there by hand. Per event:
 ## ② Maintain — finish what you started first
 
 For each `pr_open` event:
+
+**0. Flow-label correction (best-effort, applied while scanning).** Read the PR's last verdict
+comment (`gh pr view <pr> --repo <repo> --json comments`) and align its `flow:*` stage label with
+the real state — the worker and verify-runner attach these themselves at each stage, but crashes
+and misses happen, so the scan is a safety net. **Skip PRs labeled `flow:verify`, `verifying` or
+`harvesting`** (owned by verify-runner / closeout — same as the ownership rule below; `verifying`
+is the occupancy label verify-runner swaps in for `flow:verify` the moment it picks (#275), so the
+last comment is still `🔄` while verification runs — re-attaching `flow:verify` here would leave two
+stage labels). **Also skip PRs labeled `flow:claimed` or `flow:agent-ready`** (#420 — these are the
+PR mirrors of the issue rungs `agent:claimed`·`agent-ready` (#281) and belong to the worker lane.
+The only exits from those rungs are `claim-issue.sh` (`flow:agent-ready`→`flow:claimed`) and the
+worker's `handoff-verify` (`flow:claimed`→`flow:verify`); a dead worker is recovered by ① Reconcile
+and the closeout ①-b sweep (`finish-classify.sh`). Promoting on `🔄` alone would hand a **live
+worker's PR** or a **just-bounced, waiting PR** to verify-runner first and split the issue rung
+from its PR mirror — so those two labels are never part of "the other `flow:*`"). Correct only
+the remaining PRs: last comment `Merge verdict: ✅` → `flow:ready` (closeout picks it up),
+`Merge verdict: 🔄` (before ✅) → `flow:verify` (handed to verify-runner — the safety net for
+legacy PRs opened without a mirror label), `Merge verdict: ⚠ hold` → remove `flow:*`
+(needs-human path). Only when the target differs from the current label, swap with
+`gh issue edit <pr> --repo <repo> --add-label <target> --remove-label <the other flow:*>`
+(idempotent — skip when equal; `--remove-label` is harmless on a missing label). The initial
+CI/implementation stage has no PR yet and is visible only as the issue's `agent:claimed`
+(`flow:ci` appears only on PRs whose local CI is being re-run).
 
 **Circuit breaker — common to every maintenance dispatch in 1–3 below**:
 read the `<!-- repair-count: N -->` HTML comment from the PR body

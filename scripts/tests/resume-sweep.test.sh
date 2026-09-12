@@ -9,7 +9,8 @@
 #   ③ 순서 계약: **마커 코멘트 먼저 → 라벨**. 코멘트가 실패하면 라벨은 안 건드린다
 #      (카운터 없는 재개 = 상한이 안 걸리는 무한 재시도).
 #   ④ 정지 라벨은 이슈와 **PR 양쪽**에 미러돼 있다 — 재개·승격이 PR 도 함께 되돌린다.
-#      안 그러면 PR 이 영구 needs-human 으로 남고 뒤 전이가 그 라벨을 안 뗀다.
+#      안 그러면 PR 이 영구 needs-human 으로 남고 뒤 전이가 그 라벨을 안 뗀다. 재개는 이슈 칸에 맞는
+#      PR 미러(flow:agent-ready / flow:claimed)도 같은 편집에서 되붙인다(#420) — 무라벨 창 금지.
 #   ⑤ 두 쿼리(AND 재개 대상 · 사유 점검)가 각각 상한에 닿으면 알린다.
 #   ⑥ 사유 라벨 없는 needs-human 은 손대지 않고 warn 만 · 사람 몫 hold 동존도 재개 금지.
 #      단 배포 대기 라벨(deploy-wait·full-cycle)이면 **정상 상태**라 warn 이 아니라 note (#190).
@@ -266,6 +267,10 @@ case "${1:-} ${2:-}" in
       exit 0
     fi
     [ -z "${STUB_PR_EDIT_FAIL:-}" ] || exit 1
+    # (#420) 레포에 없는 라벨을 add 하면 gh 는 편집 **전체**를 실패시킨다(실측) — 그 형상만 흉내낸다.
+    if [ -n "${STUB_PR_EDIT_ADD_FAIL:-}" ]; then
+      case " $* " in *" --add-label "*) echo "gh: 'flow:agent-ready' not found" >&2; exit 1 ;; esac
+    fi
     edit_labels "$STUB_PR_LABELS" "$@"
     exit 0 ;;
   "pr view")
@@ -384,6 +389,7 @@ setup() {
   # unset 하면 export 속성이 날아가 이후 대입이 스텁에 안 전달된다 — 빈 값으로 되돌린다.
   STUB_LADDER_FAIL=""; STUB_CONFLICT_FAIL=""; STUB_HUMAN_FAIL=""; STUB_LABEL_EDIT_FAIL=""; STUB_COMMENT_FAIL=""
   STUB_COMMENTS_FAIL=""; STUB_SEARCH_FAIL=""; STUB_SEARCH_PRS_FAIL=""; STUB_PR_FAIL=""; STUB_PR_EDIT_FAIL=""
+  STUB_PR_EDIT_ADD_FAIL=""
   STUB_STATE_LABELS=""; STUB_READBACK_LABELS=""; STUB_UPDATED_LIVE=""; STUB_JQ_FAIL_PAT=""
   STUB_MIRROR_LIST_FAIL=""; STUB_MIRROR_EDIT_FAIL=""; STUB_MIRROR_READBACK=""
   STUB_MIRROR_RACE=""; rm -f "$tmp/mirror.edited"; STUB_MIRROR_EVENTS_FAIL=""
@@ -415,7 +421,7 @@ export STUB_COMMENTS="$tmp/comments.json" STUB_SEARCH="$tmp/search"
 export STUB_SEARCH_PRS="$tmp/search.prs" STUB_SEARCH_PRS_FAIL=""
 export STUB_PR_NUM="$tmp/pr.num" STUB_PR_LABELS="$tmp/pr.labels"
 export STUB_LADDER_FAIL="" STUB_HUMAN_FAIL="" STUB_LABEL_EDIT_FAIL="" STUB_COMMENT_FAIL=""
-export STUB_COMMENTS_FAIL="" STUB_SEARCH_FAIL="" STUB_PR_FAIL="" STUB_PR_EDIT_FAIL=""
+export STUB_COMMENTS_FAIL="" STUB_SEARCH_FAIL="" STUB_PR_FAIL="" STUB_PR_EDIT_FAIL="" STUB_PR_EDIT_ADD_FAIL=""
 export STUB_STATE_LABELS="" STUB_READBACK_LABELS="" STUB_UPDATED_LIVE="" STUB_JQ_FAIL_PAT=""
 export STUB_MIRROR_PRS="$tmp/mirror.prs.json" STUB_MIRROR_ISSUES="$tmp/mirror.issues"
 export STUB_MIRROR_ONE="$tmp/mirror.one"
@@ -499,6 +505,40 @@ check "PR 재개: resumed"                 "$(has_ev resumed)"
 check "PR 재개: PR hold:ladder 해제"     "$(lackspl hold:ladder)"
 check "PR 재개: PR flow:verify 유지"     "$(haspl flow:verify)"
 check "PR 재개: pr edit 을 실제로 부른다" "$(some 'pr edit 77')"
+# (#420) 이미 칸 라벨(flow:verify)을 단 PR 에는 미러를 **겹쳐 붙이지 않는다** — 단계 라벨 둘 = 사고.
+check "PR 재개: 칸 라벨이 있으면 flow:agent-ready 를 안 겹친다" "$(lackspl flow:agent-ready)"
+
+# ── ⑤-b (#420) 재개 뒤 PR 미러 유지 — verify-held 가 PR 의 flow:verify 를 뗀 뒤라 PR 에는
+# hold:ladder 만 남아 있다. 재개가 hold:ladder 만 떼면 그 PR 은 다음 claim 까지 **무라벨**
+# (transition.sh 불변식 "열린 agent PR 은 항상 어느 칸의 라벨을 하나 단다" 위반). 재개는
+# 이슈 칸에 맞는 미러를 되붙인다: 이슈가 대기(agent-ready)면 flow:agent-ready.
+setup "hold:ladder,agent-ready" 200 0
+with_pr 77 "hold:ladder"
+run
+check "재개 미러: resumed"                       "$(has_ev resumed)"
+check "재개 미러: PR hold:ladder 해제"           "$(lackspl hold:ladder)"
+check "재개 미러: PR flow:agent-ready 부착"      "$(haspl flow:agent-ready)"
+check "재개 미러: 해제·부착이 한 번의 pr edit"    "$([ "$(counts 'pr edit 77')" = 1 ] && echo ok || echo no)"
+check "재개 미러: after-edit warn 없음"          "$(no_ev warn_after_edit)"
+# 이슈가 issue-runner 칸(agent:claimed)이면 미러도 그 칸 — flow:claimed (칸이 어긋난 미러는 거짓 신호).
+setup "hold:ladder,agent-ready,agent:claimed" 200 0
+with_pr 77 "hold:ladder,flow:ci"
+run
+check "재개 미러(claimed): PR flow:claimed 부착"        "$(haspl flow:claimed)"
+check "재개 미러(claimed): flow:agent-ready 는 안 붙는다" "$(lackspl flow:agent-ready)"
+check "재개 미러(claimed): flow:ci 는 칸이 아니라 그대로" "$(haspl flow:ci)"
+# 미러 라벨이 레포에 아직 없으면(#281 이전 형상 — setup-labels.sh 미실행) 결합 편집이 통째로 실패한다.
+# 그때 hold:ladder 해제까지 잃으면 PR 이 영구 needs-human 으로 되돌아간다(#265 가 고친 증상의 회귀) —
+# remove-only 로 한 번 더 시도해 해제는 지키고, 미러 미부착만 warn_after_edit 으로 알린다.
+setup "hold:ladder,agent-ready" 200 0
+with_pr 77 "hold:ladder"
+STUB_PR_EDIT_ADD_FAIL=1
+run
+check "미러 라벨 부재: PR hold:ladder 는 해제된다"        "$(lackspl hold:ladder)"
+check "미러 라벨 부재: flow:agent-ready 는 안 붙는다"      "$(lackspl flow:agent-ready)"
+check "미러 라벨 부재: warn_after_edit(미러 미부착)"       "$(has_ev warn_after_edit)"
+check "미러 라벨 부재: 문구에 setup-labels 안내"           "$(saysl 'setup-labels')"
+check "미러 라벨 부재: 이슈 재개는 그대로"                "$(has_ev resumed)"
 
 # ── ⑥ [P1] PR 미러 승격 ───────────────────────────────────────────────────
 setup "hold:ladder,agent-ready" 200 2
@@ -2473,13 +2513,18 @@ check "conflict ⓔ: resumed 없음"               "$(no_ev resumed)"
 check "conflict ⓔ: 편집 0회"                   "$(none 'issue edit')"
 
 # ⓕ 코드펜스 안에 인용된 conflict-resume 마커는 세지 않는다 — 상한(1)이 인용으로 소진되지 않는다
+# (PR 은 칸 라벨 없이 hold:conflict 만 — closeout-blocked 가 남긴 실제 형상. 재개가 #420 의 칸
+#  미러 되붙임을 conflict 갈래에서도 타는지 한 줄로 문다 — 이슈 라벨을 mirror_labels 에 안 넘기면 무라벨.)
 setup "hold:conflict,agent-ready" 200 0
+with_pr 77 "hold:conflict"
 jq --arg b $'마커 설명:\n```\n<!-- conflict-resume: 1 -->\n```\n끝' \
   '. + [{body: $b}]' "$tmp/comments.json" > "$tmp/comments.tmp" && mv "$tmp/comments.tmp" "$tmp/comments.json"
 run
 check "conflict ⓕ: 인용 마커는 0회로 센다 → resumed" "$(has_ev resumed)"
 check "conflict ⓕ: attempt=1"                  "$(ev_is resumed '.attempt == 1')"
 check "conflict ⓕ: escalated 아님"             "$(no_ev escalated)"
+check "conflict ⓕ: PR 칸 미러 flow:agent-ready 되붙임(#420 공유)" "$(haspl flow:agent-ready)"
+check "conflict ⓕ: PR hold:conflict 해제"       "$(lackspl hold:conflict)"
 
 # ⓖ 뮤테이션 방증 — conflict 갈래의 full-cycle 제외 한 줄을 지운 사본은 ⓓ 픽스처에서 재개해 버린다
 # (전체 스위트를 그 사본에 돌린 로그는 PR 본문에 — 여기서는 그 한 칸만 스위트 안에서 실증한다).

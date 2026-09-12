@@ -36,6 +36,12 @@
 #     뜻이 갈린다. 반송 두 전이가 PR 에 `flow:agent-ready` 를 붙이고(대기 칸), claim(claim-issue.sh)이
 #     그것을 `flow:claimed` 로 바꾸며(issue-runner), 워커가 처음 여는 PR 도 `--label flow:claimed` 로 태어난다.
 #     그래서 열린 agent PR 은 항상 어느 칸의 라벨을 하나 달고 있다(라벨 없는 열린 agent PR = 사고).
+#     보장 범위(#420): 이 표의 전이(반송·인계·정지는 `hold:<사유>` 가 칸이다) + claim + 워커의 첫 PR +
+#     재개 스윕의 **자동 재개 경로**(H:ladder→S0 — `resume-sweep.sh` 가 이슈의 `hold:ladder` 를 풀며 PR 의
+#     `hold:ladder` 를 뗄 때 이슈 칸에 맞는 미러를 되붙인다; 칸 라벨이 이미 있으면 겹치지 않는다) +
+#     디스패처 Maintain 규칙0(두 미러가 붙은 PR 은 건너뛴다). 보장 밖: 사람이 이슈의 `hold:policy`·
+#     `hold:conflict` 를 직접 푼 뒤 정지 미러 정리(#265)가 PR 의 사본만 떼는 경로(미러를 되붙이지 않는다),
+#     그리고 라벨 손편집.
 #     `⊘wk` 를 handoff-verify 에도 두는 건 사람이 claim 을 안 거치고 직접 인계하는 경우의 방어이고,
 #     verify-pick·closeout-pick·closeout-dup 의 것은 방어적 제거다(정상 흐름에선 이미 없다).
 #     `flow:ci`(로컬 CI 재실행 중)는 `flow:claimed` 안의 워커 내부 하위 상태라 둘이 같이 붙는다(정상).
