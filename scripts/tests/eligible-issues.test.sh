@@ -5,7 +5,9 @@
 #   ① 블로커 없는 후보는 stdout 에 남는다 — 그리고 **stdout 바이트가 그대로다**
 #      (디스패처 파이프라인의 SSOT. 진단이 한 글자라도 새면 여기서 빨개진다).
 #   ② OPEN 블로커로 탈락한 이슈마다 stderr `blocked: <repo>#<num> ← #<b>(<상태>)`.
-#      `<상태>` 는 블로커의 라벨로 정한다(needs-human→사람대기 · agent:claimed→구현중 ·
+#      `<상태>` 는 블로커의 라벨로 정한다(needs-human→사람대기 · hold:conflict→사람대기
+#      (#244 — `loop-status.sh` 의 사람대기 버킷 정의와 같은 집합) · 그 밖 hold:*→보류(#244) ·
+#      agent:claimed→구현중 ·
 #      flow:verify→검증대기 · flow:ready→마감대기 · harvesting→마감중 · 그 밖→대기).
 #   ③ 블로커가 CLOSED·MERGED(PR)·미존재면 통과하고 `blocked:` 줄이 없다.
 #   ④ 블로커 조회 일시 오류는 `(조회오류)` — 빈 결과와 실패를 구분한다(PR#139).
@@ -266,6 +268,44 @@ no_line "② 진단이 stdout 으로 새지 않는다" "$OUT" "blocked"
 has_line "⑦ 요약 — 막힘 7건 · 사람대기 1건" "$ERR" "blocked-summary: 막힘 7건 (사람대기 블로커 1건)"
 ck "⑦ 요약은 한 줄뿐" "$(count_of "$ERR" 'blocked-summary:')" "1"
 ck "⑤ 블로커 조회는 후보당 한 번(10건)" "$(count_of "$LOG" 'blocker ')" "10"
+
+# ── ②-b (#244) 기계 정지(hold:*)인 블로커는 `대기` 가 아니라 `보류` ────────────
+# 기계 정지가 `needs-human` 을 떼고 사유 라벨만 남기게 된 뒤, 이 줄이 없으면 홀드된
+# 블로커가 `대기`(= 곧 집힐 것)로 읽혀 하위가 왜 안 풀리는지 사람 눈에 안 보인다.
+# `사람대기` 카운트에는 들어가지 않는다 — 보류는 루프가 푸는 게이트지 사람 몫이 아니다.
+fx=$(mkfx bh 34)
+add_issue "$fx" 31 '["agent-ready"]' 'hold:ladder 블로커' 'Blocked by #910'
+add_issue "$fx" 32 '["agent-ready"]' 'hold:policy 블로커' 'Blocked by #911'
+add_issue "$fx" 33 '["agent-ready"]' 'needs-human+hold 블로커' 'Blocked by #912'
+add_blocker "$fx" 910 OPEN '["agent-ready","hold:ladder"]'
+add_blocker "$fx" 911 OPEN '["agent-ready","hold:policy","flow:verify"]'
+add_blocker "$fx" 912 OPEN '["agent-ready","needs-human","hold:ladder"]'
+run_sut "$fx"
+ck "②-b exit 0" "$RC" "0"
+has_line "②-b hold:ladder 단독 → 보류" "$ERR" "blocked: owner/repo#31 ← #910(보류)"
+has_line "②-b hold:policy + 단계 라벨 → 보류(단계보다 앞)" "$ERR" "blocked: owner/repo#32 ← #911(보류)"
+has_line "②-b needs-human 이 있으면 종전대로 사람대기" "$ERR" "blocked: owner/repo#33 ← #912(사람대기)"
+has_line "②-b 요약 — 보류는 사람대기 카운트에 안 든다" "$ERR" \
+  "blocked-summary: 막힘 3건 (사람대기 블로커 1건)"
+
+# ── ②-c (#244 반송②) `hold:conflict` 는 `보류` 가 아니라 `사람대기` ───────────
+# `loop-status.sh` 는 사람대기 버킷을 `needs-human` ∪ `hold:conflict` 로 정의한다
+# (:592). 충돌은 루프가 재시도로 못 푸는 사람 몫이라 그렇다. 여기서만 일반 `hold:*`
+# 갈래로 보내면 같은 라벨을 두 스크립트가 다르게 읽고, 막힌 하위 이슈가 `사람대기
+# 블로커` 카운트에서 빠져 경보에 안 잡힌다. 갈래 **순서**가 판정의 전부다 —
+# `*",hold:conflict,"*` 가 일반 `*",hold:"*` 뒤로 가면 이 칸이 다시 빨개진다.
+fx=$(mkfx bc 34)
+add_issue "$fx" 41 '["agent-ready"]' 'hold:conflict 블로커' 'Blocked by #920'
+add_issue "$fx" 42 '["agent-ready"]' 'hold:ladder 블로커' 'Blocked by #921'
+add_blocker "$fx" 920 OPEN '["agent-ready","hold:conflict"]'
+add_blocker "$fx" 921 OPEN '["agent-ready","hold:ladder"]'
+run_sut "$fx"
+ck "②-c exit 0" "$RC" "0"
+has_line "②-c hold:conflict 단독 → 사람대기(loop-status 와 일치)" "$ERR" \
+  "blocked: owner/repo#41 ← #920(사람대기)"
+has_line "②-c hold:ladder 는 종전대로 보류" "$ERR" "blocked: owner/repo#42 ← #921(보류)"
+has_line "②-c 요약 — conflict 는 사람대기 카운트에 든다" "$ERR" \
+  "blocked-summary: 막힘 2건 (사람대기 블로커 1건)"
 
 # ── ⑤ 본문 ∪ 라벨 dedupe — 같은 번호는 한 번만 조회한다 ────────────────────
 fx=$(mkfx c 34)

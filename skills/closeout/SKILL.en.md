@@ -90,6 +90,15 @@ Run `$SCRIPTS/closeout-reconcile.sh` and handle each event:
   resume).
 - `resume` — the PR is OPEN and still holds `harvesting`. Skip the steps the
   marker table shows as finished and resume the pipeline from where it stopped.
+- `human_hold` — the PR is OPEN but carries `needs-human` (a human is investigating), or
+  that label could not be read (`why` tells which). **Touch nothing** — leave one line in
+  ④ Report, `보류: PR #<pr>(<repo_short>) — 사람 보류(<why>)`, and touch the PR no further
+  this tick. Running it as `resume` would fall into the `bounced` resume procedure below and
+  fire `closeout-redispatch`, and that transition **strips** the `needs-human`·`hold:*` a
+  human just attached (exactly the risk ①-b excludes with its target filter, #151). An
+  unreadable label goes the same way — treating a hold whose absence was never proven as a
+  pass is fail-open. **Exit path**: when the human removes `needs-human`, the next tick comes
+  back as `resume` (`harvesting` stays, so the PR never drifts out of the lane).
 - `stale` — report only.
 
 Idempotent marker table (for re-judging finished steps — prevents duplicate work on
@@ -97,12 +106,82 @@ resume):
 
 | Step | Marker | Resume judgment |
 |---|---|---|
-| 1 verify | PR comment `마감 검증: ✅` (prefix — `마감 검증: ✅ 기각 승계` shares it and is caught too) | if present, skip step 1. **`마감 검증: ⚠ 보류` does not match** — if only a stale hold marker remains, step 1 (③-1) runs again (#198: leave the prefix at `마감 검증:` and the hold comment matches too, opening a window where a post-hold commit slips into the merge gate unverified) |
+| 1 verify | PR comment `마감 검증: ✅` (prefix — `마감 검증: ✅ 기각 승계` left by ①-c *rejection* shares it and is caught too) | skip step 1 only when `$SCRIPTS/closeout-step1-marker.sh <repo> <pr>` says `skip` (section right below — `verify` and any non-zero exit both mean **run it**) |
 | 2 merge | PR `MERGED` | if MERGED, merge is done (includes post-merge worktree cleanup) |
 | 3 reconcile | plan-doc diff (merge commit) + epic comment | if in the merge, done |
 | 4 deploy | `배포 대기:` comment / `deployed:<sha>` | if present, do not re-request |
 | 5 post | `✅ 스모크` comment / deploy issue CLOSED + verification·deploy-complete comment | if present, do not re-smoke (including when the deploy lane (deploy-cycle) finished verification and closed it) |
 | 6 spinoff | created-issue number comment | if present, do not re-issue |
+
+**A step-1 marker is not "present, therefore done" — it counts only as a pass verdict on the
+current head (#271).** The old table wrote step 1 as one line, "skip if a `마감 검증:` comment
+exists", and that premise **can be false in three directions**. All three end the same way: an
+unverified head reaches the step-2 merge gate, whose conditions (CI cache pass · zero
+`검증자 리뷰:` BLOCKERs · MERGEABLE) are all still true, so **it gets merged**:
+
+- (A) **The latest `마감 검증:` is `⚠ 보류`.** ③-1 ⓑ's hold comment shares the prefix, so the
+  table catches it — but `⚠ 보류` records that step 1 was **not** passed. And it is the
+  *latest* one that counts, not the mere existence of a ✅ (`✅ → ⚠` means the later ⚠
+  overrode that ✅ — the same trap #218 attempt 3 hit in `bounce-state.sh`).
+- (B) **The marker predates the current head commit.** If a rebase or a human push moved the
+  head, that verdict judged the old code (the #171 rule applied to ✅, applied to the step-1
+  marker too).
+- (C) **The marker precedes the newest bounce marker.** If the replacement worker posted ✅
+  after a bounce **without a new commit**, the head time is unchanged, so (B) never fires.
+
+The three are **ANDed**, and the judgment lives in `$SCRIPTS/closeout-step1-marker.sh
+<repo> <pr>`, **one place** (it gets the bounce marker set and ordering from
+`bounce-state.sh --marker-index` inside — never a second copy of the marker matching, #171).
+Skip step 1 **only when the output is exactly `skip`** — `verify` and a non-zero exit
+(lookup/parse failure) both mean **run it**. Re-running costs one verifier call; skipping
+costs an unverified merge, so the two are not symmetric.
+
+**For `resume`, the bounce state decides the resume point before the marker table does
+(#271).** The marker table's step-1 row ("skip step 1 if a `마감 검증:` comment exists")
+rests on **a premise that can be false** — if a `마감 검증:` comment left by an earlier
+round is already there (e.g. a PR whose ③-1 ⓑ `⚠ 보류` a human released so the next round
+came back), the table skips step 1 and sends the PR straight to **the step-2 merge gate**.
+That gate's conditions (CI cache pass · zero `검증자 리뷰:` BLOCKERs · MERGEABLE) are all
+still true exactly as they were right before the bounce, so **the very head that just drew a
+BLOCKER gets merged.** So `resume` runs `$SCRIPTS/bounce-state.sh <repo> <pr>` once
+**before** it looks at the marker table and picks the resume point from that value (**the
+same single place** ①-b uses — never a second copy of the judgment logic). That script can
+emit four values and **all four have a destination**:
+
+| `bounce-state.sh` | Meaning | `resume` point |
+|---|---|---|
+| `ok` | no bounce marker, or the last verdict after the newest bounce marker is `머지 판정: ✅` | **the marker table as-is** — skip the finished steps and resume where it stopped. The step-1 row's judgment is `closeout-step1-marker.sh`, one place, per the section above (bounce ordering (C), head freshness (B), and `⚠ 보류` (A) all live inside it — do not re-derive them here) |
+| `bounced` | no verdict comment after the newest bounce marker, or the last one is `머지 판정: 🔄` | **do not look at the marker table**; resume at ③-1 ⓐ's `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` **retry point** (procedure right below) — never step-1 re-verification or the step-2 merge |
+| `held` | the last verdict after the newest bounce marker is `머지 판정: ⚠ 보류` | **treat as `active`, touch nothing** — the worker raised that hold explicitly. Leave one line in ④ Report, `보류: PR #<pr>(<repo_short>) — 반송 뒤 워커 ⚠`, and touch the PR no further this tick (the same direction as ①-b — the sweep does not promote this value either, #218 second round) |
+| no output (exit 1 — no judgment) | comment lookup/parse failure | **treat as `active`, touch nothing** + one line in ④ Report, `BLOCKED: 반송 판정 실패 PR #<pr>(<repo_short>)` — treating a state whose non-bounce was *never proven* as a pass is exactly fail-open (the same direction as ①-b) |
+
+**`bounced` resume procedure — align the claim before re-running the transition.** Getting
+here means ③-1 ⓐ's restore (`closeout-pick`) put `harvesting` back on both the PR and the
+issue, but that restore may have landed on only one side. Read the issue side first with
+`gh issue view <issue> --repo <repo> --json labels` and branch (the PR side must carry
+`harvesting` or no `resume` would have fired at all):
+
+- The issue has `agent:claimed` = **a replacement worker is alive** (the dispatcher got there
+  first inside the restore window). Do not run the transition — the retry would strip that
+  worker's `agent:claimed`. Treat as `active`, touch nothing, and leave one line in ④ Report:
+  `보류: PR #<pr>(<repo_short>) — 교체 워커 점유(agent:claimed)`. When that worker finishes and
+  posts `머지 판정: ✅`, the next tick's value flips to `ok` and the PR returns to the marker
+  table path on its own.
+- The issue has neither `harvesting` nor `agent:claimed` = **a half restore** (the issue side
+  was left unoccupied — run the transition as-is and the dispatcher picks that issue up
+  meanwhile). Run `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` once more to align
+  both sides (idempotent, so the PR side is a no-op) and continue below. If it exits non-zero,
+  report `BLOCKED: 전이 실패 closeout-pick PR #<pr>(<repo_short>) — <one stderr line>` in
+  ④ Report and stop on that PR for this tick.
+- Both sides have `harvesting` = a whole restore. Continue below.
+
+Then re-run **only the transition call** from ③-1 ⓐ — **do not leave the bounce comment
+again.** It is already in the ledger (that is why the value is `bounced`), and a second one
+adds a round that never happened, making the next tick's judgment input false. If that retry
+fails **again**, take ③-1 ⓐ's failure branch as written (one restore call +
+`BLOCKED: 전이 실패 closeout-redispatch …`), leave it as that `BLOCKED:` line in ④ Report, and
+**touch that PR no further this tick** (never loop it inside the same tick — no infinite
+retries). The next tick's `resume` picks the same spot back up.
 
 **Epic sweep (end of ①, every tick)** — an epic whose leaves are all closed is closed by
 **no loop at all** (an epic is never picked up by a worker; it is a sub-issue rollup target).
@@ -183,10 +262,20 @@ missing from `head_at` and an unverified head would surface as a candidate.
 
 **Targets**: `me=$(gh api user -q .login)`, then `gh api -X GET search/issues -f q="user:$me
 is:open is:pr" -f per_page=100 -f sort=created -f order=asc` (FIFO). For each PR whose head is
-`agent/issue-*` and that is **not labeled `harvesting`**, **not labeled `flow:verify`**, and **not
-labeled `needs-human`**, judge it. A `needs-human` PR is a human hold (`hold:*` reason — verify-held ·
-closeout-blocked · the dispatcher's runner-held repair cap); adopting or re-dispatching it here would undo
-that hold (#151) — never pick it until a human removes the label. This target filter runs
+`agent/issue-*` and that is **not labeled `harvesting`**, **not labeled `flow:verify`**, **not
+labeled `needs-human`**, and carries **no `hold:`-prefixed label**, judge it. The two are
+**different stops** (#244): `needs-human` means a human set the stop by hand, while
+`hold:<reason>` *is* the machine stop (verify-held · closeout-blocked · the dispatcher's
+runner-held repair cap). The transition attaches **only** the reason label to a machine stop, so
+watching `needs-human` alone lets a held PR (none of the three labels, only `hold:*` left) become
+a target **again every tick** — re-posting the hold-note, and on the `stale_reverify` branch
+letting `closeout-redispatch` strip a hold verify-runner just set (#151, reproduced). Either way,
+adopting or re-dispatching it here would undo a stop that was just set, so never pick it until
+that label comes off — released by a human (`hold:conflict` · `needs-human`) or by the resume
+sweep (`hold:ladder`, and a `hold:policy` that passed re-review). The test is on the **prefix**, so
+new reasons (`hold:<new>`) do not break it and `holding`/`on-hold`/`area:hold` do not match — the
+same rule as the identical filter in `closeout-eligible.sh` (over-exclusion silently drops
+mergeable PRs from the queue, which is worse than the original defect). This target filter runs
 **first**, ahead of the 1) CONFLICTING branch as well (#206).
 
 **1) Bounce-marker gate first — before the branch splits, common to CONFLICTING and
@@ -269,8 +358,9 @@ bounced code as finished).
 **attempt 4 — how `held` gets *released*** (closeout-verification BLOCKER, PR #225): the `held`
 built in attempts 2·3 had **an entry path but no exit.** The candidate set was ✅ and ⚠ only,
 leaving `머지 판정: 🔄` out, so this sequence repeated every tick: ⑴ bounce marker ⑵ worker
-posts `⚠ 보류` → `held` → `needs-human`+`hold:policy` ⑶ **a human clears the hold and removes
-the labels** ⑷ the replacement worker resumes with `🔄` ⑸ next tick: `needs-human` is gone so
+posts `⚠ 보류` → `held` → `hold:policy` (before #244 this came paired with `needs-human`; now it
+is the reason label alone) ⑶ **a human clears the hold and removes
+the labels** ⑷ the replacement worker resumes with `🔄` ⑸ next tick: the stop labels are gone so
 the PR is swept again, but the verdict is **still `held`** → `closeout-blocked` fires **again**,
 **resurrecting the hold the human just cleared and cutting off the live replacement worker**
 (only a `✅` releases it, and it can never get there once cut off). That is the repo's
@@ -395,7 +485,7 @@ gate of their own:
 | `done_verdict` | latest `머지 판정: ✅` **and it is proven to postdate the current head commit** (#171) | eligible.sh's normal path handles it — sweep skips. But that normal path must **pass ①-c's direction judgment first** before ② Pick takes it (#198 — a hold a human released with "fix it" is not a merge candidate however fresh the ✅ looks). And **when ①-c's hold boundary is unresolved, do not skip — route it to ①-c** — because if a human writes the decision on the PR without the marker, eligible's `unresolved` gate (#72) drops that PR from the candidate list and ①-c never runs at all (a silent stall). **The boundary is defined in ①-c, in one place** — do not repeat a literal here (a hold that leaves only `<!-- hold-note: `, e.g. `closeout-blocked --reason conflict`, would fall outside a narrower literal and the promised re-entry would never happen) |
 | `stale_inline` | 🔄 + verifier CLEAN + past buffer (reached verification, only final verdict lost, #970-type) | **Adopt (merge)** — hand to ② Pick. ③ step 1 **re-verifies independently**, then closes out. **Do not create a new issue** (no redoing completed work). Except: a `stale_inline` coming out of the `bounced` branch in 1) is **re-dispatched, never adopted** (that CLEAN may predate the bounce). |
 | `stale_reverify` | 🔄 + verifier absent / unresolved BLOCKER + past buffer + **no progress evidence** (#206) (died before verifying, implementation may be incomplete, #971-type). A CONFLICTING PR whose bounce marker is latest landing here *is* the "died just before ✅ after a bounce" class from 1) | **Re-dispatch** — do not merge unfinished work on codex re-verify alone (user decision). `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (returns the linked issue to `agent-ready`, strips `agent:claimed` and the stage labels) → a fresh worker completes verifier→checkboxes→final verdict on the same branch. Idempotency marker (below). — if the head commit is fresh (#110, commit freshness folded into the stale clock), it falls back to `active` even when the verdict comment is stale, so a live attempt-N+1 worker isn't misclassified. |
-| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold — one of ①-c's three **hold boundary** forms) | **If the release already happened** (①-c 2)'s conjunction is true — a decision comment after the window ∧ `needs-human`·`hold:*` currently absent) **send it to ①-c** (correction→`closeout-redispatch` bounce, ambiguous→`closeout-blocked`, rejection→② Pick) — calling `closeout-blocked` again before that **revives, every tick, a hold the human just released** (the spot #225 nailed down — measure only the entry and skip the release path, and the loop fights the human). **If it is not yet released, needs-human** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `needs-human` + `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the human signal survives even with no linked issue), closeout leaves it (no auto-progress). |
+| `held` | latest `머지 판정: ⚠ 보류` (worker's explicit hold — one of ①-c's three **hold boundary** forms) | **If the release already happened** (①-c 2)'s conjunction is true — a decision comment after the window ∧ `needs-human`·`hold:*` currently absent) **send it to ①-c** (correction→`closeout-redispatch` bounce, ambiguous→`closeout-blocked`, rejection→② Pick) — calling `closeout-blocked` again before that **revives, every tick, a hold the human just released** (the spot #225 nailed down — measure only the entry and skip the release path, and the loop fights the human). **If it is not yet released, stop (`hold:policy`)** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` (attaches `hold:policy` to **both** the PR and the linked issue and clears the stage labels — the stop signal survives even with no linked issue. **`needs-human` is not attached** (#244): a machine stop carries only its reason label, and the human call is attached by `transition.sh policy-kept` only when the resume sweep's ③ re-review ends as "kept"), closeout leaves it (no auto-progress). |
 | `active` | in progress · buffer not reached · not our shape, **or the ✅'s freshness could not be proven** (✅ predates the head commit, or either timestamp could not be obtained, #171), **or there is progress evidence** (commit within `STALL_MIN` · the head SHA's CI ticket alive in the queue · **the current round's `agent:claimed` was attached within the timebox** — or that judgment itself is unavailable: queue.log unreadable · head lookup failed · claim lookup failed (`unknown` ≠ `none`), #206 · `progress-evidence.sh`). A MERGEABLE bounce round is already filtered to leave-it by the 1) gate and never reaches here (#218) — the only bounce rounds that arrive here came through 1)'s **CONFLICTING exception branch** (#206), and an undecidable bounce state was filtered there as well (#196). **Do not end here for a PR whose ①-c hold boundary is unresolved** (#198 — the boundary is defined in ①-c, in one place; do not repeat a literal here): ①-c reads the release direction, and if it is *correction* the answer is not `active` (leave it) but a **bounce** (`closeout-redispatch`), and if the direction is *ambiguous* it is `closeout-blocked` (human). Left untouched it simply becomes a candidate again next tick | **If ①-c's hold boundary is unresolved, go to ①-c** (correction→`closeout-redispatch` bounce, ambiguous→`closeout-blocked`, rejection→② Pick) — **otherwise leave it** (next tick). |
 
 **`flow:*` supplementary signal**: finish-classify judges by comments, but a stale PR with
@@ -454,7 +544,7 @@ exits 1 (or any non-zero) it lands in the same cell as a `pr-head-at.sh` failure
 `BLOCKED: 코멘트 조회 실패 PR #<pr>(<repo_short>) — pr-comments.sh exit <code>` in ④ Report and
 **do not change that PR's state** (untouched · retried next tick). **Do not send it to
 `closeout-blocked` (WARN #334).** The two failures are the same kind (no value obtained), and if
-only one of them changes state, a single transient `gh` failure pins `needs-human`+`hold:policy`
+only one of them changes state, a single transient `gh` failure pins `hold:policy`
 onto a healthy candidate — and that gate only opens once someone writes a "rejection/correction"
 answer that **cannot be invented**. A lookup failure says nothing about that PR, so there is no
 ground to change its state. **Release path**: when the lookup succeeds next tick it carries on (the
@@ -512,8 +602,10 @@ down — an existence test in front makes later branches unreachable).
   leave it (the hold stands)** — a human attached labels without a comment, and this is the
   **only exit in this section that reaches ② Pick without ever reading a label**, so the axis
   resolution test ⑵ closes is closed here too. No other gate covers it: the ①-b sweep's target
-  filter looks only at `needs-human` and lets an adopt candidate carrying just `hold:*` through,
-  and `closeout-eligible.sh`'s exclusion is **bypassed** by the `done_verdict` row.
+  filter and `closeout-eligible.sh`'s exclusion read **PR labels only** (since #244 they filter the
+  `hold:` prefix too, but still on the PR side) — a label `closeout-blocked` attached to **the issue
+  as well** and a human removed only from the PR is invisible to both, and the `done_verdict` row
+  **bypasses** that exclusion and arrives here directly.
   **Release path**: the human removes the labels.
 
 **Resolution test ⑴ — only a new completion verdict is a resolution (#198 10:11/P1 axis①).**
@@ -979,7 +1071,7 @@ conflict needing human judgment·incomplete doc reconcile·etc.) **must use the
 never a hand-run `gh issue edit`**. The transition table guarantees the `harvesting`·`flow:*`
 cleanup on both the PR and the issue (prevents stale stage-label residue).
 `closeout-blocked` **requires `--reason <conflict|policy|ladder> [--note "<질문 한 줄>" — policy·conflict 필수]`** (without it the
-transition refuses with usage exit 64 — no reasonless `needs-human` can be created). A
+transition refuses with usage exit 64 — no reasonless stop can be created). A
 rebase/semantic conflict is `conflict`; anything else the loop cannot decide (spec·policy·
 no verdict) is `policy`; `ladder` only when the rungs of
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
@@ -1067,13 +1159,107 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
   in ④ Report. A hunch ("looks like a duplicate") is not dup — if you cannot name the
   evidence commit, take the BLOCKER path below (`--reason policy`).
 - BLOCKER (including no-verdict, e.g. reason `검증자 미산출 — 타임아웃
-  (>VERIFIER_TIMEOUT_MIN분)`) → `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
+  (>VERIFIER_TIMEOUT_MIN분)`) → **there are two branches. The one-line test: if the defect
+  closes with an implementation, take ⓐ (bounce to the worker lane); if a spec/policy call is
+  still open, take ⓑ (hold for a human).** (With no linked issue — the PR body has no
+  `Closes`/`Refs` so `<issue>` cannot be resolved — there is nothing to return to
+  `agent-ready`, so ⓐ is unavailable and you take ⓑ.)
+- ⓐ **Defect that closes with an implementation → bounce to the worker lane** (observed
+  twice — with no comment channel for this branch the marker got hand-typed, #271).
+  Leave the bounce comment with
+  `$SCRIPTS/bounce-comment.sh closeout-blocker <repo> <pr> <issue> "<reason>"` — **never
+  hand-type the wording** (a dropped colon or reordering makes the `bounce-state.sh` bounce
+  safety net miss the PR, and `closeout-eligible` re-lists it as a merge candidate on the
+  **stale ✅ that predates the bounce**, #212 · #171). Write `<reason>` so a worker can read
+  it and fix it — what is blocked and why (do not borrow the `redispatch` channel's fixed
+  wording: "lost finish" is false on this branch, and a false reason becomes the next tick's
+  judgment input).
+  **If that comment exited zero, then** `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`
+  returns the linked issue to `agent-ready` (stripping `agent:claimed`, the stage labels,
+  `needs-human` and `hold:*` — do not hand-run `gh issue edit`) → **`blocked` exit** (no merge; do
+  not invent a new exit state — also count it as `재디스패치 N` in ④ Report). Once the re-dispatch
+  lands, issue-runner Dispatch reuses the same `agent/issue-N` worktree, so **the fix continues on
+  the same PR branch** and no new PR appears.
+  **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
+  report `BLOCKED: transition failed closeout-redispatch PR #<pr>(<repo_short>) — <one stderr line>`
+  in ④ Report, and **immediately re-run
+  `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` to restore the `harvesting` claim on
+  BOTH the PR and the issue** (the same call ③-1 makes to mirror the source issue — idempotent, and
+  it moves no label by hand). This branch **always** has a linked issue (without one you would have
+  taken ⓑ), so do not call it in ② Pick's `<repo> - <pr>` shape: restoring **the PR only** leaves the
+  issue side unoccupied in (b)·(c) below and the dispatcher picks that issue up. `agent-ready` left
+  on the restored issue is harmless — `eligible-issues.sh` excludes the flow-label mirror
+  (`harvesting`) **first**, so an `agent-ready` + `harvesting` issue is not dispatchable.
+  `transition.sh` **finishes both edits before it reads either side back** (`run_edit` PR →
+  `run_edit` issue → `verify_side` PR → `verify_side` issue). That makes three failure branches, and
+  the one call above returns all three to the pre-transition state:
+  - **(a) PR edit succeeds · issue edit fails (exit 2 — edit stage).** No `harvesting` on the PR;
+    the issue is untouched and keeps `harvesting`. The dispatcher will not take the issue, but no
+    lane recovers the PR — ①-b leaves it untouched because the bounce marker makes it `bounced`,
+    and `closeout-eligible` excludes `bounced` too. The restore call re-attaches `harvesting` to
+    the PR and is an idempotent no-op on the issue.
+  - **(b) Both edits succeed · PR readback mismatch (exit 1).** The issue is **already**
+    `agent-ready` + no `harvesting` + no `agent:claimed` — i.e. dispatchable. Left that way, the
+    next tick hands that issue to a worker who holds the same branch closeout is holding, and the
+    tick after that the retried `closeout-redispatch` **strips the live worker's `agent:claimed`**.
+    The restore call re-attaches `harvesting` to both sides and closes that eligibility again.
+  - **(c) Both edits succeed · issue readback fails (exit 1 mismatch · exit 2 lookup failure).**
+    The labels are either as in (b) (mismatch) or unknown (lookup failure), so (b)'s race may be
+    open. Attaching `harvesting` is idempotent, so **the same single call** as (b) closes it — do
+    not branch on a state query first.
+  Once all three have their occupation back to the pre-transition state, the next tick's ① Reconcile
+  picks that PR up again as `resume`. **That resume point is set by the bounce marker, not by the
+  marker table** — this branch leaves no step-1 `마감 검증: ✅` marker of its own, but **an earlier
+  round may already have left one**, so going to the marker table would put the head that just drew a
+  BLOCKER in front of the step-2 merge gate (whose conditions are all still true exactly as they were
+  right before the bounce. The step-1 marker judgment (A)·(B)·(C) sends most of those back to ③-1,
+  but here **not looking at the marker table at all** comes first — a bounce round belongs to the
+  worker lane, not the closeout lane). So follow ① Reconcile's `resume` value table —
+  as long as `bounce-state.sh` says `bounced`, ignore the marker table and resume at **the transition
+  call right above**, re-running the same transition at the same spot — `closeout-redispatch` is idempotent, so
+  re-running it is harmless (the same discipline #157 set for the `--note` transitions: a failure
+  leaves the pre-transition state and the caller re-runs the same transition on the next tick — and
+  if the restore fails too, the two `BLOCKED` lines in ④ Report are the human signal).
+  **If that comment exits non-zero (gh failure / bad args), do NOT run `closeout-redispatch`** —
+  the issue would go back to `agent-ready` while the PR carries no bounce marker, so the safety net
+  misses the PR and `closeout-eligible` re-picks it on the stale ✅ (exactly the state this
+  branch exists to prevent). **Fold this round into ⓑ instead.** The bounce never reached the
+  ledger, so the PR cannot be handed back to the worker lane — and this tick's BLOCKER cannot be
+  treated as if it never happened either:
+  `$SCRIPTS/transition.sh closeout-blocked <repo> <issue> <pr> --reason policy --note "반송 코멘트 게시 실패 — <one stderr line>"`
+  puts it on **human hold** → **`blocked` terminal state** (no new terminal state is created; the
+  reason enum is only `conflict|policy|ladder` and a human has to decide, so it is `policy` — the
+  real reason rides in `--note`). Report
+  `BLOCKED: 반송 코멘트 실패 PR #<pr>(<repo_short>) — <one stderr line>` in ④ Report.
+  **Why a label and not a comment**: the comment channel just failed, so recording the state through
+  that same channel fails for the same reason. `transition.sh` edits labels, an independent call, and
+  `needs-human` closes **all three entrances at once** — `closeout-eligible`, ①-b's target filter,
+  and ① Reconcile (`human_hold`) — removing the stale-✅ re-pick path.
+  **If that transition also exits non-zero**, leave that PR's terminal state unchanged, add one more
+  line, `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`, to
+  ④ Report, and **touch that PR no further this tick**. `harvesting` is still attached, so the next
+  tick's ① Reconcile emits `resume` — and with no bounce trace in the ledger `bounce-state.sh` says
+  `ok`, so that `resume` takes **the marker-table path**. What guarantees ③-1 runs again there is not
+  the bounce marker but **the step-1 marker judgment** (see "A step-1 marker is not 'present,
+  therefore done'" above — an earlier round's `⚠ 보류` is caught by (A), a stale marker behind a new
+  commit by (B), a marker before the bounce by (C), and `closeout-step1-marker.sh` answers `verify`).
+  **The remaining cell is not hidden**: after that double failure (comment post and label transition
+  both failing in the same tick), if a `마감 검증: ✅` **for the current head** is still alive in the
+  ledger, the step-1 judgment is `skip` and the step-2 gate judges that head again. Closing that cell
+  too would need a **third channel** for this tick's BLOCKER, and with two channels already down
+  there is no basis for expecting a third to succeed — so the two `BLOCKED:` lines in ④ Report are
+  the human signal (the same discipline the (a)·(b)·(c) restore section set: "if the restore fails
+  too, the two `BLOCKED` lines are the human signal").
+- ⓑ **A spec/policy call is still open (no-verdict included) → hold for a human.**
+  `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
   <!-- bodat:worker -->"`
   + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`
-  (removes `harvesting` from the PR, attaches `needs-human` + `hold:policy` to the linked
-  issue and clears the stage labels) → **blocked exit** (do not merge). A verifier BLOCKER
-  or no-verdict needs a spec/policy call, so the reason is `policy` (neither `conflict`
-  nor `ladder`).
+  (removes `harvesting` from the PR, attaches `hold:policy` to the PR and the linked
+  issue and clears the stage labels — `needs-human` is not attached, #244) → **blocked exit**
+  (do not merge). A BLOCKER or
+  no-verdict that lands on this branch needs a spec/policy call, so the reason is `policy`
+  (neither `conflict` nor `ladder`). A no-verdict is **always** this branch — with no verdict
+  there is nothing to state as the reason a worker should fix.
   **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
   report `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
   in ④ Report instead (the point is to leave the half-moved labels for the next tick to catch —
@@ -1247,8 +1433,24 @@ for out-of-merge-scope verification the step-1 verifier excluded from the merge 
 - If there is **nothing at all** to step through after deploy, exactly the one word
   `없음`. Do not append an explanation after it.
 - Otherwise a **`- [ ]` checkbox list**. One line = one action deploy-cycle ⑦ performs
-  once (on real hardware, a TEST-worker profile #18 dry run).
-  Background·rationale·caveats go in `## 변경 요약`; leave only the actions here.
+  once. Background·rationale·caveats go in `## 변경 요약`; leave only the actions here.
+- **A real-hardware line REQUIRES the `[칸 ③]` prefix marker** — write it as
+  `- [ ] [칸 ③] <action>`. Saying in prose that real hardware means an action only
+  ladder rung ③ (a TEST-worker profile #18 dry run) can step **does not substitute for
+  the marker**: the marker is **shape enforcement of the same grade** as `없음` and
+  `- [ ]`. Step 5 identifies real-hardware items by this marker alone, so a line missing
+  it is counted as an ordinary Chrome item, passed, and the ticket closes without the
+  TEST worker ever running (#309). Even when rungs ①② failed and the carried-over line
+  never says "TEST worker", **if the rung it steps is ③, attach the marker** — the basis
+  for the decision is the marker, not the meaning of the sentence. The marker is a
+  **literal**: write `[칸 ③]` exactly, never a translation ("[rung ③]" and the like) —
+  step 5 and the `bin/ci` guard both match one fixed string.
+- **An unmarked line must be one Chrome can step.** Step 5 steps unmarked lines with
+  Chrome, and when the means lives outside the browser (a worker box · `ssh` · a server
+  shell) so Chrome cannot even try, it prints no pass and **counts the line as held**
+  (the fail-closed branch in step 5 below) — which keeps this ticket open. If a line is
+  not rung ③ but still needs a means outside the browser, write that means into the line
+  so ⑦ can step it directly.
 
 Why the shape is enforced: the branch below reads this section to decide whether an issue
 is filed at all, and free prose leaves that decision to per-tick interpretation, which
@@ -1363,7 +1565,12 @@ a clear closing moment**.
 reported deployed, without any new detection mechanism (no polling/timing), actively run
 a Chrome smoke to judge it. Parse `## 검증 URL` (`<VERIFY_URL>`) and
 `## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body, fill
-`references/smoke-prompt.en.md`'s placeholders, load the chrome-devtools MCP tools via
+`references/smoke-prompt.en.md`'s placeholders
+(**substitute that section untouched — do not pre-filter the marked lines out.**
+The marker/denominator/held rules below are carried
+in the same wording inside `smoke-prompt.en.md`, so the prompt applies them itself;
+filtering once more before substitution creates a second calculator for real-hardware
+items), load the chrome-devtools MCP tools via
 ToolSearch, then **entry cleanup (idempotent — crash-resume defense): via `list_pages`,
 if a prior tick died before cleanup and left a smoke page, `close_page` it first.** Then
 `navigate_page` to `<VERIFY_URL>`, and compare each item via
@@ -1377,18 +1584,66 @@ structure/empty-state confirmation from real-data render confirmation in the res
   comment instead: `스모크 생략: 밟을 항목 0`. That issue is a container the deploy-cycle
   lane closes once the promotion is done, not a verification subject.
 - **Real-hardware items still open — do not close even on green (Chrome cannot step rung ③).**
-  Among the `- [ ]` lines in `## 라이브/하드웨어 검증 항목`, a line **whose action is
-  ladder rung ③ (a TEST-worker profile #18 dry run)** is a real-hardware item — step 4
-  writes those lines exactly that way (the `<LIVE_CHECKS>` shape discipline above), so
-  reuse that predicate here instead of inventing a second one. **Drop such lines from the
-  `<n>/<n>` denominator** — pretending Chrome compared them makes both a pass and a fail
-  a lie (the same false green as "no items" above). If dropping them leaves zero items to
+  Among the `- [ ]` lines in `## 라이브/하드웨어 검증 항목`, a line **carrying the
+  `[칸 ③]` prefix marker** is a real-hardware item — step 4 enforces that marker as shape,
+  of the same grade as `없음` and `- [ ]` (the `<LIVE_CHECKS>` shape discipline above), so
+  reuse that marker here instead of inventing a second predicate. The rationale (why such
+  a line is real hardware) is that the action the marker points at is ladder rung ③ (a
+  TEST-worker profile #18 dry run), which Chrome cannot step — but keep the rationale as
+  rationale and **decide by the marker**. Interpreting the sentence lets the same line
+  read as real hardware in one tick and as an ordinary item in the next (#309).
+  **Drop marked lines from the `<n>/<n>` denominator** — pretending Chrome compared
+  them makes both a pass and a fail a lie (the same false green as "no items" above). If dropping them leaves zero items to
   compare, do not open Chrome — skip the smoke exactly like the "no items" bullet above.
   And if **even one** such line remains, **do not close the deploy issue even when
   everything else passes** — rung ③ is deploy-cycle ⑦'s job, so closing here finalizes a
   ticket whose real-hardware items never met the TEST worker once. Leave the reason as a
   comment instead: `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦`. That issue is a
   container the deploy-cycle lane's ⑦ closes after it steps rung ③.
+  **Unmarked lines — do not catch them by a string; hand them to rung ③ fail-closed.**
+  Deploy issues filed before this discipline and still open carry no `[칸 ③]` at all
+  (anything filed before #309 merged). And **no fixed string exists** that picks the
+  real-hardware lines out of that backlog — a full census of the 27 open `- [ ]` lines
+  across the 10 open backlog tickets (bodat #5119·#5115·#5110·#5108·#5107·#5105·#5095·
+  #5094·#5078·#5065) on 2026-09-12: `TEST 워커 프로필 #18` matches **0 lines** (it is
+  nowhere in any body) · `TEST 워커` matches 1 (of 6 real-hardware lines) · `워커` matches
+  7, dragging in non-hardware lines such as a `/pcs` screen check and a server-log grep
+  while still missing the line stepped over `ssh test`. Every candidate is wrong in
+  **both directions**, and an approximation that errs toward erasing more is worse than
+  the original bug. So decide by **what stepping it produced**, not by a string:
+  - Unmarked lines are **stepped with Chrome first.** Never promote one to real hardware
+    by reading the sentence's meaning — that is the moment a second calculator for
+    "real-hardware items" is born.
+  - **Stepped, and the value differed from the expectation → fail** → the fail branch
+    below (file the follow-up issue). Chrome actually saw the screen or the value, so
+    this is a genuine defect.
+  - **The means of stepping it lives outside the browser, so Chrome could not even try**
+    (a worker box · `ssh` · driving the AdsPower client · a server shell `bin/rails
+    runner` · a `log/*.out` grep — anything needing a tool the production console screen
+    does not have) → **print it as neither a pass nor a fail; count it as held, exactly
+    like a marked line** — drop it from the denominator and **add it to** the marked
+    count in `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦`, leaving the issue open.
+    **Do not file a follow-up issue** — it is not a defect, only a different lane, and
+    dropping it into fail files a `needs-human` follow-up whose recorded reason is a
+    false "smoke failure" (#309 attempt 1 leaked exactly this way).
+  - The basis for this branch is **whether Chrome actually stepped the line**, not what
+    the line means. "Could not step it" is an observation, not an interpretation, so it
+    does not conflict with the no-promotion rule above — there is still one calculator.
+  - **Do not backfill the marker in its place.** Not every held line is rung ③ (some only
+    need a server shell). Keep the marker string single, but split the breakdown into one
+    comment line: `보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건 — 재고 · 4단계 표식 누락 · 또는 4단계가 수단을 적어 보낸 비-칸③ 줄`.
+  - **Exactly one category of newly filed line reaches this fail-closed branch.** The
+    step-4 shape discipline forces `[칸 ③]` on real-hardware lines, so an unmarked line is
+    **usually** one Chrome can step, and it is decided by the first branch (marker) or the
+    second (step it, pass/fail). The exception is a line step 4 sent to ⑦ with the means
+    written on it because it **is not rung ③ yet needs a tool outside the browser** (the
+    last sentence of step 4's "an unmarked line must be one Chrome can step" bullet) —
+    that line obeys the discipline and still cannot be stepped by Chrome, so it lands
+    here. Hence the **third category** in the breakdown above: recording such a line as a
+    "missing marker" **misrecords** a step 4 that followed the rule as one that broke it
+    (the verdict is the same; only the record is wrong). Once those two are set aside,
+    anything left in this branch is the signal that the ticket is **backlog, or that the
+    step-4 shape discipline was violated**.
 - **Already-closed deploy issue — skip the smoke.** If the deploy issue is already
   CLOSED and has a verification/deploy-complete comment, treat step 5 as complete —
   do not re-smoke, proceed to the next step (the case where the deploy lane
@@ -1409,15 +1664,20 @@ structure/empty-state confirmation from real-data render confirmation in the res
   re-smoke). Then remove the `needs-human` label from the deploy issue and close the
   deploy issue (the only remaining gate was verification and it passed, so closeout
   finalizes — the recommended option of the open decision).
-  **Unless the real-hardware exception above applies** — if even one rung-③ item is
+  **Unless the real-hardware exception above applies** — if even one rung-③ item
+  (a marked line, or a line held unstepped by the fail-closed branch above) is
   still `- [ ]`, stop at the label cleanup, leave the issue open, and finish with the
   `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑦` comment (verification was not the only
   remaining gate — rung ③ is). Since #243 a step-4 issue
   never carries `needs-human` in the first place — this removal is harmless leftover
   cleanup for issues filed before that (`--remove-label` is a no-op for an absent label).
-- **fail (any item fails)** → do not fix it directly; use the existing publish path: an
+- **fail (any item fails)** — **only lines Chrome actually stepped reach here.** Lines
+  held unstepped by the fail-closed branch above are not failures, so drop them from the
+  publish targets below (filing a follow-up with a "smoke failure" reason for a line that
+  was never stepped records a non-defect as a defect — #309). → do not fix it directly; use the existing publish path: an
   agent-ready issue via `references/spinoff-issue.md` if auto-fixable (**use step 6's
-  "issuance command" form verbatim** — `--label agent-ready --label spinoff --label <P1|P2>`;
+  "issuance command" form verbatim** — `spinoff-inherit.sh` inheritance plus
+  `--label agent-ready --label spinoff --label "$priority"`;
   no prose substitute here either), a `--label needs-human` issue if live verification is needed.
   If the same failure recurs `REPAIR_RECUR_LIMIT`
   times, escalate to `needs-human` (**exhausted exit**). Do not close the deploy issue.
@@ -1446,19 +1706,40 @@ structure/empty-state confirmation from real-data render confirmation in the res
 
 **Step 6 — spinoff issues.** Fill `references/spinoff-issue.md` with the worker PR
 body's `follow-up:` items + adjacent work the step-1 diff review flagged, and issue an
-agent-ready issue. Link it as a sub-issue if there is an epic, or as a standalone
-issue if not. Record the created number in a comment on the original PR (a
-duplicate-issuance marker).
+agent-ready issue. **A spinoff inherits its parent's epic and priority mechanically,
+every time** (#261) — `$SCRIPTS/spinoff-inherit.sh` emits `epic=` for the body's first
+line `Epic #N` and `priority=` for the P label. Record the created number in a comment
+on the original PR (a duplicate-issuance marker).
 
+- **Deciding the parent (the input to inheritance).** The parent is, first and foremost,
+  the **N in the closing PR's head branch `agent/issue-<N>`**. Use
+  `closingIssuesReferences` only to **cross-check** that N appears in that list, or as a
+  **fallback** when the head branch is not of the form `agent/issue-*` — `[0]` is not
+  guaranteed to be the branch's issue (measured: `PR #113` had `head=agent/issue-109` but
+  `closingIssuesReferences=[108, 109]`, so `[0]` was **#108**, the wrong issue. The same
+  trap silently switched off an evidence source at `finish-classify.sh:317-318`). If
+  neither source yields a parent, **do not issue** — report
+  `BLOCKED: spinoff parent unknown — PR #<pr>` in ④ Report (never issue without inheritance).
 - **Issuance command (required form — do not substitute prose).** Write the filled
   `spinoff-issue.md` to a file and pass it via `--body-file` (the template is
   **body-only** — labels written there render into the issue body; labels must come
   from the command line):
 
   ```
+  eval "$($SCRIPTS/spinoff-inherit.sh <repo> <parent-issue#>)"   # epic= · priority=
   gh issue create --repo <repo> --title "<title>" --body-file <body-file> \
-    --label agent-ready --label spinoff --label <P1|P2> [--label <repo-convention label>...]
+    --label agent-ready --label spinoff --label "$priority" [--label <repo-convention label>...]
   ```
+
+  `spinoff-inherit.sh` reads the parent **once** and emits exactly two lines,
+  `epic=<N|->` and `priority=<P0|P1|P2>` (read-only — it never edits the parent).
+  **On exit 1 (no output), stop issuing** — report it as the same BLOCKED as an unknown
+  parent above. Fill the body file's `<EPIC_LINE>` slot with the single line `Epic #N`
+  when `epic=N`, or with an **empty line** when `epic=-` — an epic is linked by that
+  **dedicated body line**, not by a sub-issue link or a label (#260: `loop-status.sh`'s
+  epic section counts leaves by that line; a prose `… epic #N …` is not a signal).
+  Never raise `priority` by hand — bumping a spinoff to P1 because it "looks urgent" is
+  exactly today's inflation; raising it is a human's call at the epic level.
 
   **`--label agent-ready` is not optional** — `eligible-issues.sh` gates dispatch on
   `open + agent-ready + ¬agent:claimed`, so without it the issue is created but
@@ -1467,7 +1748,9 @@ duplicate-issuance marker).
   the loop — while step 4, whose command literally carries the label (back then
   `--label needs-human`, today `--label deploy-wait`, #243), was
   correct on all 186. The step with a command did not leak; the prose-only step did).
-  Attach a priority (`P1`/`P2`) too — without one it sorts last (`P0 > P1 > P2 > none`).
+  `--label "$priority"` is **not optional** either — without one the issue sorts last
+  (`P0 > P1 > P2 > none`). Do not invent that value; use exactly what the helper emitted
+  (if the parent carries no P label the helper hands you `P2`).
   Add the other axes per repo convention (BoDAT: `difficulty:*`·`frontend` (only when UI is
   touched)·`needs:hardware` — the repo CLAUDE.md label section is the SSOT), but **never let
   convention labels displace `agent-ready`** —
@@ -1483,9 +1766,18 @@ duplicate-issuance marker).
   (never lose the issuance) and report `BLOCKED: spinoff issue labeling failed —
   #<number>` in ④ Report.
 - **Verify right after issuance.** Check with
-  `gh issue view <number> --repo <repo> --json labels` that **both** `agent-ready` and
-  `spinoff` actually landed; if either is missing, top it up with
+  `gh issue view <number> --repo <repo> --json labels,body` that
+  ⑴ **both** `agent-ready` and `spinoff` actually landed; if either is missing, top it up with
   `gh issue edit <number> --repo <repo> --add-label agent-ready --add-label spinoff`.
+  ⑵ **Check the `Epic` line in the same place** — if the helper emitted `epic=N` but the new
+  issue's **first line is not `Epic #N`**, the `<EPIC_LINE>` substitution leaked. Fix it
+  **immediately** with `gh issue edit <number> --repo <repo> --body-file <corrected body file>`
+  (right alongside the label top-up). Skip this and the spinoff stays an orphan outside the
+  epic, invisible forever to `loop-status.sh`'s leaf rollup.
+- **Marker comment on the original PR.** After issuing, comment
+  `파생: #<new number> (Epic #<N|없음> · <P>)` on the original PR — the inheritance result is
+  readable at a glance, and ④ Report's `파생` item uses the **same shape** (so spinoffs leaking
+  outside their epic are observable every tick).
 - **Do not issue what step 3 already absorbed.** A finding that passed step 3's
   "absorb surface corrections" criterion (does this flip the pass/fail of any test?)
   and rode along in that commit is not remaining work. When one finding mixes surface
@@ -1529,7 +1821,10 @@ if it became that tick's Pick), and `stale_reverify` re-dispatches / `held` need
 
 Below that, **name the numbers item by item** — counts alone do not tell the next tick where
 each PR/issue went:
-`closed: PR #4795(bodat)←#4788 · spinoff: #4823(bodat)←PR #4788 · re-dispatched: #4770(bodat, stale_reverify)`.
+`closed: PR #4795(bodat)←#4788 · spinoff: #4823(bodat)←PR #4788 (Epic #4968 · P2) · re-dispatched: #4770(bodat, stale_reverify)`.
+Write the spinoff item in the **same shape** as step 6's PR marker comment —
+`#<new number> (Epic #<N|없음> · <P>)` — so spinoffs that failed to inherit an epic
+(`Epic 없음`) are visible as they accumulate, tick by tick.
 The repo short-name rule is the same as `loop-status.sh`'s (the repo part of `owner/repo`
 lowercased — bodat·bodac; `issue-runner` alone maps to `runner`).
 Epics closed by ①'s epic sweep are appended to the same line as
@@ -1591,7 +1886,8 @@ Non-operational notes — they do not affect tick execution.
 - Operation: run closeout as a `/loop` session separate from issue-runner
   (e.g. `/loop 20m /closeout`) — the two coordinate occupation purely by label.
 - Dependencies: the deterministic helpers (`closeout-reconcile.sh`·
-  `closeout-eligible.sh`·`closeout-ci-pass.sh`·`transition.sh` (label moves)·
+  `closeout-eligible.sh`·`closeout-ci-pass.sh`·`closeout-step1-marker.sh`
+  (the ① marker table's step-1 judgment)·`transition.sh` (label moves)·
   `loop-status.sh` (the ④ Report snapshot)) live in `$SCRIPTS`
   (=`~/.claude/skills/issue-runner/scripts`), and the 3 references
   (`verifier-prompt.md`·`deploy-check-issue.md`·`spinoff-issue.md`) live in

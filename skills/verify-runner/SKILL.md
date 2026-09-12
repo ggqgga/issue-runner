@@ -25,8 +25,10 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
   틱을 기다리지 말고** ①② 로 되돌아 다음 후보를 이어간다(아래 ⑤ Drain). 이 노브가
   E2E 크롬 부하 상한이다 — 절대 올리지 마라(동시 실행 = 크롬 자기포화 = 타임아웃).
 - `VERIFY_ATTEMPTS_LIMIT = 3` — 같은 PR 검증이 N회 실패(재디스패치)하면 그 다음엔
-  재디스패치 대신 `needs-human` 으로 승격한다(무한 반송 서킷 브레이커). 카운트는 PR
-  본문 `<!-- verify-attempt: N -->` 주석에 누적(issue-runner repair-count 동형).
+  재디스패치 대신 `hold:policy` 로 정지한다(무한 반송 서킷 브레이커 — 아래 ④ **held**,
+  `verify-held --reason policy`). 사람 호출(`needs-human`)은 그 정지의 재심이 "사람 몫
+  유지" 로 끝났을 때만 붙는다(#244 — issue-runner ① 의 `policy-kept` 가 유일한 생산자다).
+  카운트는 PR 본문 `<!-- verify-attempt: N -->` 주석에 누적(issue-runner repair-count 동형).
 - `STALE_FINISH_MIN = 30` — `finish-classify.sh` 시간버퍼(분). 재사용.
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
 - `VERIFIER = codex:codex-rescue` — diff correctness 검증자 서브에이전트 타입.
@@ -244,10 +246,11 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 실장비를 요구해 못 돈 경우:
 `gh pr comment <pr> --repo <repo> --body "검증 보류: <사유> — 사람 확인 필요
 <!-- bodat:worker -->"` + `$SCRIPTS/transition.sh verify-held <repo> <issue|-> <pr> --reason <conflict|policy|ladder> [--note "<질문 한 줄>" — policy·conflict 필수]`
-(PR 의 `flow:verify` 제거 + PR 과 — 있으면 — 연결 이슈 **양쪽**에 `needs-human` +
-`hold:<reason>` 부착. 연결 이슈가 없어도 PR 에 사람 신호가 남는다). **held 종료.**
+(PR 의 `flow:verify` 제거 + PR 과 — 있으면 — 연결 이슈 **양쪽**에 `hold:<reason>` 부착.
+`needs-human` 은 **안 붙는다**(#244 — 기계 정지는 사유 라벨 하나뿐이고, 게이트는 `hold:`
+접두를 직접 본다). 연결 이슈가 없어도 PR 에 정지 신호가 남는다). **held 종료.**
 **`--reason` 은 필수다** — 빠지면 전이가 usage exit 64 로 거절한다(사유 없는
-`needs-human` 을 만들 수 없게 하는 게이트). 이 문단의 사유 배정:
+정지를 만들 수 없게 하는 게이트). 이 문단의 사유 배정:
 - **재디스패치 상한 초과** → `policy`. 루프가 정한 한도에 걸린 것이라 한도·범위를
   사람이 다시 정해야 한다.
 - **연결 이슈 부재** → `policy`. 어느 이슈에 붙일지가 사람 결정이다.

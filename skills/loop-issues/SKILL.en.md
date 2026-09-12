@@ -36,16 +36,58 @@ context — the issue body is the only spec.
    line and the label are combined with **OR**, and `<N>` is the **issue number** —
    when the blocker issue is CLOSED the gate releases automatically. Either one
    suffices.
+
+   **What counts as a dependency**: attach `Blocked by` only when B needs A's output
+   (a schema, migration, function, command, or label) **at compile/run time, so that
+   B's tests cannot run without A**. "It feels natural to do it first", "same topic",
+   and "easier to review" are **not** dependencies — one blocker rung costs a full
+   lap of all three loops (implement · verify · close out) (measured 2026-09-11 on
+   the BoDAT S series, 6 rungs serialized).
+
+   **Depth cap**: if following blockers up from a leaf takes **more than 2** serial
+   hops, revisit the split before closing out. For every hop you keep, append a
+   one-line "why is this a real dependency" **after** the number on the same line —
+   e.g. `Blocked by #4976 — it reads the adspower_commands table`. The dispatcher
+   regex only reads the head of the line
+   (`^[[:space:]]*blocked[- ]by[[:space:]]+#[0-9]+`), so the trailing reason is
+   harmless.
+
+   **Epic line `Epic #N`**: a leaf that belongs to an epic carries a **dedicated
+   line** `Epic #N` in its body — same shape as `Blocked by #N` (line-anchored, one
+   per line, **one per issue**, case-insensitive). A `… epic #N …` buried in prose is
+   not line-anchored and the dispatcher cannot read it. `<N>` is the **issue** number
+   of the issue labeled `epic`. It is **required** on a leaf that has an epic, and
+   **absent** on a standalone issue. This line is a **topic link**, not a dependency,
+   so it never blocks dispatch — do not express "I'd rather this one went first
+   within the epic" as a `Blocked by` (the `Epic #N` line plus finish-first ordering
+   handles that).
 5. **Hierarchy**: if it is an epic (parent), split it into sub-issues and attach
    agent-ready **only to leaves**. Never attach it to the epic itself.
-6. **Priority**: attach exactly one P0/P1/P2 label (without one it is treated as
-   lowest priority).
+6. **Priority**: attach exactly **one** P0/P1/P2 label (without one it is treated as
+   lowest priority). Priority is not scored per leaf — it is set **per topic (epic)**
+   and inherited:
+   - **P0** = outage / blocking — the whole loop is waiting on it.
+   - **P1** = a leaf of the epic you are finishing right now. It inherits the epic's
+     P verbatim (leaves are not scored individually).
+   - **P2** = the default — standalone issues with no epic, and leaves of an epic
+     whose priority has not been decided yet.
+
+   **At most two** P1 epics at a time — to raise a third, lower one of them.
+   **The epic itself never gets a P** (an epic carries only the `epic` label — same
+   rule as hierarchy item 5). An epic's priority is expressed through its leaves, so
+   open leaves of one epic carrying different P values means the inheritance broke
+   (`loop-status.sh` reports it as an `에픽 내 P 혼재` warn).
+   A **spinoff filed by closeout step 6 inherits its parent** — it takes the parent's
+   `Epic #N` line and P verbatim, and when the parent is standalone (no epic) it gets
+   no `Epic` line and P2.
 7. **Repo readiness**: does the repo have (a) the label set —
    if not, run `~/.claude/skills/issue-runner/scripts/setup-labels.sh <owner/repo>`;
    (b) build/test commands in CLAUDE.md — without them the worker cannot verify
    its work. Fix these first.
-8. **Conflict forecast**: does it touch the same module as another issue that is
-   already agent-ready/claimed? If so, consider serializing with Blocked by.
+8. **Conflict forecast**: serialize with `Blocked by` **only when you are sure it
+   edits the same file** as another issue that is already agent-ready/claimed, and
+   count that hop against item 4's depth cap. If it is merely the same module, or you
+   are not sure, **leave them parallel and resolve with a rebase**.
 9. **Difficulty assessment**: if it touches multiple files/modules at once, has more
    than one viable design choice, or the acceptance criteria alone do not pin down a
    single implementation path, it is **high**.
@@ -62,8 +104,11 @@ context — the issue body is the only spec.
    more accurate both the worker's implementation and the verifier's review. The
    criterion is not task count but **whether the seam is independently verifiable**:
    - If each piece leaves an independently observable, verifiable result (e.g. a
-     data-ledger issue and a viewing-UI issue on top of it) → split and serialize
-     with `Blocked by`. Split pieces usually drop to medium or below, and
+     data-ledger issue and a viewing-UI issue on top of it) → **split, but attach
+     `Blocked by` only between pieces that actually depend on each other** (splitting
+     ≠ serializing — apply item 4's definition of a dependency). Ordering preference
+     inside one epic is carried by the `Epic #N` line plus finish-first ordering, not
+     by a blocker. Split pieces usually drop to medium or below, and
      hardware verification (needs:hardware) stays only on the pieces that need it.
    - If the seam runs through the middle of a contract so that either half is
      meaningless alone (e.g. sender/receiver — neither has an observable result by
@@ -118,11 +163,17 @@ no issue exists, **create it first**, then run the closing checklist.
    a self-contained spec from the moment it's created.
 4. **Split large work** (checklist item 9): if it's high (several modules, or more
    than one reasonable design), break it into independently-verifiable sub-issues
-   serialized with `Blocked by` (create each), or keep it whole and attach a `## Plan`
+   (create each) and attach `Blocked by` **only between pieces that actually depend**
+   on each other (splitting ≠ serializing — checklist item 4's definition), or keep it
+   whole and attach a `## Plan`
    (numbered tasks + file paths + per-task verification). A parent gets only the `epic`
-   label; `agent-ready` goes on leaves only.
+   label; `agent-ready` goes on leaves only. **Every** leaf split out of an epic
+   carries an `Epic #N` line pointing at the parent and gets the **same P**
+   (checklist item 6's inheritance).
 5. **Create + close out**: `gh issue create --repo <owner/repo> --title ... --body ...`
-   (create blockers first to get their numbers), then run each issue through the
+   (create blockers first to get their numbers; when splitting an epic, create **the
+   epic first** so you have the number for `Epic #N` — the epic itself gets only the
+   `epic` label and no P), then run each issue through the
    closing steps above to attach a priority + `agent-ready` (last). If any checklist
    item fails, don't attach the label — report what's missing. Creating an issue does
    not auto-enroll it.
@@ -152,7 +203,9 @@ label them").
    - **READY** — passes the checklist. Include a proposed priority (P0/P1/P2) to
      attach.
    - **FIXABLE** — name the missing items (e.g. no Test plan, vague acceptance
-     criteria, missing Blocked by) and propose a body amendment.
+     criteria, missing `Blocked by`, **an unnecessary `Blocked by` (not a real
+     dependency)**, **chain depth exceeded**, **missing `Epic #N`**, **mixed P inside
+     one epic**) and propose a body amendment.
    - **UNFIT** — an epic (split first), needs a human decision, or requires a spec
      rewrite. State the reason.
 3. **Report**: present the results as a table —

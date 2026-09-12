@@ -14,11 +14,12 @@
 #   handoff-verify        | flow:verify | flow:ci flow:codex                 | flow:verify | agent:claimed
 #   verify-pass           | flow:ready  | flow:verify                        | flow:ready  | flow:verify
 #   verify-redispatch     | —           | flow:verify ⊘hold                  | agent-ready | flow:verify agent:claimed ⊘hold
-#   verify-held †         | needs-human hold:R | flow:verify ⊘R              | needs-human hold:R | flow:verify agent:claimed ⊘R
+#   verify-held †         | hold:R      | flow:verify ⊘R                     | hold:R      | flow:verify agent:claimed ⊘R
 #   closeout-pick         | harvesting  | flow:ready flow:codex flow:ci flow:verify | harvesting | flow:ready flow:verify
-#   closeout-blocked †    | needs-human hold:R | harvesting ⊘R               | needs-human hold:R | harvesting flow:ready flow:verify ⊘R
+#   closeout-blocked †    | hold:R      | harvesting ⊘R                      | hold:R      | harvesting flow:ready flow:verify ⊘R
 #   closeout-redispatch   | —           | harvesting flow:ready flow:verify ⊘hold | agent-ready | harvesting flow:ready flow:verify agent:claimed ⊘hold
-#   runner-held(#151)     | needs-human hold:<r> | (다른 hold)                        | needs-human hold:<r> | agent:claimed (다른 hold)
+#   runner-held(#151)     | hold:<r>    | (다른 hold)                        | hold:<r>    | agent:claimed (다른 hold)
+#   policy-kept(#244)     | needs-human | —                                  | needs-human | —
 #   closeout-dup ‡        | dup         | harvesting flow:ci flow:codex flow:verify flow:ready | (라벨 편집 없음 — ④ release-labels.sh) |
 #
 #   기호: `hold:R` = `hold:<--reason>` · `⊘R` = 나머지 두 `hold:*`(사유 교체가 멱등이 되게)
@@ -29,12 +30,18 @@
 #     칸 외엔 건드리지 않는다(어느 remove 칸에도 없다). 근거는 release-labels.sh 의 #117:
 #     OPEN 이슈의 agent-ready 를 떼면 디스패치 자격만 사라져 조용히 좌초한다.
 #     (예외는 closeout-dup 뿐 — 이슈를 **닫으므로** release-labels.sh 가 회수한다.)
-#   · `needs-human` 은 직교하는 일시정지 플래그 — 위에 적힌 전이 외엔 건드리지 않는다.
-#     사람 대기 두 전이(verify-held·closeout-blocked)는 **PR 에도** 붙인다: 연결 이슈 없는
-#     PR(`issue=-`)은 정식 호출 형태인데, 이슈에만 붙이면 사람 신호가 아무 데도 안 남고
+#   · `needs-human` 은 **사람이 직접 세운 정지** 하나만 뜻한다(#244, 플랜 3단계). 기계 정지
+#     세 전이(verify-held·closeout-blocked·runner-held)는 `hold:<사유>` 만 붙인다 — 겹쳐
+#     붙이던 옛 표에서는 `needs-human` 이 "사람 호출" 이 아니라 "루프 손대지 마" 로 읽혀,
+#     사람 대시보드의 사람대기 칸이 **손댈 게 없는 것**(창이 지나면 루프가 스스로 재개하는
+#     `hold:ladder`)으로 찼다. 루프가 `needs-human` 을 붙이는 곳은 이제 `policy-kept`
+#     하나뿐이다 — `hold:policy` 재심(#155)이 "사람 몫 유지" 로 끝났을 때.
+#     이미 붙어 있는 `needs-human`(사람이 손으로 세운 것)은 위에 적힌 전이 외엔 건드리지
+#     않는다. 기계 정지 세 전이는 **PR 에도** 사유 라벨을 붙인다: 연결 이슈 없는
+#     PR(`issue=-`)은 정식 호출 형태인데, 이슈에만 붙이면 정지 신호가 아무 데도 안 남고
 #     exit 0 `ok` 로 끝나 조용히 사라진다.
-#   · 사람 대기 사유는 라벨이다(#147) — `needs-human` 만으론 왜 멈췄는지 목록에서 안 보여
-#     사유 없는 쓰레기통이 됐다. 그래서 `--reason` 이 **필수**고, `dup`·`hardware` 는 사유가
+#   · 정지 사유는 라벨이다(#147) — 사유가 없으면 왜 멈췄는지 목록에서 안 보여 쓰레기통이
+#     된다. 그래서 `--reason` 이 **필수**고, `dup`·`hardware` 는 사유가
 #     될 수 없다: 중복은 `closeout-dup` 이 닫고, 실장비는 검증 사다리를 오른다.
 #   · 반송 두 전이(verify-redispatch·closeout-redispatch)는 `needs-human`·`hold:*` 를 뗀다 —
 #     반송 = 사람 대기 해제. 재개 스윕(#147 §4)이 이 전이로 멈춘 건을 다시 태운다.
@@ -72,7 +79,8 @@ set -uo pipefail
 usage() {
   echo "usage: transition.sh <전이> <owner/repo> <issue#|-> [pr#|-] [--reason R] [--note \"…\"]" >&2
   echo "  전이: handoff-verify verify-pass verify-redispatch verify-held \\" >&2
-  echo "        closeout-pick closeout-blocked closeout-redispatch closeout-dup runner-held" >&2
+  echo "        closeout-pick closeout-blocked closeout-redispatch closeout-dup runner-held \\" >&2
+  echo "        policy-kept" >&2
   echo "  --reason <conflict|policy|ladder>: verify-held·closeout-blocked·runner-held 에 **필수**(다른 전이엔 금지)" >&2
   echo "        dup 은 closeout-dup 이 닫고, hardware 는 검증 사다리를 오른다 — 사유가 될 수 없다" >&2
   echo "  --note \"<근거>\": closeout-dup 에 **필수** · --reason policy|conflict 에 **필수**(사람이 답해야 할" >&2
@@ -147,14 +155,14 @@ case "$name" in
     pr_add=""; pr_rm="flow:verify needs-human $HOLD_ALL"
     iss_add="agent-ready"; iss_rm="flow:verify agent:claimed needs-human $HOLD_ALL" ;;
   verify-held)
-    pr_add="needs-human hold:$reason"; pr_rm="flow:verify $(hold_others "$reason")"
-    iss_add="needs-human hold:$reason"; iss_rm="flow:verify agent:claimed $(hold_others "$reason")" ;;
+    pr_add="hold:$reason"; pr_rm="flow:verify $(hold_others "$reason")"
+    iss_add="hold:$reason"; iss_rm="flow:verify agent:claimed $(hold_others "$reason")" ;;
   closeout-pick)
     pr_add="harvesting"; pr_rm="flow:ready flow:codex flow:ci flow:verify"
     iss_add="harvesting"; iss_rm="flow:ready flow:verify" ;;
   closeout-blocked)
-    pr_add="needs-human hold:$reason"; pr_rm="harvesting $(hold_others "$reason")"
-    iss_add="needs-human hold:$reason"; iss_rm="harvesting flow:ready flow:verify $(hold_others "$reason")" ;;
+    pr_add="hold:$reason"; pr_rm="harvesting $(hold_others "$reason")"
+    iss_add="hold:$reason"; iss_rm="harvesting flow:ready flow:verify $(hold_others "$reason")" ;;
   closeout-redispatch)
     pr_add=""; pr_rm="harvesting flow:ready flow:verify needs-human $HOLD_ALL"
     iss_add="agent-ready"; iss_rm="harvesting flow:ready flow:verify agent:claimed needs-human $HOLD_ALL" ;;
@@ -162,8 +170,15 @@ case "$name" in
     # 디스패처(issue-runner) 자체의 사람 대기 — 죽은 워커 BLOCKED · 보수 상한(#151).
     # PR 이 없을 수 있어 `-` 허용. 사다리 라벨(flow:*·harvesting)은 건드리지 않는다 — 디스패처가
     # 멈추는 시점의 PR 은 워커 소유 단계(flow:ci/없음)라 뗄 단계 라벨이 없다.
-    pr_add="needs-human hold:$reason"; pr_rm="$(hold_others "$reason")"
-    iss_add="needs-human hold:$reason"; iss_rm="agent:claimed $(hold_others "$reason")" ;;
+    pr_add="hold:$reason"; pr_rm="$(hold_others "$reason")"
+    iss_add="hold:$reason"; iss_rm="agent:claimed $(hold_others "$reason")" ;;
+  policy-kept)
+    # `hold:policy` 재심(#155)이 "사람 몫 유지"(`<!-- policy-review: kept -->`)로 끝났다 —
+    # 루프가 `needs-human` 을 붙이는 **유일한** 자리다(#244). 떼는 라벨은 없다: `hold:policy`
+    # 는 사유로 남고(사람대기 줄에 "왜" 가 계속 보인다), 단계 라벨은 이미 홀드 전이가 정리했다.
+    # PR 미러도 같이 — 정지 라벨은 이슈와 PR 양쪽에 붙이고 함께 되돌리는 것이 규약이다.
+    pr_add="needs-human"; pr_rm=""
+    iss_add="needs-human"; iss_rm="" ;;
   closeout-dup)
     # 라벨 이동은 ① 단계뿐 — PR 만. 이슈 라벨은 ④ release-labels.sh 가 정리한다.
     pr_add="dup"; pr_rm="harvesting flow:ci flow:codex flow:verify flow:ready"

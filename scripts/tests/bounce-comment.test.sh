@@ -115,6 +115,50 @@ else
   pass=$((pass + 1))
 fi
 
+# ── closeout-blocker 채널 (#271) ──────────────────────────────────────
+# closeout ③-1 마감 검증 BLOCKER 를 워커 레인으로 반송하는 채널. 사유가 매 호출
+# 가변이라(reverify-fail 과 같은 이유) 호출자가 넘긴다 — redispatch 의 고정 문구 방식이
+# 아니다. 이 채널이 없어 2026-09-11 에 같은 마커를 **두 번 손으로** 적었다(#212 재발).
+STUB_CAPTURE="$tmp/cap7"
+PATH="$tmp/bin:$PATH" STUB_CAPTURE="$STUB_CAPTURE" \
+  bash "$SUT" closeout-blocker owner/repo 42 166 "마감 검증 BLOCKER(폴백 경로가 diff 를 못 받는다) 해소" \
+  >/dev/null 2>&1
+rc=$?
+body=$(get_body "$STUB_CAPTURE")
+expect_body="재디스패치: #166 — 마감 검증 BLOCKER(폴백 경로가 diff 를 못 받는다) 해소
+<!-- bodat:worker -->"
+check_eq "closeout-blocker rc=0" "0" "$rc"
+check_eq "closeout-blocker 본문 — 첫 줄 앵커 + 호출자 사유 + 마지막 줄 마커" "$expect_body" "$body"
+
+# 사유가 본문에 실제로 실렸는가(고정 문구로 덮어쓰지 않는가 — redispatch 와의 결정적 차이).
+case "$body" in
+  *"완결 유실(검증 전 사망)"*)
+    fail=$((fail + 1))
+    echo "  ✗ closeout-blocker 본문에 redispatch 의 고정 문구가 섞였다: [$body]" ;;
+  *) pass=$((pass + 1)) ;;
+esac
+
+# 마지막 줄이 정확히 머신 마커인가(긍정 게이트가 첫 줄을 보므로 마커는 마지막 줄이어야 한다).
+last_line=$(printf '%s\n' "$body" | tail -1)
+check_eq "closeout-blocker 마지막 줄 = 머신 마커" "<!-- bodat:worker -->" "$last_line"
+
+rc=0
+PATH="$tmp/bin:$PATH" bash "$SUT" closeout-blocker owner/repo 42 166 >/dev/null 2>&1 || rc=$?
+check_eq "closeout-blocker 사유 누락 → exit 2" "2" "$rc"
+
+# 사유는 호출자 자유 입력이다 — 여러 줄 사유가 와도 **첫 줄 앵커**가 안 깨지는지
+# (bounce-state.sh 는 첫 줄만 본다. 사유 둘째 줄이 첫 줄로 올라오면 판정이 뒤집힌다).
+STUB_CAPTURE="$tmp/cap8"
+PATH="$tmp/bin:$PATH" STUB_CAPTURE="$STUB_CAPTURE" \
+  bash "$SUT" closeout-blocker owner/repo 42 166 "폴백 경로가 diff 를 못 받는다 해소
+함께: 재발 방지 테스트" >/dev/null 2>&1
+body=$(get_body "$STUB_CAPTURE")
+first_line=$(printf '%s\n' "$body" | head -1)
+check_eq "closeout-blocker 여러 줄 사유 — 첫 줄 앵커 유지" \
+  "재디스패치: #166 — 폴백 경로가 diff 를 못 받는다 해소" "$first_line"
+last_line=$(printf '%s\n' "$body" | tail -1)
+check_eq "closeout-blocker 여러 줄 사유 — 마지막 줄 = 머신 마커" "<!-- bodat:worker -->" "$last_line"
+
 # ── 인자 누락 — usage(exit 2), gh 호출 없음 ──────────────────────────────
 STUB_CAPTURE="$tmp/cap3"; : > "$STUB_CAPTURE"
 rc=0
