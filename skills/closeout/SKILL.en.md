@@ -566,8 +566,11 @@ were actually climbed and the failure output cited.
 (same shape as issue-runner's `eligible-issues.sh` `blocked:` hand-off rule, #379). The
 `✅ 이후 미해결 코멘트 N건` line (literally "N unresolved comments after ✅") means "a human left
 a review after the ✅, so it was not picked up, fail-closed" — the loop does not resolve this on its own (a machine judging a
-human comment "resolved" would be fail-open). It clears on the next tick once a human replies
-to that comment, or verify-runner re-verifies and stamps a new ✅. Until then, the same line
+human comment "resolved" would be fail-open) — the only way it clears is **verify-runner
+re-verifying and stamping a new ✅** (the confirmation step right before that ✅ is what
+absorbs the human comments — see verify-runner ④). A human reply does not clear it (a reply
+is itself an unmarked comment too); what a human needs to do is not leave a reply but send
+the PR back to `flow:verify` (or re-pick it into `verifying`). Until then, the same line
 repeating every tick is expected (never drop it silently). Why not `warn`: warn is reserved for
 invariant violations the loop can correct (`loop-status.sh` definition) — this is a legitimate
 non-pick, so it belongs to the `막힘` (blocked) bucket.
@@ -1354,8 +1357,8 @@ tick where every count is 0** — the snapshot is the only window onto what is i
 - The stderr `blocked: PR #<pr>(<repo>) — ✅ 이후 미해결 코멘트 <n>건(마커 없음 = 사람 리뷰
   대기)` line from `$SCRIPTS/closeout-eligible.sh` (see ② Pick; literally "N unresolved
   comments after ✅, no marker = awaiting human review") is pasted verbatim as a `막힘`
-  (blocked) item, one line — not as a warn. It is normal for it to repeat every tick until a
-  human replies or verify-runner stamps a new ✅.
+  (blocked) item, one line — not as a warn. It is normal for it to repeat every tick until
+  verify-runner re-verifies and stamps a new ✅ (a human reply does not clear it — see ② Pick).
 
 State the 7 exit states — for **each** PR processed (per-PR when the drain handled several):
 - **success** — ran steps 1–6, merged the PR, and issued follow-ups (including adopt/rebase recoveries).

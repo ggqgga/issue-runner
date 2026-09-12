@@ -496,9 +496,11 @@ exit 64 — 사유 없는 정지를 만들 수 없다). rebase/semantic conflict
 **`$SCRIPTS/closeout-eligible.sh` 의 stderr `blocked:` 줄은 ④ Report 로 옮긴다**(issue-runner
 `eligible-issues.sh` 의 `blocked:` 이관 규칙과 같은 꼴, #379). `✅ 이후 미해결 코멘트 N건` 은
 "사람이 ✅ 뒤에 남긴 리뷰가 있어 fail-closed 로 안 집었다"는 뜻이고, 루프가 스스로 풀지
-않는다(사람 코멘트를 기계가 '해결됨'으로 판정하면 fail-open) — 사람이 그 코멘트에 답하거나
-verify-runner 가 재검증해 새 ✅ 를 찍으면 다음 틱에 풀린다. 그 전엔 매 틱 같은 줄이
-반복되는 것이 정상이다(조용한 탈락 금지, #379). `warn` 이 아닌 이유: warn 은 루프가 교정
+않는다(사람 코멘트를 기계가 '해결됨'으로 판정하면 fail-open) — 풀리는 길은 verify-runner 가
+재검증해 새 ✅ 를 찍는 것(그 ✅ 직전 확인 단계가 사람 코멘트를 소화한다 — verify-runner ④
+참조)뿐이다. 사람 답글은 풀지 않는다(그 답글도 무마커 코멘트다). 즉 사람이 할 일은 답을
+남기는 게 아니라 PR 을 `flow:verify` 로 되돌리는(또는 `verifying` 재집) 것이다. 그 전엔
+매 틱 같은 줄이 반복되는 것이 정상이다(조용한 탈락 금지, #379). `warn` 이 아닌 이유: warn 은 루프가 교정
 가능한 불변식 위반에만 쓴다(`loop-status.sh` 정의) — 이건 정당한 미집계라 `막힘` 부류다.
 
 ## ③ 파이프라인 — 1~6단계
@@ -1159,7 +1161,8 @@ approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스�
   `loop-status: 스코프 없음(.loop/repos 부재)` 한 줄을 warn 으로 남긴다.
 - `$SCRIPTS/closeout-eligible.sh` 의 stderr `blocked: PR #<pr>(<repo>) — ✅ 이후 미해결 코멘트
   <n>건(마커 없음 = 사람 리뷰 대기)` (② Pick 참조) 는 한 줄 그대로 `막힘` 항목으로 옮겨 적는다
-  (warn 아님) — 사람이 답하거나 verify-runner 가 새 ✅ 를 찍기 전까진 매 틱 반복되는 것이 정상이다.
+  (warn 아님) — verify-runner 가 재검증해 새 ✅ 를 찍기 전까진 매 틱 반복되는 것이 정상이다
+  (사람 답글은 풀지 않는다 — ② Pick 참조).
 
 종료 상태 7종 — 처리한 PR **각각**에 대해 명시한다(드레인으로 여러 개면 PR 별로):
 - **success** — 1~6단계를 다 돌아 PR 을 머지하고 후속까지 발행함(입양·rebase 회수분 포함).

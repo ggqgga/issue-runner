@@ -237,10 +237,22 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 
 **passed** — E2E pass(또는 해당 없음) + codex BLOCKER 0:
 1. (③-3 에서 `검증자 리뷰:` 코멘트 이미 남김)
-2. 최종 그린라이트:
-   `gh pr comment <pr> --repo <repo> --body "머지 판정: ✅ 머지 가능 — 결정적 CI pass · E2E <pass 또는 '해당 없음'> · 검증자 <CLEAN 또는 'BLOCKER 0 / WARN n'> · 미해결 없음
+2. **사람 코멘트 확인(✅ 를 찍기 전 필수, #379).** `$SCRIPTS/pr-comments.sh <repo> <pr>` 로
+   코멘트 전량을 읽고, `<!-- bodat:worker -->` 마커도 없고 레거시 3접두(`머지 판정`·
+   `검증자 리뷰`·`마감 검증`)로도 시작하지 않는 코멘트(=사람 코멘트)를 **전부** 훑는다 —
+   검증 중(verifying 동안)에 달린 것도 포함한다. **이 확인이 다음 단계의 `미해결 없음`
+   을 사실로 만드는 유일한 자리다**: closeout-eligible 은 최신 ✅ **이전**의 무마커
+   코멘트를 "검증자가 이미 확인한 것"으로 치고 세지 않는다(#379) — 그 전제를 참으로
+   만드는 게 바로 이 단계다. 그 중 답을 기다리는 것(질문·수정 요구·BLOCKER 지적)이
+   하나라도 있으면 ✅ 를 찍지 말고 아래 **held** 경로로 간다: `검증 보류: <코멘트 번호
+   인용> — 사람 확인 필요` + `--reason policy`. 결정·보고·인수 메모(예 "사용자 결정 —
+   …", "리베이스 해소: …")는 답을 기다리는 것이 아니다 — 확인한 것으로 친다.
+3. 최종 그린라이트:
+   `gh pr comment <pr> --repo <repo> --body "머지 판정: ✅ 머지 가능 — 결정적 CI pass · E2E <pass 또는 '해당 없음'> · 검증자 <CLEAN 또는 'BLOCKER 0 / WARN n'> · <사람 코멘트 0건이면 '미해결 없음', 아니면 '사람 코멘트 N건 확인'>
 <!-- bodat:worker -->"`
-3. 라벨 인계: `$SCRIPTS/transition.sh verify-pass <repo> <issue|-> <pr>` — PR 과 원 이슈를
+   (마커 문구 `머지 판정: ✅ 머지 가능` 과 마지막 줄 마커는 바꾸지 않는다 — closeout-eligible
+   이 그 접두로 집는다.)
+4. 라벨 인계: `$SCRIPTS/transition.sh verify-pass <repo> <issue|-> <pr>` — PR 과 원 이슈를
    한 호출로 옮긴다(전이 표 SSOT = `transition.sh` 상단 주석). **closeout 계약 무변경**
    (기존 `머지 판정: ✅` 마커 재사용 — `closeout-eligible.sh` 가 그걸로 집는다) + 이슈
    리스트만 봐도 단계(검증→마감)가 보인다. **success 종료.**
