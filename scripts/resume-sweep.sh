@@ -1089,7 +1089,11 @@ while IFS= read -r repo; do
       # 를 내면 디스패처가 그 판정에서 `verify-redispatch` 를 부를 수 있고, 그 전이는
       # `needs-human` 과 `hold:*` 를 **둘 다** 뗀다(transition.sh 의 반송 전이). 이 이슈가
       # 방금 "루프가 치우면 안 되는 것" 으로 정의한 라벨을 루프가 치우는 것이다.
-      # ①(sweep_issue, 위)이 쓰는 것과 **같은 술어**를 여기서도 쓴다.
+      # 여기(스냅샷)의 검사는 **사전 필터**다 — 목록에 이미 있는 건을 코멘트 조회 없이 접어
+      # 왕복을 아끼고, 마커 상태(reviewed·no-note)와 무관하게 "사람 정지" 라는 이유를 note 로
+      # 남긴다. 그러나 **답은 여기서 내지 않는다**: row 는 목록을 뜬 시점의 스냅샷이라 그
+      # 뒤에 사람이 붙인 정지를 모른다 — 최종 판정은 due 를 내기 **직전**의 재조회(아래,
+      # #351)가 같은 술어(`has_label … needs-human`)로 한 번 더 한다.
       # warn 이 아니라 note 인 이유: warn 의 정의는 "루프가 교정 가능한 불변식 위반"
       # (emit_note 주석, 위)인데 이건 사람이 이 이슈가 정의한 축을 정상적으로 행사한 것이라
       # 루프가 교정할 것이 없다 — ②가 "사람이 직접 세운 정지 … 정상 상태라 warn 아님" 을
@@ -1098,7 +1102,8 @@ while IFS= read -r repo; do
       # 좌초해 영영 재개되지 않는다는 신호다(M8 이 무는 자리). 여기 ③ 은 무편집 읽기 갈래라
       # 좌초시킬 루프 상태가 없다.
       # 조용한 continue 로 두지 않는다(#247) — 왜 재심이 안 도는지가 어디에도 안 남는다.
-      if printf '%s' "$row" | jq -e '[.labels[].name] | index("needs-human") != null' >/dev/null 2>&1; then
+      plab=$(printf '%s' "$row" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || plab=""
+      if has_label "$plab" "needs-human"; then
         emit_note "$repo" "$pnum" "사람이 세운 needs-human 동존 — 재심 안 함, 정상 상태라 warn 아님"
         continue
       fi
@@ -1133,6 +1138,22 @@ while IFS= read -r repo; do
         due) ;;
         *) emit_warn "$repo" "$pnum" "재심 마커 해석 실패 — 이번 틱은 건너뛴다"; continue ;;
       esac
+      # ── `needs-human` 배제 — due 직전 **재조회**로 최종 판정한다(#351, #244 후속) ────
+      # 위 스냅샷 사전 필터만으로는 "목록 조회 → 사람이 needs-human 부착 → 같은 틱 due →
+      # 전이가 그 정지를 벗김" 창이 한 틱 안에 열린다(#351 — #151 부류). 그래서
+      # ①(sweep_issue)이 편집 직전에 쓰는 **같은 함수** `read_state` 로 여기서도 다시 읽고
+      # 그 결과로 판정한다(조회 로직 한 벌 — #229·#244 의 규율; 술어도 위와 같은 has_label).
+      # 재조회 실패는 "needs-human 없음" 으로 폴백하지 않는다 — 폴백하면 이 갈래가 막으려는
+      # 사고가 조회 실패 경로에서 그대로 재현된다(①의 재조회 실패 처리와 같은 방향, 같은 이유).
+      # note 문구는 위 사전 필터와 **한 글자도 다르지 않게** — 같은 사람 행동, 같은 낱말.
+      if ! pcur=$(read_state "$repo" "$pnum" "$tmp/policy.updated.live"); then
+        emit_warn "$repo" "$pnum" "재조회 실패(라벨·updatedAt) — needs-human 동존 여부를 확정 못 해 재심을 내지 않는다"
+        continue
+      fi
+      if has_label "$pcur" "needs-human"; then
+        emit_note "$repo" "$pnum" "사람이 세운 needs-human 동존 — 재심 안 함, 정상 상태라 warn 아님"
+        continue
+      fi
       printf '{"event":"policy_review_due","repo":"%s","number":%s,"minutes":%s}\n' "$repo" "$(_emit_num "$pnum")" "$pmin"
     done 3< "$tmp/issues.policy"
   else
