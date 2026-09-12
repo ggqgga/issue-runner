@@ -190,6 +190,16 @@ working right now, so the worker lane owns it — #218 attempt 4).
     or `stale_inline` → **Re-dispatch** (the same action as the `stale_reverify` row of the
     2) table — the `closeout-redispatch` transition plus the idempotency marker). This is the
     shape where the bounce-round worker pushed its fix and then died just before ✅.
+  - **The bounce marker's timestamp is part of the stale clock too (#308)** — the bounce
+    transition strips `agent:claimed`, so in the **label gap right after a bounce, before the
+    dispatcher re-attaches it**, all three progress-evidence axes read old/none. In that window
+    `finish-classify.sh` returns `active`, so this branch never opens (marker detection is asked
+    back to `bounce-state.sh`, the single place — never a second copy of the marker set).
+  - Why that window was **harmless** (and why it was still fixed): `closeout-redispatch` works
+    off a readback, so it is a no-op on an issue already at `agent-ready`, and the idempotency
+    marker rule blocks a re-post — the worker never died. What remains is **one line in the
+    ledger**. The ledger is the only place the next tick and a human read the *cause of death*,
+    and a live bounce round labelled `완결 유실(검증 전 사망)` reads as a dead one.
   - **`stale_inline` is re-dispatched too, never adopted (merged).** A `검증자 리뷰: CLEAN`
     left on a bounced PR may be from the round **before** the bounce, so adopting it would
     merge code that was just rejected (exactly the direction #196 closed). Leaving it
