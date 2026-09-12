@@ -18,6 +18,11 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
 드롭이 원천 불가하고, 직렬(MAX_VERIFY=1)이라 크롬 부하 피크가 한 세트로 고정돼 박스가
 안 터진다. 이것이 issue-runner(생산)→verify-runner(검증)→closeout(마감) 3루프 분리다.
 
+> **소유권·정지·전이 실패 규칙의 SSOT 는 `references/state-machine.md` 다**(#393). 어느 상태를 어느 루프가 들고
+> 있고(소유 라벨 `flow:verify`·`verifying`·`flow:ready`·`harvesting`), 기계 정지(`hold:*`)와 사람 정지(`needs-human`)가
+> 어떻게 풀리며, `transition.sh` 가 exit 1·2 로 끝난 반쯤 이동 상태를 누가 회수하는지는 그 표를 본다 — 아래 산문에
+> 같은 규칙이 남아 있으면 표가 이긴다(산문 정리는 플랜 3단계).
+
 ## 상수
 
 - `MAX_VERIFY = 1` — **동시성 1**(한 번에 1 PR 만 끝까지 직렬 검증). 틱당 상한이
