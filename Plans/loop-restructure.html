@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>루프 세 스킬 재구조화</title>
+<style>
+  :root { color-scheme: light; --ink:#1f2328; --mute:#57606a; --line:#d0d7de; --bg:#ffffff; --card:#f6f8fa; --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; --acc:#0969da; }
+  body { margin:0; padding:32px 24px 64px; font:14px/1.6 -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif; color:var(--ink); background:var(--bg); }
+  main { max-width:1080px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  h2 { font-size:16px; margin:36px 0 12px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+  p.sub { color:var(--mute); margin:0 0 20px; }
+  figure { margin:0; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; overflow-x:auto; }
+  figcaption { color:var(--mute); font-size:12px; margin-top:8px; }
+  svg text { font-family:inherit; font-size:12px; fill:var(--ink); }
+  svg .mute { fill:var(--mute); font-size:11px; }
+  svg .box { fill:#fff; stroke:var(--line); stroke-width:1.2; rx:6; }
+  svg .chip { fill:#fff; stroke:var(--line); stroke-width:1; rx:9; }
+  svg .new { stroke:var(--ok); }
+  svg .shrunk { stroke:var(--acc); }
+  svg .moved { stroke:var(--mute); stroke-dasharray:4 3; }
+  svg .bad { stroke:var(--bad); }
+  svg .arrow { stroke:var(--mute); stroke-width:1.4; fill:none; marker-end:url(#a); }
+  svg .arrow.bad { stroke:var(--bad); }
+  svg .arrow.dash { stroke-dasharray:5 3; }
+  table { border-collapse:collapse; width:100%; font-size:13px; margin-bottom:8px; }
+  th, td { border:1px solid var(--line); padding:6px 10px; text-align:left; vertical-align:top; }
+  th { background:var(--card); }
+  code { background:var(--card); padding:1px 5px; border-radius:4px; font-size:12px; }
+  .del { color:var(--bad); } .add { color:var(--ok); }
+</style>
+</head>
+<body>
+<main>
+<h1>루프 세 스킬 재구조화 — 상태기계 SSOT · 술어 라이브러리 · 프로즈→스크립트 · 문서 분리 · CI 정리</h1>
+<p class="sub">사람 결정 2026-09-13 · 방향 동의 · rationale 한글만 · 0단계부터</p>
+
+<h2>① 단계 흐름·의존성</h2>
+<figure>
+<svg width="1020" height="230" viewBox="0 0 1020 230" role="img" aria-label="단계 흐름과 의존성">
+  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#57606a"/></marker></defs>
+  <path class="arrow bad dash" d="M685,45 C685,15 105,15 105,45"/>
+  <text x="260" y="12" class="mute">3단계는 0·1·2 가 있어야 참조할 SSOT/스크립트가 생긴다</text>
+
+  <rect class="box" x="20" y="50" width="170" height="50"/><text x="30" y="72">0단계 — 상태기계 SSOT</text>
+  <rect class="box" x="215" y="50" width="170" height="50"/><text x="225" y="72">1단계 — 술어 라이브러리</text>
+  <rect class="box" x="410" y="50" width="170" height="50"/><text x="420" y="72">2단계 — 프로즈→스크립트</text>
+  <rect class="box" x="605" y="50" width="170" height="50"/><text x="615" y="72">3단계 — SKILL 문서 분리</text>
+  <rect class="box" x="800" y="50" width="170" height="50"/><text x="810" y="72">4단계 — bin/ci 정리</text>
+
+  <path class="arrow" d="M190,75 L215,75"/>
+  <path class="arrow" d="M385,75 L410,75"/>
+  <path class="arrow" d="M580,75 L605,75"/>
+  <path class="arrow" d="M775,75 L800,75"/>
+
+  <text x="30" y="118" class="mute">산출물: state-machine.md</text>
+  <text x="225" y="118" class="mute">산출물: lib/loop.jq + constants.sh</text>
+  <text x="420" y="118" class="mute">산출물: 스크립트 9개</text>
+  <text x="615" y="118" class="mute">산출물: SKILL + rationale + conventions</text>
+  <text x="810" y="118" class="mute">산출물: ci/steps + retire 정책</text>
+
+  <rect class="chip" x="20" y="138" width="90" height="24"/><text x="32" y="154" class="mute">담당 full-cycle</text>
+  <rect class="chip" x="215" y="138" width="70" height="24"/><text x="227" y="154" class="mute">담당 루프</text>
+  <rect class="chip" x="410" y="138" width="70" height="24"/><text x="422" y="154" class="mute">담당 루프</text>
+  <rect class="chip" x="605" y="138" width="90" height="24"/><text x="617" y="154" class="mute">담당 full-cycle</text>
+  <rect class="chip" x="800" y="138" width="70" height="24"/><text x="812" y="154" class="mute">담당 루프</text>
+</svg>
+<figcaption>순서는 의존 관계다 — 0 이 없으면 3 은 기준 없이 산문을 옮기는 일이 되고, 1·2 가 없으면 3 이 가리킬 스크립트가 없다(결정 로그 #4).</figcaption>
+</figure>
+
+<h2>② 현재 vs 목표 파일 구조</h2>
+<figure>
+<svg width="1020" height="360" viewBox="0 0 1020 360" role="img" aria-label="현재 대 목표 파일 구조">
+  <text x="20" y="20" font-weight="600">현재</text>
+  <text x="560" y="20" font-weight="600">목표</text>
+
+  <rect class="box" x="20" y="32" width="500" height="30"/><text x="30" y="52">SKILL.md — 495줄</text>
+  <rect class="box" x="20" y="68" width="500" height="30"/><text x="30" y="88">skills/verify-runner/SKILL.md — 362줄</text>
+  <rect class="box" x="20" y="104" width="500" height="30"/><text x="30" y="124">skills/closeout/SKILL.md — 1,185줄</text>
+  <rect class="box" x="20" y="140" width="500" height="30"/><text x="30" y="160">scripts/*.sh 35개 — 8,066줄</text>
+  <rect class="box" x="20" y="176" width="500" height="30"/><text x="30" y="196">bin/ci — 2,969줄</text>
+
+  <rect class="box shrunk" x="560" y="32" width="440" height="26"/><text x="570" y="50">SKILL.md — ≤300줄</text>
+  <rect class="box shrunk" x="560" y="64" width="440" height="26"/><text x="570" y="82">verify-runner/SKILL.md — ≤250줄</text>
+  <rect class="box shrunk" x="560" y="96" width="440" height="26"/><text x="570" y="114">closeout/SKILL.md — ≤400줄</text>
+  <rect class="box new" x="560" y="128" width="440" height="26"/><text x="570" y="146">references/loop-conventions.md (공유 1벌)</text>
+  <rect class="box new" x="560" y="160" width="440" height="26"/><text x="570" y="178">references/{issue-runner,verify-runner,closeout}-rationale.md</text>
+  <rect class="box new" x="560" y="192" width="440" height="26"/><text x="570" y="210">references/state-machine.md</text>
+  <rect class="box new" x="560" y="224" width="440" height="26"/><text x="570" y="242">scripts/lib/{loop.jq,constants.sh,scope.sh}</text>
+  <rect class="box moved" x="560" y="256" width="440" height="26"/><text x="570" y="274">scripts/manual/ (dead·수동 스크립트 격리)</text>
+  <rect class="box new" x="560" y="288" width="440" height="26"/><text x="570" y="306">ci/steps/NN-*.sh + bin/ci(20줄 러너)</text>
+
+  <text x="20" y="332" class="mute">범례</text>
+  <rect class="box new" x="70" y="320" width="16" height="16"/><text x="92" y="332" class="mute">신규</text>
+  <rect class="box shrunk" x="150" y="320" width="16" height="16"/><text x="172" y="332" class="mute">축소</text>
+  <rect class="box moved" x="230" y="320" width="16" height="16"/><text x="252" y="332" class="mute">이동</text>
+</svg>
+<figcaption>세 SKILL 합계 2,042줄(196KB) → 목표는 매 틱 필독을 절반 이하로. 서사는 지우지 않고 rationale 로 옮긴다(원칙 2).</figcaption>
+</figure>
+
+<h2>③ 소유권 상태기계(요약)</h2>
+<figure>
+<svg width="1020" height="280" viewBox="0 0 1020 280" role="img" aria-label="PR 소유권 상태기계 요약">
+  <rect class="box" x="20" y="40" width="120" height="40"/><text x="30" y="64">agent-ready</text>
+  <rect class="box" x="155" y="40" width="120" height="40"/><text x="165" y="64">agent:claimed</text>
+  <rect class="box" x="290" y="40" width="120" height="40"/><text x="300" y="64">flow:verify</text>
+  <rect class="box" x="425" y="40" width="120" height="40"/><text x="435" y="64">verifying</text>
+  <rect class="box" x="560" y="40" width="130" height="40"/><text x="570" y="64">flow:ready ✅</text>
+  <rect class="box" x="705" y="40" width="120" height="40"/><text x="715" y="64">harvesting</text>
+  <rect class="box" x="840" y="40" width="110" height="40"/><text x="850" y="64">merged</text>
+  <path class="arrow" d="M140,60 L155,60"/>
+  <path class="arrow" d="M275,60 L290,60"/>
+  <path class="arrow" d="M410,60 L425,60"/>
+  <path class="arrow" d="M545,60 L560,60"/>
+  <path class="arrow" d="M690,60 L705,60"/>
+  <path class="arrow" d="M825,60 L840,60"/>
+
+  <rect class="box bad" x="155" y="110" width="120" height="34"/><text x="165" y="131" class="mute">hold:*</text>
+  <rect class="box bad" x="425" y="110" width="120" height="34"/><text x="435" y="131" class="mute">needs-human</text>
+  <path class="arrow bad dash" d="M200,80 L200,110"/>
+  <path class="arrow bad dash" d="M470,80 L470,110"/>
+
+  <rect class="box bad" x="20" y="170" width="930" height="96"/>
+  <text x="34" y="190" class="mute" font-weight="600">소유 주체 없는 칸 4</text>
+  <text x="34" y="210" class="mute">1. verify-redispatch 반쯤 이동(PR 은 flow:verify 상실 · 이슈는 agent:claimed)</text>
+  <text x="34" y="228" class="mute">2. 연결 이슈 없는 PR 의 hold:policy 재심 경로</text>
+  <text x="34" y="246" class="mute">3. 머지 판정 코멘트가 없는 초록 PR 의 소유</text>
+  <text x="34" y="260" class="mute">4. resume-sweep 미러 정리 "양성 증거 못 얻음" 의 재시도 주체</text>
+</svg>
+<figcaption>0단계 산출물인 <code>references/state-machine.md</code> 가 이 표를 확정하고, 칸 4개는 각각 별도 leaf 로 발행한다(행동 변경이므로 원칙 1의 예외).</figcaption>
+</figure>
+
+<h2>진단 수치(2026-09-13 실측)</h2>
+<table>
+<tr><th>축</th><th>수치</th></tr>
+<tr><td>SKILL 분량</td><td>issue-runner 495 · verify-runner 362 · closeout 1,185 (①-b+③ = 882줄이 매 틱 필독)</td></tr>
+<tr><td>사고 이력·근거 서사 비중(통독 추정)</td><td>issue-runner ~28% · verify ~18% · closeout ~34% (closeout:286–421 의 135줄엔 실행 지시가 거의 없음)</td></tr>
+<tr><td>2개 이상 파일에 중복된 규칙</td><td>13종 (fail-closed 15회 변주 · 전이 exit 처리 14회 · loop-status 블록 3벌 축자 · 사다리 규율 4벌이 서로 다른 칸 지정)</td></tr>
+<tr><td>프로즈에 사는 결정론 로직</td><td>12건 (repair-count/verify-attempt 카운터 2벌 · worktree→PR head 동기화 3자리 · 배포 대기/파생 이슈 발행 · 전이 exit→조치 매핑 20+회)</td></tr>
+<tr><td>상수</td><td>프로즈 전용 9개 · 다중 정의 6개(<code>ISSUE_TIMEBOX_HOURS</code> 4벌) · VERIFIER 계약은 3파일이 각각 SSOT 자칭 · <code>CODEX_GATE_TIMEOUT=900s</code> = 10분 오기 2곳</td></tr>
+<tr><td>스크립트 중복 술어</td><td>✅ 탐지 jq 3벌(drifting) · 마지막 매칭 인덱스 3벌 · head 신선도 createdAt vs 인덱스 상충 · <code>.loop/repos</code> 7벌 · 센티널 생산 6곳/소비 1곳</td></tr>
+<tr><td>bin/ci</td><td>2,969줄 · 109블록 중 93개가 <code>#NNN</code> 가드 · 문서 문구 단언만 46블록 1,164줄(39%) · retire 정책 없음</td></tr>
+<tr><td>주석/코드</td><td>bounce-state 4.28 · finish-classify 1.58 · loop-status 헤더 330줄</td></tr>
+<tr><td>전용 테스트 없는 판정 스크립트</td><td>progress-evidence · claim-at · pr-head-at · closeout-ci-pass · closeout-reconcile</td></tr>
+<tr><td>소유 주체 없는 상태</td><td>verify-redispatch 반쯤 이동 · 이슈 없는 PR 의 <code>hold:policy</code> · 머지 판정 무코멘트 초록 PR · 미러 정리 warn 재시도</td></tr>
+</table>
+
+<h2>결정 로그 — 사용자 의도를 가정하고 택한 갈림길</h2>
+<table>
+<tr><th>#</th><th>갈림길</th><th>택한 쪽</th><th>가정</th></tr>
+<tr><td>1</td><td>행동을 함께 손보나, 구조만 옮기나</td><td>구조만(행동 변경은 사각지대 4 leaf 로 격리)</td><td>"정리·구조화" 요청은 동작 불변을 전제한다고 봄</td></tr>
+<tr><td>2</td><td>서사 삭제 vs 이동</td><td>rationale 문서로 이동</td><td>이 레포의 "주석이 설계 근거" 규율 존중</td></tr>
+<tr><td>3</td><td>술어 SSOT 를 bash 함수로 vs jq 모듈로</td><td>jq 모듈(<code>-L</code>)</td><td>소비처 대부분이 jq 필터 형태 · bash 3.2 제약 무관</td></tr>
+<tr><td>4</td><td>단계 순서</td><td>0→1→2→3→4 (상태기계 먼저, CI 마지막)</td><td>문서 분리는 참조할 SSOT 가 먼저 있어야 함</td></tr>
+<tr><td>5</td><td>담당 레인</td><td>0·3 은 full-cycle, 1·2·4 leaf 는 루프</td><td>판단이 드는 일과 기계적 치환을 가름</td></tr>
+<tr><td>6</td><td>rationale 한/영</td><td>한글만</td><td>매 틱 로드되지 않는 문서에 번역 동기 비용을 안 들임 — <strong>사람 결정 필요</strong></td></tr>
+<tr><td>7</td><td>에픽 수</td><td>5개(단계 = 에픽), P1 은 0·1 부터</td><td>동시 P1 에픽 2개 규약</td></tr>
+<tr><td>8</td><td>closeout 목표 크기</td><td>≤ 400줄</td><td>진단상 운영 지시 실분량(약 1/3)에 여유를 둔 값</td></tr>
+</table>
+</main>
+</body>
+</html>
