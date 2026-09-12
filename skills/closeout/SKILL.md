@@ -37,16 +37,19 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
 - `VERIFIER = general-purpose` — 1단계 계획 부합 검증자 서브에이전트 타입. **codex 가 아니다**
   (#375, 사용자 결정 2026-09-13 — codex 는 PR 당 2회이고 그 두 번은 verify-runner 몫이다. closeout 이
-  세 번째로 부르던 정확성·계획 부합 호출 두 번을 없앴다). **출력 계약 (SSOT — 다른 모든 곳은 이
-  항목을 참조한다)**: 호출은 read-only(코드 변경 금지)·발견마다 BLOCKER/WARN/NIT 분류·발견 없으면
-  'CLEAN'·BLOCKER 는 하드게이트(해결 전 종료 금지). 검증자는 이 SKILL.md 를 읽지 않으므로 호출
-  프롬프트 문자열에 이 계약이 그대로 담겨야 한다 — 프롬프트가 유일한 전달 경로이고, 그 프롬프트는
+  세 번째로 부르던 정확성·계획 부합 호출 두 번을 없앴다). **출력 계약은 issue-runner `SKILL.md` 의 `## 상수` 절
+  `VERIFIER` 항목이 SSOT 다**(#427 — 세 SKILL 이 각자 SSOT 를 자칭하던 것을 한 곳으로). 여기선 다시
+  적지 않는다: read-only·BLOCKER/WARN/NIT·CLEAN·BLOCKER 는 하드게이트, 그대로 적용된다. 검증자는 이
+  SKILL.md 를 읽지 않으므로 호출 프롬프트 문자열에 그 계약 문안이 그대로 담겨야 한다 — 프롬프트가
+  유일한 전달 경로이고, 그 프롬프트는
   `references/verifier-prompt-fallback.md`(diff·이슈 본문·lessons 를 **동봉**하는 판 — `general-purpose`
   는 Agent 툴에 `--cd` 대응 인자가 없어 워크트리에 스코프되지 않으므로 "이 워크트리는 최신이다" 전제를
   줄 수 없다, #207)다. `references/verifier-prompt.md` 는 내장 리뷰어(codex) 전용이라 여기선 안 쓴다.
-- `VERIFIER_TIMEOUT_MIN = 10` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
+- `VERIFIER_TIMEOUT_MIN` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
   시각 + 이 값을 데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict
-  미산출로 간주한다 — codex 외부 CLI 스톨이 틱을 무한정 묶는 것을 막는 방어선(#96).
+  미산출로 간주한다 — 외부 CLI 스톨이 틱을 무한정 묶는 것을 막는 방어선(#96).
+  **값은 `scripts/lib/constants.sh` 의 `CODEX_GATE_TIMEOUT`(초)을 분으로 환산한 것**이다
+  (#427 — 종전 산문의 "900s = 10분" 은 오기였다).
 - 절대 금지: production 무인 배포(4단계는 **배포 레인(deploy-cycle) 인계** —
   closeout 자신은 실 배포를 하지 않는다) · 프로덕션 포인터 브랜치(release 등) 무인
   승격(검증된 SHA 를 프로덕션/워커가 당기는 브랜치로 미는 것도 배포와 동급으로

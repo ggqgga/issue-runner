@@ -48,21 +48,24 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
 - `VERIFIER = general-purpose` — verifier subagent type for the step-1 plan-conformance
   check. **Not codex** (#375, user decision 2026-09-13 — codex is called at most twice per PR,
   and both calls belong to verify-runner; the two extra closeout calls (correctness + plan
-  conformance) that made it a third are gone). **Output contract (SSOT — everywhere else
-  refers to this entry)**: calls are read-only (no code changes), classify each finding as
-  BLOCKER/WARN/NIT, output 'CLEAN' if there are no findings, and BLOCKERs are a hard gate (no
-  finishing before they are resolved). The verifier does not read this SKILL.md, so the call's
-  prompt string must carry this contract verbatim — the prompt is the only delivery path, and
+  conformance) that made it a third are gone). **The output contract's SSOT is the `VERIFIER` entry in
+  issue-runner `SKILL.md`'s `## Constants`** (#427 — three SKILLs each claimed to be the SSOT;
+  now there is one). It is not restated here: read-only, BLOCKER/WARN/NIT per finding, 'CLEAN'
+  when there are none, BLOCKERs are a hard gate — all of it applies as written there. The
+  verifier does not read this SKILL.md, so the call's prompt string must carry that contract
+  verbatim — the prompt is the only delivery path, and
   that prompt is `references/verifier-prompt-fallback.md` (the variant that **embeds** the
   diff, issue body and lessons — `general-purpose` has no `--cd` equivalent in the Agent tool,
   so it is not scoped to the worktree and cannot be given the "this worktree is current"
   premise, #207). `references/verifier-prompt.md` is for the built-in reviewer (codex) only
   and is not used here.
-- `VERIFIER_TIMEOUT_MIN = 10` — wall-clock cap in minutes per `VERIFIER` (and
+- `VERIFIER_TIMEOUT_MIN` — wall-clock cap in minutes per `VERIFIER` (and
   fallback) spawn. Poll against a deadline of spawn time + this value; if the
   deadline is exceeded, cut it off with `TaskStop` and treat it as no verdict
-  produced — the guard rail that stops an external-CLI codex stall from
-  blocking the tick indefinitely (#96).
+  produced — the guard rail that stops an external-CLI stall from
+  blocking the tick indefinitely (#96). **The value is `CODEX_GATE_TIMEOUT` (seconds) in
+  `scripts/lib/constants.sh`, converted to minutes** (#427 — the old prose said
+  "900s = 10 min", which was wrong).
 - Absolutely forbidden: unattended production deploys (step 4 is a **deploy-lane
   (deploy-cycle) hand-off** — closeout itself never deploys for real) · unattended
   promotion of a production pointer branch (release etc. — pushing a verified SHA to a

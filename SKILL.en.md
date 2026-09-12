@@ -31,47 +31,41 @@ maintenance must come before new work).
   conflicts from multiplying across PRs while human merges lag
 - `MAX_REPAIRS_PER_PR = 3` — cap on maintenance dispatches per PR
   (② Maintain circuit breaker)
-- `ISSUE_TIMEBOX_HOURS = 1` — the claim age at which a `working` issue with no PR
-  **starts being asked for progress evidence** (① Reconcile timebox). Exceeding it is
-  **not by itself a reason to stop** — past this age the issue is still reprieved as
-  long as there is progress evidence (#200).
-- `STALL_MIN = 25` — the "no progress" threshold (minutes). Only when the latest commit
-  on the remote branch `agent/issue-<num>` is older than this does the commit-side
-  evidence die. Rationale: bodat's measured `bin/ci` upper bound of ~570s (9.5 min) for a
-  single run plus slack for the box-wide serial CI queue (#127) — while a worker waits
-  out one CI run it is normal for no new commit to appear, so that window must not be
-  counted as stalling.
-- `MAX_TIMEBOX_GRACE = 3` — cap on **cumulative reprieves** within the same claim (an
-  `unknown` tick in between does not reset it — the counting window is everything after
-  the claim timestamp). Past
-  it the worker is stopped by the rule even with progress evidence — an unbounded
-  reprieve would never catch a real zombie, making the relaxation itself a new hole. At a
-  15-minute tick that is at most ~45 extra minutes, which covers the measured shapes
-  (72 min · 64 min) while still leaving a ceiling. The count is not a state file: it is
-  re-derived by counting issue comment markers (`<!-- timebox-grace: N -->`) created
-  **after the current claim timestamp only**.
-- `RESUME_AFTER_MIN = 120` — how long (minutes) the resume sweep waits before letting a
-  stalled issue flow again. Once a `hold:ladder` issue has gone this long
-  without an update, ①'s resume sweep picks it up (passed to `resume-sweep.sh` as the
-  environment variable of the same name).
-- `LADDER_RESUME_LIMIT = 2` — cap on automatic resumes per issue. Beyond it the issue is
-  escalated to `hold:policy` instead of resumed — only then is it a human's (no infinite
-  retries).
-- `MIRROR_RETRY_LIMIT = 3` — cap on retries when ①'s resume sweep **stop-mirror cleanup**
-  cannot obtain positive evidence (#397). The round count is the number of
-  `<!-- mirror-retry: <reason> pr=<n> -->` marker comments on the paired issue — counting only that
-  PR's markers, and only those **after the last human-intervention boundary** (the latest
-  `policy-review`/`hold-note` comment), so a new episode never inherits the old rounds; at the cap the script emits
-  `mirror_retry_exhausted` (see the event handling below for the transition). The value must
-  match the constant of the same name in `resume-sweep.sh`, which points back at this section
-  (two copies are allowed until plan step 1).
-- `STALE_FINISH_MIN = 30` — lost-finish time buffer (minutes). The buffer for
-  `finish-classify.sh`, which is now consumed by the **closeout ①-b stuck-PR sweep**
-  (issue-runner no longer uses it directly after the rule-4 revert). A live worker
-  posts its final verdict within seconds of the `Verifier review:` comment, so if the
-  latest verifier is CLEAN yet no final verdict appears past this buffer, the worker
-  is considered dead. In-progress fix loops are auto-excluded because their latest
-  verifier comment is either recent or non-CLEAN.
+- **Constants the scripts read — the values live in `scripts/lib/constants.sh`, in one
+  place** (#427). This section no longer restates them: prose and code holding two copies
+  of a value drift apart (`ISSUE_TIMEBOX_HOURS` really did have four). An environment
+  variable overrides the default, and the **rationale/history lives in that file's
+  comments**. Below are the names and meanings only — for a value, run
+  `grep '<name>' $SCRIPTS/lib/constants.sh`.
+  - `ISSUE_TIMEBOX_HOURS` — the claim age at which a `working` issue with no PR **starts
+    being asked for progress evidence** (① Reconcile timebox). Exceeding it is **not by
+    itself a reason to stop** — past this age the issue is still reprieved as long as
+    there is progress evidence (#200).
+  - `STALL_MIN` — the "no progress" threshold (minutes). Only when the latest commit on
+    the remote branch `agent/issue-<num>` is older than this does the commit-side
+    evidence die (the decision is `timebox-check.sh`).
+  - `MAX_TIMEBOX_GRACE` — cap on **cumulative reprieves** within the same claim. The
+    count is not a state file: it is re-derived by counting issue comment markers
+    (`<!-- timebox-grace: N -->`) created **after the current claim timestamp only**.
+  - `RESUME_AFTER_MIN` — how long (minutes) the resume sweep waits before letting a
+    stalled issue flow again. Once a `hold:ladder` issue has gone this long without an
+    update, ①'s resume sweep picks it up.
+  - `LADDER_RESUME_LIMIT` — cap on automatic resumes per issue. Beyond it the issue is
+    escalated to `hold:policy` instead of resumed — only then is it a human's (no
+    infinite retries).
+  - `MIRROR_RETRY_LIMIT` — cap on retries when ①'s resume sweep **stop-mirror cleanup**
+    cannot obtain positive evidence (#397). The round count is the number of
+    `<!-- mirror-retry: <reason> pr=<n> -->` marker comments on the paired issue —
+    counting only that PR's markers, and only those **after the last human-intervention
+    boundary** (the latest `policy-review`/`hold-note` comment), so a new episode never
+    inherits the old rounds; at the cap the script emits `mirror_retry_exhausted` (see
+    the event handling below for the transition).
+  - `STALE_FINISH_MIN` — lost-finish time buffer (minutes). The buffer for
+    `finish-classify.sh`, which is now consumed by the **closeout ①-b stuck-PR sweep**
+    (issue-runner no longer uses it directly after the rule-4 revert). A live worker
+    posts its final verdict within seconds of the `Verifier review:` comment, so if the
+    latest verifier is CLEAN yet no final verdict appears past this buffer, the worker
+    is considered dead.
 - `SOFT_TOKEN_BUDGET_PER_ISSUE = 300000` — soft token budget per issue. Not a
   hard cap but the observation threshold for ④ Report (the Agent call has no
   budget API, so it cannot be enforced).

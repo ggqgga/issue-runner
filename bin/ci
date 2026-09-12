@@ -1164,22 +1164,24 @@ for f in SKILL.md SKILL.en.md; do
       || { echo "  ✗ $f 에 $token 배선 없음"; exit 1; }
   done
 done
-# 값 드리프트 검사 — 스크립트 기본값과 프롬프트가 말하는 값이 갈리면 디스패처는 문서의 값을
-# 믿는데 실제 판정은 스크립트 값으로 난다. 존재만 grep 하면 이 어긋남을 못 잡는다.
-# 상수마다 **정의가 사는 파일**을 함께 적는다 — STALL_MIN 은 #206 에서 진행 증거 술어와
-# 함께 progress-evidence.sh 로 옮겨 갔고, 그 이사를 이 검사가 모르면 드리프트 검사가
-# 조용히 빨개지거나(여기) 엉뚱한 파일을 SSOT 로 믿는다.
-# (#427) 세 상수의 정의는 전부 `scripts/lib/constants.sh` 한 자리로 이사했다.
-for pair in 'STALL_MIN:scripts/lib/constants.sh' \
-            'MAX_TIMEBOX_GRACE:scripts/lib/constants.sh' \
-            'ISSUE_TIMEBOX_HOURS:scripts/lib/constants.sh'; do
-  name="${pair%%:*}"
-  src="${pair#*:}"
-  want=$(sed -n "s/^: \"\${$name:=\([0-9][0-9]*\)}\".*/\1/p" "$src" | head -1)
-  [ -n "$want" ] || { echo "  ✗ $src 에서 $name 기본값을 읽지 못함"; exit 1; }
+# 값 드리프트 검사 — 종전엔 "스크립트 기본값 == SKILL 이 적은 값" 을 대조했다. (#427) 이제
+# 값은 `scripts/lib/constants.sh` **한 자리**에만 있고 SKILL 은 이름과 뜻만 적으므로, 대조 대신
+# **값이 문서로 되살아나지 않았는지**를 문다 — 두 벌이 없으면 드리프트도 없다.
+#   ⑴ 상수 파일에 기본값이 있는가(SSOT 가 비면 소비처가 `set -u` 로 죽는다)
+#   ⑵ SKILL 이 그 이름을 부르고 상수 파일을 가리키는가(디스패처가 값을 찾아갈 경로)
+#   ⑶ SKILL 에 `이름 = 숫자` 가 되살아나지 않았는가(두 벌 복원 금지)
+# 만료 조건: `## 상수` 절이 값을 적지 않는 형태를 유지하는 한 이 검사가 그 형태의 강제자다.
+for name in STALL_MIN MAX_TIMEBOX_GRACE ISSUE_TIMEBOX_HOURS; do
+  want=$(sed -n "s/^: \"\${$name:=\([0-9][0-9]*\)}\".*/\1/p" scripts/lib/constants.sh | head -1)
+  [ -n "$want" ] || { echo "  ✗ scripts/lib/constants.sh 에서 $name 기본값을 읽지 못함"; exit 1; }
   for f in SKILL.md SKILL.en.md; do
-    grep -qF "\`$name = $want\`" "$f" \
-      || { echo "  ✗ $f 의 $name 값이 스크립트 기본값($want)과 다르다"; exit 1; }
+    grep -qF "$name" "$f" \
+      || { echo "  ✗ $f 에 $name 이름이 없다 — 디스패처가 그 경계를 모른다"; exit 1; }
+    grep -qF 'scripts/lib/constants.sh' "$f" \
+      || { echo "  ✗ $f 가 값의 자리(scripts/lib/constants.sh)를 가리키지 않는다 (#427)"; exit 1; }
+    if grep -qE "\`$name = [0-9]" "$f"; then
+      echo "  ✗ $f 가 $name 값을 다시 적었다 — 값은 scripts/lib/constants.sh 한 자리다 (#427)"; exit 1
+    fi
   done
 done
 
