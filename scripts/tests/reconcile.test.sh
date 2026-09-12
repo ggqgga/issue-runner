@@ -56,7 +56,28 @@ cat > "$sut_dir/release-labels.sh" <<'STUB'
 #!/bin/sh
 printf 'release %s\n' "$*" >> "$STUB_DESTROY_LOG"
 STUB
+# (#394) 반쯤 이동 판별이 부르는 세 조회 — 값은 env 픽스처로 준다. **빈 값 = 조회 실패**
+# (비0 종료)라, 그 방향이 `pr_open`(종전 동작)으로 떨어지는지까지 아래 격자가 문다.
+cat > "$sut_dir/pr-comments.sh" <<'STUB'
+#!/bin/sh
+[ -n "$STUB_PR_COMMENTS" ] || exit 1
+printf '%s' "$STUB_PR_COMMENTS"
+STUB
+cat > "$sut_dir/pr-head-at.sh" <<'STUB'
+#!/bin/sh
+[ -n "$STUB_HEAD_RAW" ] || exit 1
+printf '%s' "$STUB_HEAD_RAW"
+STUB
+cat > "$sut_dir/claim-at.sh" <<'STUB'
+#!/bin/sh
+[ -n "$STUB_CLAIM_AT" ] || exit 2
+printf '%s' "$STUB_CLAIM_AT"
+STUB
+# 진행 증거 판정은 **진짜 헬퍼**를 쓴다(#200·#206 의 술어 한 자리). 스텁으로 바꾸면
+# 이 격자가 "reconcile 이 그 술어를 제대로 부르는가" 를 못 본다 — 큐 로그만 빈 파일로 준다.
+cp "$DIR/progress-evidence.sh" "$sut_dir/progress-evidence.sh"
 chmod +x "$sut_dir"/*.sh
+: > "$tmp/queue.log"
 
 # ── gh 스텁 — 호출 형태별 응답. 타임라인은 STUB_CLAIMED_AT 이 비면 실패 모사 ────
 mkdir -p "$tmp/bin"
@@ -95,6 +116,8 @@ run() {  # run <branch_prs_json> <claimed_at|""> <sweep_prs_json>
   ( cd "$tmp/run" && \
     STUB_BRANCH_PRS="$1" STUB_CLAIMED_AT="$2" STUB_SWEEP_PRS="$3" \
     STUB_CLAIMED="${4:-$default_claimed}" \
+    STUB_PR_COMMENTS="${STUB_PR_COMMENTS:-}" STUB_HEAD_RAW="${STUB_HEAD_RAW:-}" \
+    STUB_CLAIM_AT="${STUB_CLAIM_AT:-}" PE_QUEUE_LOG="$tmp/queue.log" \
     STUB_DESTROY_LOG="$tmp/destroy.log" STUB_GH_LOG="$tmp/gh.log" \
     PATH="$tmp/bin:$PATH" bash "$sut_dir/reconcile.sh" ) \
     > "$tmp/events" 2> "$tmp/err"
@@ -292,6 +315,63 @@ check "⑧ 회수: 다음 실행의 스윕이 머지를 발행" \
   "$([ "$(event_has merged)" = yes ] && echo ok || echo no)"
 check "⑧ 회수: 정리도 수행" \
   "$([ "$(destroyed)" = yes ] && echo ok || echo no)"
+
+# ── ⑭ 반쯤 이동한 verify-redispatch 회수 (#394) ──────────────────────────────
+# `transition.sh verify-redispatch` 의 이슈 편집이 실패하면 PR 은 단계 라벨을 잃고 이슈는
+# `agent:claimed` 를 유지한다 — 세 게이트 전부 제외라 아무도 안 집는다. 형상이 확정될 때만
+# `half_moved_redispatch` 를 내고(전이는 SKILL ① 이 건다), 확정 못 하면 **종전대로**
+# `pr_open` 이다. 축을 하나씩 움직여 각 술어가 실제로 물리는지 본다.
+rm -rf "$tmp/proj/repo/.claude"
+hm_old=$(ts 120)      # 진행 증거 없음(커밋 120분·claim 타임박스 밖)
+hm_new=$(ts 5)        # claim 5분 전 = 살아 있는 회차
+hm_open='[{"number":8,"state":"OPEN","mergedAt":null,"statusCheckRollup":[],"labels":[]}]'
+hm_open_verify='[{"number":8,"state":"OPEN","mergedAt":null,"statusCheckRollup":[],"labels":[{"name":"flow:verify"}]}]'
+hm_open_ready='[{"number":8,"state":"OPEN","mergedAt":null,"statusCheckRollup":[],"labels":[{"name":"flow:agent-ready"}]}]'
+hm_bounced='[{"body":"머지 판정: 🔄 진행 중","createdAt":"2026-01-01T00:00:00Z"},
+             {"body":"재검증 실패: #42 — E2E 3건 빨강 <!-- bodat:worker -->","createdAt":"2026-01-02T00:00:00Z"}]'
+hm_verdict='[{"body":"재검증 실패: #42 — E2E 3건 빨강","createdAt":"2026-01-01T00:00:00Z"},
+             {"body":"머지 판정: ✅ 통과","createdAt":"2026-01-02T00:00:00Z"}]'
+hm_run() {  # hm_run <코멘트JSON> <head_raw> <claim_at> <branch_prs>
+  STUB_PR_COMMENTS="$1" STUB_HEAD_RAW="$2" STUB_CLAIM_AT="$3" run "$4" "" '[]'
+}
+
+hm_run "$hm_bounced" "abc123 $hm_old" "$hm_old" "$hm_open"
+check "⑭ 반쯤 이동 형상: half_moved_redispatch 발행" \
+  "$([ "$(event_has half_moved_redispatch)" = yes ] && echo ok || echo no)"
+check "⑭ 반쯤 이동 형상: 이슈·PR 번호가 실린다" \
+  "$(jq -e 'select(.event=="half_moved_redispatch") | .number == 42 and .pr == 8' < "$tmp/events" >/dev/null 2>&1 && echo ok || echo no)"
+check "⑭ 반쯤 이동 형상: pr_open 은 안 낸다(② Maintain 제외)" \
+  "$([ "$(event_has pr_open)" = no ] && echo ok || echo no)"
+check "⑭ 반쯤 이동 형상: 정리(worktree·라벨) 미실행 — 이벤트만" \
+  "$([ "$(destroyed)" = no ] && echo ok || echo no)"
+
+hm_run "$hm_bounced" "abc123 $hm_old" "$hm_old" "$hm_open_ready"
+check "⑭ PR 에 flow:agent-ready 만 남음(#281 뒤 반송 전이의 실제 잔여 형상): 이벤트 발행" \
+  "$([ "$(event_has half_moved_redispatch)" = yes ] && echo ok || echo no)"
+
+hm_run "$hm_bounced" "abc123 $hm_old" "$hm_old" "$hm_open_verify"
+check "⑭ 단계 라벨(flow:verify) 있음: 이벤트 없음 · pr_open(종전 동작)" \
+  "$([ "$(event_has half_moved_redispatch)" = no ] && [ "$(event_has pr_open)" = yes ] && echo ok || echo no)"
+
+hm_run "$hm_bounced" "abc123 $hm_old" "$hm_new" "$hm_open"
+check "⑭ 진행 증거 있음(claim 5분 전): 이벤트 없음 — 살아있는 워커 무접촉" \
+  "$([ "$(event_has half_moved_redispatch)" = no ] && [ "$(event_has pr_open)" = yes ] && echo ok || echo no)"
+
+hm_run "$hm_verdict" "abc123 $hm_old" "$hm_old" "$hm_open"
+check "⑭ 마지막 판정이 ✅: 반송 형상이 아니다 — 이벤트 없음" \
+  "$([ "$(event_has half_moved_redispatch)" = no ] && echo ok || echo no)"
+
+hm_run "" "abc123 $hm_old" "$hm_old" "$hm_open"
+check "⑭ 코멘트 조회 실패: 증명 못 하면 종전 동작(pr_open)" \
+  "$([ "$(event_has half_moved_redispatch)" = no ] && [ "$(event_has pr_open)" = yes ] && echo ok || echo no)"
+
+hm_run "$hm_bounced" "" "$hm_old" "$hm_open"
+check "⑭ head 조회 실패: 증명 못 하면 종전 동작(pr_open)" \
+  "$([ "$(event_has half_moved_redispatch)" = no ] && [ "$(event_has pr_open)" = yes ] && echo ok || echo no)"
+
+hm_run "$hm_bounced" "abc123 $hm_old" "" "$hm_open"
+check "⑭ claim 조회 실패: 증명 못 하면 종전 동작(pr_open)" \
+  "$([ "$(event_has half_moved_redispatch)" = no ] && [ "$(event_has pr_open)" = yes ] && echo ok || echo no)"
 
 # ── ⑦ gh-login.sh 순차 폴백 — REST 성공이면 GraphQL 을 호출하지 않는다 ───────
 cat > "$tmp/bin/gh" <<'STUB'

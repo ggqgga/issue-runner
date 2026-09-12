@@ -315,6 +315,11 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    `flow:verify` 를 떼고 원 이슈를 `agent-ready`(+`flow:verify`·`agent:claimed` 제거)로 되돌린다.
    **exit 1·2 면 종료 상태를 바꾸지 말고** ④ Report 에
    `BLOCKED: 전이 실패 verify-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>`.
+   그 반쯤 이동한 상태(PR 은 `flow:verify`/`verifying` 상실 · 이슈는 `agent:claimed` 유지)를
+   **다시 집는 주체는 이 루프가 아니다** — 세 게이트 전부에서 빠지기 때문이다(#394).
+   회수는 **issue-runner ① Reconcile** 이 한다: `reconcile.sh` 가 그 형상을
+   `half_moved_redispatch` 이벤트로 내고 디스패처가 같은 전이를 **멱등 재실행**한다
+   (`references/state-machine.md` 의 회수 열). 여기서 할 일은 보고 한 줄뿐이다.
    → issue-runner Dispatch 가 기존 `agent/issue-<issue>` worktree/브랜치를 재사용해
    같은 PR 브랜치에서 워커를 다시 붙인다(새 PR 안 생김). 워커는 위 `재검증 실패:`
    코멘트를 읽고 고친 뒤 다시 `flow:verify` 로 넘긴다(worker-template 절차). **redispatched 종료.**
