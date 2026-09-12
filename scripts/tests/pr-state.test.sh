@@ -44,12 +44,18 @@ if [ "$paginate" = 1 ]; then
   exit 0
 fi
 case "$*" in
-  *"pr view"*"--json state,labels,closingIssuesReferences"*)
+  *"pr view"*"--json state,labels,headRefName,closingIssuesReferences"*)
     [ "${STUB_PR_RC:-0}" = 0 ] || exit "$STUB_PR_RC"
     printf '%s\n' "$STUB_PR_META" ;;
   *"issue view"*"--json labels"*)
     [ "${STUB_ISSUE_RC:-0}" = 0 ] || exit "$STUB_ISSUE_RC"
-    printf '%s\n' "$STUB_ISSUE_LABELS" ;;
+    # 번호별 지도에서 꺼낸다 — **어느 이슈를 물었는지**가 곧 단언이다(#449 짝 판정).
+    # 지도에 없는 번호를 물으면 exit 1: SUT 가 엉뚱한 이슈의 라벨을 읽으면 즉시 빨개진다.
+    num=""; prev=""
+    for a in "$@"; do [ "$prev" = "view" ] && num="$a"; prev="$a"; done
+    got=$(printf '%s' "$STUB_ISSUE_MAP" | jq -c --arg n "$num" '.[$n] // empty')
+    [ -n "$got" ] || { echo "STUB: 지도에 없는 이슈 #$num 을 물었다" >&2; exit 1; }
+    printf '%s\n' "$got" ;;
   *)
     echo "STUB: 예상 밖 gh 호출: $*" >&2
     exit 1 ;;
@@ -57,16 +63,25 @@ esac
 STUB
 chmod +x "$tmp/bin/gh"
 
-# meta <labels-json> <state> <issue|->  → gh pr view 응답
+# meta <labels-json> <state> <refs-json> <head> → gh pr view 응답
 meta() {
-  jq -n --argjson l "$1" --arg s "$2" --arg i "$3" '{
+  jq -n --argjson l "$1" --arg s "$2" --argjson r "$3" --arg h "$4" '{
     state: $s,
     labels: [$l[] | {name: .}],
-    closingIssuesReferences: (if $i == "-" then [] else [{number: ($i | tonumber)}] end)
+    headRefName: $h,
+    closingIssuesReferences: [$r[] | {number: .}]
   }'
 }
-# ilabels <labels-json> → gh issue view 응답
-ilabels() { jq -n --argjson l "$1" '{labels: [$l[] | {name: .}]}'; }
+# imap <번호> <labels-json> [<번호> <labels-json> …] → 번호별 gh issue view 응답 지도
+imap() {
+  local out='{}'
+  while [ "$#" -ge 2 ]; do
+    out=$(printf '%s' "$out" | jq -c --arg n "$1" --argjson l "$2" \
+      '.[$n] = {labels: [$l[] | {name: .}]}')
+    shift 2
+  done
+  printf '%s' "$out"
+}
 
 # 코멘트 픽스처
 C_NONE='[]'
@@ -77,14 +92,18 @@ C_OK='[{"body":"머지 판정: 🔄 진행 중","createdAt":"2026-09-01T00:00:00
 C_BOUNCED='[{"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-09-01T00:10:00Z"},
             {"body":"재검증 실패: #449 — codex BLOCKER (attempt 1)\n<!-- bodat:worker -->","createdAt":"2026-09-01T00:20:00Z"}]'
 
-# run <pr-labels-json> <issue-labels-json|-> <pr_state> <comments-json>
+# run <pr-labels-json> <issue-labels-json|-> <pr_state> <comments-json> [<refs-json> <head>]
 #   두 번째 인자가 `-` 면 연결 이슈 없음(closingIssuesReferences 빈 배열).
+#   refs·head 는 기본 `[449]`·`agent/issue-449`(짝이 맞는 평범한 PR) — 짝 판정 케이스만 덮어쓴다.
 run() {
-  local pl="$1" il="$2" st="$3" cm="$4" m
-  if [ "$il" = "-" ]; then m=$(meta "$pl" "$st" "-"); else m=$(meta "$pl" "$st" 449); fi
+  local pl="$1" il="$2" st="$3" cm="$4" refs="${5:-}" head="${6:-agent/issue-449}" m
+  if [ -z "$refs" ]; then
+    if [ "$il" = "-" ]; then refs='[]'; else refs='[449]'; fi
+  fi
+  m=$(meta "$pl" "$st" "$refs" "$head")
   out=$(PATH="$tmp/bin:$PATH" \
     STUB_PR_META="$m" \
-    STUB_ISSUE_LABELS="$( [ "$il" = "-" ] && echo '{"labels":[]}' || ilabels "$il" )" \
+    STUB_ISSUE_MAP="${STUB_ISSUE_MAP_OVERRIDE:-$( [ "$il" = "-" ] && imap 449 '[]' || imap 449 "$il" )}" \
     STUB_COMMENTS="$cm" \
     STUB_PR_RC="${STUB_PR_RC:-0}" STUB_ISSUE_RC="${STUB_ISSUE_RC:-0}" \
     STUB_COMMENTS_RC="${STUB_COMMENTS_RC:-0}" \
@@ -95,7 +114,7 @@ run() {
 # expect <name> <state> <owner> <mismatch-jq-단언> <pr-labels> <issue-labels|-> <pr_state> <comments>
 expect() {
   local name="$1" want_state="$2" want_owner="$3" mm="$4"
-  run "$5" "$6" "$7" "$8"
+  run "$5" "$6" "$7" "$8" "${9:-}" "${10:-agent/issue-449}"
   if [ "$rc" != 0 ]; then bad "$name — exit $rc (기대 0) err=[$(cat "$tmp/last.err")]"; return; fi
   local got_state got_owner
   got_state=$(printf '%s' "$out" | jq -r '.state')
@@ -198,6 +217,26 @@ expect "연결 이슈 없음 — 미러 축 없음" "H:policy" issue-runner "$NO
   '["hold:policy","flow:verify"]' '-' OPEN "$C_PENDING"
 expect "연결 이슈 없음 — 사다리 칸은 PR 라벨로 낸다" S2 verify-runner "$NOMM" \
   '["flow:verify"]' '-' OPEN "$C_PENDING"
+
+# ── 짝 이슈 판정 — head ∩ closingIssuesReferences (#449 codex 1회차 P1) ──
+# 실데이터: PR #113 head `agent/issue-109`, refs `[108,109]`. `[0]` 을 쓰면 108 의 라벨을 읽어
+# 109 의 홀드를 놓치고(승격) 108 의 무관한 홀드가 교정을 막는다. 스텁은 지도에 없는 이슈를
+# 물으면 exit 1 이라, 아래 첫 행은 **109 를 물었다는 것 자체**가 단언이다.
+STUB_ISSUE_MAP_OVERRIDE=$(imap 108 '["hold:policy","agent-ready"]' 109 '["flow:verify","agent-ready"]')
+expect "짝 이슈 — refs[108,109] + head 109 → 109 의 라벨을 본다" S2 verify-runner "$NOMM" \
+  '["flow:verify"]' 'x' OPEN "$C_PENDING" '[108,109]' 'agent/issue-109'
+STUB_ISSUE_MAP_OVERRIDE=""
+# refs 에 head 의 N 이 없으면 연결 없음(`-`) — 첫 참조로 추측하지 않는다.
+# 이슈 축이 없으니 `stop` 미러 축도 안 난다(108 의 hold:policy 가 상태를 뒤엎지 않는다).
+STUB_ISSUE_MAP_OVERRIDE=$(imap 108 '["hold:policy","agent-ready"]')
+expect "짝 이슈 — refs[108] + head 109 → 연결 없음(첫 참조 추측 금지)" S2 verify-runner "$NOMM" \
+  '["flow:verify"]' 'x' OPEN "$C_PENDING" '[108]' 'agent/issue-109'
+STUB_ISSUE_MAP_OVERRIDE=""
+# head 가 `agent/issue-*` 꼴이 아니면 짝을 증명할 축이 없다 → 연결 없음.
+STUB_ISSUE_MAP_OVERRIDE=$(imap 108 '["hold:policy","agent-ready"]')
+expect "짝 이슈 — head 가 agent/issue-* 아님 → 연결 없음" S2 verify-runner "$NOMM" \
+  '["flow:verify"]' 'x' OPEN "$C_PENDING" '[108]' 'feat/hand-written'
+STUB_ISSUE_MAP_OVERRIDE=""
 
 # ── 조회 실패 → exit 2 · 무출력 (추측한 상태를 내지 않는다) ─────────────
 STUB_PR_RC=1
