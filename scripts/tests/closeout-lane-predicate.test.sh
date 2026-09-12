@@ -17,10 +17,18 @@
 #      아니라는 반증의 기준선). 구 술어 결정도 같은 격자에서 함께 계산해 나란히 찍는다.
 #   ⑷ 격자 10·13행이 **도달 가능**하다(구 술어에선 상수 참이라 도달 불가였다).
 #
-# 뮤테이션 방증 — `LANE_MUT` 로 정의를 일부러 망가뜨리면 fail>0 이어야 한다(양방향):
+#   ⑸ **연산자·극성도 정의식에서 읽는다** (attempt 2 P2). 라벨 집합만 뽑고 `A` 를 ∨ 로, `R` 을
+#      "있음/없음" 으로 하드코딩하면 정의가 `∨`→`∧` 로 바뀌거나 극성이 뒤집혀도 격자가
+#      초록이다 — 광고한 "의미 회귀 가드" 가 아니다. 그래서 정의식을 **토큰열**(라벨 · 연산자 ·
+#      극성어)로 파싱해 평가기가 그 연산자·극성을 **그대로 실행**하고, 별도로 기대 연산자·극성을
+#      명시 단언한다(`A` 는 ∨ 단일 연산자, `R` 은 `agent-ready` 있음 ∧ 나머지 없음).
+#
+# 뮤테이션 방증 — `LANE_MUT` 로 정의를 일부러 망가뜨리면 fail>0 이어야 한다(양방향 + 의미):
 #   LANE_MUT=loose : `A` 에 `agent-ready` 를 도로 넣는다(구 동작 = 너무 느슨)
 #   LANE_MUT=tight : `A` 에서 `flow:verify` 를 뺀다(너무 조임 — 살아있는 검증 레인을 걷어냄)
-# `bin/ci` 가 정상 1회 + 뮤테이션 2회를 돌려 뒤 둘이 **실제로 빨개지는지** 확인한다.
+#   LANE_MUT=and   : `A` 의 연산자를 ∨ → ∧ 로 바꾼다(라벨 집합은 그대로 — 집합만 재면 못 잡는다)
+#   LANE_MUT=flip  : `R` 의 극성을 뒤집는다(있음↔없음 — 라벨 집합은 그대로)
+# `bin/ci` 가 정상 1회 + 뮤테이션 4회를 돌려 뒤 넷이 **실제로 fail>0 으로 끝나는지** 확인한다.
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -50,6 +58,42 @@ sec_flat_en() { awk '/^## ①-c /{on=1} on && /^## / && !/^## ①-c /{exit} on' 
 defexpr() { sed -n "s/.*$2//p" <<<"$1" | sed 's/\*\*.*//'; }
 # labels_of <식> → 백틱 토큰만, 한 줄에 하나
 labels_of() { grep -oE '`[^`]+`' <<<"$1" | tr -d '`' | sed 's/ *$//'; }
+# tokens_of <식> → 토큰열, 한 줄에 하나: `L:<라벨>` · `OP:∨` · `OP:∧` · `POL:have` · `POL:none`.
+# 라벨 사이의 `·`(같은 극성 묶음의 나열)는 연산자가 아니라 구분자라 토큰을 내지 않는다.
+# 극성어는 한/영 둘 다 받는다(있음/present → have · 없음/absent → none). 그 밖의 산문은 버린다.
+tokens_of() {
+  grep -oE '`[^`]+`|∨|∧|있음|없음|present|absent' <<<"$1" \
+    | sed -e 's/^`\(.*\)`$/L:\1/' -e 's/^∨$/OP:∨/' -e 's/^∧$/OP:∧/' \
+          -e 's/^있음$/POL:have/' -e 's/^present$/POL:have/' \
+          -e 's/^없음$/POL:none/' -e 's/^absent$/POL:none/'
+}
+# parse_or_and <토큰열> → 라벨들 사이의 연산자가 **한 종류**면 그 연산자를 찍고 0, 아니면 1.
+#   `A` 는 라벨 ∨ 라벨 ∨ … 꼴이라 극성어가 없다. 연산자가 섞이거나 하나도 없으면 실패다.
+parse_or_and() {
+  local ops
+  ops=$(grep '^OP:' <<<"$1" | sort -u)
+  [ "$(wc -l <<<"$ops" | tr -d ' ')" = 1 ] && [ -n "$ops" ] || return 1
+  sed 's/^OP://' <<<"$ops"
+}
+# parse_groups <토큰열> → `∧` 로 나뉜 묶음마다 `<극성>|<라벨>` 을 한 줄씩 찍는다(라벨마다 한 줄).
+#   묶음 = 라벨 1개 이상 + 극성어 정확히 1개. 극성어가 없거나 둘이면 실패(1). `∨` 가 섞여도 실패.
+parse_groups() {
+  local line labels='' pol='' out='' l
+  while IFS= read -r line; do
+    case "$line" in
+      L:*) labels="$labels ${line#L:}" ;;
+      POL:*) [ -z "$pol" ] || return 1; pol=${line#POL:} ;;
+      OP:∧)
+        [ -n "$labels" ] && [ -n "$pol" ] || return 1
+        for l in $labels; do out="$out$pol|$l"$'\n'; done
+        labels=''; pol='' ;;
+      OP:∨) return 1 ;;
+    esac
+  done <<<"$1"
+  [ -n "$labels" ] && [ -n "$pol" ] || return 1
+  for l in $labels; do out="$out$pol|$l"$'\n'; done
+  printf '%s' "$out"
+}
 
 ko_flat=$(sec_flat "$KO")
 en_flat=$(sec_flat_en "$EN")
@@ -67,24 +111,47 @@ done
 
 A_SET=$(labels_of "$ko_a" | sort -u | tr '\n' ' ')
 A_SET_EN=$(labels_of "$en_a" | sort -u | tr '\n' ' ')
-# R 은 `있음 ∧` / `present ∧` 로 존재부/부재부를 가른다.
-ko_r_have=${ko_r%%있음 ∧*}; ko_r_none=${ko_r#*있음 ∧}
-en_r_have=${en_r%%present ∧*}; en_r_none=${en_r#*present ∧}
-R_HAVE=$(labels_of "$ko_r_have" | sort -u | tr '\n' ' ')
-R_NONE=$(labels_of "$ko_r_none" | sort -u | tr '\n' ' ')
-R_HAVE_EN=$(labels_of "$en_r_have" | sort -u | tr '\n' ' ')
-R_NONE_EN=$(labels_of "$en_r_none" | sort -u | tr '\n' ' ')
+# ⑸ 연산자·극성은 하드코딩하지 않고 정의식에서 **파싱**한다 — 평가기가 이 값을 그대로 쓴다.
+A_OP=$(parse_or_and "$(tokens_of "$ko_a")") || { echo "  ✗ A(ko) 정의식의 연산자를 못 읽었다(섞였거나 없음): [$ko_a]"; exit 1; }
+A_OP_EN=$(parse_or_and "$(tokens_of "$en_a")") || { echo "  ✗ A(en) 정의식의 연산자를 못 읽었다(섞였거나 없음): [$en_a]"; exit 1; }
+R_GROUPS=$(parse_groups "$(tokens_of "$ko_r")") || { echo "  ✗ R(ko) 정의식을 '극성 묶음 ∧ 극성 묶음' 으로 못 읽었다: [$ko_r]"; exit 1; }
+R_GROUPS_EN=$(parse_groups "$(tokens_of "$en_r")") || { echo "  ✗ R(en) 정의식을 '극성 묶음 ∧ 극성 묶음' 으로 못 읽었다: [$en_r]"; exit 1; }
+# 파생 집합(집합 단언용) — 극성별 라벨. 평가기는 이게 아니라 R_GROUPS 를 직접 돈다.
+R_HAVE=$(awk -F'|' '$1=="have"{print $2}' <<<"$R_GROUPS" | sort -u | tr '\n' ' ')
+R_NONE=$(awk -F'|' '$1=="none"{print $2}' <<<"$R_GROUPS" | sort -u | tr '\n' ' ')
+R_HAVE_EN=$(awk -F'|' '$1=="have"{print $2}' <<<"$R_GROUPS_EN" | sort -u | tr '\n' ' ')
+R_NONE_EN=$(awk -F'|' '$1=="none"{print $2}' <<<"$R_GROUPS_EN" | sort -u | tr '\n' ' ')
 
 # ── 뮤테이션 주입 ──────────────────────────────────────────────────────────
 case "$MUT" in
   loose) A_SET="$A_SET agent-ready "; A_SET_EN="$A_SET_EN agent-ready " ;;
   tight) A_SET=${A_SET//flow:verify /}; A_SET_EN=${A_SET_EN//flow:verify /} ;;
+  and)   A_OP='∧'; A_OP_EN='∧' ;;
+  flip)  R_GROUPS=$(sed -e 's/^have|/X|/' -e 's/^none|/have|/' -e 's/^X|/none|/' <<<"$R_GROUPS")
+         R_GROUPS_EN=$(sed -e 's/^have|/X|/' -e 's/^none|/have|/' -e 's/^X|/none|/' <<<"$R_GROUPS_EN")
+         R_HAVE=$(awk -F'|' '$1=="have"{print $2}' <<<"$R_GROUPS" | sort -u | tr '\n' ' ')
+         R_NONE=$(awk -F'|' '$1=="none"{print $2}' <<<"$R_GROUPS" | sort -u | tr '\n' ' ')
+         R_HAVE_EN=$(awk -F'|' '$1=="have"{print $2}' <<<"$R_GROUPS_EN" | sort -u | tr '\n' ' ')
+         R_NONE_EN=$(awk -F'|' '$1=="none"{print $2}' <<<"$R_GROUPS_EN" | sort -u | tr '\n' ' ') ;;
   '') ;;
   *) echo "  ✗ 알 수 없는 LANE_MUT=[$MUT]"; exit 2 ;;
 esac
 
-echo "  A(ko) = [$A_SET]"
+echo "  A(ko) = [$A_SET] · 연산자 = [$A_OP]"
 echo "  R.있음 = [$R_HAVE] · R.없음 = [$R_NONE]"
+
+# ── ⑸ 연산자·극성 명시 단언 ──────────────────────────────────────────────
+# 평가기가 정의식을 그대로 실행하므로, 정의가 `∧` 로 바뀌거나 극성이 뒤집히면 아래 격자도
+# 빨개진다. 그래도 여기서 **따로** 단언하는 이유: 격자 실패는 "어느 칸이 틀렸다" 만 말하고
+# "연산자가 바뀌었다" 는 원인을 안 말한다 — 원인 줄이 하나 있어야 사람이 한 번에 짚는다.
+check_eq "A 의 연산자는 ∨ 하나(하류 레인 라벨 **하나라도** 있으면 참)" "∨" "$A_OP"
+check_eq "A 의 연산자 — en 동문" "$A_OP" "$A_OP_EN"
+check_eq "R 의 극성: agent-ready 만 '있음'" "have|agent-ready" \
+  "$(grep '^have|' <<<"$R_GROUPS" | sort -u | tr '\n' ' ' | sed 's/ $//')"
+check_eq "R 의 극성: 나머지 여섯은 전부 '없음'" \
+  "none|agent:claimed none|flow:ready none|flow:verify none|harvesting none|hold:* none|needs-human" \
+  "$(grep '^none|' <<<"$R_GROUPS" | sort -u | tr '\n' ' ' | sed 's/ $//')"
+check_eq "R 의 극성 묶음 — en 동문" "$(sort -u <<<"$R_GROUPS")" "$(sort -u <<<"$R_GROUPS_EN")"
 
 # ── ⑴⑵ 집합 자체 ──────────────────────────────────────────────────────────
 # 전이 표 `closeout-redispatch` 행(이슈): add=agent-ready · remove=harvesting flow:ready
@@ -111,15 +178,24 @@ has() { # has <라벨목록(콤마)> <라벨>  — hold:* 는 접두 매칭
   fi
   case "$labels" in *",$want,"*) return 0 ;; *) return 1 ;; esac
 }
-eval_A() { # eval_A <라벨목록> → 0=참
+eval_A() { # eval_A <라벨목록> → 0=참 — 파싱한 연산자대로: ∨ 면 하나라도, ∧ 면 전부
   local l
-  for l in $A_SET; do has "$1" "$l" && return 0; done
-  return 1
+  case "$A_OP" in
+    ∨) for l in $A_SET; do has "$1" "$l" && return 0; done; return 1 ;;
+    ∧) for l in $A_SET; do has "$1" "$l" || return 1; done; return 0 ;;
+    *) echo "  ✗ eval_A: 알 수 없는 연산자 [$A_OP]"; exit 2 ;;
+  esac
 }
-eval_R() { # eval_R <라벨목록> → 0=참
-  local l
-  for l in $R_HAVE; do has "$1" "$l" || return 1; done
-  for l in $R_NONE; do has "$1" "$l" && return 1; done
+eval_R() { # eval_R <라벨목록> → 0=참 — 파싱한 극성 묶음을 ∧ 로 잇는다(have=있어야, none=없어야)
+  local pol l
+  while IFS='|' read -r pol l; do
+    [ -n "$l" ] || continue
+    case "$pol" in
+      have) has "$1" "$l" || return 1 ;;
+      none) has "$1" "$l" && return 1 ;;
+      *) echo "  ✗ eval_R: 알 수 없는 극성 [$pol]"; exit 2 ;;
+    esac
+  done <<<"$R_GROUPS"
   return 0
 }
 decide() { # decide <라벨목록> → untouched|recall  (분기 순서: A 먼저, 그다음 R)

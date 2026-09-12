@@ -1557,14 +1557,17 @@ echo "[closeout] ①-c 술어 실효성 — 정의식을 실제로 평가한다 
 # 픽스처 격자 위에서 **평가**하고, 전이 성공/실패 두 상태에서 **값이 갈리는지**를 잰다.
 bash scripts/tests/closeout-lane-predicate.test.sh
 
-echo "[closeout] ①-c 술어 뮤테이션 방증 — 양방향 (#334)"
+echo "[closeout] ①-c 술어 뮤테이션 방증 — 집합 양방향 + 연산자·극성 (#334 · attempt 2 P2)"
 # 한쪽만 재면 "가드가 있다" 는 주장일 뿐이다. 구 동작(너무 느슨)과 과잉 조임(너무 조임)
-# 둘 다에서 **실제로 빨개지는지** 확인한다.
-for mut in loose tight; do
-  if LANE_MUT="$mut" bash scripts/tests/closeout-lane-predicate.test.sh >/dev/null 2>&1; then
-    echo "  ✗ LANE_MUT=$mut 로 술어를 망가뜨렸는데 테스트가 초록이다 — 그 테스트는 이 축을 안 문다(#334)"
-    exit 1
-  fi
+# 둘 다에서 **실제로 빨개지는지** 확인한다. attempt 2 P2: 라벨 **집합**만 뽑고 연산자(∨/∧)·
+# 극성(있음/없음)을 하드코딩하면 `A` 를 `∨`→`∧` 로 바꾸거나 `R` 의 극성을 뒤집어도 격자가
+# 초록이다 — 그래서 `and`(A 의 연산자를 ∧ 로)·`flip`(R 의 극성 반전) 두 뮤테이션을 더 건다.
+# 판정은 종료코드가 아니라 **결과 줄의 `fail=N>0`** 이다 — 모르는 뮤테이션 이름에 exit 2 로
+# 죽는 것도 비0이라, 종료코드만 보면 "그 축을 잰 적이 없다" 가 빨강으로 위장한다.
+for mut in loose tight and flip; do
+  out=$(LANE_MUT="$mut" bash scripts/tests/closeout-lane-predicate.test.sh 2>&1) || true
+  tail -1 <<<"$out" | grep -qE 'closeout-lane-predicate\.test.*fail=[1-9][0-9]*$' \
+    || { echo "  ✗ LANE_MUT=$mut 로 술어를 망가뜨렸는데 테스트가 fail>0 으로 끝나지 않았다 — 그 테스트는 이 축을 안 문다(#334): $(tail -1 <<<"$out")"; exit 1; }
 done
 
 echo "[closeout] ①-c 착수 판정 — pr-head-at.sh 가 값을 못 주면 실측 갈래에 도달하지 않는다 (반증형, #334 BLOCKER①-b)"
