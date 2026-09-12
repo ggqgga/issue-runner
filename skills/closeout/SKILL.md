@@ -67,18 +67,89 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
   4·6단계 미완 마커가 발견되면 그 단계부터 이어간다 (멱등 재개).
 - `resume` — PR 이 OPEN 이고 `harvesting` 유지 중. 마커표로 끝난 단계를 건너뛰고
   중단 지점부터 파이프라인을 이어간다.
+- `human_hold` — PR 이 OPEN 인데 `needs-human` 이 붙어 있거나(사람이 조사 중) 그 라벨을
+  못 읽었다(`why` 로 갈린다). **무접촉** — ④ Report 에
+  `보류: PR #<pr>(<repo_short>) — 사람 보류(<why>)` 한 줄만 남기고 이 틱엔 더 건드리지
+  않는다. `resume` 를 그대로 태우면 아래 `bounced` 재개 절차가 `closeout-redispatch` 를
+  걸고, 그 전이가 사람이 방금 붙인 `needs-human`·`hold:*` 를 **뗀다**(①-b 가 대상
+  필터로 명시 배제하는 바로 그 위험, #151). 라벨을 못 읽은 경우도 같은 방향이다 —
+  보류가 없음을 증명하지 못한 상태를 통과로 처리하면 그게 fail-open 이다.
+  **해제 경로**: 사람이 `needs-human` 을 떼면 다음 틱에 `resume` 로 돌아온다
+  (`harvesting` 은 그대로라 이 PR 이 레인 밖으로 새지 않는다).
 - `stale` — 보고만 한다.
 
 멱등 마커표 (끝난 단계 재판정용 — 재개 시 중복 작업 방지):
 
 | 단계 | 마커 | 재개 판정 |
 |---|---|---|
-| 1 검증 | PR 코멘트 `마감 검증:` | 있으면 1단계 건너뜀 |
+| 1 검증 | PR 코멘트 `마감 검증: ✅` | `$SCRIPTS/closeout-step1-marker.sh <repo> <pr>` 가 `skip` 일 때만 1단계 건너뜀 (바로 아래 절 — `verify`·비0은 전부 **수행**) |
 | 2 머지 | PR `MERGED` | MERGED 면 머지 끝 (머지 직후 worktree 정리 포함) |
 | 3 reconcile | 계획문서 diff(머지 커밋) + epic 코멘트 | 머지에 포함이면 끝 |
 | 4 배포 | `배포 대기:` 코멘트 / `deployed:<sha>` | 있으면 재요청 안 함 |
 | 5 후처리 | `✅ 스모크` 코멘트 / 배포 이슈 CLOSED + 검증·배포 완료 코멘트 | 있으면 재스모크 안 함 (배포 레인(deploy-cycle)이 검증까지 마치고 닫은 경우 포함) |
 | 6 파생 | 생성 이슈 번호 코멘트 | 있으면 재발행 안 함 |
+
+**1단계 마커는 "있으면 끝" 이 아니다 — 현재 head 에 대한 통과 판정일 때만 센다 (#271).**
+옛 표는 1단계를 "`마감 검증:` 코멘트가 있으면 건너뜀" 한 줄로 적었는데, 그 전제는 **세
+방향으로 거짓일 수 있다**. 셋 다 결말이 같다 — 검증 안 된 head 가 2단계 머지 게이트로
+가고, 그 게이트 조건(CI 캐시 pass · `검증자 리뷰:` BLOCKER 0 · MERGEABLE)은 그대로 전부
+참이라 **머지된다**:
+
+- (A) **가장 늦은 `마감 검증:` 이 `⚠ 보류`** 다. ③-1 ⓑ 의 보류 코멘트도 접두가 같아 표에
+  걸리는데, `⚠ 보류` 는 1단계를 **통과하지 못했다**는 기록이다. ✅ 의 *존재*가 아니라
+  **가장 늦은 것**을 봐야 한다(`✅ → ⚠` 면 더 늦은 ⚠ 이 그 ✅ 를 덮은 것이다 — #218
+  attempt 3 이 `bounce-state.sh` 에서 밟은 함정과 같은 형태).
+- (B) **마커가 현재 head 커밋보다 이르다.** rebase·사람 푸시로 head 가 바뀌면 그 판정은
+  옛 코드에 대한 것이다(✅ 에 적용하던 #171 규칙을 1단계 마커에도 그대로).
+- (C) **마커가 최신 반송 마커보다 앞이다.** 반송 뒤 교체 워커가 **새 커밋 없이** ✅ 만
+  찍으면 head 시각이 그대로라 (B) 로는 안 걸린다.
+
+셋은 **AND** 이고 판정은 `$SCRIPTS/closeout-step1-marker.sh <repo> <pr>` **한 자리**다
+(반송 마커 집합·선후는 그 안에서 `bounce-state.sh --marker-index` 로 받는다 — 마커
+매칭을 두 벌로 두지 않는다, #171). 출력이 **정확히 `skip` 일 때만** 1단계를 건너뛴다 —
+`verify` 와 비0(조회·파싱 실패)은 같은 방향(**수행**)이다. 재수행의 대가는 검증자 호출
+한 번이고 건너뜀의 대가는 검증 안 된 머지라 비대칭이다.
+
+**`resume` 의 재개 지점은 마커표보다 반송 상태가 먼저다 (#271).** 마커표 1단계 행의
+"`마감 검증:` 코멘트가 있으면 건너뜀" 은 **전제가 거짓일 수 있다** — 이전 회차가 남긴
+`마감 검증:` 코멘트(예 ③-1 ⓑ 의 `⚠ 보류` 를 사람이 풀어 다음 회차가 돌아온 PR)가 이미
+있으면 마커표는 1단계를 건너뛰고 **2단계 머지 게이트**로 보낸다. 그 게이트 조건(CI 캐시
+pass · `검증자 리뷰:` BLOCKER 0 · MERGEABLE)은 반송 직전 상태 그대로 전부 참이라 **방금
+BLOCKER 를 낸 head 가 머지된다.** 그래서 `resume` 은 마커표를 보기 **전에**
+`$SCRIPTS/bounce-state.sh <repo> <pr>` 를 한 번 돌리고 그 값으로 재개 지점을 정한다(①-b 가
+쓰는 것과 **같은 한 자리** — 판정 로직을 두 벌로 두지 않는다). 그 스크립트가 낼 수 있는
+값은 넷이고 **넷 다 행선지가 있다**:
+
+| `bounce-state.sh` | 뜻 | `resume` 재개 지점 |
+|---|---|---|
+| `ok` | 반송 마커가 없거나, 최신 반송 마커 뒤 마지막 판정이 `머지 판정: ✅` | **마커표 그대로** — 끝난 단계를 건너뛰고 중단 지점부터. 1단계 행의 판정은 위 절 대로 `closeout-step1-marker.sh` 한 자리다(반송 선후 (C)·head 신선도 (B)·`⚠ 보류` (A) 가 그 안에 함께 들어 있다 — 여기서 따로 따지지 마라) |
+| `bounced` | 최신 반송 마커 뒤에 판정 코멘트가 없거나 그중 마지막이 `머지 판정: 🔄` | 마커표를 **보지 말고** ③-1 ⓐ 의 `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` **재시도 지점**에서 이어간다(바로 아래 재개 절차) — 1단계 재검증·2단계 머지로 가지 않는다 |
+| `held` | 최신 반송 마커 뒤 마지막 판정이 `머지 판정: ⚠ 보류` | **`active` 취급 무접촉** — 워커가 명시적으로 올린 보류다. ④ Report 에 `보류: PR #<pr>(<repo_short>) — 반송 뒤 워커 ⚠` 한 줄만 남기고 이 틱엔 더 건드리지 않는다(①-b 와 같은 방향 — 스윕도 이 값을 승격에 쓰지 않는다, #218 두 번째 회차) |
+| 무출력(exit 1 — 판정 실패) | 코멘트 조회·파싱 실패 | **`active` 취급 무접촉** + ④ Report 에 `BLOCKED: 반송 판정 실패 PR #<pr>(<repo_short>)` — 반송되지 않았음을 *증명하지 못한* 상태를 통과로 처리하면 그게 fail-open 이다(①-b 와 같은 방향) |
+
+**`bounced` 재개 절차 — 전이를 다시 걸기 전에 점유부터 맞춘다.** 여기까지 왔다는 것은
+③-1 ⓐ 의 회수(`closeout-pick`)가 PR·이슈 양쪽에 `harvesting` 을 되살렸다는 뜻이지만,
+그 회수가 반쪽만 들었을 수 있다. `gh issue view <issue> --repo <repo> --json labels` 로
+이슈 쪽을 먼저 보고 갈라라(PR 쪽은 `harvesting` 이 있어야 애초에 `resume` 이 난다):
+
+- 이슈에 `agent:claimed` 가 있다 = **교체 워커가 살아 있다**(회수 창에서 디스패처가 먼저
+  집었다). 전이를 걸지 마라 — 재시도가 그 워커의 `agent:claimed` 를 뗀다. `active` 취급
+  무접촉으로 두고 ④ Report 에 `보류: PR #<pr>(<repo_short>) — 교체 워커 점유(agent:claimed)`
+  한 줄만 남긴다. 워커가 완결해 `머지 판정: ✅` 를 찍으면 다음 틱 판정이 `ok` 로 바뀌어
+  마커표 경로로 저절로 돌아온다.
+- 이슈에 `harvesting` 도 `agent:claimed` 도 없다 = **반쪽 회수**(이슈 쪽 점유가 빈 채로
+  남았다 — 그대로 전이를 걸면 그 사이 디스패처가 이슈를 집는다). 먼저
+  `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` 를 한 번 더 걸어 양쪽을 맞추고
+  (멱등이라 PR 쪽은 no-op) 아래로 간다. 비0이면 ④ Report 에
+  `BLOCKED: 전이 실패 closeout-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올리고 이 틱엔 끝이다.
+- 양쪽에 `harvesting` 이 있다 = 온전한 회수. 그대로 아래로 간다.
+
+그런 다음 ③-1 ⓐ 의 **전이 호출만** 다시 건다 — **반송 코멘트는 다시 남기지 마라.** 이미
+원장에 있고(그래서 판정이 `bounced` 다), 한 번 더 남기면 일어나지도 않은 회차가 원장에
+늘어 다음 틱의 판정 입력이 거짓이 된다. 그 재시도가 **또** 실패하면 ③-1 ⓐ 의 실패 갈래
+그대로(회수 호출 한 번 + `BLOCKED: 전이 실패 closeout-redispatch …`)이고, ④ Report 의
+`BLOCKED:` 줄로만 남긴 뒤 **그 틱은 그 PR 을 더 건드리지 않는다**(같은 틱 안에서 다시
+돌리지 마라 — 무한 재시도 금지). 다음 틱의 `resume` 이 같은 자리를 다시 집는다.
 
 **에픽 스윕 (① 끝, 매 틱)** — leaf 를 다 닫고도 열린 채 남은 에픽은 **아무 루프도 닫지
 않는다**(에픽은 워커가 집어가는 대상이 아니라 sub-issue 롤업 대상이다). `cd` 없이
@@ -481,13 +552,98 @@ Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에
   `BLOCKED: 전이 실패 closeout-dup PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
   판정이 "중복인 것 같다" 수준이면 dup 가 아니다 — 근거 커밋을 못 짚으면 아래 BLOCKER
   경로(`--reason policy`)로 간다.
-- BLOCKER(미산출 포함, 사유 예 `검증자 미산출 — 타임아웃(>VERIFIER_TIMEOUT_MIN분)` / 모델 오류 원문) →
+- BLOCKER(미산출 포함, 사유 예 `검증자 미산출 — 타임아웃(>VERIFIER_TIMEOUT_MIN분)` / 모델 오류 원문)
+  → **갈래가 둘이다. 판별 기준 한 줄: 구현으로 닫히는 결함이면 ⓐ 워커 레인 반송,
+  스펙·정책 선택이 남아 있으면 ⓑ 사람 보류다.** (연결 이슈가 없으면 — PR 본문에
+  `Closes`/`Refs` 가 없어 `<issue>` 를 못 얻으면 — 되돌릴 이슈가 없으니 ⓐ 는 불가, ⓑ 로 간다.)
+- ⓐ **구현으로 닫히는 결함 → 워커 레인 반송**(실측 2회 — 이 갈래에 코멘트 채널이 없어
+  마커를 손으로 적었다, #271).
+  `$SCRIPTS/bounce-comment.sh closeout-blocker <repo> <pr> <issue> "<사유>"` 로 반송
+  코멘트를 남긴다 — **문구를 손으로 옮겨 적지 마라**(콜론이 빠지거나 어순이 바뀌면
+  `bounce-state.sh` 반송 안전망이 그 PR 을 못 보고, `closeout-eligible` 이 **반송 사유가 된
+  코드에 대한 옛 ✅** 로 그 PR 을 다시 머지 후보로 올린다, #212 · #171). `<사유>` 는 워커가
+  그대로 읽고 고칠 수 있게 무엇이 왜 막혔는지로 쓴다(`redispatch` 채널의 고정 문구를
+  빌려 쓰지 마라 — 이 갈래에서 "완결 유실" 은 거짓이고, 거짓 사유는 다음 틱의 판정
+  입력이 된다).
+  **코멘트가 0으로 끝났다면 이어서** `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`
+  로 연결 이슈를 `agent-ready` 로 되돌린다(`agent:claimed`·단계 라벨·`needs-human`·`hold:*` 를
+  뗀다 — 손으로 `gh issue edit` 하지 마라) → **`blocked` 종료**(머지하지 않는다. 새 종료 상태를
+  만들지 않는다 — ④ Report 에는 `재디스패치 N` 으로도 함께 집계한다). 재디스패치가
+  성사되면 issue-runner Dispatch 가 같은 `agent/issue-N` worktree 를 재사용해 **같은 PR
+  브랜치에서 이어 완결**하므로 새 PR 이 생기지 않는다.
+  **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
+  `BLOCKED: 전이 실패 closeout-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올리고,
+  **곧바로 `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` 를 한 번 더 걸어 PR 과
+  이슈 양쪽의 점유를 되살려라**(③-1 의 원 이슈 미러와 같은 호출 — 멱등이고, 손으로 라벨을
+  옮기지 않는다). 이 갈래엔 연결 이슈가 **항상** 있다(없으면 애초에 ⓑ 로 갔다) — 그러니
+  ② Pick 의 `<repo> - <pr>` 형태로 부르지 마라. **PR 만** 되살리면 아래 (b)·(c) 에서 이슈 쪽
+  점유가 빈 채로 남아 디스패처가 그 이슈를 집는다. 되살린 이슈에 `agent-ready` 가 남아 있어도
+  무해하다 — `eligible-issues.sh` 는 플로우 라벨 미러(`harvesting`)를 **먼저** 배제하므로
+  `agent-ready` + `harvesting` 이슈는 디스패치 자격이 없다.
+  `transition.sh` 는 **양쪽 편집을 먼저 끝낸 뒤 readback** 한다(`run_edit` PR → `run_edit` 이슈
+  → `verify_side` PR → `verify_side` 이슈). 그래서 실패 갈래가 셋이고, 위 한 호출이 셋 다를
+  전이 이전으로 되돌린다:
+  - **(a) PR 편집 성공 · 이슈 편집 실패(exit 2 — 편집 단계).** PR 엔 `harvesting` 없음 ·
+    이슈는 손대지 않아 `harvesting` 유지. 디스패처는 이슈를 안 집지만 PR 을 회수할 레인이
+    없다 — ①-b 는 반송 마커 때문에 `bounced` 로 무접촉이고 `closeout-eligible` 도 `bounced`
+    를 뺀다. 회수 호출이 PR 에 `harvesting` 을 되붙이고 이슈 쪽은 멱등 no-op 이다.
+  - **(b) 양쪽 편집 성공 · PR readback 불일치(exit 1).** 이슈는 **이미** `agent-ready` +
+    `harvesting` 없음 + `agent:claimed` 없음 — 곧 디스패치 자격을 갖춘 상태다. 이대로 두면
+    다음 틱에 워커가 그 이슈를 집어 closeout 과 같은 브랜치를 동시에 들고, 그다음 틱의
+    `closeout-redispatch` 재시도가 **살아 있는 워커의 `agent:claimed` 를 뗀다**. 회수 호출이
+    PR·이슈 양쪽에 `harvesting` 을 되붙여 그 자격을 다시 닫는다.
+  - **(c) 양쪽 편집 성공 · 이슈 readback 실패(exit 1 불일치 · exit 2 조회 실패).** 라벨은
+    (b) 와 같거나(불일치) 미상(조회 실패)이라 (b) 의 경합이 열려 있을 수 있다. `harvesting`
+    부착은 멱등이므로 (b) 와 **같은 한 호출**로 닫힌다 — 상태를 먼저 조회해 갈라 부르지 마라.
+  셋 다 점유가 전이 이전으로 돌아가면 다음 틱 ① Reconcile 이 그 PR 을 `resume` 으로 다시
+  집는다. **그 재개 지점은 마커표가 아니라 반송 마커가 정한다** — 이 갈래는 1단계 마커
+  `마감 검증: ✅` 를 스스로 남기지 않지만 **이전 회차가 남긴 마커가 이미 있을 수 있어**,
+  마커표로 가면 방금 BLOCKER 를 낸 head 가 2단계 머지 게이트 앞에 서게 된다(그 게이트 조건은
+  반송 직전 상태 그대로 전부 참이다. 1단계 마커 판정 (A)·(B)·(C) 가 그 대부분을 다시 ③-1 로
+  돌려보내지만, 여기선 **애초에 마커표를 보지 않는 것**이 먼저다 — 반송 회차의 주인은
+  워커 레인이지 마감 레인이 아니다). 그래서 ① Reconcile 의
+  `resume` 값표대로 간다 — `bounce-state.sh` 가 `bounced` 인 한 마커표를 보지 말고 **바로 위
+  전이 호출 자리**에서 이어가, 같은 자리에서 같은 전이를
+  다시 건다 — `closeout-redispatch` 는 멱등이라 재실행이 무해하다(#157 이 `--note` 전이에
+  세운 "실패는 전이 이전 상태를 남기고 호출부가 다음 틱에 같은 전이를 다시 건다" 를 이
+  갈래에서도 성립시키는 것이다 — 되살리기까지 실패하면 ④ Report 의 두 `BLOCKED` 줄이 그대로
+  사람 신호다).
+  **코멘트가 비0으로 끝나면(gh 실패·인자 오류) `closeout-redispatch` 를 하지 마라** —
+  이슈만 `agent-ready` 로 돌아가고 PR 에는 반송 마커가 없는 상태가 되어, 반송 안전망이 그 PR 을
+  못 보고 `closeout-eligible` 이 옛 ✅ 로 다시 집어 온다(이 갈래가 막으려던 바로 그 상태).
+  **대신 이 회차를 ⓑ 로 접는다.** 반송을 원장에 못 남겼으니 워커 레인에 돌려줄 수 없고,
+  그렇다고 이번 틱의 BLOCKER 를 없던 일로 둘 수도 없다:
+  `$SCRIPTS/transition.sh closeout-blocked <repo> <issue> <pr> --reason policy --note "반송 코멘트 게시 실패 — <stderr 한 줄>"`
+  로 **사람 보류**로 내린다 → **`blocked` 종료**(새 종료 상태를 만들지 않는다. 사유 열거는
+  `conflict|policy|ladder` 셋뿐이고 사람이 판단해야 하므로 `policy` 다 — 진짜 사유는 `--note`
+  가 나른다). ④ Report 에는 `BLOCKED: 반송 코멘트 실패 PR #<pr>(<repo_short>) — <stderr 한 줄>`
+  로 올린다. **왜 코멘트가 아니라 라벨로 남기나**: 코멘트 채널이 방금 실패한 마당에 같은
+  채널로 상태를 남기면 같은 이유로 또 실패한다. `transition.sh` 는 라벨 편집이라 독립이고,
+  `needs-human` 은 `closeout-eligible`·①-b 대상 필터·① Reconcile(`human_hold`) **세 입구를
+  한꺼번에** 닫아 옛 ✅ 로 재상정되는 경로를 없앤다.
+  **그 전이까지 비0이면** 그 PR 의 종료 상태를 바꾸지 말고 ④ Report 에
+  `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 을 한 줄 더
+  올린 뒤 **이 틱에서는 그 PR 을 더 건드리지 마라**. `harvesting` 이 그대로 붙어 있으므로
+  다음 틱 ① Reconcile 이 `resume` 을 내는데, 원장에 반송 흔적이 없어 `bounce-state.sh` 는
+  `ok` 를 내므로 그 `resume` 은 **마커표 경로**로 간다 — 거기서 ③-1 이 다시 도는 것을
+  보장하는 것은 반송 마커가 아니라 **1단계 마커 판정**이다(위 "1단계 마커는 '있으면 끝'이
+  아니다" 절 — 이전 회차의 `⚠ 보류` 는 (A) 로, 새 커밋 뒤의 옛 마커는 (B) 로, 반송 앞의
+  마커는 (C) 로 걸러져 `closeout-step1-marker.sh` 가 `verify` 를 낸다).
+  **남는 칸을 숨기지 않는다**: 이 이중 실패(같은 틱에 코멘트 게시와 라벨 전이가 둘 다
+  실패) 뒤에도 원장에 **현재 head 에 대한 `마감 검증: ✅`** 가 살아 있으면 1단계 판정은
+  `skip` 이고, 그 head 는 2단계 게이트가 다시 판정한다. 그 칸까지 닫으려면 이번 틱의
+  BLOCKER 를 적을 **세 번째 채널**이 필요한데 두 채널이 이미 실패한 상황에서 셋째가
+  성공한다는 근거가 없다 — 그래서 ④ Report 의 두 `BLOCKED:` 줄이 사람 신호다(위 (a)·(b)·(c)
+  회수 절이 "되살리기까지 실패하면 두 `BLOCKED` 줄이 사람 신호" 로 세운 규율과 같다).
+- ⓑ **스펙·정책 선택이 남아 있다(검증자 미산출 포함) → 사람 보류.**
   `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>
   <!-- bodat:worker -->"`
   + `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`
   (PR 의 `harvesting` 제거 + 연결 이슈에 `needs-human` + `hold:policy` 부착·단계 라벨
-  정리) → **blocked 종료** (머지하지 않는다). 검증자 BLOCKER·미산출은 스펙/정책 판단이
-  필요한 것이므로 사유는 `policy` 다(`conflict` 도 `ladder` 도 아니다).
+  정리) → **blocked 종료** (머지하지 않는다). 이 갈래로 온 BLOCKER·미산출은 스펙/정책
+  판단이 필요한 것이므로 사유는 `policy` 다(`conflict` 도 `ladder` 도 아니다).
+  검증자 미산출은 **언제나 이 갈래다** — 무엇을 고쳐야 하는지 자체가 없으므로 워커에게
+  반송할 사유를 적을 수 없다.
   **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
   `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다
   (라벨이 반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적 — 조용히 넘어가지 않는다).
@@ -1007,7 +1163,8 @@ approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스�
 - 운용: closeout 은 issue-runner 와 별도의 `/loop` 세션으로 돌린다
   (예 `/loop 20m /closeout`) — 서로의 점유를 라벨로만 조율한다.
 - 의존: 결정적 헬퍼(`closeout-reconcile.sh`·`closeout-eligible.sh`·
-  `closeout-ci-pass.sh`·`transition.sh`(라벨 이동)·`loop-status.sh`(④ Report 스냅샷))는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)에
+  `closeout-ci-pass.sh`·`closeout-step1-marker.sh`(① 마커표 1단계 판정)·
+  `transition.sh`(라벨 이동)·`loop-status.sh`(④ Report 스냅샷))는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)에
   있고, references 3종(`verifier-prompt.md`·`deploy-check-issue.md`·
   `spinoff-issue.md`)은 `skills/closeout/references/` 에 있다.
 - 실측이 필요한 항목의 시도 순서·통로·인용 규칙은
