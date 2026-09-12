@@ -314,6 +314,28 @@ want_in "④ 마커 코멘트에 범위 인용"        "$tmp/state/comments-post
 want_in "④ PR 본문 verify-attempt = LIMIT-1" "$tmp/state/pr-body-new.md" "<!-- verify-attempt: 2 -->"
 want_in "④ PR 본문 나머지 보존"              "$tmp/state/pr-body-new.md" "PR 본문"
 
+echo "── ④-d 실사용 문형(2026-09-12 #283·#244) — 머리말·굵게 표시 뒤의 문형도 같은 신호 ──"
+# 사람이 실제로 적은 줄은 줄 머리가 아니라 `사람 결정: **ⓐ — ` 뒤에 문형이 오고, 범위 문장은
+# `**` 로 닫힌 뒤 같은 줄에 한 문장이 더 붙는다. 문서가 규정한 문형과 파서가 읽는 형태가
+# 갈리면 규칙이 없는 것과 같다(#318 반송 ⑶) — 문형 문자열은 그대로 두고 앞자리만 넓힌다.
+setup 2
+issue_comments '[{"body":"사람 결정: **ⓐ — 회차 허용: +1 — 범위: 17:23 검증자 리뷰의 fail-open 2칸(같은 줄 면책 · 헤더+불릿)만.** 그 외 수정 금지.\n\n근거: 새는 칸 2개를 남긴 채 닫지 않는다.\n\n기계 표현: PR #295 본문 `<!-- verify-attempt: 2 -->` → `1`. **이 회차도 BLOCKER 면 #301 규칙대로 재발행**.","created_at":"2026-09-12T04:22:31Z"}]'
+run grant-round "$REPO" "$PR" "$OLD"
+check "④-d exit 0" "$([ "$(rc)" = 0 ] && echo ok || echo no)"
+want_in "④-d granted"                          "$tmp/state/out.txt" "granted"
+want_in "④-d 범위 = 문형 뒤 줄 끝까지(굵게 표시 제거)" "$tmp/state/out.txt" "범위: 17:23 검증자 리뷰의 fail-open 2칸(같은 줄 면책 · 헤더+불릿)만. 그 외 수정 금지."
+want_not_in "④-d 범위에 ** 가 남지 않는다"       "$tmp/state/out.txt" "**"
+want_in "④-d 마커 코멘트"                       "$tmp/state/comments-posted.txt" "<!-- round-granted -->"
+want_in "④-d verify-attempt = LIMIT-1"          "$tmp/state/pr-body-new.md" "<!-- verify-attempt: 2 -->"
+want_not_in "④-d 어긋난 문형 warn 이 뜨지 않는다" "$tmp/state/err.txt" "문형이 어긋난"
+
+echo "── ④-e 대조군: 따옴표·등호 바로 뒤의 문형은 인용이다(스크립트 줄을 붙여넣은 경우) ──"
+setup 2
+issue_comments '[{"body":"형식은 '"'"'회차 허용: +1 — 범위: <한 줄>'"'"' 이고 GRANT_PHRASE=\"회차 허용: +1 — 범위: x\" 다","created_at":"2026-09-12T04:22:31Z"}]'
+run grant-round "$REPO" "$PR" "$OLD"
+want_in "④-e none"   "$tmp/state/out.txt" "none"
+want_not_in "④-e 무쓰기" "$STUB_LOG" "issue comment"
+
 echo "── ④-b 창 전(attempt 0)엔 회차를 깎지 않는다 ──────────────────────"
 setup 0
 issue_comments '[{"body":"회차 허용: +1 — 범위: 여기만","created_at":"2026-09-11T03:00:00Z"}]'
