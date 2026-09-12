@@ -104,15 +104,20 @@ fi
 half_moved_shape() {  # half_moved_shape <repo> <이슈> <PR> <PR 라벨 JSON 배열>
   local repo="$1" issue="$2" prnum="$3" labels="$4"
   local comments last head_raw head_sha head_at claimed pe
-  printf '%s' "$labels" | jq -e '
-    [ .[]? | select((startswith("flow:") and . != "flow:agent-ready") or . == "verifying" or . == "harvesting") ] | length == 0' \
+  # 소유 라벨(`flow:*`(대기칸 제외)·`verifying`·`harvesting`)이 하나도 없는가 —
+  # 술어는 `lib/loop.jq` 의 `is_owner_label` 한 자리 (#426).
+  printf '%s' "$labels" | jq -L "$SCRIPT_DIR/lib" -e '
+    include "loop"; [ .[]? | select(is_owner_label) ] | length == 0' \
     >/dev/null 2>&1 || return 1
   # 코멘트는 `pr-comments.sh` 로 **페이지네이션 전량**(첫 100건 상한 회피, #171).
   comments=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$prnum" 2>/dev/null) || return 1
-  last=$(printf '%s' "$comments" | jq -r '
+  # 판정성 코멘트(판정 접두 ∪ 반송 접두) 중 마지막 것 — 술어는 `lib/loop.jq` 한 자리 (#426).
+  # `.[]?`·`.body // ""`·`last // ""` 세 방어는 그대로다: 형상이 어긋난 응답을 에러가
+  # 아니라 "매칭 없음" 으로 받아 아래 `case` 가 무접촉으로 떨어지게 하는 fail-shape 가드다.
+  last=$(printf '%s' "$comments" | jq -L "$SCRIPT_DIR/lib" -r '
+    include "loop";
     [ .[]? | .body // ""
-      | select(startswith("머지 판정") or startswith("Merge verdict")
-               or startswith("재검증 실패") or startswith("재디스패치")) ]
+      | select(has_verdict_prefix or is_bounce) ]
     | last // ""' 2>/dev/null) || return 1
   case "$last" in "재검증 실패"*) ;; *) return 1 ;; esac
   head_raw=$("$SCRIPT_DIR/pr-head-at.sh" --with-sha "$repo" "$prnum" 2>/dev/null) || return 1

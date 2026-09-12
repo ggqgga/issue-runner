@@ -272,17 +272,22 @@ iso_to_epoch() {
   date -u -d "$iso" +%s 2>/dev/null
 }
 
-# 접두 매칭 코멘트의 마지막 것에서 필드 추출. $2=body|createdAt.
+# 접두 매칭 코멘트의 마지막 것에서 필드 추출. $1=loop.jq 술어 이름 · $2=body|createdAt.
+# 접두 집합은 `lib/loop.jq` 한 자리다 (#426 로 한 자리로) — 술어 **이름**만 넘긴다.
+# 여기서 기호(✅/⚠/🔄)까지 무는 술어를 쓰지 않는 것은 의도다: 아래 갈래가 본문을
+# `case *✅*` 로 **포함** 검사해 `머지 판정(재심): ✅` 같은 변형도 최종 판정으로 받는다.
+# `is_verdict_ok`(정확 접두)로 바꾸면 그 변형이 조용히 no_verdict 로 떨어진다 — 소비처마다
+# 다른 이 경계는 그대로 둔다(행동 불변).
 last_matching() {
-  local prefix_ko="$1" prefix_en="$2" field="$3"
-  printf '%s' "$comments" | jq -r \
-    --arg pk "$prefix_ko" --arg pe "$prefix_en" --arg f "$field" '
-    [ .[] | select((.body|startswith($pk)) or (.body|startswith($pe))) ]
-    | last | if . == null then "" else .[$f] end'
+  local pred="$1" field="$2"
+  printf '%s' "$comments" | jq -L "$SCRIPT_DIR/lib" -r --arg f "$field" \
+    "include \"loop\";
+    [ .[] | select(.body | $pred) ]
+    | last | if . == null then \"\" else .[\$f] end"
 }
 
-verdict_body=$(last_matching "머지 판정" "Merge verdict" body)
-verdict_at=$(last_matching "머지 판정" "Merge verdict" createdAt)
+verdict_body=$(last_matching has_verdict_prefix body)
+verdict_at=$(last_matching has_verdict_prefix createdAt)
 head_epoch=$(iso_to_epoch "${head_at:-}")
 verdict_epoch=$(iso_to_epoch "$verdict_at")
 
@@ -327,8 +332,8 @@ if [ "${failing:-0}" -gt 0 ] 2>/dev/null; then
   echo active; exit 0
 fi
 
-verifier_body=$(last_matching "검증자 리뷰" "Verifier review" body)
-verifier_at=$(last_matching "검증자 리뷰" "Verifier review" createdAt)
+verifier_body=$(last_matching has_verifier_prefix body)
+verifier_at=$(last_matching has_verifier_prefix createdAt)
 
 # 검증자 CLEAN/전건해소 판정 (보수적 — 확실히 깨끗할 때만 인라인 자동 판정 허용).
 # 안전 게이트라 애매하면 non-clean 으로 떨어뜨린다(→ 재디스패치=안전). 3중 방어:
@@ -575,9 +580,9 @@ case "$verdict_body" in
     # 것은 조회 실패뿐이고 이 셋은 그 뒤에 온다. 그래서 주장하는 사실 그대로,
     # **매칭 코멘트 수가 정확히 0** 일 때만 이 계급을 연다(그 외는 종전대로 active).
     printf '%s' "$comments" | jq -e 'type=="array"' >/dev/null 2>&1 || { echo active; exit 0; }
-    nv_n=$(printf '%s' "$comments" | jq -r '
-      [ .[]? | (.body // "")
-        | select(startswith("머지 판정") or startswith("Merge verdict")) ] | length' 2>/dev/null) \
+    nv_n=$(printf '%s' "$comments" | jq -L "$SCRIPT_DIR/lib" -r '
+      include "loop";
+      [ .[]? | (.body // "") | select(has_verdict_prefix) ] | length' 2>/dev/null) \
       || { echo active; exit 0; }
     case "$nv_n" in
       0) ;;                              # 판정 코멘트 0건 — 이 계급의 유일한 형상

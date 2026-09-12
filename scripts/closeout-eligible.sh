@@ -102,9 +102,10 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 아래 미해결 코멘트 판정의 경계로 그대로 쓰인다(#379) — ✅ 술어를 한 벌만 두려는 것이다
   # (같은 startswith 를 두 jq 에 베끼면 한쪽만 고쳐질 때 게이트와 경계가 갈린다). 선후는
   # createdAt 이 아니라 배열 인덱스다(`bounce-state.sh` 와 같은 규율 — 동초 선후 문제).
-  vi=$(printf '%s' "$comments" | jq -r '[ to_entries[]
-    | select(.value.body | startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))
-    | .key ] | last // empty')
+  # 술어(`is_verdict_ok`)와 인덱스 규율은 이제 `lib/loop.jq` 한 자리다 (#426 로 한 자리로).
+  # 본문이 null 이면 jq 가 에러 → 빈 값 → `continue` 로 **fail-closed** 되는 것도 종전 그대로다.
+  vi=$(printf '%s' "$comments" | jq -L "$SCRIPT_DIR/lib" -r \
+    'include "loop"; last_index(.body | is_verdict_ok) // empty')
   [ -n "$vi" ] || continue
 
   # ✅ 본문의 `코멘트 스냅샷 N` 토큰 — verify-runner 가 사람 코멘트를 **읽은 시점**의
@@ -182,6 +183,8 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 이 마커가 박힌다(worker-template 한/영·closeout SKILL 한/영). 마커가 있으면 머신
   # → unresolved 제외. 접두사 어휘가 늘어도(예 "추가 보정") 안 깨진다 = allowlist 탈피.
   #
+  # 술어는 `lib/loop.jq` 의 `is_machine` 한 자리다 (#426 로 한 자리로) — 아래 규율은 그
+  # 파일 주석에도 같이 적혀 있다(한글 접두 동결의 이유 포함).
   # 레거시 3접두사(머지 판정/검증자 리뷰/마감 검증)는 **동결 폴백**으로 남긴다 — 마커
   # 도입 이전에 열린 PR 의 옛 머신 코멘트가 "미해결 사람 리뷰"로 오인돼 탈락하지 않게.
   # 이 폴백은 더 키우지 않는다(새 어휘는 마커가 받는다) → whack-a-mole 종결.
@@ -212,11 +215,11 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
   # 정의 · #188: 조치 불가능한 warn 은 신호를 죽인다). 이 탈락은 사람이 답하거나
   # verify-runner 가 새 ✅ 를 찍어야 풀리는 **정당한 미집계**라 `eligible-issues.sh` 의
   # `blocked:` 줄과 같은 부류이고, ④ Report 가 그대로 한 줄로 옮긴다.
-  unresolved=$(printf '%s' "$comments" | jq --argjson cut "$cut" '[ to_entries[]
+  unresolved=$(printf '%s' "$comments" | jq -L "$SCRIPT_DIR/lib" --argjson cut "$cut" \
+    'include "loop"; [ to_entries[]
     | select(.key >= $cut)
     | .value.body
-    | select((contains("<!-- bodat:worker -->")
-              or startswith("머지 판정") or startswith("검증자 리뷰") or startswith("마감 검증")) | not)]
+    | select(is_machine | not)]
     | length')
   # 계산 자체가 실패해 빈 값이면 "0건" 으로 접지 않는다 — 판정 실패는 통과가 아니다
   # (fail-closed, 위 ✅ 갈래와 같은 방향). 종전 `${unresolved:-0}` 는 이 실패를 조용히
