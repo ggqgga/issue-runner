@@ -471,20 +471,34 @@ helper's stderr (404 · not supported · requires a newer version) is not a stal
   it and fix it — what is blocked and why (do not borrow the `redispatch` channel's fixed
   wording: "lost finish" is false on this branch, and a false reason becomes the next tick's
   judgment input).
-  **If that comment exits non-zero (gh failure / bad args), do NOT run the transition** — the
-  issue would go back to `agent-ready` while the PR carries no bounce marker, so the safety net
-  misses the PR and `closeout-eligible` re-picks it on the stale ✅ (exactly the state this
-  branch exists to prevent). Leave that PR's terminal state unchanged and report
-  `BLOCKED: 반송 코멘트 실패 PR #<pr>(<repo_short>) — <one stderr line>` in ④ Report.
-  Then `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` returns the linked
-  issue to `agent-ready` (stripping `agent:claimed`, the stage labels, `needs-human` and
-  `hold:*` — do not hand-run `gh issue edit`) → **`blocked` exit** (no merge; do not invent a
-  new exit state — also count it as `재디스패치 N` in ④ Report). Once the re-dispatch lands,
-  issue-runner Dispatch reuses the same `agent/issue-N` worktree, so **the fix continues on
+  **If that comment exited zero, then** `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`
+  returns the linked issue to `agent-ready` (stripping `agent:claimed`, the stage labels,
+  `needs-human` and `hold:*` — do not hand-run `gh issue edit`) → **`blocked` exit** (no merge; do
+  not invent a new exit state — also count it as `재디스패치 N` in ④ Report). Once the re-dispatch
+  lands, issue-runner Dispatch reuses the same `agent/issue-N` worktree, so **the fix continues on
   the same PR branch** and no new PR appears.
   **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
   report `BLOCKED: transition failed closeout-redispatch PR #<pr>(<repo_short>) — <one stderr line>`
-  in ④ Report instead.
+  in ④ Report, and **immediately re-run `$SCRIPTS/transition.sh closeout-pick <repo> - <pr>` to
+  restore closeout's `harvesting` claim on the PR** (the same call ② Pick makes — idempotent, and it
+  moves no label by hand). `transition.sh` edits **the PR first**, so when the PR side succeeds and
+  the issue side fails you are left with **no `harvesting` on the PR + no `agent-ready` on the
+  issue** — a combination no lane recovers: ①-b leaves it untouched because the bounce marker makes
+  it `bounced`, `closeout-eligible` excludes `bounced` as well, and the dispatcher skips an issue
+  that is not `agent-ready`. Restoring `harvesting` puts the state back to what it was before the
+  transition, so the next tick's ① Reconcile picks that PR up again as `resume` (from ③-1, since
+  this branch leaves no step-1 `마감 검증:` marker) and re-runs the same transition at the same spot
+  — `closeout-redispatch` is idempotent, so re-running it is harmless (the same discipline #157 set
+  for the `--note` transitions: a failure leaves the pre-transition state and the caller re-runs the
+  same transition on the next tick — and if the restore fails too, the two `BLOCKED` lines in
+  ④ Report are the human signal).
+  **If that comment exits non-zero (gh failure / bad args), do NOT run the transition** — the
+  issue would go back to `agent-ready` while the PR carries no bounce marker, so the safety net
+  misses the PR and `closeout-eligible` re-picks it on the stale ✅ (exactly the state this
+  branch exists to prevent). Leave that PR's terminal state unchanged, report
+  `BLOCKED: 반송 코멘트 실패 PR #<pr>(<repo_short>) — <one stderr line>` in ④ Report, and
+  **touch that PR no further this tick** — `harvesting` is still attached, so the next tick's
+  ① Reconcile retries the same spot as `resume`.
 - ⓑ **A spec/policy call is still open (no-verdict included) → hold for a human.**
   `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <reason>
   <!-- bodat:worker -->"`
