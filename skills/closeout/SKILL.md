@@ -495,7 +495,8 @@ exit 64 — 사유 없는 정지를 만들 수 없다). rebase/semantic conflict
 
 **`$SCRIPTS/closeout-eligible.sh` 의 stderr `blocked:` 줄은 ④ Report 로 옮긴다**(issue-runner
 `eligible-issues.sh` 의 `blocked:` 이관 규칙과 같은 꼴, #379). `✅ 이후 미해결 코멘트 N건` 은
-"사람이 ✅ 뒤에 남긴 리뷰가 있어 fail-closed 로 안 집었다"는 뜻이고, 루프가 스스로 풀지
+"검증자가 확인한 경계(✅ 의 `코멘트 스냅샷 N`, 없으면 ✅ 자리) **뒤에** 사람 리뷰가 남아 있어
+fail-closed 로 안 집었다"는 뜻이고(리터럴의 "✅ 이후" 는 이 경계를 가리킨다), 루프가 스스로 풀지
 않는다(사람 코멘트를 기계가 '해결됨'으로 판정하면 fail-open) — 풀리는 길은 verify-runner 가
 재검증해 새 ✅ 를 찍는 것(그 ✅ 직전 확인 단계가 사람 코멘트를 소화한다 — verify-runner ④
 참조)뿐이다. 사람 답글은 풀지 않는다(그 답글도 무마커 코멘트다). 즉 사람이 할 일은 답을

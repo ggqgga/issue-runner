@@ -564,8 +564,9 @@ were actually climbed and the failure output cited.
 
 **The stderr `blocked:` line from `$SCRIPTS/closeout-eligible.sh` is moved into ④ Report**
 (same shape as issue-runner's `eligible-issues.sh` `blocked:` hand-off rule, #379). The
-`✅ 이후 미해결 코멘트 N건` line (literally "N unresolved comments after ✅") means "a human left
-a review after the ✅, so it was not picked up, fail-closed" — the loop does not resolve this on its own (a machine judging a
+`✅ 이후 미해결 코멘트 N건` line (literally "N unresolved comments after ✅") means "a human review
+remains after the boundary the verifier acknowledged (the ✅'s `코멘트 스냅샷 N`, or the ✅ itself
+when absent), so it was not picked up, fail-closed" (the literal's "after ✅" refers to that boundary) — the loop does not resolve this on its own (a machine judging a
 human comment "resolved" would be fail-open) — the only way it clears is **verify-runner
 re-verifying and stamping a new ✅** (the confirmation step right before that ✅ is what
 absorbs the human comments — see verify-runner ④). A human reply does not clear it (a reply
