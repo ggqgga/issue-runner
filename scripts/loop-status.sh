@@ -40,8 +40,16 @@
 #   순간 `flow:verify` 를 떼고 붙이는 점유 라벨 — #275). `needs-human`(사람이 직접 세운 정지)과 `hold:*`
 #   (기계 정지의 사유 — #244 로 둘은 더 이상 쌍이 아니다)는 직교하는 일시정지 플래그 —
 #   둘 중 하나라도 붙어 있으면 게이트(#242)가 빼므로 루프가 안 집는다.
-#   PR 쪽 라벨은 이슈 단계의 미러이고, `flow:ci`·`flow:codex` 는 PR 에만 있는 워커 내부
-#   단계라 이슈 미러가 없다(=미러 불일치 판정에 참여하지 않는다).
+#   PR 쪽 라벨은 이슈 칸의 미러다 — **6쌍**(#282, 라벨 자체는 #281): 이슈 `agent-ready` 만(사다리
+#   라벨 0) ↔ PR `flow:agent-ready` · `agent:claimed` ↔ `flow:claimed` · `flow:verify` ↔ `flow:verify` ·
+#   `verifying` ↔ `verifying` · `flow:ready` ↔ `flow:ready` · `harvesting` ↔ `harvesting`
+#   (코드의 `mirror_pairs`). 앞 두 쌍의 이름이 갈리는 이유는 transition.sh 상단 — 이슈의
+#   `agent-ready` 는 자격 라벨이라 PR 의 단계 이름으로 못 쓴다. `flow:ci`·`flow:codex` 는 PR 에만
+#   있는 워커 내부 단계라 이슈 미러가 없다(=미러 불일치 판정에 참여하지 않는다).
+#   **대기·issue-runner 줄도 연결 PR 을 `← PR #n` 으로 그린다**(#282) — PR 라벨이 `flow:agent-ready`
+#   면 대기 줄, `flow:claimed` 면 issue-runner 줄, 이슈 칸과 **일치할 때만**(불일치는 warn
+#   `미러 불일치`, 라벨 0 PR 은 아래 인계 전 창 규칙). 예외 하나 — 이슈 대기 칸 + PR `flow:claimed`
+#   는 재claim 대기 모양(★warn 정의★ 미러 불일치 참조)이라 대기 줄에 붙는다.
 #
 #   이슈는 OPEN 기준. **한 이슈는 한 버킷** — 위에서 아래로 첫 매칭:
 #     1. needs-human — `needs-human` ∪ `hold:conflict` (#244 — 사람이 직접 세운 정지, 재심이
@@ -139,8 +147,11 @@
 #   근거 주석에 한 벌만 둔다(여기는 정의, 거기는 근거).
 #   · 무소속 PR      — 열린 PR + head 가 `agent/issue-*`(연결 이슈는 있어도 없어도 된다) +
 #                      PR 라벨에 `full-cycle` 없음(사람 세션 레인 소유 표시 — #246, 두 번째 축) +
-#                      PR 라벨에 flow:ci·flow:codex·flow:verify·flow:ready·harvesting 이
-#                      하나도 없고 PR 도 연결 이슈도 **정지 라벨**(`needs-human` ∪ `hold:*`)을
+#                      PR 라벨에 단계 라벨(`pr_stage_labels` — flow:agent-ready·flow:claimed·flow:ci·
+#                      flow:codex·flow:verify·verifying·flow:ready·harvesting)이 **하나도 없고**
+#                      (#282 — 반송 PR 의 `flow:agent-ready`·issue-runner 칸 PR 의 `flow:claimed` 도 단계
+#                      라벨이라 라벨이 정말 0개인 PR(옛 워커·사람이 연 PR)만 남는다)
+#                      PR 도 연결 이슈도 **정지 라벨**(`needs-human` ∪ `hold:*`)을
 #                      안 달았음 → 어느 루프도 안 문다. `hold:*` 를 함께 보는 이유는 #244 —
 #                      기계 정지가 `needs-human` 을 떼고 사유 라벨만 남기게 됐으므로,
 #                      `needs-human` 만 보면 홀드된 PR 이 통째로 이 warn 으로 쏟아진다.
@@ -150,7 +161,10 @@
 #                      사라진 게 아니라 warn 이 아닌 자리로 간 것이다. 왜 그렇게 가르는지는
 #                      `orphan_base`/`$ohuman` 정의 옆 주석에 한 벌만 둔다(여기는 정의,
 #                      거기는 근거 — 같은 문장을 두 벌로 두면 드리프트한다).
-#                      **인계 전 창(플랜 §5)**: 그(=agent 헤드) 후보 중 연결 이슈가 **issue-runner 버킷**이고
+#                      **인계 전 창(플랜 §5) — 라벨 0 PR 의 폴백(#282)**: `flow:claimed` PR 은 창과
+#                      무관하게 issue-runner 줄에 붙고(위 버킷 정의), 아래 창 규칙은 `flow:claimed`
+#                      가 없는 라벨 0 PR(옛 워커·사람이 연 PR)에만 남는다.
+#                      그(=agent 헤드) 후보 중 연결 이슈가 **issue-runner 버킷**이고
 #                      (=`agent:claimed` 이 이긴 이슈. 라벨이 아니라 버킷으로 본다 — 라벨로
 #                      걸면 `agent:claimed` 을 단 채 배포대기·flow:*·harvesting 으로 간
 #                      이슈의 PR 이 warn 에서만 빠지고 issue-runner 줄엔 안 그려져 아무 표시도
@@ -177,6 +191,17 @@
 #                      (`CLAIM_TIME_MAX`)에 걸려 애초에 조회하지 않았으면 `(agent:claimed
 #                      인데 경과 미상 — 조회 상한)` — "안 봤다" 와 "보고 실패했다" 는 다른
 #                      사실이라 사람이 다르게 반응해야 한다(전자는 상한을 늘릴 문제).
+#   · 워커 사망 의심 (#282)
+#                    — issue-runner 줄에 `flow:claimed` PR 이 붙은 이슈인데 그 PR 이 인계 전 창
+#                      (`HANDOFF_GRACE_MIN`) 밖이고 **claim 경과**(위와 같은 `agent:claimed` 시각
+#                      기준)도 창 이상. 무소속 warn 이 라벨 0 PR 로 좁혀져(위) 그 꼬리표가
+#                      `flow:claimed` PR 엔 닿지 않으므로 경과 기준의 별도 줄이다 — "라벨이
+#                      붙어도 경과가 길면 뜬다". 후보는 PR 나이로 고르고(창 안 PR 은 타임라인을
+#                      안 본다 — 틱 비용) 판정은 claim 경과로 한다: 재디스패치 건은 PR 이
+#                      오래됐어도 claim 이 최근이라 **뜨지 않는다**(PR 나이로 울리면 #177 이
+#                      걷어낸 오탐이 이 줄로 되살아난다). 시각을 못 얻으면 무소속 warn 과
+#                      같은 두 문구(`경과 미상 — 확인 필요` / `조회 상한`)로 warn 은 유지한다.
+#                      문구: `워커 사망 의심 #i(rs) ← PR #n(rs) — agent:claimed 인데 N분 경과`.
 #   · 질문 유무 미확인
 #                    — **needs-human 버킷**의 `hold:policy|conflict` 이슈인데 질문(hold-note)
 #                      코멘트의 유무를 못 봤다(조회 실패·응답 파싱 실패·코멘트 100건 상한·
@@ -191,9 +216,18 @@
 #                      `대기`·`막힘` 블로커와 PR
 #                      블로커는 warn 이 아니다 — 루프가 처리 중이라 사람이 할 일이 없다.
 #   · 단계 라벨 중복 — 이슈에 사다리 라벨 2개 이상.
-#   · 미러 불일치    — 이슈와 **열린** 연결 PR 의 {flow:verify, verifying, flow:ready, harvesting}
-#                      집합이 다름(이슈 `verifying` ↔ PR `flow:verify` 도 여기 — #276).
-#                      연결 PR 이 없으면 대조할 상대가 없으니 warn 아님.
+#   · 미러 불일치    — 이슈 칸과 **열린** 연결 PR 의 미러 라벨이 6쌍(위 버킷 정의의 `mirror_pairs`)
+#                      으로 어긋남 — 양방향(이슈 `verifying` ↔ PR `flow:verify` 도, 이슈
+#                      `flow:verify` ↔ PR `flow:claimed` 도, 이슈 `agent:claimed` ↔ PR
+#                      `flow:agent-ready` 도 — #276·#282). 연결 PR 이 없으면 대조할 상대가
+#                      없으니 warn 아님. 워커 칸 두 쌍(`flow:agent-ready`·`flow:claimed`)은
+#                      **PR 이 그 라벨을 달고 있고 이슈가 정지 중이 아닐 때만** 대조에 든다
+#                      (근거는 코드의 `mirror_scoped` 주석 — 라벨 0 PR 은 인계 전 창의 소유,
+#                      정지 중엔 홀드 전이가 그 둘을 일부러 안 맞춘다). 이슈 대기 칸 + PR
+#                      `flow:claimed` 는 **재claim 대기**(홀드 해제·죽은 워커 claim 회수 뒤 — 다음
+#                      claim 이 수렴, #281) 라 warn 이 아니라 대기 줄에 `← PR #n` 으로 붙는다. 문구는 양쪽 칸을 그대로
+#                      적는다 — 이슈는 이슈 라벨 이름(사다리 라벨 0 이면 `agent-ready 만`, 그것도
+#                      없으면 `단계 없음`), PR 은 PR 라벨 이름(없으면 `단계 없음`).
 #   · 정지 미러 불일치 (#265)
 #                    — 이슈엔 정지 라벨(`needs-human` ∪ `hold:` **접두** — SSOT 는 BUILD_JQ 의
 #                      `stops_of`)이 **하나도 없는데** 짝이 되는 **열린** PR 에 남아 있음.
@@ -349,9 +383,11 @@
 # **예외 둘**. ①(#157) needs-human 버킷에서 사유가 `policy`·`conflict` 인
 # 이슈에 한해 질문 코멘트 조회 `gh issue view --json comments` 를 1건씩 더 쓴다 — 라벨만으론
 # 질문 유무를 알 수 없고, 대상은 "지금 사람을 기다리는 건" 이라 목록 전체가 아니라 한 줌이다.
-# ②(#177) 무소속 warn 중 **사망 의심 꼬리표가 붙는 후보**에 한해 이슈 타임라인
+# ②(#177) 무소속 warn 중 **사망 의심 꼬리표가 붙는 후보**와 `워커 사망 의심`(#282 — 인계 창을
+# 넘긴 `flow:claimed` PR) 후보에 한해 이슈 타임라인
 # (`gh api .../timeline --paginate`)을 1건씩 더 쓴다 — 그 시각은 목록 API 에 없다. 대상은
-# "인계 창을 넘긴 무소속 PR" 이라 정상적으로는 0건이고, 상한은 `CLAIM_TIME_MAX`(기본 20).
+# "인계 창을 넘긴 무소속 PR" 과 "인계 창을 넘긴 issue-runner 칸(flow:claimed) PR" 이라 정상적으로는 한 줌이고(창 안
+# PR 은 조회하지 않는다), 상한은 `CLAIM_TIME_MAX`(기본 20).
 # ③(#292) 에픽 닫힌 leaf 조회 — 아래 단서가 붙은 **유일한 검색 사용처**다.
 # 그 밖의 이슈·PR **개별** `gh view` 는 여전히 금지(N+1).
 # `gh search` / `gh issue list --search` 는 **원칙 금지** — 인덱스 지연 + 부정 라벨 오파싱
@@ -387,8 +423,10 @@ usage() {
     echo "  --post : 레포마다 고정 이슈 '루프 현황'(라벨 loop-dashboard) 본문을 이 스냅샷으로 덮어쓴다 —"
     echo "           깃헙만 보고 '누가 들고 있고 루프가 마지막으로 언제 돌았나' 를 알게(#163). 자기 루프의"
     echo "           마지막 틱 시각·--delta 만 갱신하고 다른 두 루프 줄은 보존. --json 과 함께 못 쓴다."
-    echo "  env HANDOFF_GRACE_MIN: 인계 전 창(분, 기본 90). 그 안의 agent:claimed PR 은"
-    echo "          무소속 warn 대신 issue-runner 줄에 '← PR #n(인계 전)'."
+    echo "  env HANDOFF_GRACE_MIN: 인계 전 창(분, 기본 90). flow:claimed 가 없는 라벨 0 PR 의 폴백 —"
+    echo "          그 안의 agent:claimed PR 은 무소속 warn 대신 issue-runner 줄에 '← PR #n(인계 전)'."
+    echo "          flow:claimed PR 은 창과 무관하게 issue-runner 줄에 붙고(#282), 창 밖 + claim 경과가"
+    echo "          창 이상이면 warn '워커 사망 의심' 이 따로 뜬다."
   } >&2
   exit 64
 }
@@ -557,8 +595,9 @@ HOLD_NOTE_MAX=$hold_note_max
 
 # ── claim 시각 조회 상한 — CLAIM_TIME_MAX (#177) ───────────────────────────
 # 레포당 이 개수까지만 `gh api .../timeline` 을 쓴다. 넘는 후보는 조회하지 않고 `경과 미상`
-# 으로 남는다(거짓 숫자를 만들지 않는다). 대상은 사망 의심 꼬리표가 붙는 무소속 warn 뿐이라
-# 평시엔 0건이지만, 루프가 크게 어긋난 날 상한이 없으면 이 스크립트가 틱을 잡아먹는다.
+# 으로 남는다(거짓 숫자를 만들지 않는다). 대상은 사망 의심 꼬리표가 붙는 무소속 warn 과 창 밖
+# `flow:claimed` PR 의 `워커 사망 의심`(#282) 뿐이라
+# 평시엔 한 줌이지만(창 안 PR 은 조회하지 않는다), 루프가 크게 어긋난 날 상한이 없으면 이 스크립트가 틱을 잡아먹는다.
 claim_time_max=${CLAIM_TIME_MAX:-20}
 case "$claim_time_max" in
   ""|*[!0-9]*) snapshot_abort "CLAIM_TIME_MAX 형식 오류: $claim_time_max (0 이상 정수만)" ;;
@@ -647,12 +686,37 @@ include "loop";
 # 붙이는 점유 라벨이라 `flow:verify` 와 `flow:ready` **사이**다(#276). 세 목록 전부에 같은
 # 자리로 들어가야 한다 — 하나라도 빠지면 검증 중인 이슈가 `대기` 로 새거나(lad), 그 PR 이
 # 무소속 warn 으로 울리거나(pr_stage_labels), 이슈 `verifying` ↔ PR `flow:verify` 가
-# 조용히 지나간다(mirror_labels).
+# 조용히 지나간다(mirror_pairs).
 def lad: ["agent:claimed","flow:verify","verifying","flow:ready","harvesting"];
-def mirror_labels: ["flow:verify","verifying","flow:ready","harvesting"];
-def pr_stage_labels: ["flow:ci","flow:codex","flow:verify","verifying","flow:ready","harvesting"];
+# PR 미러 6쌍 (#282) — (이슈 칸 → PR 라벨). #281 이 PR 미러를 사다리 **전 칸**으로 넓혔다:
+# 이슈 `agent-ready` 만(사다리 라벨 0) ↔ PR `flow:agent-ready`, 이슈 `agent:claimed` ↔ PR
+# `flow:claimed`, 그 뒤 네 칸은 같은 이름. 이름이 갈리는 이유는 transition.sh 상단(이슈의
+# `agent-ready` 는 자격 라벨이라 PR 의 단계 이름으로 못 쓴다). 순서는 사다리 순 — warn 문구의
+# 표기 순서도 이것이다.
+def mirror_pairs: [["agent-ready","flow:agent-ready"],["agent:claimed","flow:claimed"],
+                   ["flow:verify","flow:verify"],["verifying","verifying"],
+                   ["flow:ready","flow:ready"],["harvesting","harvesting"]];
+def pr_mirror_labels: mirror_pairs | map(.[1]);
+# 워커 칸 두 쌍 — 이슈가 정지 중이거나 PR 이 이 라벨을 안 달았으면 대조에서 뺀다(mirror_scoped).
+def worker_mirror: ["flow:agent-ready","flow:claimed"];
+# PR 의 단계 라벨 전부 — 무소속 판정("단계 라벨 0")의 집합. 워커 칸 둘(#282)이 들어 있어
+# 라벨이 **정말 하나도 없는** PR(옛 워커·사람이 연 PR)만 무소속 후보로 남는다.
+def pr_stage_labels: ["flow:agent-ready","flow:claimed","flow:ci","flow:codex",
+                      "flow:verify","verifying","flow:ready","harvesting"];
 def has($l; $x): ($l | index($x)) != null;
 def ladder_of($l): lad | map(select(. as $x | has($l; $x)));
+# 이슈 칸을 PR 라벨 이름으로 옮긴 것 — 사다리 라벨은 짝의 PR 이름으로(사다리 순), 사다리 라벨이
+# 0개인데 `agent-ready` 면 대기 칸(`flow:agent-ready`). 표시용 문구는 issue_mirror_text.
+def issue_mirror($l):
+  (ladder_of($l) | map(. as $x | mirror_pairs | map(select(.[0] == $x)) | .[0][1]))
+  | if length == 0 and has($l; "agent-ready") then ["flow:agent-ready"] else . end;
+def pr_mirror($l): pr_mirror_labels | map(select(. as $x | has($l; $x)));
+def issue_mirror_text($l):
+  ladder_of($l) as $lad
+  | if ($lad | length) > 0 then ($lad | join(" "))
+    elif has($l; "agent-ready") then "agent-ready 만"
+    else "단계 없음" end;
+def pr_mirror_text($l): pr_mirror($l) | if length == 0 then "단계 없음" else join(" ") end;
 def key_of($s):
   if $s == "harvesting" then "harvesting"
   elif $s == "flow:ready" then "ready"
@@ -712,6 +776,34 @@ def holds_of($l): $l | map(select(is_hold_label) | ltrimstr("hold:")) | sort;
 # 정지 라벨 하나가 단계 일치 판정을 통째로 깨뜨린다.
 # 집합 정의(`needs-human` ∪ `hold:` 접두)는 `lib/loop.jq` 의 `stop_labels` 한 자리다 (#426).
 def stops_of($l): $l | stop_labels | sort;
+# 단계 미러 대조 범위 (#282) — 워커 칸 두 쌍(`flow:agent-ready`·`flow:claimed`)은 ⑴ PR 이 그
+# 라벨을 달고 있고 ⑵ 이슈가 정지(needs-human ∪ hold:*) 중이 아닐 때만 대조에 넣고, 아니면
+# 뒤 네 쌍만(현행) 본다.
+#   ⑴ 라벨 0 PR(옛 워커·사람이 연 PR)은 인계 전 창·무소속 규칙의 소유다(#282 4번) — 여기서도
+#      물면 인계 전 창 **안**의 정상 PR(이슈 agent:claimed · PR 라벨 0)이 매 틱 미러 warn 으로
+#      울려 창을 둔 이유가 없어진다.
+#   ⑵ 홀드 전이는 이슈의 `agent:claimed` 만 떼고 PR 의 `flow:claimed` 는 둔다(transition.sh
+#      runner-held — "재개 뒤 claim 이 수렴시킨다"), verify-held·closeout-blocked 뒤엔 PR 단계 0 ·
+#      이슈 `agent-ready` 만이다 — 둘 다 **설계된** 모양이라 정지 중에 워커 칸을 대조하면 홀드된
+#      건마다 상시 warn 이 된다(#190: warn 은 루프가 교정 가능한 위반일 때만).
+#   ⑶ 이슈 대기 칸(`agent-ready` 만) + PR `flow:claimed` 는 **재claim 대기** 모양이라 일치로
+#      본다 — ⑵ 의 홀드가 풀리면(resume-sweep 은 PR 에서 `hold:ladder` 만 뗀다) 또는 죽은 워커의
+#      claim 이 회수되면 이슈만 대기로 내려오고 PR 의 `flow:claimed` 는 다음 claim 이 수렴시킨다
+#      (#281). 디스패치가 밀리는 동안(배압·우선순위) 이 모양이 몇 시간 갈 수 있는데 고칠 게
+#      없다 — warn 으로 올리면 #282 가 걷어내려던 잡음이 이름만 바꿔 돌아온다. 대기 줄에
+#      `← PR #n` 으로 그린다(worker_pr_of). 반대 방향(이슈 `agent:claimed` · PR
+#      `flow:agent-ready`)은 claim 의 PR 미러가 실패한 것이라 그대로 warn 이다.
+# 문구(issue_mirror_text·pr_mirror_text)는 범위와 무관하게 양쪽 칸을 그대로 적는다.
+def mirror_scoped($il; $pl):
+  (issue_mirror($il)) as $a | (pr_mirror($pl)) as $b
+  | if $a == ["flow:agent-ready"] and $b == ["flow:claimed"] and ((stops_of($il) | length) == 0)
+    then {a: $a, b: $a}
+    elif (($b | map(select(. as $x | worker_mirror | index($x) != null)) | length) > 0)
+       and ((stops_of($il) | length) == 0)
+    then {a: $a, b: $b}
+    else {a: ($a | map(select(. as $x | worker_mirror | index($x) == null))),
+          b: ($b | map(select(. as $x | worker_mirror | index($x) == null)))} end;
+def mirror_ok($il; $pl): mirror_scoped($il; $pl) | .a == .b;
 # 블로커 번호 (#248) — 규칙의 SSOT 는 `eligible-issues.sh`(body_blockers/label_blockers).
 # 거기의 `grep -oiE '^[[:space:]]*blocked[- ]by[[:space:]]+#[0-9]+'` 를 줄 단위로 옮긴 것이다:
 #   · `split("\n")` 로 먼저 줄을 가른다 — jq(Oniguruma)의 `^` 는 grep 과 달리 **문자열 시작**만
@@ -936,6 +1028,14 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
 | ($handoff | map(.number)) as $hnums
 | def pr_of($n): ($po | map(select(.issue == $n)) | if length > 0 then .[0] else null end);
   def handoff_pr_of($n): ($handoff | map(select(.issue == $n)) | .[0]);
+  # 대기·issue-runner 줄에 붙일 PR (#282) — 연결 PR 이 워커 칸 라벨(flow:agent-ready·flow:claimed)
+  # 을 달고 이슈 칸과 **일치**할 때만. 라벨 0 PR 은 인계 전 창 규칙(handoff_pr_of)이, 불일치는
+  # warn `미러 불일치` 가 맡는다 — 세 갈래가 배타라 한 PR 이 두 자리에 나오지 않는다.
+  def worker_pr_of($i): pr_of($i.number) as $p
+    | if $p != null
+         and ((pr_mirror($p.ln) | map(select(. as $x | worker_mirror | index($x) != null)) | length) > 0)
+         and mirror_ok($i.ln; $p.ln)
+      then $p else null end;
   def closed_agent_in_window: ($pc
     | map(select((.headRefName | test("^agent/issue-"))
                  and .mergedAt == null
@@ -953,7 +1053,10 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
     ok: true,
     since: $since,
     buckets: {
-      waiting:     bucket("waiting";     item(.; "#\(.number)")),
+      # 대기 (#282) — 반송된 PR(`flow:agent-ready`)을 검증대기 줄과 같은 꼴로 병기한다.
+      waiting:     bucket("waiting";     . as $i | worker_pr_of($i) as $p
+                     | (item($i; "#\($i.number)" + (if $p == null then "" else " ← PR #\($p.number)" end))
+                        + {pr: (if $p == null then null else $p.number end)})),
       # 막힘 (#248) — 항목은 기존 item 필드 + `blockers: [{n, state, bucket|null}]`.
       # 라벨과 blockers 는 **같은 목록**(openblk)에서 나온다 — 따로 적으면 드리프트한다.
       blocked:     bucket("blocked";     . as $i
@@ -963,10 +1066,15 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
                             | map({n, state,
                                    bucket: (if .state == "OPEN PR" then null
                                             else blocker_bucket(.n) end)}))})),
-      claimed:     bucket("claimed";     . as $i | handoff_pr_of($i.number) as $p
-                     | (item($i; "#\($i.number)" + (if $p == null then "" else " ← PR #\($p.number)(인계 전)" end))
-                        + {pr: (if $p == null then null else $p.number end),
-                           handoff_pending: ($p != null)})),
+      # issue-runner — `flow:claimed` PR 은 창과 무관하게 붙고(#282), 라벨 0 PR 은 종전 인계 전 창
+      # 규칙(창 안이면 `(인계 전)`, 밖이면 무소속 warn)이 폴백으로 남는다.
+      claimed:     bucket("claimed";     . as $i | worker_pr_of($i) as $wp | handoff_pr_of($i.number) as $hp
+                     | (item($i; "#\($i.number)"
+                                 + (if $wp != null then " ← PR #\($wp.number)"
+                                    elif $hp != null then " ← PR #\($hp.number)(인계 전)"
+                                    else "" end))
+                        + {pr: (if $wp != null then $wp.number elif $hp != null then $hp.number else null end),
+                           handoff_pending: ($wp == null and $hp != null)})),
       verify:      bucket("verify";      . as $i | pr_of($i.number) as $p | (item($i; "#\($i.number)" + (if $p then " ← PR #\($p.number)" else "" end)) + {pr: (if $p then $p.number else null end)})),
       # verify-runner 가 들고 있는 건 (#276 · 라벨은 #275) — 검증대기와 같은 꼴, 사다리 한 칸 뒤.
       verifying:   bucket("verifying";   . as $i | pr_of($i.number) as $p | (item($i; "#\($i.number)" + (if $p then " ← PR #\($p.number)" else "" end)) + {pr: (if $p then $p.number else null end)})),
@@ -1055,19 +1163,36 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
       + ($iss | map(select((.ladder | length) > 1))
         | map({kind: "dup_stage", repo_short: $rs, issue: .number,
                text: "단계 라벨 중복 #\(.number)(\($rs)) — \(.ladder | join(" + "))"}))
-      # 미러 불일치 — 열린 연결 PR 이 있을 때만(대조 상대가 없으면 warn 아님)
+      # 워커 사망 의심 (#282) — issue-runner 줄에 `flow:claimed` PR 이 붙은 이슈. 무소속 warn 이
+      # 라벨 0 PR 로 좁혀져 그 꼬리표가 이 PR 엔 닿지 않으므로 **경과 기준의 별도 warn** 이다.
+      # 창 분할은 종전대로 PR 나이(HANDOFF_GRACE_MIN)로 후보를 고르고, 경과는 claim 시각(#177)으로
+      # 잰다 — 재디스패치 건은 PR 이 오래됐어도 claim 이 최근이라 **경과가 창 미만이면 내지 않는다**
+      # (PR 나이로 울리면 #177 이 걷어낸 오탐이 이 줄로 되살아난다). 시각을 못 얻으면 숫자를
+      # 지어내지 않고 미상으로 두되 warn 은 유지한다(#181 과 같은 규율 — 후보는 창 밖 PR 이라
+      # "모른다" 가 "살아 있다" 는 아니다).
+      + ($iss | map(select(.bucket == "claimed")) | map(. as $i | worker_pr_of($i) as $p
+          | if $p == null then empty
+            # createdAt 이 없으면 "창 안" 으로 접지 않는다(모름 ≠ 살아 있음) — 후보로 두고 claim 경과가 가른다.
+            elif $p.createdAt != null and (($now - epoch($p.createdAt)) < ($grace * 60)) then empty
+            else claim_at($i.number) as $cat
+              | if $cat != null and mins_since($cat) < $grace then empty
+                else {kind: "worker_stale", repo_short: $rs, issue: $i.number, pr: $p.number,
+                      handoff_overdue: true,
+                      claimed_minutes: (if $cat == null then null else mins_since($cat) end),
+                      text: ("워커 사망 의심 #\($i.number)(\($rs)) ← PR #\($p.number)(\($rs)) — agent:claimed 인데 "
+                             + (if $cat != null then "\(mins_since($cat))분 경과"
+                                elif capped($i.number) then "경과 미상 — 조회 상한"
+                                else "경과 미상 — 확인 필요" end))}
+                end
+            end))
+      # 미러 불일치 — 열린 연결 PR 이 있을 때만(대조 상대가 없으면 warn 아님). 6쌍(#282) —
+      # 범위 규칙은 mirror_scoped, 문구는 양쪽 칸을 그대로(이슈는 이슈 라벨 이름, PR 은 PR 라벨 이름).
       + ($iss | map(. as $i | pr_of($i.number) as $p
           | if $p == null then empty
-            else
-              ($i.ln | map(select(. as $x | mirror_labels | index($x) != null)) | sort) as $a
-              | ($p.ln | map(select(. as $x | mirror_labels | index($x) != null)) | sort) as $b
-              | if $a == $b then empty
-                else {kind: "mirror_mismatch", repo_short: $rs, issue: $i.number, pr: $p.number,
-                      text: ("미러 불일치 #\($i.number)(\($rs)) ↔ PR #\($p.number)(\($rs)) — 이슈 "
-                             + (if ($a | length) == 0 then "단계 없음" else ($a | join(" ")) end)
-                             + " · PR "
-                             + (if ($b | length) == 0 then "단계 없음" else ($b | join(" ")) end))}
-                end
+            elif mirror_ok($i.ln; $p.ln) then empty
+            else {kind: "mirror_mismatch", repo_short: $rs, issue: $i.number, pr: $p.number,
+                  text: ("미러 불일치 #\($i.number)(\($rs)) ↔ PR #\($p.number)(\($rs)) — 이슈 "
+                         + issue_mirror_text($i.ln) + " · PR " + pr_mirror_text($p.ln))}
             end))
       # 정지 미러 불일치 (#265) — 이슈엔 정지 라벨이 **하나도 없는데** 연결된 열린 PR 에
       # 남아 있다. 사람이 이슈에서만 홀드를 풀면 생기는 상태이고, 그때 네 게이트
@@ -1566,9 +1691,13 @@ for repo in "${repos[@]}"; do
   # 둘이면 같은 이슈 번호가 두 줄 나온다. 상한(`CLAIM_TIME_MAX`)은 **고유 이슈 수**를
   # 세야 하므로 여기서 중복을 제거한다(#181) — 안 그러면 같은 타임라인을 두 번 조회하고
   # 상한도 두 번 깎는다. `unique` 는 정렬해 순서가 바뀌므로 안 쓴다 — 상한에 걸려 누가
-  # 조회되고 누가 밀리는지가 원래(PR 목록) 등장 순서를 따르게, 첫 등장 순을 그대로 둔다.
+  # 조회되고 누가 밀리는지가 warns[] 등장 순서를 따르게, 첫 등장 순을 그대로 둔다 — `worker_stale`
+  # 블록이 `orphan_pr` 블록보다 앞이라 상한에선 무소속(라벨 0) 쪽이 먼저 밀린다(#282).
+  # `worker_stale`(#282 — flow:claimed PR 이 창 밖) 도 같은 시각을 쓴다: 예비 패스는 시각 없이
+  # 후보를 전부 내고, 본 패스가 claim 경과가 창 미만인 건을 지운다(재디스패치 = 살아 있음).
   ct_err=$(jq -r '[.warns[]
-                  | select(.kind == "orphan_pr" and .handoff_overdue == true and .issue != null)
+                  | select((.kind == "orphan_pr" or .kind == "worker_stale")
+                           and .handoff_overdue == true and .issue != null)
                   | .issue]
                   | reduce .[] as $n ([]; if index($n) then . else . + [$n] end)
                   | .[]' "$tmpdir/repo.pre.json" 2>&1 > "$tmpdir/ccands")
