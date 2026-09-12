@@ -1195,6 +1195,134 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
     || { echo "  ✗ $f: 5단계 green 갈래에 실장비 예외 상호참조('$xref')가 없다 — green 만 읽으면 그대로 닫는다 (#278)"; exit 1; }
 done
 
+echo "[closeout] <LIVE_CHECKS> 실장비 표식 — 형태 강제 + 4·5단계·템플릿·실행 프롬프트 동일 표식 검사 (#309)"
+# #298 은 5단계 green 갈래에 "실장비 항목이 `- [ ]` 로 남아 있으면 닫지 않는다" 예외를 넣어
+# **닫는 자리**를 막았다. 그런데 그 예외가 걸리려면 5단계가 **어느 줄이 실장비인지** 알아야
+# 하는데, 당시 근거는 4단계의 산문 한 줄("한 줄 = … (실장비면 TEST 워커 프로필 #18 드라이런)")
+# 뿐이었다 — 그건 *실장비란 무엇인가* 의 성격 규정이지 *그 줄을 이렇게 적어라* 는 형태 강제가
+# 아니다. 그래서 칸 ①② 를 시도했다 실패해 옮겨진 줄이 "TEST 워커 프로필 #18" 이라는 말 없이 적히면
+# (`- [ ] worker001 에서 프록시 회전 후 IG 세션 유지 확인`) 5단계가 그 줄을 일반 항목으로
+# 세어 크롬 pass → green → close 로 흘러, TEST 워커를 한 번도 안 거친 티켓이 종결된다(#309).
+# 처방: 실장비 줄에 `없음`·`- [ ]` 와 **같은 등급**의 접두 표식 `[칸 ③]` 을 형태로 강제하고,
+# 생산(4단계)·소비(5단계)·템플릿 **셋이 같은 표식**을 쓰는지 여기서 문다 — 셋 중 하나가
+# 갈라지면 실장비를 세는 계산기가 둘이 되고, 그 갈라짐은 사람 눈에 안 보인다.
+# 스코프를 구간으로 좁히는 이유는 #278·#223 과 같다 — "파일 어딘가" 면 문구가 6단계로 밀려도 초록.
+live_marker='[칸 ③]'
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) m4_anchor='^\*\*Step 4 —'; m5_anchor='^\*\*Step 5 —'; m6_anchor='^\*\*Step 6 —'
+             mandate='A real-hardware line REQUIRES the `[칸 ③]` prefix marker'
+             verdict='`[칸 ③]` prefix marker** is a real-hardware item'
+             noissue='**Do not file a follow-up issue** — it is not a defect, only a different lane, and'
+             failexcl='- **fail (any item fails)** — **only lines Chrome actually stepped reach here.** Lines'
+             deadclause='fixed string `TEST 워커 프로필 #18` counts as real hardware' ;;
+    *)       m4_anchor='^\*\*4단계 —';   m5_anchor='^\*\*5단계 —';   m6_anchor='^\*\*6단계 —'
+             mandate='실장비 줄은 접두 표식 `[칸 ③]` 필수'
+             verdict='**접두 표식 `[칸 ③]` 이 붙은 줄**'
+             noissue='**후속 이슈를 발행하지 마라** — 결함이'
+             failexcl='- **fail (한 건이라도 실패)** — **크롬이 밟은 줄만 여기 온다.**'
+             deadclause='고정 문자열 `TEST 워커 프로필 #18` 이 적혀 있으면 실장비로 본다' ;;
+  esac
+  m4_line=$(grep -nE "$m4_anchor" "$f" | head -1 | cut -d: -f1)
+  m5_line=$(grep -nE "$m5_anchor" "$f" | head -1 | cut -d: -f1)
+  m6_line=$(grep -nE "$m6_anchor" "$f" | head -1 | cut -d: -f1)
+  [ -n "$m4_line" ] || { echo "  ✗ $f: 4단계 헤더 앵커 없음"; exit 1; }
+  [ -n "$m5_line" ] || { echo "  ✗ $f: 5단계 헤더 앵커 없음"; exit 1; }
+  [ -n "$m6_line" ] || { echo "  ✗ $f: 6단계 헤더 앵커 없음"; exit 1; }
+  m4_body=$(sed -n "${m4_line},${m5_line}p" "$f")
+  m5_body=$(sed -n "${m5_line},${m6_line}p" "$f")
+  # ⓐ 생산 쪽 — 4단계 형태 규율에 표식이 **강제**로 적혀 있어야 한다. 성격 규정("실장비면
+  #    TEST 워커 …")만 남으면 #309 의 출발점으로 되돌아간다.
+  printf '%s\n' "$m4_body" | grep -qF "$mandate" \
+    || { echo "  ✗ $f: 4단계 <LIVE_CHECKS> 형태 규율에 실장비 접두 표식 강제 문면('$mandate')이 없다 — 성격 규정은 형태 강제가 아니다 (#309)"; exit 1; }
+  # ⓑ 소비 쪽 — **판별문 자체**가 같은 표식을 써야 한다. "5단계 어딘가에 표식이 있는가" 로
+  #    물으면 다른 문단(전환기 조항 등)에 표식이 한 번 더 늘어난 뒤 판별문만 산문 술어로
+  #    되돌려도 초록이 된다 — 그래서 판별문 고유 문구에 결합한다.
+  printf '%s\n' "$m5_body" | grep -qF "$verdict" \
+    || { echo "  ✗ $f: 5단계 실장비 판별문이 표식('$live_marker')에 결합돼 있지 않다('$verdict' 부재) — 판별이 문장 해석으로 돌아갔다 (#309)"; exit 1; }
+  # ⓓ 표식 없는 줄의 라우팅 — **fail-closed**. attempt 1 은 이 자리를 고정 문자열
+  #    `TEST 워커 프로필 #18` 소급 조항으로 메웠는데, 열린 재고 10건·`- [ ]` 27줄 전수
+  #    실측에서 그 문자열은 **0줄**을 물었다(조항이 태어날 때부터 죽어 있었다). 그 결과
+  #    재고의 실장비 줄이 ⑦ 레인이 아니라 fail 갈래로 떨어져 **결함이 아닌 것에
+  #    `needs-human` 후속 이슈가 나고 사유가 '스모크 실패' 로 잘못 기록**됐다(#309 BLOCKER).
+  #    그래서 ⑴ 미밟음 줄은 후속 이슈를 내지 않는다는 문면과 ⑵ fail 갈래가 그 줄을
+  #    제외한다는 문면이 **둘 다** 있어야 한다 — 한쪽만 있으면 같은 줄을 두 갈래가 집는다.
+  #    ⑶ 죽은 고정 문자열 조항이 되살아나면 빨강(같은 사고의 재발 지문).
+  printf '%s\n' "$m5_body" | grep -qF -- "$noissue" \
+    || { echo "  ✗ $f: 5단계에 '미밟음 줄은 후속 이슈를 내지 않는다' 문면('$noissue')이 없다 — 결함 아닌 줄이 '스모크 실패' 로 기록된다 (#309)"; exit 1; }
+  printf '%s\n' "$m5_body" | grep -qF -- "$failexcl" \
+    || { echo "  ✗ $f: 5단계 fail 갈래가 미밟음 보류 줄을 제외하지 않는다('$failexcl' 부재) — 보류와 fail 이 같은 줄을 집는다 (#309)"; exit 1; }
+  if printf '%s\n' "$m5_body" | grep -qF -- "$deadclause"; then
+    echo "  ✗ $f: 5단계에 죽은 소급 조항('$deadclause')이 되살아났다 — 재고 27줄 전수 실측 0건 (#309)"; exit 1
+  fi
+done
+# ⓒ 템플릿 — 실제로 발행되는 이슈 본문의 형태가 여기서 나온다. 여기가 표식을 안 가르치면
+#    4단계 규율이 아무리 강제여도 발행물엔 표식이 안 붙는다. 스코프는 **형태 안내 주석 구간**
+#    (`## 라이브/하드웨어 검증 항목` ~ `<LIVE_CHECKS>`) — 파일 전체로 물면 아래 `## 완료 처리`
+#    문장에 남은 표식 덕에 정작 안내가 지워져도 초록이다.
+tmpl='skills/closeout/references/deploy-check-issue.md'
+t_head=$(grep -nF '## 라이브/하드웨어 검증 항목' "$tmpl" | head -1 | cut -d: -f1)
+t_ph=$(grep -nF '<LIVE_CHECKS>' "$tmpl" | head -1 | cut -d: -f1)
+[ -n "$t_head" ] && [ -n "$t_ph" ] && [ "$t_head" -lt "$t_ph" ] \
+  || { echo "  ✗ $tmpl: '## 라이브/하드웨어 검증 항목' ~ '<LIVE_CHECKS>' 구간을 못 찾음"; exit 1; }
+sed -n "${t_head},${t_ph}p" "$tmpl" | grep -qF '`- [ ] [칸 ③] <동작>` 형태로 적는다' \
+  || { echo "  ✗ $tmpl: 형태 안내 주석에 실장비 접두 표식 형태('- [ ] [칸 ③] <동작>')가 없다 — 발행되는 이슈에 표식이 안 붙는다 (#309)"; exit 1; }
+# ⓔ **실행 프롬프트** — 위 ⓐⓑⓒ 는 생산(4단계)·소비(5단계)·템플릿 셋을 묶었지만, 5단계가
+#    실제로 **밟는 주체에게 건네는 문서**는 `references/smoke-prompt*.md` 다: 5단계는
+#    `<LIVE_CHECKS>` 를 그 프롬프트에 통째로 치환하고(placeholder 는 파일 끝), 그 프롬프트의
+#    출력 계약이 항목별 판정 어휘와 `<전체수>` 의 정의를 쥐고 있다. 그래서 표식·분모 규칙이
+#    SKILL 에만 있으면 **같은 에이전트가 모순된 두 계약을 받는다** — SKILL 은 "표식 줄은
+#    밟지 말고 분모에서 빼라" 인데 프롬프트는 "전 항목에 한 줄씩 판정, 끝에 <전체수>" 다.
+#    결말이 둘 다 나쁘다: 표식 줄을 크롬이 시도해 **거짓 fail** 이 되면 fail 갈래가
+#    `needs-human` 후속 이슈를 내고(attempt 1 이 샌 자리), `skip` 으로 찍히면 **분모에 남아
+#    거짓 초록**이 되며 그 `skip` 은 저하 마커 `스모크 skip:` 과 **어휘가 겹친다**(#309 BLOCKER).
+#    처방(ⓐ 갈래): 같은 표식·분모 규칙을 두 프롬프트에 넣고, 항목별 어휘를
+#    `pass`·`fail`·`보류` 로 고정해 `skip` 을 전체-저하 전용으로 돌려준다.
+#    ⓑ(치환 전 필터)를 택하지 않은 이유도 여기서 문다 — 필터는 표식 줄만 지울 수 있고
+#    "크롬이 시도조차 못 한 줄" 은 **밟아 봐야 알기에** 프롬프트 안에서만 갈린다. 두 갈래를
+#    섞으면 실장비를 세는 계산기가 둘이 된다. 그래서 5단계에 "그대로 치환·미리 거르지 마라"
+#    문면이 있는지도 함께 문다(없으면 ⓑ 하이브리드가 슬며시 돌아온다).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) nofilter='substitute that section untouched — do not pre-filter the marked lines out' ;;
+    *)       nofilter='그 절을 손대지 말고 그대로 치환한다 — 표식 줄을 미리 걸러 내지 마라' ;;
+  esac
+  grep -qF -- "$nofilter" "$f" \
+    || { echo "  ✗ $f: 5단계에 '<LIVE_CHECKS> 를 그대로 치환한다(미리 거르지 마라)' 문면('$nofilter')이 없다 — 프롬프트와 치환부가 실장비를 각자 세게 된다 (#309)"; exit 1; }
+done
+for f in skills/closeout/references/smoke-prompt.md \
+         skills/closeout/references/smoke-prompt.en.md; do
+  [ -f "$f" ] || { echo "  ✗ 누락: $f"; exit 1; }
+  case "$f" in
+    *.en.md) p_marker='A line carrying the `[칸 ③]` prefix marker'
+             p_denom='`보류` lines go into neither'
+             p_vocab='vocabulary is `pass`·`fail`·`보류`'
+             p_stale='with `pass`/`fail`/`skip` and a rationale' ;;
+    *)       p_marker='접두 표식 `[칸 ③]` 이 붙은 줄'
+             p_denom='`보류` 줄은 분자에도 분모에도 넣지 않는다'
+             p_vocab='`pass`·`fail`·`보류` **셋뿐이다.**'
+             p_stale='`pass`/`fail`/`skip` 과 근거를 적고' ;;
+  esac
+  # ⑴ 판별 — 프롬프트가 4·5단계와 **같은 표식**으로 실장비 줄을 가려내는가.
+  grep -qF -- "$p_marker" "$f" \
+    || { echo "  ✗ $f: 실행 프롬프트에 실장비 표식('$live_marker') 판별 문면('$p_marker')이 없다 — 5단계 규칙이 밟는 주체에 도달하지 않는다 (#309)"; exit 1; }
+  # ⑵ 분모 — `<전체수>` 정의가 보류 줄을 빼는가. 이게 없으면 보류 줄이 분모에 남아 거짓 초록.
+  grep -qF -- "$p_denom" "$f" \
+    || { echo "  ✗ $f: 출력 계약의 <전체수> 정의가 보류 줄을 분모에서 빼지 않는다('$p_denom' 부재) — 밟지 않은 줄이 통과로 세어진다 (#309)"; exit 1; }
+  # ⑶ 어휘 — 항목별 판정에서 `skip` 을 몰아내야 저하 마커 `스모크 skip:` 과 안 겹친다.
+  grep -qF -- "$p_vocab" "$f" \
+    || { echo "  ✗ $f: 항목별 판정 어휘를 pass·fail·보류 셋으로 고정하는 문면('$p_vocab')이 없다 — 항목 skip 이 저하 마커 '스모크 skip:' 과 겹친다 (#309)"; exit 1; }
+  # ⑷ 재발 지문 — 옛 출력 계약(전 항목 pass/fail/skip)이 되살아나면 빨강. ⑴~⑶ 만으로는
+  #    새 문면을 덧붙이고 옛 계약을 그대로 남기는 회귀를 못 잡는다(두 계약 공존 = BLOCKER 원형).
+  if grep -qF -- "$p_stale" "$f"; then
+    echo "  ✗ $f: 옛 출력 계약('$p_stale')이 남아 있다 — 표식·보류 규칙과 모순된 두 계약을 같은 에이전트가 받는다 (#309)"; exit 1
+  fi
+  # ⑸ 보류 내역 — 5단계가 코멘트로 옮길 내역 줄을 프롬프트가 **같은 문자열**로 낸다.
+  #    (5단계는 뒤에 분류 접미사를 더하므로 공통 접두로 문다.)
+  grep -qF -- '보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건' "$f" \
+    || { echo "  ✗ $f: 보류 내역 출력('보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건')이 없다 — 5단계가 <a>·<b> 를 받을 경로가 없다 (#309)"; exit 1; }
+done
+
 echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4)"
 # 1단계 검증자가 과거 오판 패턴(인용 오판·base 맹점 등)을 반복하지 않도록 lessons 를
 # 프롬프트에 주입한다 — 프롬프트가 유일한 전달 경로라는 기존 계약 유지.
@@ -1249,6 +1377,35 @@ bash scripts/tests/resume-sweep.test.sh
 
 echo "[test] loop-status.sh 파이프라인 스냅샷 버킷·창 필터·warn·부분 실패 (#144)"
 bash scripts/tests/loop-status.test.sh
+
+echo "[test] epic-sweep.sh — leaf 전부 종료 에픽 자동 종료·전용 줄 판정·상한 보류·멱등 (#258)"
+# closeout ① 이 `"$SCRIPTS/epic-sweep.sh"` 로 직접 exec 하므로 실행 비트도 여기서 문다
+# (비트가 빠지면 조용히 exit 126 → 에픽 스윕이 매 틱 no-op 으로 degrade, PR#173 교훈과 동일 함정).
+[ -x scripts/epic-sweep.sh ] || { echo "  ✗ epic-sweep.sh 실행 비트 없음"; exit 1; }
+bash scripts/tests/epic-sweep.test.sh
+
+echo "[#258] closeout ① 이 epic-sweep.sh 를 \$SCRIPTS/ 절대경로로 부르고 이벤트 3종을 다 처리 (한/영)"
+# ⑴ closeout 은 대상 레포의 worktree 를 cwd 로 돌 수 있는데, 상대경로 `scripts/…` 는 그
+#    레포엔 없는 파일이다(스크립트는 ~/.claude/skills/issue-runner/scripts/ 에 산다) — #227
+#    이 lessons-trim.sh 에서 실제로 밟은 함정. 같은 문서의 기존 호출 형태에 맞춘다.
+# ⑵ 이벤트 이름이 문서에서 빠지면 그 이벤트는 프롬프트가 아예 안 읽어 조용히 버려진다
+#    (특히 warn — 판정 보류가 보고에서 사라지면 조용한 오판과 구분이 안 된다).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF '$SCRIPTS/epic-sweep.sh' "$f" \
+    || { echo "  ✗ $f: closeout ① 에 \$SCRIPTS/epic-sweep.sh 호출 없음"; exit 1; }
+  if grep -qE '(^|[^A-Za-z/])scripts/epic-sweep\.sh' "$f"; then
+    echo "  ✗ $f: epic-sweep.sh 를 상대경로로 부르는 줄이 있다"; exit 1
+  fi
+  # 이벤트 이름은 **epic-sweep 절 안에서** 찾는다 — 문서 어딘가에 같은 단어가 있다고
+  # 통과시키면(`closed` 는 ④ Report 카운터에도 있다) 가드가 고치려는 상태에서도 참이 된다(#218).
+  blk=$(grep -A 14 -F '$SCRIPTS/epic-sweep.sh' "$f")
+  for ev in '`closed`' '`note`' '`warn`'; do
+    printf '%s' "$blk" | grep -qF "$ev" \
+      || { echo "  ✗ $f: epic-sweep 절에 이벤트 $ev 처리 지시 없음"; exit 1; }
+  done
+  grep -qF '에픽 종료: #' "$f" \
+    || { echo "  ✗ $f: ④ Report 의 에픽 종료 보고 형식(에픽 종료: #N) 없음"; exit 1; }
+done
 
 echo "[#206] 진행 증거 술어는 progress-evidence.sh 한 자리 (#200 → #206)"
 # 커밋 신선도(STALL_MIN)와 CI 큐 티켓 판정을 다른 스크립트가 자기 벌로 들고 있으면 언젠가
@@ -2151,6 +2308,32 @@ if grep -nF -- "ps -Ao pid,command | grep '[b]in/ci'" references/worker-template
   exit 1
 fi
 
+echo "[worker-template] WIP 커밋 규율 문면 검사 (#187)"
+# 커밋 트리거가 '완료된 단위' 하나뿐이면 TDD 사이클 중간에 죽은 워커는 커밋이 0이라
+# push 할 것이 없고, 미커밋 작업이 worktree 에 갇혀 그 이슈가 정체한다(cleanup-worktree.sh
+# 더티 가드가 제거를 보류 → 사람 개입). 아래 일곱 축이 한/영 양쪽에 살아 있어야 한다:
+# 규율 제목 · 트리거 (a) · 트리거 (b) · `WIP:` 접두 · 초록 요건의 예외 · 처분 · 그 근거.
+for tok in '**WIP 커밋 규율' \
+           '긴 단계에 들어가기 전' \
+           '마지막 커밋 이후 편집이 상당히 쌓였을 때' \
+           'WIP: <한 줄>' \
+           '초록 요건의 예외' \
+           '최종 PR 에 그대로 남긴다' \
+           'squash 머지'; do
+  grep -qF -- "$tok" references/worker-template.md \
+    || { echo "  ✗ references/worker-template.md 에 WIP 커밋 규율 문구 '$tok' 없음"; exit 1; }
+done
+for tok in '**WIP commit discipline' \
+           'Before entering a long stage' \
+           'significant edits have piled up since your last commit' \
+           'WIP: <one line>' \
+           'exception to the green requirement' \
+           'left in the final PR as-is' \
+           'squash merge'; do
+  grep -qF -- "$tok" references/worker-template.en.md \
+    || { echo "  ✗ references/worker-template.en.md 에 WIP 커밋 규율 문구 '$tok' 없음"; exit 1; }
+done
+
 echo "[#292] loop-status 에픽 닫힌 leaf 조회 — 검색 쿼리 형태·단일 epic_of·헤더 계약"
 # ⑴ 상태는 **`--state closed` 플래그**로 준다. 쿼리 문자열의 `is:closed` 는 `gh` 가
 #    오파싱한 실측 전례가 있다(#236 — resume-sweep.sh 가 같은 이유로 플래그로 옮겼다).
@@ -2177,8 +2360,13 @@ for tok in 'EPIC_CLOSED_LIMIT' '종료 미상' '에픽 닫힌 leaf'; do
   grep -qF -- "$tok" scripts/loop-status.sh \
     || { echo "  ✗ scripts/loop-status.sh 헤더/코드에 '$tok' 계약이 없다(#292)"; exit 1; }
 done
-if grep -nF -- '창 절단 가능(닫힌 이슈)' scripts/loop-status.sh; then
-  echo "  ✗ 최근 닫힌 200건의 절단 warn 이 되살아났다 — bodat 에서 매 틱 뜨는 상시 소음이다(#292/#190)"
+#    닫힌 이슈(최근 200건) 절단 warn 이 되살아나면 빨강. **렌더된 문자열이 아니라 후보
+#    목록의 항목**을 본다 — warn 문구는 `"목록 상한 200 도달 — 창 절단 가능(\(.what))"`
+#    처럼 jq 보간으로 만들어지므로 `창 절단 가능(닫힌 이슈)` 리터럴은 **되돌린 트리에도
+#    없다**(merge-base `19cba3c8:scripts/loop-status.sh:826,831` 실측 — 옛 코드도 보간형).
+#    리터럴로 적으면 태어날 때부터 죽은 조항이 된다.
+if grep -nF -- 'what: "닫힌 이슈"' scripts/loop-status.sh; then
+  echo "  ✗ 최근 닫힌 200건이 절단 warn 후보 목록에 되살아났다 — bodat 에서 매 틱 뜨는 상시 소음이다(#292/#190)"
   exit 1
 fi
 

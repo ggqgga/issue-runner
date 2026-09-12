@@ -249,8 +249,27 @@ The resume count is the number of issue **comments** carrying the marker
 never overwrite someone's edit). Stop labels are mirrored onto the issue **and its open
 linked PR**, so a resume/escalation reverts the PR's labels too — otherwise the PR stays
 permanently human-blocked and the downstream transitions (handoff-verify, verify-pass,
-closeout-pick) never remove it. Per event:
+closeout-pick) never remove it. That revert only ever happened when the sweep itself
+resumed or escalated, so the path where a **human** clears `hold:policy`/`hold:conflict`
+had nowhere to drop the PR copy — the same run therefore also does a **stop-mirror
+cleanup** (#265): when the issue carries no stop label at all but its paired open PR still
+does, it removes them **from the PR only** (a pair means an `agent/issue-*` head with a
+proven `Closes` link — a human-opened PR's marks and a `Refs`-only PR's legitimate hold are
+left alone). **What licenses the removal is positive evidence, not absence** — absence ("the
+issue carries no stop label") cannot tell ⓐ a human removed it from ⓑ the machine removed it
+from ⓒ **a transition partially failed and never attached it**, and ⓒ is real
+(`transition.sh` edits the PR first and the issue second). So it reads the label **event
+history** and requires the issue's last removal to be **later** than the PR's last
+attachment; when it cannot prove that it leaves the labels alone and warns. And when the
+PR's only stop label is a bare `needs-human` (no `hold:` prefix at all) it **never** removes
+it — the machine cannot produce that shape (all three hold transitions require `--reason`),
+so it is a brake a human put there by hand. Per event:
 
+- `mirror_cleared` — the script removed the **PR copy** of a hold a human cleared on the
+  issue alone (#265). The issue was already clean, so it is left untouched. **Nothing
+  further to do** — that PR returns as a `verify-eligible.sh`/`closeout-eligible.sh`
+  candidate from this tick on. Put one line under `mirror cleared N` in ④ Report (`pr` is
+  the PR, `number` the linked issue, `removed` the labels taken off).
 - `resumed` — `needs-human` and `hold:ladder` are off and `agent-ready` is untouched (the
   eligibility label is never touched). **Nothing for the dispatcher to do** — the issue
   reappears naturally as an `eligible-issues.sh` candidate in ③ this tick. Record the
