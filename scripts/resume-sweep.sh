@@ -190,7 +190,9 @@ has_label() {  # has_label <콤마목록> <라벨>
 }
 
 # 정지 라벨이 하나라도 있나 — 기계 정지(transition.sh 의 verify-held·closeout-blocked·
-# runner-held)가 이슈와 PR **양쪽**에 붙이는 표식이다(#244 가 보존 대상으로 적어 둔 규약).
+# runner-held)가 이슈와 PR **양쪽**에 붙이는 `hold:<사유>`(#244 로 기계 정지가 다는 것은
+# 이것뿐이다)와, 사람이 손으로 세우는 `needs-human` 을 **둘 다** 센다 — 이 갈래가 묻는 것은
+# "사람 게이트가 살아 있나" 이고, 그 답은 두 쪽 중 하나만 있어도 참이기 때문이다.
 # 열거가 아니라 **접두** 판별인 이유: 네 게이트(eligible-issues·claim-issue·verify-eligible·
 # closeout-eligible)가 전부 `hold:` 접두로 보므로(#242), 사유가 하나 늘면(`hold:<새사유>`)
 # 게이트는 그 PR 을 제외하는데 이 갈래만 못 봐서 **이 이슈가 고치려는 조용한 좌초가 그대로
