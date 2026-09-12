@@ -2463,6 +2463,35 @@ for f in SKILL.md SKILL.en.md; do
   printf '%s\n' "$pr_body" | grep -qF 'BLOCKED: 전이 실패 policy-kept' \
     || { echo "  ✗ $f: 전이 비0 시의 목적지(\`BLOCKED: 전이 실패 policy-kept\` · 마커 미부착)가 없다 (#244)"; exit 1; }
 done
+# (#410) 재심 "루프가 답한다" 갈래의 **소비자측 needs-human 재확인**. 생산자(resume-sweep ③)가
+# due 직전 `read_state` 로 재조회해도(#351/#386) "이벤트 발행 → 디스패처 판정 → verify-redispatch"
+# 구간은 남고, 그 사이 사람이 `needs-human` 을 붙이면 전이표 `⊘hold`(반송 = 사람 대기 해제)가
+# 그 정지를 무조건 벗긴다(#151·#244 가 막아 온 축). 그래서 디스패처가 전이 **직전에** 이슈·PR
+# 라벨을 다시 읽고, 있으면 전이 대신 policy-kept 경로로 간다 — 생산자·소비자 두 겹.
+# 문구 SSOT 는 아래 리터럴 한 자리(명령은 언어 중립이라 한/영 같은 리터럴) · 문단 스코프(#223 —
+# 파일 다른 곳의 같은 명령이 대신 만족시키지 않게) · 순서(재확인 → verify-redispatch, "직전")
+# · 재확인 줄과 전이 줄 사이에 목적지(policy-kept)가 적혀 있어야 한다.
+nh_recheck_issue='gh issue view <issue> --repo <repo> --json labels'
+nh_recheck_pr='gh pr view <pr> --repo <repo> --json labels'
+for f in SKILL.md SKILL.en.md; do
+  pr_s=$(grep -n '^- `policy_review_due`' "$f" | head -1 | cut -d: -f1)
+  pr_e=$(grep -n '^- `waiting`' "$f" | head -1 | cut -d: -f1)
+  { [ -n "$pr_s" ] && [ -n "$pr_e" ]; } \
+    || { echo "  ✗ $f: policy_review_due 불릿 경계(다음 불릿 \`waiting\`)를 못 찾았다 (#410)"; exit 1; }
+  pr_body=$(sed -n "${pr_s},${pr_e}p" "$f")
+  r_line=$(printf '%s\n' "$pr_body" | grep -nF "$nh_recheck_issue" | head -1 | cut -d: -f1)
+  [ -n "$r_line" ] \
+    || { echo "  ✗ $f: policy_review_due 불릿에 verify-redispatch 직전 needs-human 재확인(\`$nh_recheck_issue\`)이 없다 (#410)"; exit 1; }
+  printf '%s\n' "$pr_body" | grep -qF "$nh_recheck_pr" \
+    || { echo "  ✗ $f: policy_review_due 불릿의 needs-human 재확인이 PR 쪽(\`$nh_recheck_pr\`)을 안 본다 (#410)"; exit 1; }
+  v_line=$(printf '%s\n' "$pr_body" | grep -nF 'transition.sh verify-redispatch' | head -1 | cut -d: -f1)
+  [ -n "$v_line" ] \
+    || { echo "  ✗ $f: policy_review_due 불릿에 verify-redispatch 전이가 없다 (#410)"; exit 1; }
+  [ "$r_line" -lt "$v_line" ] \
+    || { echo "  ✗ $f: needs-human 재확인이 verify-redispatch 뒤에 있다 — 전이 '직전' 이어야 창이 닫힌다 (#410)"; exit 1; }
+  printf '%s\n' "$pr_body" | sed -n "${r_line},$((v_line - 1))p" | grep -qF 'policy-kept' \
+    || { echo "  ✗ $f: 재확인과 verify-redispatch 사이에 '있으면 → policy-kept' 목적지가 없다 (#410)"; exit 1; }
+done
 # (#244) closeout ①-b 스윕 **대상 필터** — 기계 정지의 마지막 소비자. 이 필터는 `needs-human`
 # 미부착만 보던 자리인데, #244 가 기계 정지에서 그 라벨을 떼므로 홀드된 PR(harvesting·
 # flow:verify·needs-human 이 전부 없고 `hold:*` 만 남은 PR)이 매 틱 다시 대상이 된다 —

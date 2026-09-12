@@ -309,8 +309,17 @@ so it is a brake a human put there by hand. Per event:
 - `policy_review_due` — an issue parked with `hold:policy` for longer than `RESUME_AFTER_MIN` that
   has not been re-reviewed yet (#155). **The dispatcher judges it once**: re-read the one-line
   question in the issue's `<!-- hold-note: policy -->` comment; if the answer can be found in the
-  plan (`Plans/*.md`), the issue body, or the verification ladder, **the loop answers** — leave the
-  answer as a comment (`재심: <answer> <!-- policy-review: resumed --><!-- bodat:worker -->`) and
+  plan (`Plans/*.md`), the issue body, or the verification ladder, **the loop answers** — but
+  **right before** resuming (comment · `verify-redispatch`) **re-read `needs-human`** (#410):
+  re-check with `gh issue view <issue> --repo <repo> --json labels` and (when there is a PR)
+  `gh pr view <pr> --repo <repo> --json labels`; if either carries it, a human parked the issue in
+  the meantime — do not resume, take the **`policy-kept` path** (the "human decision" order below,
+  one-line reason `재심 중 사람이 needs-human 을 세움`). Even though the sweep re-reads right before
+  due (#351), the window from event emission to this transition can only be closed by the consumer
+  (#151·#244 axis). A failed lookup does not fall back to "absent" either — no comment, no
+  transition; leave one line `재심 보류: 라벨 재확인 실패 #<issue>` in ④ Report (with no marker the
+  next sweep re-emits it). Otherwise leave the answer as a comment
+  (`재심: <answer> <!-- policy-review: resumed --><!-- bodat:worker -->`) and
   resume with `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr|->` (clears
   needs-human/hold:*, keeps agent-ready → a ③ candidate this tick). If it truly is a human
   decision, **the transition comes first** — run

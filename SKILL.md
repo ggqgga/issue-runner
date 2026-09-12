@@ -277,7 +277,14 @@ PR 이 영구 사람대기로 남고 뒤 전이(handoff-verify·verify-pass·clo
 - `policy_review_due` — `hold:policy` 로 멈춘 지 `RESUME_AFTER_MIN` 이 지났는데 아직 재심을 안 한
   건(#155). **디스패처가 1회 판정한다**: 이슈의 `<!-- hold-note: policy -->` 코멘트에 적힌 "사람이 답해야
   할 질문 한 줄" 을 다시 읽고, 그 답이 플랜(`Plans/*.md`)·이슈 본문·검증 사다리에서 나오면 **루프가
-  답한다** — 답을 코멘트로 남기고(`재심: <답> <!-- policy-review: resumed --><!-- bodat:worker -->`)
+  답한다** — 단, 재개(코멘트·`verify-redispatch`) **직전에 `needs-human` 을 다시 읽는다**(#410):
+  `gh issue view <issue> --repo <repo> --json labels` 와(PR 이 있으면) `gh pr view <pr> --repo <repo> --json labels`
+  로 재확인해 어느 쪽에든 있으면 사람이 그 사이 세운 정지다 — 재개하지 말고 **`policy-kept` 경로**(아래
+  "사람 몫" 순서 그대로, 이유 한 줄 `재심 중 사람이 needs-human 을 세움`)로 간다. 스윕이 due 직전에
+  재조회해도(#351) 이벤트 발행부터 이 전이까지의 창은 소비자만 닫을 수 있다(#151·#244 축). 조회 실패도
+  "없음" 으로 폴백하지 않는다 — 코멘트·전이 없이 ④ Report 에 `재심 보류: 라벨 재확인 실패 #<이슈>` 한 줄
+  (마커가 없으니 다음 스윕이 다시 낸다). 없으면 답을 코멘트로 남기고
+  (`재심: <답> <!-- policy-review: resumed --><!-- bodat:worker -->`)
   `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr|->` 로 재개(needs-human·hold:* 해제,
   agent-ready 유지 → 이번 틱 ③ 후보). 답이 정말 사람 결정이면 **전이가 먼저다** —
   `$SCRIPTS/transition.sh policy-kept <repo> <issue> <pr|->` 로 `needs-human` 을 PR·이슈
