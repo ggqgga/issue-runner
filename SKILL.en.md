@@ -31,53 +31,47 @@ maintenance must come before new work).
   conflicts from multiplying across PRs while human merges lag
 - `MAX_REPAIRS_PER_PR = 3` — cap on maintenance dispatches per PR
   (② Maintain circuit breaker)
-- `ISSUE_TIMEBOX_HOURS = 1` — the claim age at which a `working` issue with no PR
-  **starts being asked for progress evidence** (① Reconcile timebox). Exceeding it is
-  **not by itself a reason to stop** — past this age the issue is still reprieved as
-  long as there is progress evidence (#200).
-- `STALL_MIN = 25` — the "no progress" threshold (minutes). Only when the latest commit
-  on the remote branch `agent/issue-<num>` is older than this does the commit-side
-  evidence die. Rationale: bodat's measured `bin/ci` upper bound of ~570s (9.5 min) for a
-  single run plus slack for the box-wide serial CI queue (#127) — while a worker waits
-  out one CI run it is normal for no new commit to appear, so that window must not be
-  counted as stalling.
-- `MAX_TIMEBOX_GRACE = 3` — cap on **cumulative reprieves** within the same claim (an
-  `unknown` tick in between does not reset it — the counting window is everything after
-  the claim timestamp). Past
-  it the worker is stopped by the rule even with progress evidence — an unbounded
-  reprieve would never catch a real zombie, making the relaxation itself a new hole. At a
-  15-minute tick that is at most ~45 extra minutes, which covers the measured shapes
-  (72 min · 64 min) while still leaving a ceiling. The count is not a state file: it is
-  re-derived by counting issue comment markers (`<!-- timebox-grace: N -->`) created
-  **after the current claim timestamp only**.
-- `RESUME_AFTER_MIN = 120` — how long (minutes) the resume sweep waits before letting a
-  stalled issue flow again. Once a `hold:ladder` issue has gone this long
-  without an update, ①'s resume sweep picks it up (passed to `resume-sweep.sh` as the
-  environment variable of the same name).
-- `LADDER_RESUME_LIMIT = 2` — cap on automatic resumes per issue. Beyond it the issue is
-  escalated to `hold:policy` instead of resumed — only then is it a human's (no infinite
-  retries).
-- `CONFLICT_RESUME_LIMIT = 1` — cap on automatic resumes of `hold:conflict` (#345). In the
-  field (BoDAT #5103 · #185) a human's answer to the first conflict was ⓐ (one more worker
-  round) every time, and the second was ⓑ (human takeover) — hence 1. The window is the
-  shared `RESUME_AFTER_MIN` (that window is exactly the time a human has to take over with
-  `full-cycle`). Beyond the cap: `hold:policy` escalation → the re-review (③) question is
-  "ⓑ takeover, or reissue?".
-- `MIRROR_RETRY_LIMIT = 3` — cap on retries when ①'s resume sweep **stop-mirror cleanup**
-  cannot obtain positive evidence (#397). The round count is the number of
-  `<!-- mirror-retry: <reason> pr=<n> -->` marker comments on the paired issue — counting only that
-  PR's markers, and only those **after the last human-intervention boundary** (the latest
-  `policy-review`/`hold-note` comment), so a new episode never inherits the old rounds; at the cap the script emits
-  `mirror_retry_exhausted` (see the event handling below for the transition). The value must
-  match the constant of the same name in `resume-sweep.sh`, which points back at this section
-  (two copies are allowed until plan step 1).
-- `STALE_FINISH_MIN = 30` — lost-finish time buffer (minutes). The buffer for
-  `finish-classify.sh`, which is now consumed by the **closeout ①-b stuck-PR sweep**
-  (issue-runner no longer uses it directly after the rule-4 revert). A live worker
-  posts its final verdict within seconds of the `Verifier review:` comment, so if the
-  latest verifier is CLEAN yet no final verdict appears past this buffer, the worker
-  is considered dead. In-progress fix loops are auto-excluded because their latest
-  verifier comment is either recent or non-CLEAN.
+- **Constants the scripts read — the values live in `scripts/lib/constants.sh`, in one
+  place** (#427). This section no longer restates them: prose and code holding two copies
+  of a value drift apart (`ISSUE_TIMEBOX_HOURS` really did have four). An environment
+  variable overrides the default, and the **rationale/history lives in that file's
+  comments**. Below are the names and meanings only — for a value, run
+  `grep '<name>' $SCRIPTS/lib/constants.sh`.
+  - `ISSUE_TIMEBOX_HOURS` — the claim age at which a `working` issue with no PR **starts
+    being asked for progress evidence** (① Reconcile timebox). Exceeding it is **not by
+    itself a reason to stop** — past this age the issue is still reprieved as long as
+    there is progress evidence (#200).
+  - `STALL_MIN` — the "no progress" threshold (minutes). Only when the latest commit on
+    the remote branch `agent/issue-<num>` is older than this does the commit-side
+    evidence die (the decision is `timebox-check.sh`).
+  - `MAX_TIMEBOX_GRACE` — cap on **cumulative reprieves** within the same claim. The
+    count is not a state file: it is re-derived by counting issue comment markers
+    (`<!-- timebox-grace: N -->`) created **after the current claim timestamp only**.
+  - `RESUME_AFTER_MIN` — how long (minutes) the resume sweep waits before letting a
+    stalled issue flow again. Once a `hold:ladder` issue has gone this long without an
+    update, ①'s resume sweep picks it up.
+  - `LADDER_RESUME_LIMIT` — cap on automatic resumes per issue. Beyond it the issue is
+    escalated to `hold:policy` instead of resumed — only then is it a human's (no
+    infinite retries).
+  - `CONFLICT_RESUME_LIMIT` — cap on automatic resumes of `hold:conflict` (#345). In the
+    field (BoDAT #5103 · #185) a human's answer to the first conflict was ⓐ (one more
+    worker round) every time, and the second was ⓑ (human takeover). The window is the
+    shared `RESUME_AFTER_MIN` (that window is exactly the time a human has to take over
+    with `full-cycle`). Beyond the cap: `hold:policy` escalation → the re-review (③)
+    question is "ⓑ takeover, or reissue?".
+  - `MIRROR_RETRY_LIMIT` — cap on retries when ①'s resume sweep **stop-mirror cleanup**
+    cannot obtain positive evidence (#397). The round count is the number of
+    `<!-- mirror-retry: <reason> pr=<n> -->` marker comments on the paired issue —
+    counting only that PR's markers, and only those **after the last human-intervention
+    boundary** (the latest `policy-review`/`hold-note` comment), so a new episode never
+    inherits the old rounds; at the cap the script emits `mirror_retry_exhausted` (see
+    the event handling below for the transition).
+  - `STALE_FINISH_MIN` — lost-finish time buffer (minutes). The buffer for
+    `finish-classify.sh`, which is now consumed by the **closeout ①-b stuck-PR sweep**
+    (issue-runner no longer uses it directly after the rule-4 revert). A live worker
+    posts its final verdict within seconds of the `Verifier review:` comment, so if the
+    latest verifier is CLEAN yet no final verdict appears past this buffer, the worker
+    is considered dead.
 - `SOFT_TOKEN_BUDGET_PER_ISSUE = 300000` — soft token budget per issue. Not a
   hard cap but the observation threshold for ④ Report (the Agent call has no
   budget API, so it cannot be enforced).
@@ -413,39 +407,40 @@ so it is a brake a human put there by hand. Per event:
 
 For each `pr_open` event:
 
-**0. Flow-label correction (best-effort, applied while scanning).** Read the PR's last verdict
-comment (`gh pr view <pr> --repo <repo> --json comments`) and align its `flow:*` stage label with
-the real state — the worker and verify-runner attach these themselves at each stage, but crashes
-and misses happen, so the scan is a safety net. **Skip PRs labeled `flow:verify`, `verifying` or
-`harvesting`** (owned by verify-runner / closeout — same as the ownership rule below; `verifying`
-is the occupancy label verify-runner swaps in for `flow:verify` the moment it picks (#275), so the
-last comment is still `🔄` while verification runs — re-attaching `flow:verify` here would leave two
-stage labels). **Also skip PRs labeled `flow:claimed` or `flow:agent-ready`** (#420 — these are the
-PR mirrors of the issue rungs `agent:claimed`·`agent-ready` (#281) and belong to the worker lane.
-The only exits from those rungs are `claim-issue.sh` (`flow:agent-ready`→`flow:claimed`) and the
-worker's `handoff-verify` (`flow:claimed`→`flow:verify`); a dead worker is recovered by ① Reconcile
-and the closeout ①-b sweep (`finish-classify.sh`). Promoting on `🔄` alone would hand a **live
-worker's PR** or a **just-bounced, waiting PR** to verify-runner first and split the issue rung
-from its PR mirror — so those two labels are never part of "the other `flow:*`"). Correct only
-the remaining PRs: last comment `Merge verdict: ✅` → `flow:ready` (closeout picks it up),
-`Merge verdict: 🔄` (before ✅) → `flow:verify` (handed to verify-runner — the safety net for
-legacy PRs opened without a mirror label), `Merge verdict: ⚠ hold` → remove `flow:*`
-(needs-human path). Only when the target differs from the current label, swap with
-`gh issue edit <pr> --repo <repo> --add-label <target> --remove-label <the other flow:*>`
-(idempotent — skip when equal; `--remove-label` is harmless on a missing label). The initial
+**0. Flow-label correction (best-effort, applied while scanning).** One line decides it:
+`$SCRIPTS/pr-state.sh <repo> <pr>` (#449) — it reads the three axes (PR labels, linked-issue
+labels, last verdict comment) and returns the row name from `references/state-machine.md` as
+`{state, owner, mismatch}`. This prose no longer restates that table.
+**When `mismatch` is non-empty, the loop that owns the row fixes it with a transition** — and
+**only the `verdict:` axis is this loop's share** (the safety net for legacy PRs opened without a
+mirror label). That item reads `verdict: pr=<row> target=<label>` and **hands you the label to
+attach** (the verdict-symbol → label mapping lives in the script alone — do not restate it here):
+`gh issue edit <pr> --repo <repo> --add-label <the item's target> --remove-label <the other flow:*>`
+(idempotent — skip when equal; `--remove-label` is harmless on a missing label). **Leave the other
+axes alone** (`rung`·`stage`·`stop`) and raise one warn line in ④ Report,
+`mismatch PR #<pr>(<repo_short>) — <item>`: the `owner` field names who owns that row
+(verify-runner / closeout / resume-sweep / a human).
+Where the script does **not** emit a `verdict:` axis is exactly the old skip list —
+PRs labeled `flow:verify`, `verifying`, `harvesting`, `flow:claimed` or `flow:agent-ready`
+(#275·#420 — owned by verify-runner / closeout / the worker lane, so promoting on `🔄` alone
+would take a live worker's PR away), plus the stop (H:*) and terminal (E) rows.
+**On exit 2 (lookup failed) skip this PR's correction** — never guess the state. The initial
 CI/implementation stage has no PR yet and is visible only as the issue's `agent:claimed`
 (`flow:ci` appears only on PRs whose local CI is being re-run).
 
 **Circuit breaker — common to every maintenance dispatch in 1–3 below**:
-read the `<!-- repair-count: N -->` HTML comment from the PR body
-(`gh pr view <pr> --repo <repo> --json body`; if the comment is absent, N = 0).
+read the attempt count with `N=$($SCRIPTS/attempt-counter.sh <repo> <pr> repair-count)`
+(`0` when the marker is absent; **exit 2 = lookup failed → skip this PR's repair for
+this tick**, since reading it as 0 would reset the cap, #444).
 If N ≥ `MAX_REPAIRS_PER_PR`, **do not dispatch a repair** — attach the
 `hold:policy` label to the PR and the issue with
 `$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy --note "<one-line question>"` and surface it as a
 warn in ④ Report (a machine stop carries the reason label only, #244). If N is below the cap, dispatch the maintenance agent and at
-the same time update the comment in the PR body to `<!-- repair-count: N+1 -->`
-(`gh pr edit <pr> --repo <repo> --body ...` — if the comment was absent, append
-it at the end of the body, keeping the rest of the body unchanged). Even when
+the same time bump the counter with
+`$SCRIPTS/attempt-counter.sh <repo> <pr> repair-count --bump`
+(the script rewrites the marker, appends it at the end when absent, and leaves the
+rest of the body untouched. **On exit 2 the count did not go up** — skip that dispatch
+and leave one warn line in ④ Report). Even when
 several of the causes 1–3 apply to the same PR, dispatch **one maintenance agent
 per PR per tick** — merge all repair instructions into that single agent's
 prompt, and increment N by exactly 1 per dispatch.

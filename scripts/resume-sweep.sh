@@ -8,7 +8,7 @@
 #     — 계정 전체 모드의 레포 열거는 **이슈 축 ∪ PR 축**이다(#331): `needs-human` 이 이슈에만
 #       있는 레포도, **PR 에만** 있는 레포(④ 정지 미러의 표적)도 순회 대상이다. 전수 근거와
 #       각 축이 놓치는 상태는 스코프 블록 주석 참조.
-#   환경변수: RESUME_AFTER_MIN(기본 120) · LADDER_RESUME_LIMIT(기본 2) · CONFLICT_RESUME_LIMIT(기본 1)
+#   환경변수: RESUME_AFTER_MIN · LADDER_RESUME_LIMIT · CONFLICT_RESUME_LIMIT (값은 `scripts/lib/constants.sh`)
 #
 # 출력(JSON lines):
 #   mirror_cleared — 사람이 이슈에서만 푼 홀드의 **PR 사본**을 뗐다(#265, ④ 갈래). 이슈는
@@ -76,18 +76,15 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/scope.sh
+. "$SCRIPT_DIR/lib/scope.sh"   # scope_lines · scope_file 기본값 — 판정은 한 자리 (#427)
+# shellcheck source=scripts/lib/constants.sh
+. "$SCRIPT_DIR/lib/constants.sh"   # 상수는 한 자리 (#427)
 
-RESUME_AFTER_MIN="${RESUME_AFTER_MIN:-120}"
-LADDER_RESUME_LIMIT="${LADDER_RESUME_LIMIT:-2}"
-# `hold:conflict` 자동 재개 상한(#345). 기본 **1** — 실측에서 사람이 매번 치던 답이 "한 회차
-# 더" 였고 두 번째 충돌은 사람 인수(ⓑ)였다(BoDAT #5103). 창은 RESUME_AFTER_MIN 공용 —
-# 별도 env 를 두지 않는 이유는 그 창이 곧 사람이 `full-cycle` 로 인수할 시간이기 때문이다.
-CONFLICT_RESUME_LIMIT="${CONFLICT_RESUME_LIMIT:-1}"
-# ④ 정지 미러 정리가 **양성 증거를 못 얻었을 때** 같은 건을 다시 시도하는 상한(#397).
-# 값의 정의·근거는 SKILL.md 의 `## 상수` 절(`MIRROR_RETRY_LIMIT = 3`) — 플랜 1단계 전이라
-# 두 벌을 허용하고 주석으로 상호 참조한다. 회차는 상태 파일이 아니라 **이슈 코멘트 마커**
-# (`<!-- mirror-retry: <사유> -->`)의 개수가 SSOT 다(`ladder-resume` 과 같은 규약).
-MIRROR_RETRY_LIMIT="${MIRROR_RETRY_LIMIT:-3}"
+# 창·상한 네 상수(RESUME_AFTER_MIN · LADDER_RESUME_LIMIT · CONFLICT_RESUME_LIMIT ·
+# MIRROR_RETRY_LIMIT)의 값과 근거는 `scripts/lib/constants.sh` 다 — SKILL.md 의 `## 상수`
+# 절과 두 벌로 두던 것을 한 자리로 모았다(#427). 아래 `_nonneg_int` 검사는 **env 로 들어온
+# 값**을 무는 관문이라 그대로 남는다(상수가 어디서 오든 형식이 어긋나면 여기서 exit 64).
 # 목록·탐색 조회 상한. 기본 200 — 기본 limit(30)은 조용히 잘라 그 이슈들이 영영 안 보인다.
 # 테스트가 상한 도달 경로를 200건짜리 픽스처 없이 재현하도록 env 로 낮출 수 있게 열어 뒀다
 # (운영에서 내리는 값이 아니다 — 내리면 그만큼 잘린다. 잘림 자체는 warn 으로 드러난다).
@@ -661,14 +658,15 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate|resume-conflict
 #      붙었다" 를 구분하지 못한다 — 상세는 같은 함수 안의 ⑷ 주석.
 # ⑴⑵ 중 하나라도 아니면 이슈 칸이 빈 값으로 나가고, 호출부가 그대로 넘긴다(무편집·무이벤트).
 mirror_row() {  # mirror_row <PR row-json> — "<PR><TAB><짝 이슈|빈값><TAB><closes 공백목록><TAB><정지라벨 공백목록>"
-  printf '%s' "$1" | jq -r '
+  printf '%s' "$1" | jq -L "$SCRIPT_DIR/lib" -r '
+    include "loop";
     [.labels[]?.name] as $ln
     | [((.closingIssuesReferences // [])[].number)] as $closes
     | (if ((.headRefName // "") | test("^agent/issue-[0-9]+"))
        then ((.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber)) else null end) as $hn
     | (if $hn != null and (($closes | index($hn)) != null) then ($hn | tostring) else "" end) as $issue
     | [(.number|tostring), $issue, ($closes | map(tostring) | join(" ")),
-       ($ln | map(select(. == "needs-human" or startswith("hold:"))) | sort | join(" "))]
+       ($ln | stop_labels | sort | join(" "))]   # 집합 정의는 lib/loop.jq (#426)
     | @tsv' 2>/dev/null
 }
 
@@ -1208,10 +1206,9 @@ sweep_issue() {  # sweep_issue <repo> <이슈 JSON 한 줄> [ladder|conflict]
 # ── 스코프 레포 목록 ───────────────────────────────────────────────────────
 # 파이프 대신 파일로 받는다 — `cmd | while` 은 서브셸이라 루프 안에서 올린 exit 상태가
 # 밖으로 안 나온다(조회 실패의 fail-loud 가 조용히 삼켜진다).
-scope_file="$PWD/.loop/repos"
 repos_file="$tmp/repos"
 if [ -f "$scope_file" ]; then
-  grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' > "$repos_file"
+  scope_lines "$scope_file" > "$repos_file"   # 줄 필터는 lib/scope.sh 한 자리 (#427)
 else
   # ── 계정 전체 모드의 레포 탐색 = 이슈 축 ∪ PR 축 (#331) ────────────────────
   # **순회 대상을 정하는 입력 전수** — 각 입력이 어떤 상태를 놓치는지 함께 적는다.
@@ -1401,7 +1398,8 @@ while IFS= read -r repo; do
     while IFS= read -r row <&3; do
       [ -n "$row" ] || continue
       if ! printf '%s' "$row" \
-           | jq -e '[.labels[].name | select(startswith("hold:"))] | length > 0' >/dev/null 2>&1; then
+           | jq -L "$SCRIPT_DIR/lib" -e \
+               'include "loop"; [.labels[].name | select(is_hold_label)] | length > 0' >/dev/null 2>&1; then
         # 사유 라벨 없는 `needs-human` 은 **정상 상태**다(#244) — 라벨 하나에 뜻 하나를 준
         # 뒤로 그것은 "사람이 직접 세운 정지" 하나만 뜻하고, 루프가 교정할 불변식 위반이
         # 아니다(warn 은 **루프가 교정 가능한 불변식 위반일 때만** — #188/#190 이 세운 정의).

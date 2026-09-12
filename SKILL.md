@@ -34,40 +34,36 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   2~3건 캡을 영구 점유해 실효 캡이 7 로 떨어져 있었다(2026-08-13 실측: 10칸 중 3칸).
   14 는 그 상시 점유분을 흡수한 값이다. 사람 대기 PR 이 정리되면 다시 낮춰도 된다.
 - `MAX_REPAIRS_PER_PR = 3` — PR 1개당 보수 디스패치 상한 (② Maintain 서킷 브레이커)
-- `ISSUE_TIMEBOX_HOURS = 1` — PR 없는 `working` 이슈에서 **진행 증거를 묻기 시작하는**
-  claim 경과 시간 (① Reconcile timebox). 경과 초과 **자체는 중단 사유가 아니다** — 이
-  시간을 넘긴 뒤에도 진행 증거가 있으면 유예한다(#200).
-- `STALL_MIN = 25` — "무진전" 의 기준(분). 원격 브랜치 `agent/issue-<num>` 의 최신 커밋이
-  이보다 오래됐을 때만 커밋 쪽 진행 증거가 죽는다. 근거: bodat `bin/ci` 1회 실측 상한
-  ~570초(9.5분)에 박스 전역 직렬 CI 큐(#127) 대기 여유를 더한 값 — 워커가 CI 한 판을
-  기다리는 동안 새 커밋이 없는 것은 정상이므로, 그 구간을 무진전으로 세면 안 된다.
-- `MAX_TIMEBOX_GRACE = 3` — 같은 claim 에서 허용하는 **누적 유예 횟수**(사이에 `unknown`
-  틱이 끼어도 리셋되지 않는다 — 세는 창은 claim 시각 이후 전부다). 넘으면 진행
-  증거가 있어도 규칙대로 중단한다 — 유예가 무한이면 진짜 좀비를 못 잡아 이 완화 자체가
-  새 구멍이 된다. 틱 간격 15분 기준 최대 ~45분의 추가 시간이라 실측(72분·64분) 형상을
-  덮으면서도 상한이 남는다. 횟수는 상태 파일이 아니라 이슈 코멘트 마커
-  (`<!-- timebox-grace: N -->`)를 **현재 claim 시각 이후 것만** 세어 재파생한다.
-- `RESUME_AFTER_MIN = 120` — 재개 스윕이 멈춘 이슈를 다시 흘려보내기까지 기다리는
-  시간(분). `hold:ladder` 이슈의 마지막 갱신이 이만큼 지나면 ① 의 재개
-  스윕이 집는다 (`resume-sweep.sh` 에 동명 환경변수로 전달된다).
-- `LADDER_RESUME_LIMIT = 2` — 이슈 1건당 자동 재개 상한. 초과하면 재개 대신
-  `hold:policy` 승격 — 그때만 사람이다(무한 재시도 금지).
-- `CONFLICT_RESUME_LIMIT = 1` — `hold:conflict` 의 자동 재개 상한(#345). 실측(BoDAT #5103 ·
-  #185)에서 첫 충돌의 사람 답은 매번 ⓐ(워커 한 회차 더)였고 두 번째는 ⓑ(사람 인수)였다 —
-  그래서 1회. 창은 `RESUME_AFTER_MIN` 공용(그 창이 곧 사람이 `full-cycle` 로 인수할 시간이다).
-  초과하면 `hold:policy` 승격 → 재심(③)의 질문은 "ⓑ 인수인가, 재발행인가".
-- `MIRROR_RETRY_LIMIT = 3` — ① 재개 스윕의 **정지 미러 정리**가 양성 증거를 못 얻었을 때
-  같은 건을 다시 시도하는 상한(#397). 회차는 짝 이슈 코멘트의 `<!-- mirror-retry: <사유> pr=<n> -->`
-  마커 개수이고 — **그 PR 의 것만**, **사람이 개입한 경계**(마지막 `policy-review`·`hold-note` 코멘트)
-  **이후**의 것만 센다(옛 에피소드를 물려받지 않는다) —
-  상한에 닿으면 스크립트가 `mirror_retry_exhausted` 를 낸다(전이는 아래
-  이벤트 처리 참조). 값은 `resume-sweep.sh` 의 동명 상수와 **같아야 한다** — 그 파일이
-  이 절을 가리키고 있다(플랜 1단계 전이라 두 벌 허용).
-- `STALE_FINISH_MIN = 30` — 완결 유실 판별 시간버퍼(분). `finish-classify.sh` 의
-  버퍼이며, 이제 이 헬퍼는 **closeout ①-b 정체 스윕**이 소비한다(issue-runner 는 규칙4
-  원복 후 직접 쓰지 않음). 살아있는 워커는 `검증자 리뷰:` 직후 수초 내 최종 판정을
-  찍으므로, 최신 검증자가 CLEAN 인데 이 버퍼를 넘도록 최종 판정이 없으면 워커 사망으로
-  간주. 진행 중 fix 루프는 최신 검증자 코멘트가 recent 이거나 non-CLEAN 이라 자동 제외.
+- **스크립트가 읽는 상수 — 값은 `scripts/lib/constants.sh` 한 자리다** (#427). 이 절은 값을
+  다시 적지 않는다: 산문과 코드가 값을 두 벌로 들면 갈린다(`ISSUE_TIMEBOX_HOURS` 는 실제로
+  4벌이었다). 환경변수로 덮어쓰면 그 값이 이기고, 값의 **근거·이력은 그 파일 주석**에 있다.
+  아래는 이름과 뜻만이다 — 값이 궁금하면 `grep '<이름>' $SCRIPTS/lib/constants.sh`.
+  - `ISSUE_TIMEBOX_HOURS` — PR 없는 `working` 이슈에서 **진행 증거를 묻기 시작하는** claim
+    경과 시간(① Reconcile timebox). 경과 초과 **자체는 중단 사유가 아니다** — 넘긴 뒤에도
+    진행 증거가 있으면 유예한다(#200).
+  - `STALL_MIN` — "무진전" 의 기준(분). 원격 브랜치 `agent/issue-<num>` 의 최신 커밋이
+    이보다 오래됐을 때만 커밋 쪽 진행 증거가 죽는다(판정은 `timebox-check.sh`).
+  - `MAX_TIMEBOX_GRACE` — 같은 claim 에서 허용하는 **누적 유예 횟수**. 횟수는 상태 파일이
+    아니라 이슈 코멘트 마커(`<!-- timebox-grace: N -->`)를 **현재 claim 시각 이후 것만**
+    세어 재파생한다.
+  - `RESUME_AFTER_MIN` — 재개 스윕이 멈춘 이슈를 다시 흘려보내기까지 기다리는 창(분).
+    `hold:ladder` 이슈의 마지막 갱신이 이만큼 지나면 ① 의 재개 스윕이 집는다.
+  - `LADDER_RESUME_LIMIT` — 이슈 1건당 자동 재개 상한. 초과하면 재개 대신 `hold:policy`
+    승격 — 그때만 사람이다(무한 재시도 금지).
+  - `CONFLICT_RESUME_LIMIT` — `hold:conflict` 의 자동 재개 상한(#345). 실측(BoDAT #5103 ·
+    #185)에서 첫 충돌의 사람 답은 매번 ⓐ(워커 한 회차 더)였고 두 번째는 ⓑ(사람 인수)였다.
+    창은 `RESUME_AFTER_MIN` 공용(그 창이 곧 사람이 `full-cycle` 로 인수할 시간이다).
+    초과하면 `hold:policy` 승격 → 재심(③)의 질문은 "ⓑ 인수인가, 재발행인가".
+  - `MIRROR_RETRY_LIMIT` — ① 재개 스윕의 **정지 미러 정리**가 양성 증거를 못 얻었을 때
+    같은 건을 다시 시도하는 상한(#397). 회차는 짝 이슈 코멘트의
+    `<!-- mirror-retry: <사유> pr=<n> -->` 마커 개수이고 — **그 PR 의 것만**, **사람이 개입한
+    경계**(마지막 `policy-review`·`hold-note` 코멘트) **이후**의 것만 센다(옛 에피소드를
+    물려받지 않는다) — 상한에 닿으면 스크립트가 `mirror_retry_exhausted` 를 낸다(전이는
+    아래 이벤트 처리 참조).
+  - `STALE_FINISH_MIN` — 완결 유실 판별 시간버퍼(분). `finish-classify.sh` 의 버퍼이며,
+    이제 이 헬퍼는 **closeout ①-b 정체 스윕**이 소비한다(issue-runner 는 규칙4 원복 후
+    직접 쓰지 않음). 살아있는 워커는 `검증자 리뷰:` 직후 수초 내 최종 판정을 찍으므로,
+    최신 검증자가 CLEAN 인데 이 버퍼를 넘도록 최종 판정이 없으면 워커 사망으로 간주.
 - `SOFT_TOKEN_BUDGET_PER_ISSUE = 300000` — 이슈당 소프트 토큰 예산. 하드 캡이
   아니라 ④ Report 의 관측 기준 (Agent 호출에 예산 API 가 없어 강제는 불가).
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
@@ -365,35 +361,31 @@ PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·
 
 `pr_open` 이벤트 각각에 대해:
 
-**0. 단계 라벨 보정 (best-effort, 스캔할 때 붙인다).** 이 PR 의 마지막 판정 코멘트를
-읽어(`gh pr view <pr> --repo <repo> --json comments`) 단계 라벨 `flow:*` 를 실제 상태에
-맞춘다 — 워커·verify-runner 가 각 단계에서 직접 붙이지만 크래시·놓침이 있을 수 있어
-스캔이 안전망이다. **단, `flow:verify`·`verifying` 또는 `harvesting` 라벨이 붙은 PR 은 이 보정을
-건너뛴다**(각각 verify-runner·closeout 소유 — 아래 소유 규칙과 동일. `verifying` 은 verify-runner 가
-집는 순간 `flow:verify` 를 떼고 붙이는 점유 라벨이라(#275) 마지막 코멘트가 `🔄` 인 채로 검증이 도는
-중이다 — 여기서 `flow:verify` 를 되붙이면 단계 라벨이 둘이 된다). **`flow:claimed`·`flow:agent-ready`
-가 붙은 PR 도 건너뛴다**(#420 — 이슈 칸 `agent:claimed`·`agent-ready` 의 PR 미러(#281)라 워커 레인
-소유다. 그 칸의 출구는 `claim-issue.sh`(`flow:agent-ready`→`flow:claimed`)와 워커의 `handoff-verify`
-(`flow:claimed`→`flow:verify`)뿐이고, 워커 사망은 ① Reconcile 과 closeout ①-b 스윕(`finish-classify.sh`)이
-회수한다. 여기서 `🔄` 만 보고 `flow:verify` 로 올리면 **살아있는 워커의 PR** 이나 **반송 직후 대기 중인 PR**
-이 verify-runner 에 먼저 집히고, 이슈 칸과 PR 미러가 갈린다 — 그래서 "나머지 `flow:*`" 에 이 둘은
-결코 들지 않는다). 그 외 PR 만 보정:
-마지막 코멘트가 `머지 판정: ✅` → `flow:ready`(closeout 이 집는다), `머지 판정: 🔄`(✅ 전)
-→ `flow:verify`(verify-runner 에 넘김 — 미러 라벨 없이 열린 옛 PR 의 안전망),
-`머지 판정: ⚠ 보류` → flow:* 제거(needs-human 경로). 목표 라벨과 현재가 다를 때만
-`gh issue edit <pr> --repo <repo> --add-label <목표> --remove-label <나머지 flow:*>` 로
-교체한다(멱등 — 같으면 skip, `--remove-label` 은 없는 라벨에 무해). 최초 CI·구현 단계는
-PR 이 아직 없어 이슈 `agent:claimed` 로만 보인다(`flow:ci` 는 재-CI 도는 PR 에만 뜬다).
+**0. 단계 라벨 보정 (best-effort, 스캔할 때 붙인다).** `$SCRIPTS/pr-state.sh <repo> <pr>` 한 줄이
+판정한다(#449) — PR 라벨·이슈 라벨·마지막 판정 세 축을 `references/state-machine.md` 의 행 이름
+(`{state, owner, mismatch}`)으로 낸다. 이 산문은 그 표를 다시 적지 않는다.
+**`mismatch` 가 비어 있지 않으면 표의 소유 루프가 전이로 맞춘다** — 그중 **이 루프 몫은
+`verdict:` 축 하나**다(미러 라벨 없이 열린 옛 PR 의 안전망). 그 항목은 `verdict: pr=<행> target=<라벨>`
+꼴로 **붙일 라벨을 그대로 준다**(판정 기호 → 라벨 매핑은 스크립트 한 자리다 — 여기서 다시 외우지 마라):
+`gh issue edit <pr> --repo <repo> --add-label <항목의 target> --remove-label <나머지 flow:*>`
+한 번(멱등 — 같으면 skip, `--remove-label` 은 없는 라벨에 무해). 나머지 축(`rung`·`stage`·`stop`)은
+**건드리지 말고** ④ Report warn 에 `mismatch PR #<pr>(<repo_short>) — <항목>` 한 줄로 올려라:
+그 칸의 소유는 `owner` 필드가 말한다(verify-runner·closeout·resume-sweep·사람).
+스크립트가 `verdict:` 축을 **안 내는** 자리가 곧 종전 산문의 건너뛰기 목록이다 —
+`flow:verify`·`verifying`·`harvesting`·`flow:claimed`·`flow:agent-ready` 가 붙은 PR(#275·#420 —
+각각 verify-runner·closeout·워커 레인 소유라 `🔄` 만 보고 올리면 살아있는 워커의 PR 을 뺏는다)과
+정지(H:*)·종료(E) 행. **exit 2(조회 실패)면 이 PR 의 보정을 건너뛴다** — 상태를 추측하지 않는다.
+최초 CI·구현 단계는 PR 이 아직 없어 이슈 `agent:claimed` 로만 보인다(`flow:ci` 는 재-CI 도는 PR 에만 뜬다).
 
 **서킷 브레이커 — 아래 1~3 의 모든 보수 디스패치 전 공통**:
-PR 본문에서 `<!-- repair-count: N -->` HTML 주석을 읽어라
-(`gh pr view <pr> --repo <repo> --json body`; 주석이 없으면 N = 0).
+`N=$($SCRIPTS/attempt-counter.sh <repo> <pr> repair-count)` 로 회차를 읽는다(마커 없으면 `0`,
+**exit 2 = 조회 실패 → 이번 틱엔 이 PR 의 보수를 건너뛴다**. 0 으로 읽으면 상한이 리셋된다, #444).
 N ≥ `MAX_REPAIRS_PER_PR` 이면 **보수를 디스패치하지 않는다** — 이슈에
 `$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy --note "<질문 한 줄>"` 로 `hold:policy`
 를 PR·이슈 양쪽에 부착하고 warn 으로 ④ Report 에 올려라(기계 정지는 사유 라벨 하나만, #244). N 이 상한 미만이면 보수 에이전트를
-디스패치하면서 PR 본문의 주석을 `<!-- repair-count: N+1 -->` 로 갱신하라
-(`gh pr edit <pr> --repo <repo> --body ...` — 주석이 없었으면 본문 끝에 새로 추가,
-나머지 본문은 그대로 유지). 같은 PR 에 1~3 의 사유가 여러 개 겹쳐도 **틱당 같은 PR
+디스패치하면서 `$SCRIPTS/attempt-counter.sh <repo> <pr> repair-count --bump` 로 회차를 올린다
+(마커 갱신·부재 시 본문 끝 추가·나머지 본문 무손상은 스크립트가 한다. **exit 2 면 회차가
+안 올라갔다** — 그 디스패치는 하지 말고 ④ Report warn 에 한 줄). 같은 PR 에 1~3 의 사유가 여러 개 겹쳐도 **틱당 같은 PR
 의 보수 에이전트는 1개** — 모든 수리 지시를 그 한 에이전트의 프롬프트에 합치고,
 N 도 디스패치당 1만 올린다.
 

@@ -8,7 +8,11 @@
 #      BoDAT #5197: 테스트 버킷 신설 · needs-human 최우선).
 #   ② 실패·파생의 `--since` 창 필터 — 창 밖 1건씩은 빠진다.
 #   ③ warn 5종 검출(미러 불일치는 양방향 — 이슈에만 단계 / PR 에만 단계)과,
-#      깨끗한 픽스처면 `warn 0`.
+#      깨끗한 픽스처면 `warn 0`. 무소속 PR warn 은 **단계 라벨이 정말 하나도 없는** 열린 agent
+#      PR 만이다(#282 — 반송 PR 의 `flow:agent-ready`·issue-runner 칸 PR 의 `flow:claimed` 도 단계
+#      라벨). 미러 불일치는 **6쌍**(이슈 `agent-ready` 만 ↔ PR `flow:agent-ready` · `agent:claimed` ↔
+#      `flow:claimed` · 뒤 네 칸은 같은 이름)으로 대조하되 워커 칸 두 쌍은 PR 이 그 라벨을 달고
+#      이슈가 정지 중이 아닐 때만 — 그 격자는 ⑰.
 #   ③-b (#265) **정지** 라벨(needs-human·hold:*) 미러 불일치 — 단계 미러와 **별도 판정**이다
 #      (단계 배열에 섞으면 정지 라벨이 단계 일치 판정을 깨뜨린다). 해제 방향만 warn:
 #      이슈에 정지 라벨이 0개인데 연결된 **열린** PR 에 남은 칸. 4격자로 오탐 0 을 단언한다.
@@ -57,6 +61,13 @@
 #   ⑯ (#276) verify-runner 칸 — `verifying`(#275) 이 사다리의 `flow:verify` 와 `flow:ready` 사이에
 #      끼어 버킷·중복·미러·무소속·에픽 접기 전부에 그 자리로 참여한다. 정상·중복·미러 불일치
 #      3건 + 뒤 단계 우선·대조군·leaf 접기. `--json` 키는 종전 그대로 + `verifying` 하나.
+#   ⑰ (#282) PR 미러 6쌍 · 대기/issue-runner 줄 PR 첨부 — `flow:agent-ready` PR 은 대기 줄에,
+#      `flow:claimed` PR 은 창과 무관하게 issue-runner 줄에 `← PR #n`(이슈 칸과 일치할 때만 ·
+#      `--json` 의 `waiting[].pr`·`claimed[].pr`). 불일치는 양방향 `미러 불일치`(이슈 대기 칸 + PR `flow:claimed` 는 재claim 대기
+#      모양이라 예외 — 대기 줄에 붙는다). 라벨 0 PR 은 종전 인계 전 창 규칙 그대로(대조군). 정지 중(runner-held·verify-held 모양)은 조용.
+#      `flow:claimed` PR 의 사망 의심은 **경과 기준의 별도 warn**(`워커 사망 의심`) — PR 나이로
+#      후보를 고르고 claim 경과로 판정하므로 재디스패치(PR 240분·claim 5분)는 뜨지 않고, 창 안
+#      PR 은 타임라인을 조회하지 않는다(호출 로그로 단언).
 #
 # 기대 줄은 **손으로 적는다** — SUT 의 jq 를 베껴 기대값을 만들면 공허하게 통과한다
 # (transition.test.sh 의 관행).
@@ -570,6 +581,93 @@ FX
 echo '[]' > "$tmp/fx/ggqgga_Verifying.pr_closed.json"
 echo '[]' > "$tmp/fx/ggqgga_Verifying.issues_closed.json"
 
+# ── 픽스처: ggqgga/Mirror6 (mirror6) — PR 미러 6쌍 · 대기/issue-runner 줄 PR 첨부 (#282) ──
+# #281 이 PR 미러를 사다리 **전 칸**으로 넓혔다 — 이슈 `agent-ready` 만 ↔ PR `flow:agent-ready`,
+# 이슈 `agent:claimed` ↔ PR `flow:claimed`. 대시보드는 그 두 쌍을 대조에 넣고, 대기·issue-runner
+# 줄에도 연결 PR 을 그리며, 무소속 warn 은 **라벨이 정말 하나도 없는** PR 로 좁힌다.
+#
+#   번호  이슈 / PR                                        want
+#   ────  ───────────────────────────────────────────────  ─────────────────────────────────────
+#   #10   agent-ready 만 / PR #110 flow:agent-ready         대기 `#10 ← PR #110` · warn 0
+#   #20   agent:claimed / PR #120 flow:claimed+flow:ci      issue-runner `#20 ← PR #120` · 무소속 warn 없음
+#         (PR 200분 전 · claim 200분 전)                     · **사망 의심 warn 은 경과 기준으로 별도**(200분)
+#   #21   agent:claimed / PR #121 flow:claimed              issue-runner `#21 ← PR #121` · warn 없음 —
+#         (PR 240분 전 · claim 5분 전 = 재디스패치)           PR 나이가 아니라 claim 경과(#177)로 재니 살아 있다
+#   #22   agent:claimed / PR #122 flow:claimed (PR 방금)    issue-runner `#22 ← PR #122` · 창 안 = 타임라인 조회 0
+#   #30   flow:verify / PR #130 flow:claimed                warn `미러 불일치 — 이슈 flow:verify · PR flow:claimed`
+#   #31   agent:claimed / PR #131 flow:verify               warn `미러 불일치 — 이슈 agent:claimed · PR flow:verify`(반대 방향)
+#   #32   agent-ready 만 / PR #132 flow:claimed             대기 `#32 ← PR #132` · warn 0 — **재claim 대기** 모양(홀드 해제·claim
+#                                                            회수 뒤 PR 의 flow:claimed 는 다음 claim 이 수렴시킨다, #281)
+#   #60   agent:claimed / PR #160 flow:agent-ready          warn `미러 불일치 — 이슈 agent:claimed · PR flow:agent-ready` · 무소속 아님
+#   #40   agent:claimed / PR #140 라벨 0 (PR 방금)          issue-runner `#40 ← PR #140(인계 전)` — 종전 창 규칙 그대로(대조군)
+#   #41   agent:claimed / PR #141 라벨 0 (PR 200분 전)      무소속 warn + 사망 의심(200분) — 종전 그대로
+#   #50   agent-ready+hold:ladder / PR #150 flow:claimed    warn 0 — runner-held 는 이슈 agent:claimed 만 떼고 PR 의
+#                                                            flow:claimed 는 둔다(transition.sh) → 정지 중엔 워커 칸 대조 안 함
+#   #51   agent-ready+hold:policy / PR #151 hold:policy     warn 0 — verify-held 뒤 모양(PR 단계 0 · 이슈 agent-ready 만)
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Mirror6.issues.json" <<'FX'
+[
+ {"number":10,"title":"반송 뒤 대기 — PR 은 flow:agent-ready","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"}]},
+ {"number":20,"title":"issue-runner 칸 — PR 은 flow:claimed, 창 밖","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":21,"title":"재디스패치 — PR 은 오래됐고 claim 은 방금","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":22,"title":"issue-runner 칸 — PR 방금","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":30,"title":"검증대기인데 PR 은 flow:claimed","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"flow:verify"}]},
+ {"number":31,"title":"issue-runner 칸인데 PR 은 flow:verify","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":32,"title":"대기인데 PR 은 flow:claimed","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"}]},
+ {"number":60,"title":"issue-runner 칸인데 PR 은 아직 flow:agent-ready(claim 미러 실패)","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":40,"title":"라벨 0 PR — 인계 전 창 안(대조군)","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":41,"title":"라벨 0 PR — 인계 전 창 밖(대조군)","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":50,"title":"runner-held — PR 의 flow:claimed 는 남는다","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:ladder"}]},
+ {"number":51,"title":"verify-held — PR 단계 0","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:policy"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g; s/@AGO200@/$AGO200/g; s/@AGO240@/$AGO240/g" > "$tmp/fx/ggqgga_Mirror6.pr_open.json" <<'FX'
+[
+ {"number":110,"headRefName":"agent/issue-10","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO200@",
+  "closingIssuesReferences":[{"number":10}],"labels":[{"name":"flow:agent-ready"}]},
+ {"number":120,"headRefName":"agent/issue-20","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO200@",
+  "closingIssuesReferences":[{"number":20}],"labels":[{"name":"flow:claimed"},{"name":"flow:ci"}]},
+ {"number":121,"headRefName":"agent/issue-21","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO240@",
+  "closingIssuesReferences":[{"number":21}],"labels":[{"name":"flow:claimed"}]},
+ {"number":122,"headRefName":"agent/issue-22","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":22}],"labels":[{"name":"flow:claimed"}]},
+ {"number":130,"headRefName":"agent/issue-30","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":30}],"labels":[{"name":"flow:claimed"}]},
+ {"number":131,"headRefName":"agent/issue-31","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":31}],"labels":[{"name":"flow:verify"}]},
+ {"number":132,"headRefName":"agent/issue-32","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":32}],"labels":[{"name":"flow:claimed"}]},
+ {"number":160,"headRefName":"agent/issue-60","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":60}],"labels":[{"name":"flow:agent-ready"}]},
+ {"number":140,"headRefName":"agent/issue-40","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":40}],"labels":[]},
+ {"number":141,"headRefName":"agent/issue-41","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO200@",
+  "closingIssuesReferences":[{"number":41}],"labels":[]},
+ {"number":150,"headRefName":"agent/issue-50","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO200@",
+  "closingIssuesReferences":[{"number":50}],"labels":[{"name":"flow:claimed"},{"name":"hold:ladder"}]},
+ {"number":151,"headRefName":"agent/issue-51","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@AGO200@",
+  "closingIssuesReferences":[{"number":51}],"labels":[{"name":"hold:policy"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_Mirror6.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_Mirror6.issues_closed.json"
+# 타임라인 — #20·#41 은 claim 200분 전(정상 흐름), #21 은 PR 240분 전인데 claim 은 5분 전(재디스패치).
+# #22 는 픽스처를 **두지 않는다** — 창 안 PR 은 조회 대상이 아니어야 하고, 조회하면 스텁이 exit 1 로 드러낸다.
+for n in 20 41; do
+  sed "s/@AGO200@/$AGO200/g" > "$tmp/fx/ggqgga_Mirror6.timeline.$n.p1.json" <<'FX'
+[
+ {"event":"labeled","label":{"name":"agent-ready"},"created_at":"@AGO200@"},
+ {"event":"labeled","label":{"name":"agent:claimed"},"created_at":"@AGO200@"}
+]
+FX
+done
+sed "s/@AGO240@/$AGO240/g; s/@AGO5@/$AGO5/g" > "$tmp/fx/ggqgga_Mirror6.timeline.21.p1.json" <<'FX'
+[
+ {"event":"labeled","label":{"name":"agent:claimed"},"created_at":"@AGO240@"},
+ {"event":"unlabeled","label":{"name":"agent:claimed"},"created_at":"@AGO240@"},
+ {"event":"labeled","label":{"name":"agent:claimed"},"created_at":"@AGO5@"}
+]
+FX
+
 # ── 픽스처: ggqgga/Blockers (blockers) — 대기/막힘 가르기 (#248) ─────────────
 # 블로커 파싱 규칙은 eligible-issues.sh 와 **같은 의미**여야 한다. 개별 반례만 막으면
 # 근사가 '더 많이 잡는' 쪽으로 틀리고(정상 `대기` 가 `막힘` 으로 내려간다 — 원래 버그보다
@@ -951,8 +1049,9 @@ has_sub "warn 단계 라벨 중복" "$tmp/out" \
   "    - 단계 라벨 중복 #4700(bodat) — flow:verify + harvesting"
 has_sub "warn 미러 불일치(이슈에만 단계)" "$tmp/out" \
   "    - 미러 불일치 #4811(bodat) ↔ PR #4841(bodat) — 이슈 flow:ready · PR 단계 없음"
+# (#282) 이슈 `agent-ready` 만은 이제 대기 **칸**이라 문구가 `단계 없음` 이 아니라 `agent-ready 만` 이다.
 has_sub "warn 미러 불일치(PR 에만 단계 — 반대 방향)" "$tmp/out" \
-  "    - 미러 불일치 #4600(bodat) ↔ PR #4860(bodat) — 이슈 단계 없음 · PR flow:ready"
+  "    - 미러 불일치 #4600(bodat) ↔ PR #4860(bodat) — 이슈 agent-ready 만 · PR flow:ready"
 has_sub "warn 좌초형" "$tmp/out" \
   "    - 좌초형 #4701(bodat) — 사다리 라벨(agent:claimed) 인데 agent-ready 없음"
 has_sub "warn 연결 이슈 종료" "$tmp/out" \
@@ -1795,6 +1894,70 @@ run --repo ggqgga/Mirror --since 24h --json
 ck "(#265) --json: kind·issue·pr·labels" \
   "$(jq -c '[.repos[0].warns[] | select(.kind=="hold_mirror_mismatch") | {i:.issue, p:.pr, l:.labels}]' < "$tmp/out")" \
   '[{"i":20,"p":120,"l":["hold:policy","needs-human"]},{"i":50,"p":150,"l":["hold:conflict"]},{"i":90,"p":190,"l":["hold:policy"]},{"i":93,"p":193,"l":["hold:policy"]}]'
+
+# ── ⑰ (#282) PR 미러 6쌍 · 대기/issue-runner 줄 PR 첨부 · 무소속 warn 은 라벨 0 PR 만 ──
+run --repo ggqgga/Mirror6 --since 24h
+ck "mirror6: exit 0" "$RC" 0
+has_line "mirror6 헤더 — 열림 12" "$tmp/out" \
+  "파이프라인 mirror6 — 열림 12 · 스코프 mirror6 · 창 24h"
+# 수용 기준 1 — flow:agent-ready PR + 이슈 agent-ready 만 → 대기 줄에 PR 이 붙는다. #32(PR 은 아직
+# flow:claimed)는 재claim 대기 모양 — 같은 줄에 붙고 warn 이 아니다(resume-sweep 은 PR 에서 hold 만 뗀다).
+has_line "(#282) 대기 줄 — flow:agent-ready PR 과 재claim 대기(flow:claimed) PR 이 ← PR #n 으로" "$tmp/out" \
+  "  대기           2  #32 ← PR #132 #10 ← PR #110"
+# 수용 기준 2·4 — flow:claimed PR 은 창과 무관하게 issue-runner 줄, 라벨 0 PR 은 종전 창 규칙(인계 전).
+has_line "(#282) issue-runner 줄 — flow:claimed PR 은 창 밖(#20)·재디스패치(#21)·방금(#22) 다 붙고, 라벨 0 은 창 안만 인계 전" "$tmp/out" \
+  "  issue-runner   7  #60 #41 #40 ← PR #140(인계 전) #31 #22 ← PR #122 #21 ← PR #121 #20 ← PR #120"
+has_line "(#282) 검증대기 줄은 종전대로 연결 PR 병기(라벨 무관)" "$tmp/out" "  검증대기       1  #30 ← PR #130"
+has_line "(#282) 보류 2 — 정지 중인 두 모양(runner-held·verify-held)" "$tmp/out" \
+  "  보류           2  #51(policy, PR #151) #50(ladder, PR #150)"
+# warn — 미러 불일치 3(양방향 + 워커 칸) · 사망 의심 1(#20, 경과 기준) · 무소속 1(#41, 라벨 0 대조군)
+has_line "(#282) warn 5 — 그 밖(#10·#21·#22·#32·#40·#50·#51)은 조용" "$tmp/out" "  warn           5"
+has_sub "(#282) 수용 기준 3 — flow:claimed PR 인데 이슈 flow:verify" "$tmp/out" \
+  "    - 미러 불일치 #30(mirror6) ↔ PR #130(mirror6) — 이슈 flow:verify · PR flow:claimed"
+has_sub "(#282) 수용 기준 3 반대 방향 — 이슈 agent:claimed 인데 PR flow:verify" "$tmp/out" \
+  "    - 미러 불일치 #31(mirror6) ↔ PR #131(mirror6) — 이슈 agent:claimed · PR flow:verify"
+# 이슈 대기 칸 + PR flow:claimed 는 재claim 대기(홀드 해제·죽은 워커 claim 회수 뒤) — 다음 claim 이 수렴시키는
+# 설계된 모양이라 warn 이 아니다. 디스패치가 밀리는 몇 시간 동안 상시 warn 이 되면 #282 가 걷어내려던 잡음이다.
+no_sub "(#282) 재claim 대기 모양(#32: 이슈 agent-ready 만 · PR flow:claimed)은 미러 불일치가 아니다" "$tmp/out" "미러 불일치 #32"
+has_sub "(#282) claim 미러 실패(이슈 agent:claimed · PR flow:agent-ready) 도 불일치" "$tmp/out" \
+  "    - 미러 불일치 #60(mirror6) ↔ PR #160(mirror6) — 이슈 agent:claimed · PR flow:agent-ready"
+# 수용 기준 2 — 창 밖이어도 무소속 warn 은 없고, 사망 의심은 claim 경과 기준의 **별도** warn.
+no_sub "(#282) flow:claimed PR #120 은 창 밖이어도 무소속이 아니다" "$tmp/out" "무소속 PR #120"
+has_line "(#282) 사망 의심 warn — 경과 기준(claim 200분)" "$tmp/out" \
+  "    - 워커 사망 의심 #20(mirror6) ← PR #120(mirror6) — agent:claimed 인데 200분 경과"
+# 재디스패치(#21) — PR 은 240분 전이지만 claim 은 5분 전. PR 나이로 울리면 #177 의 오탐이 되살아난다.
+no_sub "(#282) 재디스패치 #21 은 사망 의심이 아니다(claim 5분)" "$tmp/out" "사망 의심 #21"
+no_sub "(#282) #21 PR 나이(240분)로 재지 않는다" "$tmp/out" "240분 경과"
+# 수용 기준 3 — 무소속 warn 은 라벨 0 PR 만: flow:claimed·flow:agent-ready PR 은 후보가 아니다.
+no_sub "(#282) flow:claimed PR 은 무소속 후보가 아니다(#130)" "$tmp/out" "무소속 PR #130"
+no_sub "(#282) flow:claimed PR 은 무소속 후보가 아니다(#132)" "$tmp/out" "무소속 PR #132"
+no_sub "(#282) flow:agent-ready PR 은 무소속 후보가 아니다(#160)" "$tmp/out" "무소속 PR #160"
+no_sub "(#282) flow:agent-ready PR 은 무소속 후보가 아니다(#110)" "$tmp/out" "무소속 PR #110"
+# 수용 기준 4 — 라벨 0 PR 은 종전 그대로: 창 안은 인계 전(warn 아님), 창 밖은 무소속 warn + 사망 의심.
+no_sub "(#282) 라벨 0 창 안 PR #140 은 warn 아님" "$tmp/out" "무소속 PR #140"
+has_line "(#282) 라벨 0 창 밖 PR #141 은 종전 무소속 warn + 사망 의심" "$tmp/out" \
+  "    - 무소속 PR #141(mirror6) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #41 도 정지 라벨 없음(agent:claimed 인데 200분 경과 — 워커 사망 의심)"
+# 정지는 직교 — 홀드 전이는 이슈의 agent:claimed 만 떼고 PR 의 flow:claimed 는 둔다(runner-held).
+# 정지 중인 이슈에 워커 칸 두 쌍을 대조하면 홀드된 건마다 상시 warn 이 된다.
+no_sub "(#282) runner-held 모양(#50: 이슈 hold · PR flow:claimed)은 미러 불일치가 아니다" "$tmp/out" "미러 불일치 #50"
+no_sub "(#282) verify-held 모양(#51: 이슈 agent-ready 만 · PR 단계 0)은 미러 불일치가 아니다" "$tmp/out" "미러 불일치 #51"
+no_sub "(#282) 정지 중인 PR 은 무소속도 아니다(#151)" "$tmp/out" "무소속 PR #151"
+# 타임라인 조회는 창 밖 후보에만 — #22(PR 방금)는 픽스처가 없어 조회하면 스텁이 exit 1 로 드러난다.
+ck "(#282) 타임라인 조회는 #20·#21·#41 셋뿐(창 안 #22 는 안 본다)" \
+  "$(grep '^timeline ' "$STUB_CALL_LOG" | sort | tr '\n' ' ')" \
+  "timeline ggqgga/Mirror6 20 timeline ggqgga/Mirror6 21 timeline ggqgga/Mirror6 41 "
+
+# 수용 기준 5 — `--json` 의 buckets.waiting[].pr · buckets.claimed[].pr 에 PR 번호.
+run --repo ggqgga/Mirror6 --since 24h --json
+ck "(#282) --json: waiting[].pr — 일치하는 PR 만 번호, 아니면 null" \
+  "$(jq -c '[.repos[0].buckets.waiting[] | {n:.number, p:.pr}]' < "$tmp/out")" \
+  '[{"n":32,"p":132},{"n":10,"p":110}]'
+ck "(#282) --json: claimed[].pr — flow:claimed 는 번호(handoff_pending false), 인계 전은 번호+true, 나머지 null" \
+  "$(jq -c '[.repos[0].buckets.claimed[] | {n:.number, p:.pr, h:.handoff_pending}]' < "$tmp/out")" \
+  '[{"n":60,"p":null,"h":false},{"n":41,"p":null,"h":false},{"n":40,"p":140,"h":true},{"n":31,"p":null,"h":false},{"n":22,"p":122,"h":false},{"n":21,"p":121,"h":false},{"n":20,"p":120,"h":false}]'
+ck "(#282) --json: 사망 의심 warn 은 별도 kind 에 분(정수)" \
+  "$(jq -c '[.repos[0].warns[] | select(.kind=="worker_stale") | {i:.issue, p:.pr, m:.claimed_minutes}]' < "$tmp/out")" \
+  '[{"i":20,"p":120,"m":200}]'
 
 # ── --post 대시보드(#163) ──────────────────────────────────────────────────
 fx="$tmp/fx/ggqgga_issue-runner"

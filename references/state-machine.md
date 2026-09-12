@@ -4,6 +4,9 @@
 "기계 정지/사람 정지" · "전이 실패 시 처리" 를 산문으로 다시 쓰지 않고 이 파일을 가리킨다. 라벨 이동의
 기계적 정의는 `scripts/transition.sh` 상단 전이 표, 대시보드 버킷은 `scripts/loop-status.sh` 상단 주석 —
 둘 다 이 표와 1:1 이어야 하며, 어긋나면 **이 표를 고치기 전에 그쪽이 틀린 것인지 먼저 본다**(행동 불변).
+**이 표를 기계가 읽는 진입점은 `scripts/pr-state.sh`** 다(#449) — PR 하나를 받아 아래 행 이름
+(`state`)·소유 루프(`owner`)·미러 어긋남(`mismatch`)을 낸다. 행을 더하거나 소유를 옮기면 그 스크립트의
+선택 순서와 `scripts/tests/pr-state.test.sh` 격자를 **같은 커밋에서** 고친다.
 
 ## 읽는 법
 
@@ -46,7 +49,7 @@
 |---|---|---|---|---|---|
 | H:ladder | `hold:ladder` (PR·이슈 양쪽) | 기계 정지 — resume-sweep | `verify-held --reason ladder` · `closeout-blocked --reason ladder` | 창(`RESUME_AFTER_MIN`) 뒤 `resume-sweep.sh` 가 자동 재개(`LADDER_RESUME_LIMIT` 회) | resume-sweep |
 | H:policy | `hold:policy` + `<!-- hold-note: policy -->` 질문 코멘트 | 기계 정지 — 재심 1회는 issue-runner ①(#155) | `*-held/blocked --reason policy` · `runner-held` | 재심이 풀면 반송(S0) · "사람 몫 유지" 면 `policy-kept` → H:human | resume-sweep 이 `policy_review_due` 를 **두 축**으로 낸다(#395): 이슈 축(`pr:null`) · 열린 연결 이슈가 없는 PR 은 PR 축(`number:null`, 전이 인자는 `<repo> - <pr>`). **PR 축은 재개가 없다** — 반송해도 그 상태를 집는 레인이 없어 언제나 `policy-kept` → H:human 으로만 끝난다(#421) |
-| H:conflict | `hold:conflict` + `<!-- hold-note: conflict -->` 워커 재개 범위 코멘트(#344) | 기계 정지 — resume-sweep(#345) | `*-held/blocked --reason conflict`(보안 경계·대범위는 #344 가 `policy` 로 보낸다) | 창(`RESUME_AFTER_MIN`) 뒤 `resume-sweep.sh` 가 자동 재개(`CONFLICT_RESUME_LIMIT`=1 회 — ⓐ 워커 한 회차 더: 재개 워커가 홀드 노트를 받아 rebase) · 사람이 `full-cycle` 로 인수(ⓑ)했으면 재개하지 않는다 · 상한 초과면 `hold:policy` 승격 → H:policy | resume-sweep |
+| H:conflict | `hold:conflict` + `<!-- hold-note: conflict -->` 워커 재개 범위 코멘트(#344) | 기계 정지 — resume-sweep(#345) | `*-held/blocked --reason conflict`(보안 경계·대범위는 #344 가 `policy` 로 보낸다) | 창(`RESUME_AFTER_MIN`) 뒤 `resume-sweep.sh` 가 자동 재개(`CONFLICT_RESUME_LIMIT` 회 — ⓐ 워커 한 회차 더: 재개 워커가 홀드 노트를 받아 rebase) · 사람이 `full-cycle` 로 인수(ⓑ)했으면 재개하지 않는다 · 상한 초과면 `hold:policy` 승격 → H:policy | resume-sweep |
 | H:human | `needs-human` | 사람 | `policy-kept` 만 루프가 붙인다 — 그 외는 사람이 직접 | 사람이 뗀다 | — (세 게이트 전부 제외) |
 | B | 반송 마커(`재검증 실패:` · `재디스패치:`)가 마지막 판정보다 뒤 · PR `flow:agent-ready` / 이슈 `agent-ready` | 워커 레인 (S0 과 같다) | `verify-redispatch` · `closeout-redispatch` — 둘 다 `needs-human`·`hold:*` 를 뗀다(반송 = 사람 대기 해제) | 새 워커가 같은 브랜치에서 고쳐 `handoff-verify` → 새 `✅` | `bounce-state.sh`(마커 인덱스가 판정 뒤면 `bounced` — closeout-eligible 이 옛 ✅ 로 집지 않는다) |
 

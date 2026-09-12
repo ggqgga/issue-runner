@@ -38,11 +38,8 @@ fi
 
 # 세션 레포 스코프 (#40): 실행 cwd 의 .loop/repos 가 있으면 그 목록(owner/repo,
 # 줄당 하나, # 주석·빈 줄 허용)의 레포만 처리한다. 없으면 계정 전체(기존 동작).
-scope_file="$PWD/.loop/repos"
-in_scope() {
-  [ -f "$scope_file" ] || return 0
-  grep -vE '^[[:space:]]*(#|$)' "$scope_file" | tr -d ' \t' | grep -qxF "$1"
-}
+# shellcheck source=scripts/lib/scope.sh
+. "$SCRIPT_DIR/lib/scope.sh"   # in_scope · scope_file 기본값 — 판정은 한 자리 (#427)
 
 # needs-human 은 서버 쿼리에서도 제외 — 클라이언트 필터만 쓰면 needs-human 이슈가
 # per_page=50 창을 채워 실제 eligible 이슈가 밀려날 수 있다
@@ -258,7 +255,8 @@ while [ "$i" -lt "$count" ]; do
   # closeout-eligible.sh)와 같은 표현이다. 라벨 목록을 쉼표로 이어 붙인 뒤 `,needs-human,`
   # 를 찾으면, 쉼표를 품은 **한** 라벨(GitHub 은 라벨명에 쉼표를 허용한다 — 예 `a,needs-human`)
   # 이 두 라벨로 쪼개져 정상 후보가 소리 없이 사라진다. 과잉 제외는 원래 결함보다 나쁘다.
-  printf '%s' "$row" | jq -e '[.labels[].name]|index("needs-human")' >/dev/null && continue
+  printf '%s' "$row" | jq -L "$SCRIPT_DIR/lib" -e \
+    'include "loop"; [.labels[].name] | any(is_human_stop_label)' >/dev/null && continue
 
   # 기계 정지(hold:*) 제외 (#242) — verify-held·closeout-blocked·runner-held 가 붙이는
   # 정지 사유. #244 로 기계 정지는 이 라벨 **하나만** 달고 오므로 이 필터가 곧 정지의
@@ -280,7 +278,8 @@ while [ "$i" -lt "$count" ]; do
   #
   # 해제는 **붙어 있는 정지 라벨을 다** 떼는 것이다 — `hold:*` 만 남아도 후보로
   # 돌아오지 않는다(기계 해제 경로는 이미 둘 다 뗀다: transition.sh `⊘hold`·resume-sweep 재개).
-  printf '%s' "$row" | jq -e '[.labels[].name]|any(startswith("hold:"))' >/dev/null && continue
+  printf '%s' "$row" | jq -L "$SCRIPT_DIR/lib" -e \
+    'include "loop"; [.labels[].name] | any(is_hold_label)' >/dev/null && continue   # 술어는 lib/loop.jq (#426)
 
   # 검증/마감 레인 이슈 제외 (진행 라벨 미러) — 원 이슈에 flow:verify/verifying/flow:ready/
   # harvesting 이 미러링돼 있으면 구현이 끝나 다운스트림(verify-runner·closeout) 소유다.
@@ -293,8 +292,8 @@ while [ "$i" -lt "$count" ]; do
   # `claim-issue.sh` 의 직전 재확인·`release-labels.sh` 의 머지 후 해제와 같아야 한다.
   # 판별은 쉼표 join 이 아니라 라벨 배열이다 — 쉼표를 품은 한 라벨(`x,verifying`)을 두 라벨로
   # 쪼개 과잉 제외하지 않는다(#266, 위 hold:* 게이트와 같은 표현).
-  printf '%s' "$row" | jq -e '[.labels[].name]
-    | any(. == "flow:verify" or . == "verifying" or . == "flow:ready" or . == "harvesting")' \
+  printf '%s' "$row" | jq -L "$SCRIPT_DIR/lib" -e 'include "loop";
+    [.labels[].name] | any(is_downstream_label)' \
     >/dev/null && continue
 
   # 블로커 = 본문 "Blocked by #N" 라인의 N ∪ blocked-by:<N> 라벨의 N (OR·dedupe).

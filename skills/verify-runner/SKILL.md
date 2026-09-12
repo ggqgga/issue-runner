@@ -31,24 +31,29 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
   E2E 크롬 부하 상한이다 — 절대 올리지 마라(동시 실행 = 크롬 자기포화 = 타임아웃).
 - `CODEX_REVIEW_LIMIT = 2` — **같은 PR 에 codex 를 부르는 횟수 상한**(사용자 결정 2026-09-13,
   #375 · Plans/review-round-cap-and-gate-signals.md). 카운트는 PR 본문 `<!-- verify-attempt: N -->`
-  주석(N = 지금까지의 codex BLOCKER 반송 수, issue-runner repair-count 동형). N < 2 면 ③-3 이
+  주석(N = 지금까지의 codex BLOCKER 반송 수, issue-runner repair-count 동형). 읽기·증가는
+  `$SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt [--bump]` 한 자리다(#444). N < 2 면 ③-3 이
   codex 를 부르고, **N = 2 면 codex 없이 ③-3′ 자체 리뷰로 판정해 완료**한다 — 리뷰어(codex)는
   같은 diff 에 회차마다 다른 답을 내므로(같은 head 세 번 → P1 → P2 → CLEAN 실측) 세 번째부터는
   게이트가 아니라 발산이다. 옛 상한(3회 초과 → `hold:policy`)은 폐기 —
   **리뷰 반송은 사람 결정 사유가 아니다.** 사람 호출(`needs-human`)은 여전히 재심이 "사람 몫
   유지" 로 끝났을 때만 붙는다(#244 — issue-runner ① 의 `policy-kept` 가 유일한 생산자다).
-- `STALE_FINISH_MIN = 30` — `finish-classify.sh` 시간버퍼(분). 재사용.
+- `STALE_FINISH_MIN` — `finish-classify.sh` 시간버퍼(분). 재사용. **값은 `scripts/lib/constants.sh`** (#427).
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
 - `VERIFIER = codex:codex-rescue` — diff correctness 검증자 서브에이전트 타입.
-  **출력 계약 (SSOT)**: read-only(코드 변경 금지)·발견마다 BLOCKER/WARN/NIT 분류·
-  발견 없으면 'CLEAN'·BLOCKER 는 게이트(미해결 시 통과 판정 금지). 검증자는 이
-  SKILL.md 를 안 읽으므로 호출 프롬프트(`references/verify-prompt.md`)에 계약이
-  담겨 있다. **폴백**: (a) codex 미설치(Agent 툴 subagent_type 목록에 없거나 unknown
+  **출력 계약은 issue-runner `SKILL.md` 의 `## 상수` 절 `VERIFIER` 항목이 SSOT 다**(#427 —
+  세 SKILL 이 각자 SSOT 를 자칭하던 것을 한 곳으로). 여기선 그 계약을 다시 적지 않는다:
+  read-only·BLOCKER/WARN/NIT·CLEAN·BLOCKER 는 게이트, 그대로 적용된다(이 레인에선 미해결
+  BLOCKER 가 있으면 통과 판정 금지). 검증자는 이 SKILL.md 를 안 읽으므로 호출
+  프롬프트(`references/verify-prompt.md`)에 계약 문안이 담겨 있다. **폴백**: (a) codex 미설치(Agent 툴 subagent_type 목록에 없거나 unknown
   타입 오류) 또는 (b) codex stall/실패로 verdict 미산출이면 `general-purpose` 로 같은
   프롬프트 재시도. 폴백도 verdict 를 못 내면 BLOCKER 로 간주(fail-closed).
-- `VERIFIER_TIMEOUT_MIN = 10` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
+- `VERIFIER_TIMEOUT_MIN` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
   시각 + 이 값을 데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict
   미산출로 간주한다 — codex 외부 CLI 스톨이 틱을 무한정 묶는 것을 막는 방어선(#96).
+  **값은 `scripts/lib/constants.sh` 의 `CODEX_GATE_TIMEOUT`(초)을 분으로 환산한 것**이다
+  (#427 — 종전 산문은 "900s = 10분" 이라 두 값이 어긋나 있었다. 게이트가 기다리는 시간보다
+  스폰 데드라인이 짧으면 정상 리뷰를 끊어 놓고 "미산출" 로 적게 된다).
 - `AUX_REVIEWERS = pr-review-toolkit:silent-failure-hunter, pr-review-toolkit:pr-test-analyzer`
   — **보조 리뷰어**(비게이트). Codex 와 같은 동봉 diff 를 받아 조용한 실패(삼킨 예외·근거 없는
   폴백)와 테스트 갭을 찾는다. 판정에 **들어가지 않는다**(BLOCKER 는 `VERIFIER` 만) — Codex 와
@@ -202,13 +207,16 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
   직렬 레인이라 이 느린 재확인을 감당한다(예전 per-test 재시도 하네스가 게이트에서
   하던 일을 여기서 루프 수준으로, 부하 없이).
 
-**3. codex correctness 리뷰 — 내장 리뷰어. 먼저 `<!-- verify-attempt: N -->` 을 읽는다(없으면 0).**
+**3. codex correctness 리뷰 — 내장 리뷰어. 먼저 회차를 읽는다:
+`N=$($SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt)`(마커 없으면 `0`,
+**exit 2 = 조회 실패 → codex 를 부르지 말고 이 PR 을 이번 틱에 놓아둔다** — 0 으로 읽으면
+상한이 리셋돼 회차가 무한히 돈다, #444).**
 **N ≥ `CODEX_REVIEW_LIMIT`(=2) 면 이 절을 건너뛰고 아래 3′ 로 간다 — codex 를 부르지 않는다.**
 N < 2 면 `$SCRIPTS/codex-review-gate.sh --base origin/<default>
 --cd <worktree> --out <스크래치>` 를 **동기 호출**한다(#134, Plans/codex-native-review-gate.md). 이 헬퍼가
 `codex exec review` 를 sol/medium 으로 돌려 stdout 마지막 줄에 `verdict=<BLOCKER|WARN|NIT|CLEAN|NONE> p1= p2= p3= model= secs=`
-를 내고 본문을 `<out>/review.md` 에 남긴다. 자체 타임아웃(`CODEX_GATE_TIMEOUT`, 기본 900s = `VERIFIER_TIMEOUT_MIN`
-과 동조)이 있어 스폰·폴링·`TaskStop` 배선이 필요 없다 — 서브에이전트 없이 명령 하나. `[P0]`·`[P1]` 이 BLOCKER, `[P2]` 가 WARN, `[P3+]` 가 NIT(비차단).
+를 내고 본문을 `<out>/review.md` 에 남긴다. 자체 타임아웃(`CODEX_GATE_TIMEOUT` — 값은 `scripts/lib/constants.sh` 한 자리이고
+`VERIFIER_TIMEOUT_MIN` 이 그 값을 분으로 환산한 것이다, #427)이 있어 스폰·폴링·`TaskStop` 배선이 필요 없다 — 서브에이전트 없이 명령 하나. `[P0]`·`[P1]` 이 BLOCKER, `[P2]` 가 WARN, `[P3+]` 가 NIT(비차단).
 - **exit 2(`verdict=NONE`) = 리뷰 미산출**(codex 부재·모델 오류·타임아웃·본문 없음). 그때만 ## 상수의 `VERIFIER`
   폴백(general-purpose, `references/verify-prompt.md` 에 `gh pr diff`·이슈 본문·`.loop/lessons-verifier.md` 동봉,
   `run_in_background` + `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을 쓴다. 헬퍼의 stderr 가 모델 오류(404·
@@ -295,7 +303,8 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
      라벨이 반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적이다(조용히 넘어가지 않는다).
 
 **redispatched** — E2E 진짜 실패 / codex BLOCKER(검증자 데드라인 초과 포함) / 결정적 CI 실패:
-1. `<!-- verify-attempt: N -->` 를 PR 본문에서 읽는다(없으면 0). **N 은 codex BLOCKER 반송 수만 센다.**
+1. `N=$($SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt)`(마커 없으면 `0` · exit 2 면
+   이 PR 을 놓아두고 ④ Report warn 한 줄, #444). **N 은 codex BLOCKER 반송 수만 센다.**
    codex BLOCKER 반송은 N+1 ≤ `CODEX_REVIEW_LIMIT` 에서만 일어난다(N = 2 면 ③-3′ 가 codex 를 부르지
    않았으니 codex BLOCKER 자체가 없다). E2E·결정적 CI 실패는 회차와 무관하게 반송한다 — 그건 게이트다 —
    **그리고 N 을 올리지 않는다**(카운터를 같이 올리면 E2E 실패 두 번에 codex 를 한 번도 못 받고 3′ 로 간다).
@@ -309,8 +318,10 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    안전망이 놓친다, #212. 생성되는 본문은
    `재검증 실패: #<issue> — <사유> (attempt N+1)\n<!-- bodat:worker -->`).
    **이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지 않는다**
-   (/loop 스팸 방지). **codex BLOCKER 반송일 때만** PR 본문 주석을 `<!-- verify-attempt: N+1 -->` 로 갱신
-   (`gh pr edit <pr> --repo <repo> --body ...` — 나머지 본문 보존).
+   (/loop 스팸 방지). **codex BLOCKER 반송일 때만**
+   `$SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt --bump` 로 회차를 올린다
+   (마커 갱신·나머지 본문 무손상은 스크립트가 한다, #444 — **exit 2 면 회차가 안 올라갔다**:
+   그 PR 은 다음 틱에 같은 회차로 다시 codex 를 받으므로 ④ Report warn 에 한 줄 남긴다).
 3. 라벨·반송: `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr>` — PR 의
    `flow:verify` 를 떼고 원 이슈를 `agent-ready`(+`flow:verify`·`agent:claimed` 제거)로 되돌린다.
    **exit 1·2 면 종료 상태를 바꾸지 말고** ④ Report 에

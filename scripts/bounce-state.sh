@@ -309,7 +309,8 @@ fi
 # 필요하면 그대로 쓸 수 있게 남겨 둔다. 폐지되는 것은 "이 특정 호출자(closeout 스윕)가
 # 이 값을 어떻게 조치하는가" 뿐이다 — 조치는 `bounce-state.sh` 밖(SKILL.md 프로즈)의
 # 계약이라 이 파일은 그 계약을 문서로만 반영한다.
-raw=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
+raw=$(printf '%s' "$comments" | jq -L "$SCRIPT_DIR/lib" -r --argjson bm "$BOUNCE_MARKERS" '
+  include "loop";
   [.[].body] as $bodies
   | ([ $bodies | to_entries[]
        | select(.value as $x
@@ -335,15 +336,11 @@ raw=$(printf '%s' "$comments" | jq -r --argjson bm "$BOUNCE_MARKERS" '
                       else true
                       end))))
        | .key ] | last) as $bi
-  | ([ $bodies | to_entries[]
-       | select(.value | startswith("머지 판정: ✅") or startswith("Merge verdict: ✅"))
-       | .key ] | last) as $vi
-  | ([ $bodies | to_entries[]
-       | select(.value | startswith("머지 판정: ⚠") or startswith("Merge verdict: ⚠"))
-       | .key ] | last) as $hi
-  | ([ $bodies | to_entries[]
-       | select(.value | startswith("머지 판정: 🔄") or startswith("Merge verdict: 🔄"))
-       | .key ] | last) as $pi
+  # 판정 세 기호의 마지막 인덱스 — 술어·인덱스 규율은 `lib/loop.jq` 한 자리 (#426).
+  # (마커 판정 문법은 위 그대로 남는다 — 접두 집합만 공유하는 이유는 loop.jq 주석 참조.)
+  | ($bodies | last_index(is_verdict_ok))      as $vi
+  | ($bodies | last_index(is_verdict_hold))    as $hi
+  | ($bodies | last_index(is_verdict_pending)) as $pi
   # 반송 뒤(>bi)에 실제로 온 판정만 후보로 삼는다 — bi 앞에 낡게 남은 ✅/⚠/🔄 는
   # 무의미하므로 존재 여부가 아니라 "반송보다 늦었는가" 로 먼저 걸러낸다.
   | (if $vi != null and $vi > $bi then $vi else null end) as $v_after

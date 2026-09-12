@@ -120,6 +120,7 @@ echo "[SSOT] 반송 인덱스는 bounce-state.sh --marker-index 에서 온다"
 mkdir -p "$tmp/sc"
 cp "$SUT" "$tmp/sc/closeout-step1-marker.sh"
 cp "$DIR/pr-comments.sh" "$DIR/pr-head-at.sh" "$tmp/sc/"
+cp -R "$DIR/lib" "$tmp/sc/lib"   # SUT 사본이 include 하는 라이브러리 (#426)
 cat > "$tmp/sc/bounce-state.sh" <<'CAP'
 #!/bin/sh
 printf '%s\n' "$*" >> "$CAP_FILE"
@@ -153,6 +154,7 @@ echo "[뮤테이션] 세 축이 각각 혼자 지키는 칸"
 # 전건 exit 1 이 되어 격자가 아무것도 못 잰다.
 mkdir -p "$tmp/mut"
 cp "$DIR/bounce-state.sh" "$DIR/pr-comments.sh" "$DIR/pr-head-at.sh" "$tmp/mut/"
+cp -R "$DIR/lib" "$tmp/mut/lib"   # 뮤턴트·형제 헬퍼가 include 하는 라이브러리 (#426)
 muta="$tmp/mut/muta.sh"; mutb="$tmp/mut/mutb.sh"; mutc="$tmp/mut/mutc.sh"
 sed -E 's@^ *elif \(\(\.\[\$si\]\.body.*# MUT-A.*@    elif false then "verify"@' "$SUT" > "$muta"
 sed -E 's@^ *elif \$h <= \$m then "skip".*# MUT-B.*@        elif true then "skip"@' "$SUT" > "$mutb"

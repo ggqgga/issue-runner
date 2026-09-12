@@ -38,8 +38,8 @@
 # claim 이 새로 붙으면 옛 마커는 자동으로 계산에서 빠지므로 리셋용 쓰기가 필요 없다.
 #
 # 상수 기본값(정의·근거는 SKILL.md 의 상수 절 — 여기는 그 값을 읽는 자리다):
-#   ISSUE_TIMEBOX_HOURS  기본 1   MAX_TIMEBOX_GRACE 기본 3
-#   STALL_MIN(기본 25)은 `progress-evidence.sh` 가 읽는다 — env 로 그대로 전달된다.
+#   ISSUE_TIMEBOX_HOURS · MAX_TIMEBOX_GRACE — 값은 `scripts/lib/constants.sh` (#427 로 한 자리로)
+#   STALL_MIN 은 `progress-evidence.sh` 가 같은 파일에서 읽는다 — env 로 그대로 전달된다.
 #
 # 테스트/재현용 env 오버라이드 (없으면 gh/date 실조회):
 #   TB_NOW             현재 epoch(초)
@@ -73,9 +73,11 @@ if [ -z "$repo" ] || [ -z "$num" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/constants.sh
+. "$SCRIPT_DIR/lib/constants.sh"   # 상수는 한 자리 (#427)
 
-TIMEBOX_HOURS="${ISSUE_TIMEBOX_HOURS:-1}"
-MAX_GRACE="${MAX_TIMEBOX_GRACE:-3}"
+TIMEBOX_HOURS="$ISSUE_TIMEBOX_HOURS"
+MAX_GRACE="$MAX_TIMEBOX_GRACE"
 QUEUE_LOG="${TB_QUEUE_LOG:-$HOME/.claude/.local-ci/queue.log}"
 BRANCH="agent/issue-$num"
 
