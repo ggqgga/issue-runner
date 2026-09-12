@@ -494,19 +494,33 @@ Plans/codex-native-review-gate.md) **동기 호출 두 번**이다 — 서브에
   그대로 읽고 고칠 수 있게 무엇이 왜 막혔는지로 쓴다(`redispatch` 채널의 고정 문구를
   빌려 쓰지 마라 — 이 갈래에서 "완결 유실" 은 거짓이고, 거짓 사유는 다음 틱의 판정
   입력이 된다).
-  **이 코멘트가 비0으로 끝나면(gh 실패·인자 오류) 전이를 하지 마라** — 이슈만
-  `agent-ready` 로 돌아가고 PR 에는 반송 마커가 없는 상태가 되어, 반송 안전망이 그 PR 을
-  못 보고 `closeout-eligible` 이 옛 ✅ 로 다시 집어 온다(이 갈래가 막으려던 바로 그 상태).
-  그때는 그 PR 의 종료 상태를 바꾸지 말고 ④ Report 에
-  `BLOCKED: 반송 코멘트 실패 PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
-  이어서 `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` 로 연결 이슈를
-  `agent-ready` 로 되돌린다(`agent:claimed`·단계 라벨·`needs-human`·`hold:*` 를 뗀다 —
-  손으로 `gh issue edit` 하지 마라) → **`blocked` 종료**(머지하지 않는다. 새 종료 상태를
+  **코멘트가 0으로 끝났다면 이어서** `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`
+  로 연결 이슈를 `agent-ready` 로 되돌린다(`agent:claimed`·단계 라벨·`needs-human`·`hold:*` 를
+  뗀다 — 손으로 `gh issue edit` 하지 마라) → **`blocked` 종료**(머지하지 않는다. 새 종료 상태를
   만들지 않는다 — ④ Report 에는 `재디스패치 N` 으로도 함께 집계한다). 재디스패치가
   성사되면 issue-runner Dispatch 가 같은 `agent/issue-N` worktree 를 재사용해 **같은 PR
   브랜치에서 이어 완결**하므로 새 PR 이 생기지 않는다.
   **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
-  `BLOCKED: 전이 실패 closeout-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
+  `BLOCKED: 전이 실패 closeout-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올리고,
+  **곧바로 `$SCRIPTS/transition.sh closeout-pick <repo> - <pr>` 를 한 번 더 걸어 PR 의
+  `harvesting` 점유를 되살려라**(② Pick 과 같은 호출 — 멱등이고, 손으로 라벨을 옮기지
+  않는다). `transition.sh` 는 **PR 을 먼저** 편집하므로 PR 쪽만 성공하고 이슈 쪽이 실패하면
+  **PR 엔 `harvesting` 없음 + 이슈는 `agent-ready` 아님** 이 남는데, 그 조합은 어느 레인도
+  회수하지 않는다 — ①-b 는 반송 마커 때문에 `bounced` 로 무접촉이고, `closeout-eligible` 도
+  `bounced` 를 빼며, 디스패처는 이슈가 `agent-ready` 가 아니라 안 집는다. `harvesting` 을
+  되살리면 상태가 전이 이전으로 돌아가 다음 틱 ① Reconcile 이 그 PR 을 `resume` 으로 다시
+  집고(이 갈래엔 1단계 마커 `마감 검증:` 이 없으므로 ③-1 부터), 같은 자리에서 같은 전이를
+  다시 건다 — `closeout-redispatch` 는 멱등이라 재실행이 무해하다(#157 이 `--note` 전이에
+  세운 "실패는 전이 이전 상태를 남기고 호출부가 다음 틱에 같은 전이를 다시 건다" 를 이
+  갈래에서도 성립시키는 것이다 — 되살리기까지 실패하면 ④ Report 의 두 `BLOCKED` 줄이 그대로
+  사람 신호다).
+  **코멘트가 비0으로 끝나면(gh 실패·인자 오류) 전이를 하지 마라** — 이슈만
+  `agent-ready` 로 돌아가고 PR 에는 반송 마커가 없는 상태가 되어, 반송 안전망이 그 PR 을
+  못 보고 `closeout-eligible` 이 옛 ✅ 로 다시 집어 온다(이 갈래가 막으려던 바로 그 상태).
+  그때는 그 PR 의 종료 상태를 바꾸지 말고 ④ Report 에
+  `BLOCKED: 반송 코멘트 실패 PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린 뒤 **이 틱에서는
+  그 PR 을 더 건드리지 마라** — `harvesting` 이 그대로 붙어 있으므로 다음 틱 ① Reconcile 이
+  `resume` 으로 같은 자리를 재시도한다.
 - ⓑ **스펙·정책 선택이 남아 있다(검증자 미산출 포함) → 사람 보류.**
   `gh pr comment <pr> --repo <repo> --body "마감 검증: ⚠ 보류 — <사유>
   <!-- bodat:worker -->"`

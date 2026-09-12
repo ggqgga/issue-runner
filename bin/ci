@@ -295,6 +295,44 @@ EOF
 done
 [ "$bc_hit" = 0 ] || exit 1
 
+echo "[closeout ③-1 ⓐ] 반송 갈래 제어 흐름 — 성공 갈래가 먼저인지 · 반쯤 성공한 전이의 회수 지시가 있는지 (#271)"
+# 이 레포에선 산문이 곧 실행 코드다. ③-1 ⓐ 절을 **글자 그대로 순차 실행**하는 봇이 빠지는
+# 구멍 두 개를 문장 순서와 문장 존재로 막는다:
+#  ⑴ "코멘트가 비0이면 전이를 하지 마라" 실패 갈래 **뒤**에 전이 호출이 오면, 봇은 그
+#     "이어서" 를 성공 갈래 복귀가 아니라 연속 지시로 읽어 전이를 돌린다 — 이슈는
+#     `agent-ready`·PR 엔 반송 마커 없음 이 되고 `bounce-state.sh` 가 `ok` 를 내어
+#     `closeout-eligible` 이 옛 ✅ 로 재상정한다(그 문단이 막으려던 바로 그 상태).
+#  ⑵ `transition.sh` 는 **PR 을 먼저** 편집한다. PR 쪽만 성공하고 이슈 쪽이 실패하면
+#     `harvesting` 없음 + `agent-ready` 아님 이 남아 ①-b(`bounced` 무접촉)·
+#     `closeout-eligible`(`bounced` 제외)·디스패처(`agent-ready` 아님) 어느 레인도 회수하지
+#     않는다. 회수 지시(`closeout-pick` 재호출로 점유 되살리기)가 절 안에 있어야 한다.
+# 스코프는 **ⓐ~ⓑ 구간**이다 — 파일 전체를 보면 ② Pick 의 `closeout-pick`·①-b 의
+# `closeout-redispatch` 같은 다른 절의 같은 문자열에 걸려 가드가 뜻을 잃는다(#223 형).
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in
+    *.en.md) fail_anchor='exits non-zero' ;;
+    *)       fail_anchor='코멘트가 비0으로 끝나면' ;;
+  esac
+  a_line=$(grep -nE '^- ⓐ \*\*' "$f" | head -1 | cut -d: -f1) || a_line=""
+  b_line=$(grep -nE '^- ⓑ \*\*' "$f" | head -1 | cut -d: -f1) || b_line=""
+  { [ -n "$a_line" ] && [ -n "$b_line" ]; } \
+    || { echo "  ✗ $f: ③-1 의 ⓐ/ⓑ 갈래 앵커를 못 찾았다 — 개명·이동이면 앵커를 고쳐라"; exit 1; }
+  [ "$b_line" -gt "$a_line" ] \
+    || { echo "  ✗ $f: ⓑ 앵커가 ⓐ 보다 앞이다 — 구간 스코프가 성립하지 않는다"; exit 1; }
+  seg=$(sed -n "${a_line},$((b_line - 1))p" "$f")
+  t_rel=$(printf '%s\n' "$seg" | grep -nF -- 'transition.sh closeout-redispatch' | head -1 | cut -d: -f1) || t_rel=""
+  f_rel=$(printf '%s\n' "$seg" | grep -nF -- "$fail_anchor" | head -1 | cut -d: -f1) || f_rel=""
+  p_rel=$(printf '%s\n' "$seg" | grep -nF -- 'transition.sh closeout-pick' | head -1 | cut -d: -f1) || p_rel=""
+  [ -n "$t_rel" ] \
+    || { echo "  ✗ $f: ③-1 ⓐ 구간에 transition.sh closeout-redispatch 호출이 없다"; exit 1; }
+  [ -n "$f_rel" ] \
+    || { echo "  ✗ $f: ③-1 ⓐ 구간에 반송 코멘트 실패 갈래('$fail_anchor')가 없다"; exit 1; }
+  [ "$t_rel" -lt "$f_rel" ] \
+    || { echo "  ✗ $f: ③-1 ⓐ 의 전이 호출이 실패 갈래보다 뒤다 — 순차 실행하면 코멘트 실패 뒤에도 전이가 돈다 (#271 ⑴)"; exit 1; }
+  [ -n "$p_rel" ] \
+    || { echo "  ✗ $f: ③-1 ⓐ 구간에 반쯤 성공한 전이의 회수 지시(transition.sh closeout-pick 재호출)가 없다 (#271 ⑵)"; exit 1; }
+done
+
 echo "[worker] 반송 해소 보고 접두가 마커 집합 밖인지 — 한/영 템플릿 (#251 ②)"
 # #251 ② 는 판정기가 아니라 **문안**으로 닫혔다: 워커의 반송 해소 보고가 반송 마커로
 # 시작하면 안전망이 그걸 반송으로 읽어, 아무도 반송하지 않은 PR 이 마감 후보에서 빠진다.
