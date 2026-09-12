@@ -124,11 +124,13 @@
 #                      claim-at.sh 실조회 대체. **설정돼 있으면 실조회로 새지 않는다**
 #                      (픽스처 테스트의 네트워크 무접속을 이 변수 하나가 지킨다).
 #   FC_NOW            현재 epoch(초) — date 대체
-#   STALE_FINISH_MIN  시간버퍼(분, 기본 30)
-#   ISSUE_TIMEBOX_HOURS  claim 신선도 상한(시간, 기본 1) — progress-evidence.sh 가 읽는다
+#   STALE_FINISH_MIN  시간버퍼(분) — 값은 `scripts/lib/constants.sh` (#427 로 한 자리로)
+#   ISSUE_TIMEBOX_HOURS  claim 신선도 상한(시간) — progress-evidence.sh 가 같은 파일에서 읽는다
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/constants.sh
+. "$SCRIPT_DIR/lib/constants.sh"   # 상수는 한 자리 (#427)
 
 # 픽스처용 큐 로그 경로는 **있을 때만** 넘긴다 — 기본 경로는 progress-evidence.sh 가
 # 이미 갖고 있고, 여기 한 벌 더 적으면 이 PR 이 세운 SSOT 규율과 반대 방향이다.
@@ -138,7 +140,7 @@ repo=${1:?repo}
 pr=${2:?pr_num}
 issue=${3:-${FC_ISSUE:-}}
 
-stale_min=${STALE_FINISH_MIN:-30}
+stale_min="$STALE_FINISH_MIN"
 stale_sec=$((stale_min * 60))
 now=${FC_NOW:-$(date -u +%s)}
 

@@ -7,7 +7,7 @@
 #     — 계정 전체 모드의 레포 열거는 **이슈 축 ∪ PR 축**이다(#331): `needs-human` 이 이슈에만
 #       있는 레포도, **PR 에만** 있는 레포(④ 정지 미러의 표적)도 순회 대상이다. 전수 근거와
 #       각 축이 놓치는 상태는 스코프 블록 주석 참조.
-#   환경변수: RESUME_AFTER_MIN(기본 120) · LADDER_RESUME_LIMIT(기본 2)
+#   환경변수: RESUME_AFTER_MIN · LADDER_RESUME_LIMIT (값은 `scripts/lib/constants.sh`)
 #
 # 출력(JSON lines):
 #   mirror_cleared — 사람이 이슈에서만 푼 홀드의 **PR 사본**을 뗐다(#265, ④ 갈래). 이슈는
@@ -68,14 +68,13 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/lib/scope.sh
 . "$SCRIPT_DIR/lib/scope.sh"   # scope_lines · scope_file 기본값 — 판정은 한 자리 (#427)
+# shellcheck source=scripts/lib/constants.sh
+. "$SCRIPT_DIR/lib/constants.sh"   # 상수는 한 자리 (#427)
 
-RESUME_AFTER_MIN="${RESUME_AFTER_MIN:-120}"
-LADDER_RESUME_LIMIT="${LADDER_RESUME_LIMIT:-2}"
-# ④ 정지 미러 정리가 **양성 증거를 못 얻었을 때** 같은 건을 다시 시도하는 상한(#397).
-# 값의 정의·근거는 SKILL.md 의 `## 상수` 절(`MIRROR_RETRY_LIMIT = 3`) — 플랜 1단계 전이라
-# 두 벌을 허용하고 주석으로 상호 참조한다. 회차는 상태 파일이 아니라 **이슈 코멘트 마커**
-# (`<!-- mirror-retry: <사유> -->`)의 개수가 SSOT 다(`ladder-resume` 과 같은 규약).
-MIRROR_RETRY_LIMIT="${MIRROR_RETRY_LIMIT:-3}"
+# 창·상한 세 상수(RESUME_AFTER_MIN · LADDER_RESUME_LIMIT · MIRROR_RETRY_LIMIT)의 값과
+# 근거는 `scripts/lib/constants.sh` 다 — SKILL.md 의 `## 상수` 절과 두 벌로 두던 것을
+# 한 자리로 모았다(#427). 아래 `_nonneg_int` 검사는 **env 로 들어온 값**을 무는 관문이라
+# 그대로 남는다(상수가 어디서 오든 형식이 어긋나면 여기서 exit 64).
 # 목록·탐색 조회 상한. 기본 200 — 기본 limit(30)은 조용히 잘라 그 이슈들이 영영 안 보인다.
 # 테스트가 상한 도달 경로를 200건짜리 픽스처 없이 재현하도록 env 로 낮출 수 있게 열어 뒀다
 # (운영에서 내리는 값이 아니다 — 내리면 그만큼 잘린다. 잘림 자체는 warn 으로 드러난다).

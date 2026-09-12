@@ -1001,7 +1001,10 @@ echo "[#206] 진행 증거 술어는 progress-evidence.sh 한 자리 (#200 → #
 # 한쪽만 고쳐져 두 소비자(timebox-check · finish-classify)가 다른 수를 센다 — 반송 마커
 # 집합을 bounce-state.sh 한 자리에 묶은 것과 같은 규율(PR#191 교훈).
 # 판정선은 **정의**다: 산문·주석의 언급(`STALL_MIN 이내` 등)은 사본이 아니므로 안 건다.
-dup=$(grep -lE '^STALL_MIN=|^queue_alive\(\)' scripts/*.sh | grep -v '^scripts/progress-evidence.sh$' || true)
+# (#427) `STALL_MIN` 의 값 정의는 `scripts/lib/constants.sh` 로 옮겼다 — 술어(`queue_alive`)는
+# 여전히 progress-evidence.sh 한 자리다. 두 파일 밖에 정의가 생기면 여기서 빨개진다.
+dup=$(grep -lE '^STALL_MIN=|^: "\$\{STALL_MIN:=|^queue_alive\(\)' scripts/*.sh scripts/lib/*.sh \
+  | grep -v -e '^scripts/progress-evidence.sh$' -e '^scripts/lib/constants.sh$' || true)
 [ -z "$dup" ] || { echo "  ✗ 진행 증거 술어 정의가 progress-evidence.sh 밖에도 있다: $dup"; exit 1; }
 # 소비자 둘이 `"$SCRIPT_DIR/progress-evidence.sh"` 로 직접 exec 하므로 실행 비트를 문다
 # (비트가 빠지면 조용히 exit 126 → 판정이 항상 빈 값이 되고, 그 degrade 가 timebox 는
@@ -1053,7 +1056,9 @@ grep -qF -e '--claimed-at' -- scripts/progress-evidence.sh \
   || { echo "  ✗ scripts/progress-evidence.sh 에 --claimed-at 입력 없음"; exit 1; }
 # claim 신선도 상한은 timebox 와 **같은 상수**다(두 자리가 같은 경계를 쓴다는 계약).
 # 기본값이 갈리면 스윕과 ① Reconcile 이 서로 다른 창에서 같은 워커를 살리고 죽인다.
-tb_defaults=$(grep -ho 'ISSUE_TIMEBOX_HOURS:-[0-9]*' scripts/*.sh | sort -u)
+# (#427) 기본값의 한 자리는 `scripts/lib/constants.sh` 의 `: "${ISSUE_TIMEBOX_HOURS:=1}"` 다.
+# 두 리더(timebox-check·progress-evidence)가 자기 기본값을 되살리면 이 검사가 2건을 본다.
+tb_defaults=$(grep -ho 'ISSUE_TIMEBOX_HOURS:[-=][0-9]*' scripts/*.sh scripts/lib/*.sh | sort -u)
 tb_n=$(printf '%s\n' "$tb_defaults" | grep -c . || true)
 [ "$tb_n" -ge 1 ] \
   || { echo "  ✗ ISSUE_TIMEBOX_HOURS 기본값을 읽는 자리가 없다 — 가드가 의미를 잃었다"; exit 1; }
@@ -1164,12 +1169,13 @@ done
 # 상수마다 **정의가 사는 파일**을 함께 적는다 — STALL_MIN 은 #206 에서 진행 증거 술어와
 # 함께 progress-evidence.sh 로 옮겨 갔고, 그 이사를 이 검사가 모르면 드리프트 검사가
 # 조용히 빨개지거나(여기) 엉뚱한 파일을 SSOT 로 믿는다.
-for pair in 'STALL_MIN:scripts/progress-evidence.sh' \
-            'MAX_TIMEBOX_GRACE:scripts/timebox-check.sh' \
-            'ISSUE_TIMEBOX_HOURS:scripts/timebox-check.sh'; do
+# (#427) 세 상수의 정의는 전부 `scripts/lib/constants.sh` 한 자리로 이사했다.
+for pair in 'STALL_MIN:scripts/lib/constants.sh' \
+            'MAX_TIMEBOX_GRACE:scripts/lib/constants.sh' \
+            'ISSUE_TIMEBOX_HOURS:scripts/lib/constants.sh'; do
   name="${pair%%:*}"
   src="${pair#*:}"
-  want=$(sed -n "s/^[A-Z_]*=\"\${$name:-\([0-9][0-9]*\)}\".*/\1/p" "$src" | head -1)
+  want=$(sed -n "s/^: \"\${$name:=\([0-9][0-9]*\)}\".*/\1/p" "$src" | head -1)
   [ -n "$want" ] || { echo "  ✗ $src 에서 $name 기본값을 읽지 못함"; exit 1; }
   for f in SKILL.md SKILL.en.md; do
     grep -qF "\`$name = $want\`" "$f" \
@@ -1724,8 +1730,9 @@ for lbl in agent-ready agent:claimed needs-human P0 P1 harvesting epic flow:ci f
 done
 # ⑶ (#364) hold:ladder 설명이 가리키는 창 상수명은 resume-sweep.sh 의 실제 정의와 같은
 #    철자여야 한다 — 상수를 개명하면 설명이 없는 이름을 가리킨다.
-grep -qE '^RESUME_AFTER_MIN=' scripts/resume-sweep.sh \
-  || { echo "  ✗ scripts/resume-sweep.sh: 창 상수 RESUME_AFTER_MIN 정의가 없다 — hold:ladder 설명이 가리키는 상수명 (#364)"; exit 1; }
+# (#427) 정의 자리는 `scripts/lib/constants.sh` 로 이사했다 — 철자 대조라는 취지는 그대로다.
+grep -qE '^: "\$\{RESUME_AFTER_MIN:=' scripts/lib/constants.sh \
+  || { echo "  ✗ scripts/lib/constants.sh: 창 상수 RESUME_AFTER_MIN 정의가 없다 — hold:ladder 설명이 가리키는 상수명 (#364)"; exit 1; }
 
 # [#308] 반송 마커 시각이 스테일 클록에 든다 — 판별은 bounce-state.sh 한 자리
 echo "[#308] 반송 마커 시각 = 스테일 클록의 네 번째 입력 (판별 한 자리·한/영 산문)"
