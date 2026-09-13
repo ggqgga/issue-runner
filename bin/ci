@@ -508,6 +508,9 @@ bash scripts/tests/deploy-wait-issue.test.sh
 echo "[test] make-worktree.sh --sync 격자 — 원격 head 강제 동기화·더티 거부·untracked 무해·원격 부재 (#445)"
 bash scripts/tests/make-worktree.test.sh
 
+echo "[test] ci-gate 훅 — 대상 파싱 fail-closed·--repo 캐시 판정·rollup SUCCESS-only allowlist (#47 · #60)"
+bash scripts/tests/ci-gate.test.sh
+
 echo "[#206] 진행 증거 술어는 progress-evidence.sh 한 자리 (#200 → #206)"
 # 커밋 신선도(STALL_MIN)와 CI 큐 티켓 판정을 다른 스크립트가 자기 벌로 들고 있으면 언젠가
 # 한쪽만 고쳐져 두 소비자(timebox-check · finish-classify)가 다른 수를 센다 — 반송 마커
