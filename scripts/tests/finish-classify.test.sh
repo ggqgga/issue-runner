@@ -1601,14 +1601,15 @@ check_claim "head=agent/issue-109·refs=[108,109]→109 로 묻는다(브랜치 
 # 어느 이슈를 물었는지까지 못박는다 — 결과만 보면 우연히 맞을 수 있다.
 if grep -qx 'owner/repo 109' "$CT/args"; then pass=$((pass + 1)); else
   fail=$((fail + 1)); echo "  ✗ [claim 실호출] 브랜치 이슈 인자 — 기대=[owner/repo 109] 실제=[$(cat "$CT/args")]"; fi
-# 대조군(실데이터 PR #112) — head 가 `agent/issue-N` 이 **아니면** 폴백 그대로 `[0]`=108 이라
-# claim 이 `none` 이다. 이 행이 초록이어야 위 행을 살린 것이 **head 파싱**임이 증명된다
-# (둘 다 refs 는 같다 — 다른 것은 head 하나뿐).
+# 대조군(실데이터 PR #112) — head 가 `agent/issue-N` 이 **아니고** refs 가 둘 이상이면 짝을
+# 증명할 축이 없다 → 연결 이슈 **없음**(none). `[0]`=108 로 추측해 남의 이슈의 claim 을 묻지
+# 않는다 — 술어는 `lib/loop.jq` 의 `linked_issue`(#495, 세 소비자 공용·fail-closed).
+# 이 행이 초록이어야 위 행을 살린 것이 **head 파싱**임이 증명된다(둘 다 refs 는 같다).
 : > "$CT/args"
 got=$(run_iss "session/issues-110-109-108" '[{"number":108},{"number":109}]')
-check_claim "head 가 agent/issue-* 아님·refs=[108,109]→폴백 [0]=108(claim 없음)" stale_reverify "$got"
-if grep -qx 'owner/repo 108' "$CT/args"; then pass=$((pass + 1)); else
-  fail=$((fail + 1)); echo "  ✗ [claim 실호출] 폴백 인자 — 기대=[owner/repo 108] 실제=[$(cat "$CT/args")]"; fi
+check_claim "head 가 agent/issue-* 아님·refs=[108,109]→연결 없음(claim 안 묻는다)" stale_reverify "$got"
+if [ ! -s "$CT/args" ]; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ [claim 실호출] refs 다수·head 없음인데 claim 을 물었다 — 실제=[$(cat "$CT/args")]"; fi
 
 rm -rf "$CT"
 

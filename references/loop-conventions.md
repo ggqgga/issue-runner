@@ -89,26 +89,29 @@ closeout 세 SKILL(한/영)과 `references/worker-template.md` 는 아래 규약
   닫지 않고 잇기만 할 때는 같은 자리에 `Refs #N`. **백틱 안·문장 속 언급은 무시된다** —
   훅 `hooks/require-issue-in-pr.sh` 가 전용 줄만 인정한다. 정말 관련 이슈가 없으면 본문에
   `(no-issue)`.
-- **소비 — 소비자마다 축이 다르다.** 아래가 코드의 실제 동작이다(문서가 코드를 따른다):
-  - `scripts/finish-classify.sh` — head 브랜치 `agent/issue-N` 이 **1순위**,
-    `closingIssuesReferences[0]` 이 **폴백**.
-  - `scripts/closeout-eligible.sh` — `closingIssuesReferences[0].number` **하나뿐**이다
-    (head 를 보지 않는다).
-  - `scripts/pr-state.sh` — head 의 `agent/issue-N` **∩** `closingIssuesReferences`,
-    교집합이 없으면 `-`(짝을 증명할 축이 없다).
+- **소비 — 네 소비자가 같은 술어다.** `scripts/finish-classify.sh`(브랜치 이슈의 claim 조회)·
+  `scripts/closeout-eligible.sh`(후보 행의 `issue`)·`scripts/verify-eligible.sh`(후보 행의 `issue`
+  — verify-pass·verify-redispatch 가 옮길 이슈)·`scripts/pr-state.sh`(이슈 축)는 전부
+  `scripts/lib/loop.jq` 의 `linked_issue(head; refs)` **한 자리**를 부른다(#495):
+  1. head 브랜치 `agent/issue-N` 의 N 이 `closingIssuesReferences` 에 있으면 **N**
+     (브랜치가 집어간 이슈 = 증명된 짝).
+  2. 아니면 `closingIssuesReferences` 가 **정확히 1건**이면 그것(닫는 이슈가 하나면 추측이 아니다).
+  3. 그 외 **빈 값**(fail-closed) — finish-classify 는 claim 증거 없음(`none`), closeout-eligible·
+     verify-eligible 은 `issue` 빈 문자열, pr-state 는 `-`(이슈 축 없음)로 받는다.
 
-  `[0]` 은 GitHub 이 본문의 `Closes` 를 만난 순서일 뿐이라, 닫는 이슈가 둘 이상인 묶음
-  디스패치에서는 "이 PR 이 이 이슈 한 쌍으로 붙었다" 를 증명하지 못한다(#206 회차3).
-  **그래서 `Closes` 를 여러 개 쓰면 두 소비자가 서로 다른 이슈를 볼 수 있다 — 연결 이슈는
-  하나만 쓴다.** 세 축을 한 술어로 통일하는 것은 이 문서의 범위 밖이다(별도 이슈로 낸다) —
-  여기서는 갈라져 있다는 사실을 드러내는 데까지만 한다.
+  네 소비자 어디서도 `[0]` 을 쓰지 않는다(`loop-status.sh` 의 `linked()` 는 대시보드라 `[0]`·head
+  폴백 꼬리를 유지한다 — 판정이 아니라 표시다) — GitHub 이 본문의 `Closes` 를 만난 순서일 뿐이라, 닫는 이슈가
+  둘 이상인 묶음 디스패치에서는 "이 PR 이 이 이슈 한 쌍으로 붙었다" 를 증명하지 못한다
+  (#206 회차3 · 이 레포 PR #113 head `agent/issue-109`·refs `[108,109]`). **`Closes` 를 여러 개
+  쓰려면 head 가 그중 하나를 가리켜야 한다** — 아니면 네 소비자 모두 연결 이슈를 못 보고
+  (같은 답으로) 마감·미러 정리가 멈춘다. 연결 이슈는 하나만 쓰는 것이 기본이다. head **단독**
+  폴백도 없다 — `Refs #N`·`(no-issue)` PR 은 head 가 `agent/issue-N` 이어도 연결 이슈가 없다
+  (finish-classify 는 그 PR 의 claim 증거 ③ 을 포기하고 커밋·판정 시각 축으로만 잰다).
 - **부분 착지 PR 은 `Closes` 대신 `Refs`** 를 써서 트래커를 살려 둔다 — 그 경우 이슈는 머지로
   닫히지 않는다(`release-labels.sh`·`reconcile.sh` 가 그 전제를 쓴다).
 
 생산이 "전용 줄" 을 요구하는 것과 소비가 head 를 섞어 보는 것은 **모순이 아니다**: 훅은
-사람이 쓴 본문을 막는 관문이고, 소비는 이미 열린 PR 에서 짝을 **증명**하는 자리다. 다만 위
-세 소비자가 서로 다른 축을 쓰는 것은 규약이 아니라 **현상**이다 — 규약으로 굳히지 말고
-통일 이슈가 날 때까지 이 서술을 코드와 맞춰 둔다.
+사람이 쓴 본문을 막는 관문이고, 소비는 이미 열린 PR 에서 짝을 **증명**하는 자리다.
 
 ## §6 레포 짧은 이름
 

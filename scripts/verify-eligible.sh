@@ -123,7 +123,13 @@ fi
     *) ci=fail ;;
   esac
 
-  issue=$(printf '%s' "$meta" | jq -r '.closingIssuesReferences[0].number // empty')
+  # 연결 이슈는 `lib/loop.jq` 의 `linked_issue` 한 자리(#495) — finish-classify·closeout-eligible·
+  # pr-state 와 같은 답. `[0]` 은 `Closes` 가 둘 이상인 PR 에서 남의 이슈를 가리켜(PR #113 head
+  # 109·refs [108,109]) verify-pass/verify-redispatch 가 closeout 과 **다른 이슈**를 옮긴다 —
+  # 검증→마감 인계의 이슈 정체성이 갈린다. 짝을 증명 못 하면 빈 값(fail-closed) — 소비자
+  # (verify-runner 전이)는 종전처럼 빈 issue 를 "연결 없음" 으로 받는다.
+  issue=$(printf '%s' "$meta" | jq -L "$SCRIPT_DIR/lib" -r 'include "loop";
+    linked_issue(.headRefName; [(.closingIssuesReferences // [])[].number]) // empty')
   # 고아 판정은 **현재 라벨**로 — search 갈래가 아니다(라벨이 진실, 위 머리 주석).
   # 둘 다 없으면 이 루프 소유가 아니다(verify-pass 직후 인덱스 지연) — 후보에서 뺀다.
   if printf '%s' "$meta" | jq -e '[.labels[].name]|index("verifying")' >/dev/null; then

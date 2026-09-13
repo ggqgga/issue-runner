@@ -244,6 +244,10 @@ printf '%s' "$prs" | jq -c '.[]' | while IFS= read -r row; do
     *) continue ;;
   esac
 
-  issue=$(printf '%s' "$meta" | jq -r '.closingIssuesReferences[0].number // empty')
+  # 연결 이슈는 `lib/loop.jq` 의 `linked_issue` 한 자리(#495) — finish-classify·verify-eligible·pr-state 와 같은 답.
+  # `[0]` 은 `Closes` 가 둘 이상인 PR 에서 남의 이슈를 가리킨다(PR #113 head 109·refs [108,109]).
+  # 짝을 증명 못 하면 빈 값 — 소비자(closeout ③단계)는 종전처럼 빈 issue 를 "연결 없음" 으로 받는다.
+  issue=$(printf '%s' "$meta" | jq -L "$SCRIPT_DIR/lib" -r 'include "loop";
+    linked_issue(.headRefName; [(.closingIssuesReferences // [])[].number]) // empty')
   printf '{"repo":"%s","pr":%s,"issue":"%s","head":"%s","revalidate":%s}\n' "$repo" "$pr" "$issue" "$head" "$reval"
 done
