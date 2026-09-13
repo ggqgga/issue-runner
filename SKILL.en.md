@@ -16,376 +16,216 @@ maintenance must come before new work).
 > **The SSOT for ownership, holds and failed transitions is `references/state-machine.md`** (#393). Which loop owns
 > which state (owner labels `flow:verify`·`verifying`·`flow:ready`·`harvesting`), how machine holds (`hold:*`) and human
 > holds (`needs-human`) clear, and who recovers a half-moved state after `transition.sh` exits 1·2 — read that table;
-> where prose below restates a rule, the table wins (prose cleanup is plan stage 3).
+> where prose below restates a rule, the table wins.
 >
 > **The SSOT for the conventions all three loops share is `references/loop-conventions.md`** (#452, Korean only).
 > What fail-closed means (§1) · the warn·note·blocked channel boundary (§2) · relaying script stderr into ④ Report
 > (§3) · the sentinel marker (§4) · the dedicated `Closes #N` line (§5) · repo short names (§6) · the pipeline
 > snapshot discipline (§7) · the missing-label fallback (§8) · verification-ladder rungs (§9) · the surface-correction
 > criterion (§10) — the prose below points at those sections instead of restating them.
+>
+> **Why each rule exists (history, field measurements, rejected alternatives) lives in
+> `references/issue-runner-rationale.md`** (#454, Korean only). The `(rationale §N)` markers below point at its
+> sections — a tick never needs to read that file.
 
 ## Constants
 
-- `MAX_AGENTS = 4` — cap on concurrently in-flight issues (in-flight is defined
-  in ③-1 — PRs waiting for human review do not occupy a slot). **Lowered 5→3 in a
-  2026-07 contention experiment**: workers are all background subagents in one
-  process, so N concurrent ones share API/CPU and each is throttled to ~1/N
-  (measured: 0 concurrent ~10 min vs 1–4 concurrent ~30 min). Throughput is roughly
-  preserved while box load and orphan risk drop. Lower to 2 if it is still slow.
-- `MAX_OPEN_PRS = 14` — **per-repo** cap on open PRs (backlog backpressure). When
-  a repo reaches it, only new dispatches for that repo stop (maintenance continues,
-  other repos dispatch normally) — prevents rebase conflicts from multiplying across
-  PRs while human merges lag.
-  **Raised 10→14 on 2026-08-14** — PRs waiting on humans (needs-human · human gates)
-  permanently held 2–3 slots, dropping the effective cap to 7 (measured 2026-08-13:
-  3 of 10 slots). 14 absorbs that standing occupancy; lower it again once those clear.
-  **Changed from scope-wide sum to per-repo on 2026-09-13 (#362)** — measured 2026-09-12: the summed cap
-  filled up as runner 10 + bodat 5 = 15, and bodat's 15 waiting issues were never picked
-  for 20+ ticks. Conflicts only arise **between PRs of the same repo**, so the sum blocked
-  wider than its rationale and one repo's backlog starved the others' queues.
-- `MAX_REPAIRS_PER_PR = 3` — cap on maintenance dispatches per PR
-  (② Maintain circuit breaker)
-- **Constants the scripts read — the values live in `scripts/lib/constants.sh`, in one
-  place** (#427). This section no longer restates them: prose and code holding two copies
-  of a value drift apart (`ISSUE_TIMEBOX_HOURS` really did have four). An environment
-  variable overrides the default, and the **rationale/history lives in that file's
-  comments**. Below are the names and meanings only — for a value, run
-  `grep '<name>' $SCRIPTS/lib/constants.sh`.
-  - `ISSUE_TIMEBOX_HOURS` — the claim age at which a `working` issue with no PR **starts
-    being asked for progress evidence** (① Reconcile timebox). Exceeding it is **not by
-    itself a reason to stop** — past this age the issue is still reprieved as long as
-    there is progress evidence (#200).
-  - `STALL_MIN` — the "no progress" threshold (minutes). Only when the latest commit on
-    the remote branch `agent/issue-<num>` is older than this does the commit-side
-    evidence die (the decision is `timebox-check.sh`).
-  - `MAX_TIMEBOX_GRACE` — cap on **cumulative reprieves** within the same claim. The
-    count is not a state file: it is re-derived by counting issue comment markers
-    (`<!-- timebox-grace: N -->`) created **after the current claim timestamp only**.
-  - `RESUME_AFTER_MIN` — how long (minutes) the resume sweep waits before letting a
-    stalled issue flow again. Once a `hold:ladder` issue has gone this long without an
-    update, ①'s resume sweep picks it up.
-  - `LADDER_RESUME_LIMIT` — cap on automatic resumes per issue. Beyond it the issue is
-    escalated to `hold:policy` instead of resumed — only then is it a human's (no
-    infinite retries).
-  - `CONFLICT_RESUME_LIMIT` — cap on automatic resumes of `hold:conflict` (#345). In the
-    field (BoDAT #5103 · #185) a human's answer to the first conflict was ⓐ (one more
-    worker round) every time, and the second was ⓑ (human takeover). The window is the
-    shared `RESUME_AFTER_MIN` (that window is exactly the time a human has to take over
-    with `full-cycle`). Beyond the cap: `hold:policy` escalation → the re-review (③)
-    question is "ⓑ takeover, or reissue?".
-  - `MIRROR_RETRY_LIMIT` — cap on retries when ①'s resume sweep **stop-mirror cleanup**
-    cannot obtain positive evidence (#397). The round count is the number of
-    `<!-- mirror-retry: <reason> pr=<n> -->` marker comments on the paired issue —
-    counting only that PR's markers, and only those **after the last human-intervention
-    boundary** (the latest `policy-review`/`hold-note` comment), so a new episode never
-    inherits the old rounds; at the cap the script emits `mirror_retry_exhausted` (see
-    the event handling below for the transition).
-  - `STALE_FINISH_MIN` — lost-finish time buffer (minutes). The buffer for
-    `finish-classify.sh`, which is now consumed by the **closeout ①-b stuck-PR sweep**
-    (issue-runner no longer uses it directly after the rule-4 revert). A live worker
-    posts its final verdict within seconds of the `Verifier review:` comment, so if the
-    latest verifier is CLEAN yet no final verdict appears past this buffer, the worker
-    is considered dead.
-- `SOFT_TOKEN_BUDGET_PER_ISSUE = 300000` — soft token budget per issue. Not a
-  hard cap but the observation threshold for ④ Report (the Agent call has no
-  budget API, so it cannot be enforced).
+Only the knobs the LLM judges with. The measurement history behind the values is rationale §1·§2.
+
+- `MAX_AGENTS = 4` — cap on concurrently in-flight issues (in-flight is defined in ③-1 — PRs waiting for human
+  review do not occupy a slot). Lower to 2 if it is still slow. **Never raise it above 4 without measuring** —
+  the real ceiling is machine load, not the API (rationale §1).
+- `MAX_OPEN_PRS = 14` — **per-repo** cap on open PRs. When a repo reaches it, only new dispatches for that repo
+  stop (maintenance continues, other repos dispatch normally) — backpressure that prevents rebase conflicts from
+  multiplying across PRs while human merges lag (rationale §1).
+- `MAX_REPAIRS_PER_PR = 3` — cap on maintenance dispatches per PR (② Maintain circuit breaker)
+- **Constants the scripts read — the values live in `scripts/lib/constants.sh`, in one place** (#427). This section
+  does not restate them: names and meanings only. For a value, run `grep '<name>' $SCRIPTS/lib/constants.sh`
+  (rationale §2).
+  - `ISSUE_TIMEBOX_HOURS` — the claim age at which a `working` issue with no PR **starts being asked for progress
+    evidence** (① Reconcile timebox). Exceeding it is **not by itself a reason to stop** — past this age the issue
+    is still reprieved as long as there is progress evidence (#200).
+  - `STALL_MIN` — the "no progress" threshold (minutes). `timebox-check.sh` decides commit-side evidence freshness.
+  - `MAX_TIMEBOX_GRACE` — cap on **cumulative reprieves** within the same claim. The count is not a state file: it
+    is re-derived by counting issue comment markers (`<!-- timebox-grace: N -->`) created **after the current claim
+    timestamp only**.
+  - `RESUME_AFTER_MIN` — how long (minutes) the resume sweep waits before letting a stalled issue flow again.
+  - `LADDER_RESUME_LIMIT` — cap on automatic resumes per issue. Beyond it the issue is escalated to `hold:policy`
+    instead of resumed (no infinite retries).
+  - `CONFLICT_RESUME_LIMIT` — cap on automatic resumes of `hold:conflict` (#345). The window is the shared
+    `RESUME_AFTER_MIN`. Beyond the cap: `hold:policy` escalation → the re-review (③) question is "ⓑ takeover, or
+    reissue?".
+  - `MIRROR_RETRY_LIMIT` — cap on retries of ①'s resume-sweep **stop-mirror cleanup** (#397). The round count is
+    the number of `<!-- mirror-retry: <reason> pr=<n> -->` marker comments on the paired issue (what is in scope is
+    rationale §2) — at the cap the script emits `mirror_retry_exhausted`.
+  - `STALE_FINISH_MIN` — lost-finish time buffer (minutes). Consumed by the **closeout ①-b stuck-PR sweep**
+    (`finish-classify.sh`; issue-runner no longer uses it directly).
+- `SOFT_TOKEN_BUDGET_PER_ISSUE = 300000` — soft token budget per issue. Not a hard cap but the observation
+  threshold for ④ Report.
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
-- `VERIFIER = codex:codex-rescue` — verifier subagent type for reviews and lesson
-  extraction. **Output contract (SSOT — everywhere else refers to this entry)**:
-  review calls are read-only (no code changes), classify each finding as
-  BLOCKER/WARN/NIT, output 'CLEAN' if there are no findings, and BLOCKERs are a
-  gate (no finishing before they are resolved); lesson-extraction calls
-  (① Reconcile) output 'one lesson line or NONE'. The verifier does not read
-  SKILL.md, so the call's prompt string must carry this contract verbatim — the
-  prompt is the only delivery path.
-  **Fallback**: in environments without the codex plugin (the type above is
-  missing from the Agent tool's subagent_type list, or the call fails with an
-  unknown subagent type error), use `general-purpose` as the verifier — it is
-  invoked with the same prompt, so the same contract applies.
-- Absolutely forbidden: merging PRs, pushing directly to main, touching
-  human-created branches, attaching the agent-ready label on your own, appending the
-  final `Merge verdict: ✅` on behalf of a lost-finish PR (that recovery is owned by
-  the closeout ①-b sweep).
-  **Allowed**: the ② Maintain rule-0 flow-label (`flow:*`) correction (these are
-  self-describing labels the worker attaches at each step, so aligning them to the
-  actual state as a scan safety net is not manipulation).
+- `VERIFIER = codex:codex-rescue` — verifier subagent type for reviews and lesson extraction. **Output contract
+  (SSOT — everywhere else refers to this entry)**: review calls are read-only (no code changes), classify each
+  finding as BLOCKER/WARN/NIT, output 'CLEAN' if there are no findings, and BLOCKERs are a gate (no finishing
+  before they are resolved); lesson-extraction calls (① Reconcile) output 'one lesson line or NONE'. The verifier
+  does not read SKILL.md, so the call's prompt string must carry this contract verbatim — the prompt is the only
+  delivery path. **Fallback**: in environments without the codex plugin (the type above is missing from the Agent
+  tool's subagent_type list, or the call fails with an unknown subagent type error), use `general-purpose` as the
+  verifier — it is invoked with the same prompt, so the same contract applies.
+- Absolutely forbidden: merging PRs, pushing directly to main, touching human-created branches, attaching the
+  agent-ready label on your own, appending the final `Merge verdict: ✅` on behalf of a lost-finish PR (that
+  recovery is owned by the closeout ①-b sweep). **Allowed**: the ② Maintain rule-0 flow-label (`flow:*`)
+  correction (rationale §2).
 
 ## ① Reconcile
 
 Run `$SCRIPTS/reconcile.sh` and handle each event:
 
-- `merged` — the PR merged. ★**This does not mean the issue closed**★ — a PR that
-  lands only part of the work uses `Refs` instead of `Closes`, so the issue stays
-  OPEN and `release-labels.sh` keeps `agent-ready` in that case, letting a later
-  tick pick up the remaining half (#117 — it used to strip the label
-  unconditionally, silently stranding the issue). **Orphan-worker cleanup (first)**: if this
-  issue's worker is still alive (check TaskList for the `implement <repo>#<num>`
-  background agent), stop it with `TaskStop` — the PR has merged so the worker's
-  work is moot, and if left alone it holds the already-closed PR and spins forever
-  (the recovery path for the observed orphan ghost). Then the **Lessons step**: if any of the failure
-  signals below is present (all checked via `gh pr view <pr> --repo <repo>`),
-  synchronously invoke the `VERIFIER` subagent (following the VERIFIER contract
-  and fallback in ## Constants). If no signal is present, do not invoke it and
-  leave it NONE (record no lesson): (1) a CHANGES_REQUESTED review (`--json
-  reviews`) · (2) a `gh run list` CI failure (GitHub Actions repos) · (3) a
-  **local-ci commit status failure history** — if any of the PR's commits had the
-  local-ci context as FAILURE (enumerate commit SHAs via `--json commits` and query
-  each SHA via `gh api repos/<repo>/commits/<sha>/statuses` — the HEAD's `--json
-  statusCheckRollup` keeps only the latest state per context and cannot see a
-  failure history; a lesson candidate even if the final state is SUCCESS after a
-  mid-life failure was fixed on a new SHA, as long as there is a failure history;
-  on local-ci repos `gh run list` is always empty, so this is the effective
-  trigger) · (4) a **BLOCKER in a verifier review comment** — if the PR's
+- `merged` — the PR merged. ★**This does not mean the issue closed**★ (#117, rationale §3).
+  **Orphan-worker cleanup (first)**: if this issue's worker is still alive (check TaskList for the
+  `implement <repo>#<num>` background agent), stop it with `TaskStop`. Then the **Lessons step**: if any of the
+  failure signals below is present (all checked via `gh pr view <pr> --repo <repo>`), synchronously invoke the
+  `VERIFIER` subagent (following the VERIFIER contract and fallback in ## Constants). If no signal is present, do
+  not invoke it and leave it NONE (record no lesson): (1) a CHANGES_REQUESTED review (`--json reviews`) ·
+  (2) a `gh run list` CI failure (GitHub Actions repos) · (3) a **local-ci commit status failure history** — if
+  any of the PR's commits had the local-ci context as FAILURE (enumerate commit SHAs via `--json commits` and
+  query each SHA via `gh api repos/<repo>/commits/<sha>/statuses` — do not use the HEAD's `--json
+  statusCheckRollup`, rationale §4) · (4) a **BLOCKER in a verifier review comment** — if the PR's
   `마감 검증:`·`검증자 리뷰:` comment had a BLOCKER (`--json comments`).
+
+  ⚠️ **A rebase voids signal (3) — never trust "no failure history" as a verdict** (rationale §4).
+  Detect it with `gh api repos/<repo>/issues/<pr>/timeline --jq '[.[]|select(.event=="head_ref_force_pushed")]|length'`:
+  greater than 0 means the commit enumeration is incomplete. Then — ⓐ if context (the worker's completion report,
+  or a previous tick's Report `run-local-ci` result) still holds the **pre-rebase SHA**, query that SHA directly
+  with `gh api repos/<repo>/commits/<sha>/statuses` and decide. ⓑ If you do not know the pre-rebase SHA, treat (3)
+  as unknown, decide on signals 1·2·4 alone, and leave one line **"failure history undecidable after rebase"** in
+  ④ Report. Never pass it off silently as "none".
+  (If the same lesson already exists in `lessons.md`, do not append a duplicate; write "same as an existing
+  lesson — not recorded" in Report instead.)
 
   > "Read the review comments and CI failure logs of PR #<pr> (<repo>), and from
   > the objective failure facts produce exactly one recurrence-prevention lesson
   > line in the form 'When <situation>, do <specific action>'. No speculation or
   > generalities. If there are no failure facts, output 'NONE'."
 
-  If the result is not NONE, append one line `- [YYYY-MM-DD PR#<pr>] <lesson>` to
-  the `.loop/lessons.md` under the path output by `$SCRIPTS/repo-dir.sh <repo>`
-  (= `<repo-dir>/.loop/lessons.md` — the only interpretation that makes record and
-  read point at the same file even on a repos.conf-mapped machine), then trim to the
-  cap — **call `$SCRIPTS/lessons-trim.sh append <file> 20 "<line>"` in one place**
-  (it creates the file if absent). **Do not append by hand outside this call** —
-  another tick may be trimming the same file concurrently, and an append done
-  outside the lock can be lost if it lands in that trim's read→write window (#208
-  re-verification BLOCKER② — the same reason closeout steps 1 and 6 use this call).
-  **Cap: 20 entries** — on overflow, drop the oldest entries **until the entry count
-  is at or below the cap** (context-rot defense; the old prose rule "delete the
-  oldest line" netted zero against the append, so once over the cap it never shrank).
-  Only a human moves lessons into CLAUDE.md.
-- `rejected` — a human rejected the PR. **If a worker is still alive, stop it first
-  with `TaskStop` the same as `merged`** (orphan prevention). Perform the lessons step the same way.
-  Do not re-dispatch the issue (agent-ready has already been removed).
+  If the result is not NONE, append one line `- [YYYY-MM-DD PR#<pr>] <lesson>` to the `.loop/lessons.md` under the
+  path output by `$SCRIPTS/repo-dir.sh <repo>` (= `<repo-dir>/.loop/lessons.md`), then trim to the cap —
+  **call `$SCRIPTS/lessons-trim.sh append <file> 20 "<line>"` in one place** (it creates the file if absent).
+  **Do not append by hand outside this call** (#208, rationale §5). **Cap: 20 entries** — on overflow, drop the
+  oldest entries **until the entry count is at or below the cap**. Only a human moves lessons into CLAUDE.md.
+  **Routing — `lessons.md` is for implementation lessons only** (③-4d loads it verbatim into the worker prompt).
+  If the lesson is about **verification judgment** (what the verifier misread · how a false BLOCKER was overturned ·
+  the BLOCKER vs WARN boundary), do not write it here — append it to **`.loop/lessons-verifier.md`** in the same
+  directory, **through the same call**: `$SCRIPTS/lessons-trim.sh append <file> 20 "<line>"` (rationale §5).
+- `rejected` — a human rejected the PR. **If a worker is still alive, stop it first with `TaskStop` the same as
+  `merged`** (orphan prevention). Perform the lessons step the same way. Do not re-dispatch the issue
+  (agent-ready has already been removed).
 - `stale` — a dead claim was released. Report only.
-- `warn` — dirty/unpushed worktree. **Do not touch it** — surface it as-is in
-  Report so a human sees it.
-- `half_moved_redispatch` — a PR whose `verify-redispatch` **half-failed** (#394): the PR lost its
-  stage labels (`flow:*`·`verifying`) while the issue kept `agent:claimed`, so it falls out of
-  **all three** gates (`verify-eligible`·`closeout-eligible`·`eligible-issues`) — this is the owner
-  of the state verify-runner hands off as "the next tick will catch it"
-  (see the recovery column in `references/state-machine.md`).
-  **Re-run the same transition idempotently**:
-  `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr>` (the PR side has already moved, so
-  it is a no-op; only the issue returns to `agent-ready` → a ③ candidate this tick). On success add
+- `warn` — dirty/unpushed worktree. **Do not touch it** — surface it as-is in Report so a human sees it.
+- `half_moved_redispatch` — a PR whose `verify-redispatch` **half-failed** (#394, rationale §6).
+  **Re-run the same transition idempotently**: `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr>`
+  (the PR side is a no-op; only the issue returns to `agent-ready` → a ③ candidate this tick). On success add
   `#<num>(반쯤 이동 회수)` to `보수` in ④ Report. If the transition exits non-zero, act per
-  `references/state-machine.md` 「전이 실패의 공통 규칙」 (the common rule for failed transitions)
-  — report `BLOCKED: transition failed verify-redispatch PR #<pr>(<repo_short>) — <one stderr line>`
-  and move on (the rule is not restated here).
-  A PR with this event is **not** ② Maintain input (no `pr_open` — same shape as `harvesting`).
-  A live worker (progress evidence via `progress-evidence.sh`) and any unprovable lookup are already
-  filtered out by the script, so do not re-judge freshness here.
+  `references/state-machine.md` 「전이 실패의 공통 규칙」 (the common rule for failed transitions) — report
+  `BLOCKED: transition failed verify-redispatch PR #<pr>(<repo_short>) — <one stderr line>` and move on (the rule
+  is not restated here). A PR with this event is **not** ② Maintain input. Do not re-judge freshness here.
 - `pr_open` — input to ② Maintain.
-- `working` — a worker is in progress. Use TaskList to check whether that
-  background agent is actually alive. **Do not assume "looks dead" (the task has
-  ended in TaskList) means actually dead** — first read the task's last message with
-  `TaskOutput(task_id)`. If its last line reads
+- `working` — a worker is in progress. Use TaskList to check whether that background agent is actually alive.
+  **Do not assume "looks dead" (the task has ended in TaskList) means actually dead** — first read the task's last
+  message with `TaskOutput(task_id)`. If its last line reads
   `CI 대기 중 — <SHA 40자> <queued N|running|none>, 다음 할 일: <한 줄>`
-  (the signal is a verbatim Korean literal), the worker only ended its turn while waiting in the `run-local-ci.sh` queue
-  — it is not dead (#185). **Do not remove the worktree or release the claim** —
-  wake the worker with `SendMessage` to that task, telling it to resume (pick up the
-  "다음 할 일" / next step it reported). Once resumed, record it in ④ Report's
-  `maintained` line as `#<num>(resumed from CI wait)` — and **once the resume
-  succeeds, this issue is finished for this tick: do not run the genuine-death path
-  below, and do not run the timebox cleanup at its end; move on to the next event**
-  (in code terms, `continue` here). A worker you just woke is by definition *alive*,
-  so simply reading on would catch it in the timebox paragraph below. This box's CI
-  queue takes 550~750s from enqueue to finish, so a rework round easily pushes the
-  claim age past `ISSUE_TIMEBOX_HOURS`, and then ⓐ `TaskStop`, ⓑ worktree removal and
-  ⓒ claim release **immediately kill the worker you just resumed.**
-  **The state token is one of `queued N`, `running`, `none` —**
-  **all three states are resume signals.** Whichever one arrives, resume exactly as
-  above; **in all three cases**
-  do not remove the worktree and do not release the claim. `queued N` means that
-  worker's SHA is Nth in line; `running` means its job is already executing (this state
-  has no queue position at all — under the old fixed wording `대기열 N번째` the worker
-  had nothing truthful to write, so it ended silently, which is the very death-misread
-  this branch exists to prevent); `none` means the ticket was reclaimed, so there is
-  neither a queue entry nor a result. **`none` does not mean the worker died** — what
-  was reclaimed is the ticket, not the worker; once woken it re-queues the same SHA once
-  and carries on. The three values are not the worker's own words — they are the output
-  of `ci-queue.sh status <SHA>` (`running` / `queued <n>` / `none`).
-  If the message is not in that
-  format (a genuine death), continue below.
-  **Evidence — a background subagent whose turn has ended is still resumable with
-  `SendMessage`.** (1) The Agent tool contract defines `SendMessage` as
-  "continue a previously spawned agent with its context intact"
-  (a sentence premised on the spawn being over). (2) The note on a background task's completion notification
-  (task-notification) states: "The user can send it another message and resume it, so
-  the same task-id may notify more than once" — **a completion notification means "the
-  turn ended", not "the task is gone".** (3) Observed in operation: over 2026-09-10~11,
-  five workers (bodat #4959·#4927·#4957·#4971 · runner #188) were woken this way and
-  **all of them resumed and finished their work** (the same task-id notified twice).
-  **Fallback — if the resume message also gets no response** (the rare case where the
-  task really is gone), do not release the claim: **dispatch a replacement worker
-  reusing the existing worktree and branch** — `make-worktree.sh` reuses an existing
-  tree via `exists:`, and the pushed commits are the asset. **Do not create a new claim
-  and do not open a new PR** (if a PR is already open, have it continue that one). Only
-  if this fallback also fails do you fall through to the genuine-death path below.
-  If it is dead and there are pushed commits,
-  treat it as a maintenance target for ②. If there are no commits at all, check
-  the issue's latest comment **before** releasing the claim —
+  (the signal is a verbatim Korean literal), the worker only ended its turn while waiting in the
+  `run-local-ci.sh` queue — it is not dead (#185). **Do not remove the worktree or release the claim** — wake the
+  worker with `SendMessage` to that task, telling it to resume (pick up the "다음 할 일" / next step it reported).
+  Once resumed, record it in ④ Report's `maintained` line as `#<num>(resumed from CI wait)` — and **once the
+  resume succeeds, this issue is finished for this tick: do not run the genuine-death path below, and do not run
+  the timebox cleanup at its end; move on to the next event** (in code terms, `continue` here).
+  **The state token is one of `queued N`, `running`, `none` — all three states are resume signals.** Whichever one
+  arrives, resume exactly as above; **in all three cases** do not remove the worktree and do not release the claim.
+  What the three tokens mean, and the evidence that a background subagent whose turn has ended is still resumable
+  with `SendMessage`, is rationale §7. If the message is not in that format (a genuine death), continue below.
+  **Fallback — if the resume message also gets no response** (the rare case where the task really is gone), do not
+  release the claim: **dispatch a replacement worker reusing the existing worktree and branch**. **Do not create a
+  new claim and do not open a new PR** (if a PR is already open, have it continue that one). Only if this fallback
+  also fails do you fall through to the genuine-death path below.
+  If it is dead and there are pushed commits, treat it as a maintenance target for ②. If there are no commits at
+  all, check the issue's latest comment **before** releasing the claim —
   `gh issue view <num> --repo <repo> --json comments --jq '[.comments[] | select((.body | test("<!--\\s*timebox-grace:")) | not)] | last.body'`
-  (timebox reprieve markers are skipped — if a marker takes the latest-comment slot it
-  hides the worker's `BLOCKED:` and the issue silently loses its claim instead of being
-  escalated to a human, #200).
-  If it starts with `BLOCKED:`, the worker stopped because human intervention is
-  needed (ambiguous spec / plan-reality mismatch / same failure repeating):
-  instead of returning the issue to a re-dispatchable state, attach the
-  `hold:policy` label with
-  `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy --note "<the one-line question a human must answer>"` (this also releases
-  the claim — a machine stop carries the reason label only, #244), remove the
-  worktree, and surface the BLOCKED reason as a warn in
-  ④ Report (once a human resolves the cause and removes `hold:*`, the issue flows
-  again — the gate reads the `hold:` prefix, so a leftover reason label keeps it out
-  of the queue, #242; if a re-review ended as "kept" the issue also carries
-  `needs-human`, which must come off too. The README
-  'guardrails' convention). If the latest comment is not
-  a BLOCKED comment, remove the worktree and release the claim (returning the
-  issue to a re-dispatchable state).
-  **Timebox (no-progress detection)** — **an issue resumed via `SendMessage` in this
-  tick is exempt** (the resume branch above already finished handling it: that worker
-  was waiting in the CI queue, not stalled, so cleaning it up here would kill the
-  worker you just woke). For an issue you did not resume, check whether it is **making
-  progress** even if it is alive — the decision input is progress evidence, not elapsed
-  time (#200: the elapsed time swallows the box-wide serial CI queue wait, which the
-  worker does not control; in two measured cases that nearly killed workers that were
-  still working). Get the claim timestamp with
+  (timebox reprieve markers are skipped — rationale §7). If it starts with `BLOCKED:`, the worker stopped because
+  human intervention is needed (ambiguous spec / plan-reality mismatch / same failure repeating): instead of
+  returning the issue to a re-dispatchable state, attach the `hold:policy` label with
+  `$SCRIPTS/transition.sh runner-held <repo> <num> <pr|-> --reason policy --note "<the one-line question a human must answer>"`
+  (this also releases the claim — a machine stop carries the reason label only, #244), remove the worktree, and
+  surface the BLOCKED reason as a warn in ④ Report (rationale §7). If the latest comment is not a BLOCKED comment,
+  remove the worktree and release the claim (returning the issue to a re-dispatchable state).
+  **Timebox (no-progress detection)** — **an issue resumed via `SendMessage` in this tick is exempt.** For an
+  issue you did not resume, check whether it is **making progress** even if it is alive — the decision input is
+  progress evidence, not elapsed time (#200, rationale §8). Get the claim timestamp with
   `gh api repos/<repo>/issues/<num>/timeline --jq '[.[] | select(.event=="labeled" and .label.name=="agent:claimed")] | last.created_at'`
-  (if the response is empty, fall back to the worktree directory's creation time) and
-  hand it to `$SCRIPTS/timebox-check.sh <repo> <num> --claim-at <ISO8601>` (`working` by
-  definition means there is no PR). The verdict is one line —
-  `<verdict> <reason> elapsed=..m commit=..m queue=.. grace=n/max`:
+  (if the response is empty, fall back to the worktree directory's creation time) and hand it to
+  `$SCRIPTS/timebox-check.sh <repo> <num> --claim-at <ISO8601>` (`working` by definition means there is no PR).
+  The verdict is one line — `<verdict> <reason> elapsed=..m commit=..m queue=.. grace=n/max`:
   - `ok` (exit 0) — the claim age is still within `ISSUE_TIMEBOX_HOURS`. Leave it alone.
-  - `grace` (exit 0) — past the age but there is progress evidence: the latest commit is
-    within `STALL_MIN` (`recent_commit`), or that head SHA's CI ticket is still alive in
-    the box-wide queue (`ci_queued`). **Do not stop it this tick.** The helper appends a
-    reprieve marker to the issue, so the next tick counts those markers against
-    `MAX_TIMEBOX_GRACE`. Put the verdict line as-is (elapsed · last commit · queue state ·
-    reprieve n/max) into ④ Report as an **info line, not a warn**, so an endless reprieve
-    is visible.
-  - `stop` (exit 1) — no progress (`no_progress`) or the reprieve cap is spent
-    (`grace_exhausted`). Do ⓐ–ⓓ below as written.
-  - `unknown` (exit 2) — a decision input could not be obtained (claim timestamp, branch
-    lookup, comment lookup, or the reprieve-marker append failed). **Do not stop it** —
-    surface it as a warn in ④ Report. Killing a live worker on a lookup failure discards
-    unpushed leftovers irreversibly, whereas a reprieve can be reversed next tick.
-  Only when the verdict is `stop`:
-  ⓐ stop the worker with TaskStop (pushed commits are preserved on the remote
-  branch),
-  ⓑ remove the worktree — `git -C <repo-dir> worktree remove --force <wt>` then
-  `git -C <repo-dir> branch -D agent/issue-<num>`. Unpushed leftovers are
-  **deliberately discarded** as the price of the `stop` verdict — if left in
-  place, the next dispatch's make-worktree would hand the stopped worker's
-  intermediate state to a fresh worker, breaking worktree isolation (the
-  dirty-warn hold rule is for leftovers of unknown origin, so it does not apply
-  to this deliberate stop),
-  ⓒ release the claim with
-  `gh issue edit <num> --repo <repo> --remove-label "agent:claimed"`, and
-  ⓓ surface it as a warn in ④ Report (agent-ready remains, so the next tick
-  re-dispatches in a fresh worktree on top of the remote branch).
+  - `grace` (exit 0) — past the age but there is progress evidence (`recent_commit`·`ci_queued`). **Do not stop it
+    this tick.** The helper appends a reprieve marker to the issue, so the next tick counts those markers against
+    `MAX_TIMEBOX_GRACE`. Put the verdict line as-is into ④ Report as an **info line, not a warn**.
+  - `stop` (exit 1) — no progress (`no_progress`) or the reprieve cap is spent (`grace_exhausted`). Do ⓐ–ⓓ below
+    as written.
+  - `unknown` (exit 2) — a decision input could not be obtained (claim timestamp, branch lookup, comment lookup,
+    or the reprieve-marker append failed). **Do not stop it** — surface it as a warn in ④ Report (rationale §8).
 
-**Resume sweep — a stalled issue is retried by the tick.** After handling every event
-above, run `$SCRIPTS/resume-sweep.sh` with no arguments (the script applies the loop
-session cwd's `.loop/repos` scope on its own). Of the machine stops (`hold:*`),
-**`hold:ladder`** (stopped because ladder rungs ①–③ of live verification all failed) and
-**`hold:conflict`** (closeout ③ stopped on a merge conflict — since #344 routes
-security-boundary and large-scope conflicts to `policy`, this label means "the loop may
-resume it once", #345) are reverted automatically once the window (`RESUME_AFTER_MIN`)
-passes — only `hold:policy` stays a human decision, after one re-review (③).
-A stop a human set by hand (`needs-human`) alongside it is never auto-resumed (#244).
-**A `hold:conflict` carrying `full-cycle` was taken over by a human (ⓑ) and is never
-resumed** (the BoDAT #5103 second-round shape — it only leaves a `note`). Run it
-**before** ③ Dispatch so this same tick can pick the issue up.
-The resume count is the number of issue **comments** carrying the marker
-`<!-- ladder-resume: N -->` / `<!-- conflict-resume: N -->` (each branch counts only its own
-marker) — the body is neither read nor written (append-only, so it can
-never overwrite someone's edit). Stop labels are mirrored onto the issue **and its open
-linked PR**, so a resume/escalation reverts the PR's labels too — otherwise the PR stays
-permanently human-blocked and the downstream transitions (handoff-verify, verify-pass,
-closeout-pick) never remove it. In the same edit that drops the PR's hold (`hold:ladder` /
-`hold:conflict`), a resume
-also re-attaches the mirror matching the issue rung (`flow:agent-ready`, or `flow:claimed` when
-the issue carries `agent:claimed`; never stacked on a PR that already has a rung label) (#420) — the hold transition already stripped the PR's stage
-label, so without it the PR would sit unlabeled until the next claim (breaking the #281
-invariant). That revert only ever happened when the sweep itself
-resumed or escalated, so the path where a **human** clears `hold:policy` (or a hold past
-its cap) had nowhere to drop the PR copy — the same run therefore also does a **stop-mirror
-cleanup** (#265): when the issue carries no stop label at all but its paired open PR still
-does, it removes them **from the PR only** (a pair means an `agent/issue-*` head with a
-proven `Closes` link — a human-opened PR's marks and a `Refs`-only PR's legitimate hold are
-left alone). **What licenses the removal is positive evidence, not absence** — absence ("the
-issue carries no stop label") cannot tell ⓐ a human removed it from ⓑ the machine removed it
-from ⓒ **a transition partially failed and never attached it**, and ⓒ is real
-(`transition.sh` edits the PR first and the issue second). So it reads the label **event
-history** and requires the issue's last removal to be **later** than the PR's last
-attachment; when it cannot prove that it leaves the labels alone and warns. And when the
-PR's only stop label is a bare `needs-human` (no `hold:` prefix at all) it **never** removes
-it — the machine cannot produce that shape (all three hold transitions require `--reason`),
-so it is a brake a human put there by hand. Per event:
+  Only when the verdict is `stop`: ⓐ stop the worker with TaskStop, ⓑ remove the worktree —
+  `git -C <repo-dir> worktree remove --force <wt>` then `git -C <repo-dir> branch -D agent/issue-<num>`
+  (unpushed leftovers are **deliberately discarded** as the price of the `stop` verdict, rationale §8),
+  ⓒ release the claim with `gh issue edit <num> --repo <repo> --remove-label "agent:claimed"`, and ⓓ surface it as
+  a warn in ④ Report.
 
-- `mirror_cleared` — the script removed the **PR copy** of a hold a human cleared on the
-  issue alone (#265). The issue was already clean, so it is left untouched. **Nothing
-  further to do** — that PR returns as a `verify-eligible.sh`/`closeout-eligible.sh`
-  candidate from this tick on. Put one line under `mirror cleared N` in ④ Report (`pr` is
-  the PR, `number` the linked issue, `removed` the labels taken off).
-- `mirror_retry_exhausted` — the stop-mirror cleanup hit `MIRROR_RETRY_LIMIT` rounds **without
-  ever obtaining positive evidence** (#397 — read `attempts`/`limit` as `3/3`). The script never
-  touched a label (that branch never strips a human gate without proof). **Escalate it to a human
-  here**:
+**Resume sweep — a stalled issue is retried by the tick.** After handling every event above, run
+`$SCRIPTS/resume-sweep.sh` with no arguments (the script applies the loop session cwd's `.loop/repos` scope on its
+own). Run it **before ③ Dispatch** so this same tick can pick the issue up. Of the machine stops (`hold:*`), the
+sweep reverts **`hold:ladder`** and **`hold:conflict`** (#345) once the window (`RESUME_AFTER_MIN`) passes (the
+resume count is the number of issue **comments** carrying `<!-- ladder-resume: N -->` / `<!-- conflict-resume: N -->`
+— each branch counts only its own marker), reverts the mirrored labels on the linked open PR too (#420), and also
+runs the **stop-mirror cleanup** (#265) for a PR whose hold was cleared on the issue alone. Only `hold:policy`
+stays a human decision, after one re-review (③). A coexisting `needs-human`, and a `hold:conflict` carrying
+`full-cycle`, are never auto-resumed (#244·#345). The sweep's own evidence discipline (positive evidence · never
+stripping a bare `needs-human`) belongs to the script (rationale §9·§10). Per event:
+
+- `mirror_cleared` — the script removed the **PR copy** of a hold a human cleared on the issue alone (#265). The
+  issue was already clean, so it is left untouched. **Nothing further to do** — that PR returns as a
+  `verify-eligible.sh`/`closeout-eligible.sh` candidate from this tick on. Put one line under `mirror cleared N`
+  in ④ Report (`pr` is the PR, `number` the linked issue, `removed` the labels taken off).
+- `mirror_retry_exhausted` — the stop-mirror cleanup hit `MIRROR_RETRY_LIMIT` rounds **without ever obtaining
+  positive evidence** (#397 — read `attempts`/`limit` as `3/3`). **Escalate it to a human here**:
   `$SCRIPTS/transition.sh runner-held <repo> <number> <pr> --reason policy --note "미러 불일치 증거 부재 <attempts>회 — PR 과 이슈의 정지 라벨이 어긋난다"`
-  (attaches `hold:policy` plus the question comment on both the issue and the PR). If the
-  transition exits non-zero, act per `references/state-machine.md` 「전이 실패의 공통 규칙」 —
-  leave one line `BLOCKED: transition failed runner-held #<number>(exit N)` in ④ Report; the
-  next tick re-emits the same event (no new marker is added, so the round count does not
-  inflate). Once it lands, the issue carries a stop label and the PR drops out of mirror
-  cleanup on the next tick (it terminates itself). Report one warn line `미러 상한 #<pr>` in ④.
-- `resumed` — the hold (`reason` field: `ladder` → `hold:ladder`, `conflict` →
-  `hold:conflict`, #345) is off and `agent-ready` is untouched (the
-  eligibility label is never touched). **Nothing for the dispatcher to do** — the issue
-  reappears naturally as an `eligible-issues.sh` candidate in ③ this tick (for a conflict
-  resume, ③ inlines the hold note and the rebase instruction into the prompt — see the
-  "If the issue was resumed" item in ③). Record the
-  number with `reason` and `attempt` under `resumed` in ④ Report, as `resumed #N(conflict 1/1)`.
-  An issue carrying the deploy-wait
-  label (`deploy-wait`) never emits this event even once the window passes (#217) — it
-  goes to `note` below instead.
-- `escalated` — the resume cap (`LADDER_RESUME_LIMIT` when `reason` is `ladder`,
-  `CONFLICT_RESUME_LIMIT` when `conflict`) was exceeded, so the issue was
-  escalated to `hold:policy` (`attempt`/`limit` are the resumes the marker comments actually
-  recorded vs. the cap — read as `2/2` / `1/1`). The script already applied the label, so with
-  **no further action** list it under `escalated` in ④ Report with the reason
-  (`escalated #N(conflict, hold:policy)`) for a human to see.
-  **PR axis** (`number` is `null` and `pr` is set, #345 bounce): a `hold:conflict` on a PR
-  with no open linked issue (`closeout-blocked - <pr>`, or the references closed after the
-  hold) — there is no issue to dispatch a resume worker on (the same fact as #421), so the
-  sweep escalated it to `hold:policy` right after the window and `attempt`/`limit` read
-  `0/0` (zero resumes, cap zero). Also **no further action** — once the next window passes
-  the same sweep's PR-only re-review emits `policy_review_due` (`pr` axis), whose only
-  disposition is `policy-kept` per the bullet below. In ④ Report write
-  `escalated PR #N(conflict, hold:policy)`.
-- `warn` — another stop the sweep may not clear (`needs-human`, or another `hold:*` —
-  policy still owes its one re-review) coexisting with the hold, so it is not an
-  auto-resume target (a `needs-human` next to `hold:conflict` is a `note` instead); a race against human edits; a failure **before** any write; or a
-  **listing/search cap hit** (the `--limit 200` window filled, so truncated issues are
-  invisible this tick — repeated hits mean it is time to narrow scope with `.loop/repos`;
-  a `repo` of `*` means the account-wide search). The script did **not** touch it —
-  **do not touch it either**; copy it verbatim into ④ Report's warns.
-- `note` — an informational line the script did **not** touch (a `needs-human` with no reason
-  label — a stop a human set by hand, which is **normal** (#244); the same on a deploy-wait
-  issue, which says so in its own wording; a deploy-wait issue's `hold:ladder` (#217, not a resume/
-  escalation target even once the window passes); or a `hold:conflict` a human took over
-  (`full-cycle`) or parked with `needs-human` (#345) — a **normal state** with nothing to act
-  on). It is not a warn, so it does not go into ④ Report's warns — if it is worth reporting at all,
-  carry it as an info line only. The boundary between the three channels is per
-  `references/loop-conventions.md` §2.
-- `warn_after_edit` — a side failure **after** a write was already applied (label-release
-  failure · escalate/resume readback lookup failure or mismatch · **linked-PR mirror label
-  release failure**, whose message names `PR #<number>`). The
-  resume/escalation itself may have happened, so do not revert; copy it into ④ Report's warns
-  tagged `(edit applied)` — next tick's loop-status shows the actual label state.
+  (attaches `hold:policy` plus the question comment on both the issue and the PR). If the transition exits
+  non-zero, act per `references/state-machine.md` 「전이 실패의 공통 규칙」 — leave one line
+  `BLOCKED: transition failed runner-held #<number>(exit N)` in ④ Report; the next tick re-emits the same event.
+  Report one warn line `미러 상한 #<pr>` in ④ (rationale §10).
+- `resumed` — the hold (`reason` field: `ladder` → `hold:ladder`, `conflict` → `hold:conflict`, #345) is off and
+  `agent-ready` is untouched. **Nothing for the dispatcher to do** — the issue reappears naturally as an
+  `eligible-issues.sh` candidate in ③ this tick (for a conflict resume, the "If the issue was resumed" item in ③
+  inlines the hold note and the rebase instruction). Record the number with `reason` and `attempt` under `resumed`
+  in ④ Report, as `resumed #N(conflict 1/1)`. An issue carrying the deploy-wait label goes to `note` below instead
+  of this event (#217).
+- `escalated` — the resume cap (`LADDER_RESUME_LIMIT` when `reason` is `ladder`, `CONFLICT_RESUME_LIMIT` when
+  `conflict`) was exceeded, so the issue was escalated to `hold:policy` (`attempt`/`limit` are the resumes spent
+  vs. the cap — read as `2/2` / `1/1`). The script already applied the label, so with **no further action** list it
+  under `escalated` in ④ Report with the reason (`escalated #N(conflict, hold:policy)`) for a human to see.
+  **PR axis** (`number` is `null` and `pr` is set, #345 bounce) is also **no further action**
+  (`attempt`/`limit` read `0/0`) — write `escalated PR #N(conflict, hold:policy)` in ④ Report (rationale §10).
+- `warn` — another stop coexisting with the hold (`needs-human` or another `hold:*`; a `needs-human` next to
+  `hold:conflict` is a `note` instead) · a race against human edits · a failure **before** any write · a
+  **listing/search cap hit** (`--limit 200`). The script did **not** touch it — **do not touch it either**; copy
+  it verbatim into ④ Report's warns (rationale §10).
+- `note` — an informational line the script did **not** touch (a `needs-human` with no reason label; the same on a
+  deploy-wait issue; a deploy-wait issue's `hold:ladder` (#217); or a `hold:conflict` a human took over
+  (`full-cycle`) or parked with `needs-human` (#345) — a **normal state** with nothing to act on). It is not a
+  warn, so it does not go into ④ Report's warns — if it is worth reporting at all, carry it as an info line only.
+  The boundary between the three channels is per `references/loop-conventions.md` §2.
+- `warn_after_edit` — a side failure **after** a write was already applied (label-release failure · escalate/resume
+  readback lookup failure or mismatch · **linked-PR mirror label release failure**, whose message names
+  `PR #<number>`). The resume/escalation itself may have happened, so do not revert; copy it into ④ Report's warns
+  tagged `(edit applied)`.
 - `policy_review_due` — an issue parked with `hold:policy` for longer than `RESUME_AFTER_MIN` that
   has not been re-reviewed yet (#155). **The dispatcher judges it once**: re-read the one-line
   question in the issue's `<!-- hold-note: policy -->` comment; if the answer can be found in the
@@ -398,14 +238,9 @@ so it is a brake a human put there by hand. Per event:
   and the issue (#244 — the only place the loop attaches it; `hold:policy` stays as the reason),
   and **only after that transition ends with exit 0 `ok`** leave
   `재심: 사람 몫 유지 — <one-line reason> <!-- policy-review: kept --><!-- bodat:worker -->`.
-  **The order is the contract** (#244): the marker *is* "re-review done", so posting it first
-  means a dead transition still folds the issue to `reviewed` on the next tick — `needs-human`
-  is never attached, the issue keeps only `hold:policy`, and **nobody ever asks again** (a human
-  decision sealed out of the needs-human column).
+  **The order is the contract** (#244, rationale §11).
   If the transition exits non-zero, **do not post the marker comment**; leave one line
-  `BLOCKED: 전이 실패 policy-kept #<issue>(exit N)` in ④ Report instead — with no marker the next
-  sweep **emits the same issue again** as `policy_review_due`. `policy-kept` only adds labels and
-  is idempotent, so re-running it *is* the recovery. What each exit code means and what to do
+  `BLOCKED: 전이 실패 policy-kept #<issue>(exit N)` in ④ Report instead. What each exit code means and what to do
   about it lives in `references/state-machine.md` 「전이 실패의 공통 규칙」 — not restated here.
   The one thing specific to this spot is the **marker disposition**: on exit 0 post the marker,
   on non-zero do not (the next sweep re-emits the re-review). **Only an issue whose
@@ -413,27 +248,19 @@ so it is a brake a human put there by hand. Per event:
   `re-reviewed N (resumed n · kept m)`.
   **A PR-only hold always ends as "kept human"** (#395 → #421). The event's `pr` field splits the
   axes: a filled `pr` with `number` = `null` is the `hold:policy` of a **PR with no open linked
-  issue** (`verify-held`/`closeout-blocked` called with `-` in the `<issue>` slot, or every
-  referenced issue already closed). The question (`<!-- hold-note: policy -->`) lives on that PR, so
-  read it there — but **do not resume, even when the plan answers it**: verify-runner ④ nails
-  "no linked issue" down as a **human** case (which issue to attach is a human decision), and on
-  this axis a resume has **no consumer**: calling `verify-redispatch` with `-` in the `<issue>`
-  slot leaves only `flow:agent-ready` on the PR, while `eligible-issues.sh` dispatches **issues**
-  only and `verify-eligible.sh` requires `flow:verify`/`verifying` — no lane ever picks it up and
-  the PR is orphaned for good. So this axis has exactly one disposition: run
+  issue**. The question (`<!-- hold-note: policy -->`) lives on that PR, so read it there — but
+  **do not resume, even when the plan answers it** (rationale §12). So this axis has exactly one disposition: run
   `$SCRIPTS/transition.sh policy-kept <repo> - <pr>` (the issue argument of the transition is `-`)
   and **only after it ends with exit 0 `ok`** leave `재심: 사람 몫 유지 — 연결 이슈 없음 — 사람이
   이슈를 연결하거나 PR 을 닫는다 <!-- policy-review: kept --><!-- bodat:worker -->` on **that PR**
   via `gh pr comment <pr>` (order, marker and non-zero disposition are letter-for-letter the same
   as above — on non-zero post no marker and leave `BLOCKED: 전이 실패 policy-kept #<PR>(exit N)`).
-  Count it in ④ Report's `kept m`. A PR that *does* have an **open** linked issue never produces
-  this event — the issue axis already emitted it (no duplicates).
+  Count it in ④ Report's `kept m`.
 - `waiting` — still inside the window. Pass over it quietly (no reporting needed).
-- exit 2 — a listing failed for some repos (the rest were processed normally), or the
-  account-wide search failed. Leave one warn line `resume-sweep 부분 실패(레포 조회)` in
-  ④ Report.
-- exit 64 — `RESUME_AFTER_MIN` / `LADDER_RESUME_LIMIT` / `CONFLICT_RESUME_LIMIT` is not an integer (it stops before any
-  write). The sweep does not run at all until the constant is fixed, so raise it as a warn.
+- exit 2 — a listing failed for some repos (the rest were processed normally), or the account-wide search failed.
+  Leave one warn line `resume-sweep 부분 실패(레포 조회)` in ④ Report.
+- exit 64 — `RESUME_AFTER_MIN` / `LADDER_RESUME_LIMIT` / `CONFLICT_RESUME_LIMIT` is not an integer (it stops before
+  any write). The sweep does not run at all until the constant is fixed, so raise it as a warn.
 
 ## ② Maintain — finish what you started first
 
@@ -454,168 +281,119 @@ axes alone** (`rung`·`stage`·`stop`) and raise one warn line in ④ Report,
 (verify-runner / closeout / resume-sweep / a human).
 Where the script does **not** emit a `verdict:` axis is exactly the old skip list —
 PRs labeled `flow:verify`, `verifying`, `harvesting`, `flow:claimed` or `flow:agent-ready`
-(#275·#420 — owned by verify-runner / closeout / the worker lane, so promoting on `🔄` alone
-would take a live worker's PR away), plus the stop (H:*) and terminal (E) rows.
-**On exit 2 (lookup failed) skip this PR's correction** — never guess the state. The initial
-CI/implementation stage has no PR yet and is visible only as the issue's `agent:claimed`
-(`flow:ci` appears only on PRs whose local CI is being re-run).
+(#275·#420), plus the stop (H:*) and terminal (E) rows.
+**On exit 2 (lookup failed) skip this PR's correction** — never guess the state.
+(Why those lanes are skipped: rationale §13.)
 
 **Circuit breaker — common to every maintenance dispatch in 1–3 below**:
 read the attempt count with `N=$($SCRIPTS/attempt-counter.sh <repo> <pr> repair-count)`
 (`0` when the marker is absent; **exit 2 = lookup failed → skip this PR's repair for
 this tick**, since reading it as 0 would reset the cap, #444).
-If N ≥ `MAX_REPAIRS_PER_PR`, **do not dispatch a repair** — attach the
-`hold:policy` label to the PR and the issue with
-`$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy --note "<one-line question>"` and surface it as a
-warn in ④ Report (a machine stop carries the reason label only, #244). If N is below the cap, dispatch the maintenance agent and at
-the same time bump the counter with
-`$SCRIPTS/attempt-counter.sh <repo> <pr> repair-count --bump`
-(the script rewrites the marker, appends it at the end when absent, and leaves the
-rest of the body untouched. **On exit 2 the count did not go up** — skip that dispatch
-and leave one warn line in ④ Report). Even when
-several of the causes 1–3 apply to the same PR, dispatch **one maintenance agent
-per PR per tick** — merge all repair instructions into that single agent's
-prompt, and increment N by exactly 1 per dispatch.
+If N ≥ `MAX_REPAIRS_PER_PR`, **do not dispatch a repair** — attach the `hold:policy` label to the PR and the issue
+with `$SCRIPTS/transition.sh runner-held <repo> <num> <pr> --reason policy --note "<one-line question>"` and
+surface it as a warn in ④ Report (a machine stop carries the reason label only, #244). If N is below the cap,
+dispatch the maintenance agent and at the same time bump the counter with
+`$SCRIPTS/attempt-counter.sh <repo> <pr> repair-count --bump` (the script rewrites the marker, appends it at the
+end when absent, and leaves the rest of the body untouched. **On exit 2 the count did not go up** — skip that
+dispatch and leave one warn line in ④ Report). Even when several of the causes 1–3 apply to the same PR, dispatch
+**one maintenance agent per PR per tick** — merge all repair instructions into that single agent's prompt, and
+increment N by exactly 1 per dispatch.
 
-1. `failing > 0` → inspect the failure logs (gh run view --log-failed); if it
-   looks like a flake, re-run (gh run rerun); if it is a real failure, dispatch a
-   **maintenance agent** in the background using the worker template file
-   `~/.claude/skills/issue-runner/references/worker-template.en.md` (read and
-   filled the same way as ③-4d; if the worktree is gone,
-   `$SCRIPTS/make-worktree.sh` recreates it on top of the remote branch). Replace
-   the template's "Procedure" with the concrete repair instructions, but keep
-   everything else (compound commands, push discipline, prohibitions).
-2. Unresolved review comments → in the same way, instruct a maintenance agent to
-   resolve the comments. However, status comments left by the worker itself
-   (starting with `Merge verdict:`/`머지 판정:` or `Verifier review:`/`검증자 리뷰:`)
-   are not review comments — do not count them as repair triggers.
-3. Conflict with base → **no longer rebase here** — conflict-rebase ownership was
-   transferred to closeout (closeout ③ step 2 rebases and merges directly after
-   taking the `harvesting` occupation). issue-runner leaves conflict PRs untouched
-   and defers to the next closeout tick. Still count them as in-flight since they
-   are unfinished (③ backpressure stays).
-4. CI green + no unresolved review comments → **leave it alone.** Either it is
-   waiting for human review, or the worker died before writing the final
-   `Merge verdict: ✅` (**lost finish**). Lost-finish recovery (closing out PRs that
-   reached verification / re-dispatching PRs that died before verifying) is owned by
-   the **closeout ①-b stuck-PR sweep** (which consumes `finish-classify.sh`).
-   issue-runner does **not** append final verdicts on behalf of lost-finish PRs or
-   re-dispatch completion agents — the finish logic is unified into the closeout
-   loop rather than loaded onto this one (role split). Only the flow-label
-   correction (rule 0) is kept, to leave self-describing PR lists and a supplementary
-   signal for the closeout sweep.
+1. `failing > 0` → inspect the failure logs (gh run view --log-failed); if it looks like a flake, re-run
+   (gh run rerun); if it is a real failure, dispatch a **maintenance agent** in the background using the worker
+   template file `~/.claude/skills/issue-runner/references/worker-template.en.md` (read and filled the same way as
+   ③-4d; if the worktree is gone, `$SCRIPTS/make-worktree.sh` recreates it on top of the remote branch). Replace
+   the template's "Procedure" with the concrete repair instructions, but keep everything else (compound commands,
+   push discipline, prohibitions).
+2. Unresolved review comments → in the same way, instruct a maintenance agent to resolve the comments. However,
+   status comments left by the worker itself (starting with `Merge verdict:`/`머지 판정:` or
+   `Verifier review:`/`검증자 리뷰:`) are not review comments — do not count them as repair triggers.
+3. Conflict with base → **no longer rebase here** — conflict-rebase ownership was transferred to closeout
+   (closeout ③ step 2 rebases and merges directly after taking the `harvesting` occupation). issue-runner leaves
+   conflict PRs untouched and defers to the next closeout tick. Still count them as in-flight since they are
+   unfinished (③ backpressure stays).
+4. CI green + no unresolved review comments → **leave it alone.** Either it is waiting for human review, or the
+   worker died before writing the final `Merge verdict: ✅` (**lost finish**). Lost-finish recovery is owned by the
+   **closeout ①-b stuck-PR sweep** (which consumes `finish-classify.sh`). issue-runner does **not** append final
+   verdicts on behalf of lost-finish PRs or re-dispatch completion agents. Only the flow-label correction (rule 0)
+   is kept (rationale §13).
 
 A `harvesting` event = closeout is in progress → **leave it alone** (no repair, rebase, or review-comment resolution). closeout merges/cleans it up.
 
 ## ③ Dispatch — only as many as there are free slots
 
-1. Compute in-flight: the count of ①'s `working` + whatever this tick sent
-   into ② + **red PRs** (`pr_open` with failing CI or unresolved review comments =
-   targets of ② 1–2; plus conflicts = closeout's transferred responsibility but still
-   counted as backpressure since unfinished). **PRs that are CI green with no
-   comments (② 4, waiting for human review) do not occupy a slot** — they are
-   dormant with nothing for an agent to do, so they must not block new work.
+1. Compute in-flight: the count of ①'s `working` + whatever this tick sent into ② + **red PRs** (`pr_open` with
+   failing CI or unresolved review comments = targets of ② 1–2; plus conflicts = closeout's transferred
+   responsibility but still counted as backpressure since unfinished). **PRs that are CI green with no comments
+   (② 4, waiting for human review) do not occupy a slot.** **`flow:verify`/`verifying` PRs do not occupy a slot
+   either** — they are verify-runner's, so they are excluded from in-flight (rationale §14).
    `slots = MAX_AGENTS - in-flight`. If slots ≤ 0, skip this phase.
-   **Backlog backpressure — judged per repo** (#362): count open PRs (regardless of
-   state) for each repo in scope —
+   **Backlog backpressure — judged per repo** (#362): count open PRs (regardless of state) for each repo in scope —
    `for r in <scope repos>: gh pr list --repo $r --state open --limit 100 --json number --jq length`.
-   A repo at or above `MAX_OPEN_PRS` has **only its own issues** skipped among the ③-2
-   candidates; candidates from repos under the cap dispatch normally (the summed cap let
-   one repo's backlog starve the other repos' queues). For each repo at the cap raise one
-   `머지 대기 적체 <repo> N개` ("merge backlog <repo> N") warn line in ④ Report (`<repo>` is ④'s repo short name —
-   runner·bodat; repos under the cap are not listed. Maintenance keeps running in ②).
+   A repo at or above `MAX_OPEN_PRS` has **only its own issues** skipped among the ③-2 candidates; candidates from
+   repos under the cap dispatch normally. For each repo at the cap raise one `머지 대기 적체 <repo> N개`
+   ("merge backlog <repo> N") warn line in ④ Report (`<repo>` is ④'s repo short name — runner·bodat; repos under
+   the cap are not listed. Maintenance keeps running in ②).
 2. Run `$SCRIPTS/eligible-issues.sh` → priority-sorted candidates (**stdout**).
    **Carry its stderr `blocked:` / `blocked-summary:` / `warn:` lines into ④ Report** (#247) —
    which channel goes where, and why, is per `references/loop-conventions.md` §3.
-3. **LLM judgment (only toward picking less)**: if two or more candidates look
-   like they will touch the same repo and the same module, pick only one this
-   tick. If you cannot tell, pick it (a conflict gets resolved by the next tick's
-   rebase).
+3. **LLM judgment (only toward picking less)**: if two or more candidates look like they will touch the same repo
+   and the same module, pick only one this tick. If you cannot tell, pick it (a conflict gets resolved by the next
+   tick's rebase).
 4. For up to `slots` candidates in priority order:
-   a. `$SCRIPTS/claim-issue.sh <repo> <num>` — on failure (already claimed, lost
-      the lock race, etc.) move on to the next candidate. Before touching labels
-      the helper takes a create-only lock ref
-      (`refs/issue-runner/claim/<num>/<anchor>`) — label writes are idempotent and
-      therefore cannot serve as a lock on their own (#108). Two loop sessions
-      racing for the same issue leave exactly one winner. When a previous attempt
-      died without committing and only its lock remains, the helper takes over by
-      creating `<anchor>-takeover` (a sibling — a child path is impossible due to
-      git's ref D/F conflict) — also create-only, so that race likewise
-      leaves one winner and atomicity holds on the stale-takeover path too. If the
-      taking-over worker also dies without committing, that anchor is wedged — only
-      then does a human clear it: list with `gh api
-      repos/<repo>/git/matching-refs/issue-runner/claim/<num> -q '.[].ref'` and delete
-      via `gh api -X DELETE repos/<repo>/git/refs/<ref minus the leading refs/>`.
-   b. `$SCRIPTS/make-worktree.sh <repo> <num>` — the last output line is the
-      worktree path. Secret symlinks (`.env`, `config/master.key`) are off by
-      default — they appear only in repos that opt in via `link-secrets` in
-      `repos.conf` (#109). In repos without it, credential-dependent tests are
-      reported as **skipped**, not failed.
-   c. If the `.loop/lessons.md` under the path output by `$SCRIPTS/repo-dir.sh
-      <repo>` (= `<repo-dir>/.loop/lessons.md`, same interpretation as the record
-      path) exists, read its contents.
-   d. Right before dispatching, read
-      `~/.claude/skills/issue-runner/references/worker-template.en.md`, fill the
-      placeholders (`<WT_PATH>` `<REPO>` `<NUM>` `<TITLE>` `<DEFAULT_BRANCH>`
-      `<REPO_DIR>` `<VERIFIER>` `<LESSONS_OR_"none">`), and dispatch it (background
-      Agent tool call — the call signature is at the top of the template file). Fill
-      `<DEFAULT_BRANCH>` from
-      `gh repo view <repo> --json defaultBranchRef -q .defaultBranchRef.name`.
-      Fill `<REPO_DIR>` with the output of `$SCRIPTS/repo-dir.sh <repo>` (the main
-      checkout's absolute path) — the worker's codegraph exploration (`-p`) reads
-      the index at this path.
-      Fill `<VERIFIER>` from ## Constants with the fallback rule applied
-      (`general-purpose` if codex is not installed).
-      Instead of a codex verifier, the worker **nests one self-review pre-reviewer
-      (`general-purpose`) before opening its PR** (template step 9-b — non-gating, fail-open,
-      one round; outcome recorded in the PR body's `## Pre-review` section). Nothing for the
-      dispatcher to do — the worker waits on the reviewer with a blocking `TaskOutput`, so the
-      stream count is +1 only for that window and `MAX_AGENTS` stays as is. Copy the worker exit
-      report's `pre-review: <value>` line into ④ Report (absence is a line too) — measure the
-      effect by verify-runner bounces (`재검증 실패:` comments) / the share of reviews that
-      actually ran (CLEAN or findings).
-      **If the issue was resumed, inline two more things in the prompt.** If any **comment**
-      carries the marker `<!-- ladder-resume: N -->`, the issue was revived by ①'s resume
-      sweep, and the number of such comments is which resume this is (the body has no marker —
-      the sweep never touches it):
-      (quoted markers do not count — a marker inside inline backticks or a code fence is not
-      the signal but prose *about* the signal, so it is stripped first, with the **same
-      definition** as `JQ_UNQUOTE` in `resume-sweep.sh`. If the two drift apart, a second
-      invisible counter counts a different number — #197. **The lookup is shared too** (#397):
-      `gh issue view --json comments` returns only the first 100, so on a chatty issue this spot
-      would count differently from the (paginated) sweep — read the full set with
-      `pr-comments.sh`. Its output is an **array**, not `{comments:[…]}`, hence `.[]`.)
+   a. `$SCRIPTS/claim-issue.sh <repo> <num>` — on failure (already claimed, lost the lock race, etc.) move on to
+      the next candidate. Before touching labels the helper takes a create-only lock ref
+      (`refs/issue-runner/claim/<num>/<anchor>`) (#108). When a previous attempt died without committing and only
+      its lock remains, the helper takes over by creating `<anchor>-takeover`, also create-only. If the
+      taking-over worker also dies without committing, that anchor is wedged — only then does a human clear it:
+      list with `gh api repos/<repo>/git/matching-refs/issue-runner/claim/<num> -q '.[].ref'` and delete via
+      `gh api -X DELETE repos/<repo>/git/refs/<ref minus the leading refs/>` (rationale §14).
+   b. `$SCRIPTS/make-worktree.sh <repo> <num>` — the last output line is the worktree path. Secret symlinks
+      (`.env`, `config/master.key`) are off by default — they appear only in repos that opt in via `link-secrets`
+      in `repos.conf` (#109). In repos without it, credential-dependent tests are reported as **skipped**, not
+      failed.
+   c. If the `.loop/lessons.md` under the path output by `$SCRIPTS/repo-dir.sh <repo>`
+      (= `<repo-dir>/.loop/lessons.md`, same interpretation as the record path) exists, read its contents.
+      **Do not read `.loop/lessons-verifier.md`** — it is the verifier's casebook, irrelevant to an implementation
+      worker and it only inflates the prompt (see the routing item in ①).
+   d. Right before dispatching, read `~/.claude/skills/issue-runner/references/worker-template.en.md`, fill the
+      placeholders (`<WT_PATH>` `<REPO>` `<NUM>` `<TITLE>` `<DEFAULT_BRANCH>` `<REPO_DIR>` `<VERIFIER>`
+      `<LESSONS_OR_"none">`), and dispatch it (background Agent tool call — the call signature is at the top of the
+      template file). Fill `<DEFAULT_BRANCH>` from
+      `gh repo view <repo> --json defaultBranchRef -q .defaultBranchRef.name`. Fill `<REPO_DIR>` with the output of
+      `$SCRIPTS/repo-dir.sh <repo>` (the main checkout's absolute path) — the worker's codegraph exploration (`-p`)
+      reads the index at this path. Fill `<VERIFIER>` from ## Constants with the fallback rule applied
+      (`general-purpose` if codex is not installed). Copy the worker exit report's `pre-review: <value>` line into
+      ④ Report (absence is a line too) — the nested pre-reviewer (template step 9-b) needs nothing from the
+      dispatcher (rationale §14).
+      **If the issue was resumed, inline two more things in the prompt.** If any **comment** carries the marker
+      `<!-- ladder-resume: N -->`, the issue was revived by ①'s resume sweep, and the number of such comments is
+      which resume this is. Quoted markers do not count, and the full comment set is read with `pr-comments.sh`
+      (rationale §14):
 
       ````sh
       $SCRIPTS/pr-comments.sh <repo> <num> | jq 'def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " "); [.[] | select(.body|unquoted|test("<!--\\s*ladder-resume:\\s*[0-9]+\\s*-->"))] | length'
       ````
 
       After the filled template, append ⓐ the ladder document's path
-      `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (where the
-      worker reads which rung is climbed with which command) and ⓑ **the previous attempt's
-      failure output** — the body of the issue's last ladder-related comment:
+      `~/.claude/skills/issue-runner/references/live-verification-ladder.md` (where the worker reads which rung is
+      climbed with which command) and ⓑ **the previous attempt's failure output** — the body of the issue's last
+      ladder-related comment:
       `$SCRIPTS/pr-comments.sh <repo> <num> | jq -r '[.[] | select((.body|test("사다리|ladder")) and ((.body|test("^재개 "))|not))] | last.body // ""'`
-      (exclude the sweep's own `재개 N/…` comment — it is the most recent one, so without the
-      filter you would hand the worker that line instead of the failure output). Then state
-      in one line: **"Do not repeat the same failure on the same rung — start from the next
-      rung (this is resume N). If you still cannot climb it, stop with `BLOCKED:` quoting the
-      rung you tried and its failure output"** — deferring without a quote is not allowed.
+      (exclude the sweep's own `재개 N/…` comment). Then state in one line: **"Do not repeat the same failure on
+      the same rung — start from the next rung (this is resume N). If you still cannot climb it, stop with
+      `BLOCKED:` quoting the rung you tried and its failure output"** — deferring without a quote is not allowed.
 
-      **Conflict-resume branch (#345).** If the marker is `<!-- conflict-resume: N -->` (count
-      it with the jq above, swapping `ladder-resume` for `conflict-resume` — same `unquoted`
-      definition), ① reverted a `hold:conflict`. Instead of the ladder document, inline two
-      things for this worker:
-      ⓐ the body of the issue's **last `사람 확인(conflict):` comment** — the one-line
-      "worker resume scope" closeout ③ left via `--reason conflict --note` (#344):
+      **Conflict-resume branch (#345).** If the marker is `<!-- conflict-resume: N -->` (count it with the jq
+      above, swapping `ladder-resume` for `conflict-resume` — same `unquoted` definition), ① reverted a
+      `hold:conflict`. Instead of the ladder document, inline two things for this worker:
+      ⓐ the body of the issue's **last `사람 확인(conflict):` comment**:
       `$SCRIPTS/pr-comments.sh <repo> <num> | jq -r '[.[] | select(.body|test("^사람 확인\\(conflict\\):"))] | last.body // ""'`
       ⓑ one line of instruction: **"This branch already has an open PR. Bring it up with
-      `git fetch origin && git rebase origin/<DEFAULT_BRANCH>`, resolve the conflicts the way the
-      original intended, implement the extra work in the note, push with
-      `--force-with-lease`, and continue the existing PR (no new PR · no merge commit). If
-      you cannot merge it, stop with `BLOCKED:` quoting the conflicting files and why"**.
-      The worker template's redispatch detection (step 10) recognises this round as "the
-      issue's `사람 확인(conflict):` is **later** than the PR's last `재검증 실패:` (or there is
-      none)" and gives this inlined instruction precedence over the bounce branch.
+      `git fetch origin && git rebase origin/<DEFAULT_BRANCH>`, resolve the conflicts the way the original
+      intended, implement the extra work in the note, push with `--force-with-lease`, and continue the existing PR
+      (no new PR · no merge commit). If you cannot merge it, stop with `BLOCKED:` quoting the conflicting files and
+      why"** (rationale §14).
 
 ## ④ Report
 
@@ -624,55 +402,33 @@ One-line summary: `reconciled N · maintained N · new N · resumed N · escalat
 item carries the event's `reason` (`ladder`|`conflict`, #345);
 `blocked` is the count from the ③-2 eligible scan's `blocked-summary:` — candidates dropped
 by an OPEN blocker. Print it even when it is 0).
-Below it, **name the numbers item by item** — counts alone do not tell the next tick where
-each issue/PR went:
+Below it, **name the numbers item by item**:
 `reconciled: #4801(bodat, PR #4810 merged) · maintained: PR #4812(bodat, rebase) · new: #4818(bodat) · resumed: #4772(bodat, ladder 2/2) #5103(bodat, conflict 1/1) · escalated: #4803(bodat, ladder, hold:policy) · blocked: #4986(bodat ← #4985 needs-human) · warn: #4799(bodat) dirty worktree`.
-Copy the search-window `warn:` lines (`검색 창 절단` / `검색 창 임박`) into the warn list as
-they are — once the window fills, the **newest** issues silently drop out of the candidate
-list, so losing that signal means a dying queue looks exactly like a healthy one.
+Copy the search-window `warn:` lines (`검색 창 절단` / `검색 창 임박`) into the warn list as they are.
 Repo short names are per `references/loop-conventions.md` §6.
 If there are warns, list the paths and reasons below it.
 **Token observation (soft budget)**: if any worker delivered a completion report, add
 one line per issue — `tokens: <repo>#<num> <this report's count> (cumulative <sum>)`.
-Also copy that worker report's `pre-review: <value>` as one line `pre-review: <repo>#<num> <value>` (no line → `none` — the signal that 9-b silently dropped out). This count is subagent_tokens from the completion notification (absent → `?`, counted as 0);
+Also copy that worker report's `pre-review: <value>` as one line `pre-review: <repo>#<num> <value>` (no line → `none`). This count is subagent_tokens from the completion notification (absent → `?`, counted as 0);
 cumulative = the same issue's `tokens:` figures from previous tick Reports visible in
 context + this count (none visible → just this count). If it exceeds `SOFT_TOKEN_BUDGET_PER_ISSUE`,
 state **"soft budget exceeded — recommend escalating to needs-human"** on that line (report only — never auto-label or stop workers).
-If every count is 0, output the single line "quiet" — `blocked N` is one of those counts.
-A tick with blocked issues is not a quiet tick (that silence is why the item exists).
+If every count is 0, output the single line "quiet" — `blocked N` is one of those counts (rationale §15).
 
 **Pipeline snapshot (required every tick).** After the lines above, run
 `$SCRIPTS/loop-status.sh --post issue-runner --delta "<this tick's one-line summary>"` and paste its
 output verbatim — the pasting discipline (no `cd` · even on a quiet tick) and the exit 1·64 handling
 are per `references/loop-conventions.md` §7.
-Even on a quiet tick, **run the eligible scan of ③ Dispatch (eligible-issues.sh)
-every tick** — new agent-ready issues create no reconcile events, so skipping the
-eligible scan makes quiet mode permanently blind to new candidates (on an empty
-queue it is a single search/issues call, so the cost is negligible).
+Even on a quiet tick, **run the eligible scan of ③ Dispatch (eligible-issues.sh) every tick** (rationale §15).
 If eligible is empty and reconcile is also quiet, report the single line "quiet" and stop.
 
 ## References
 
 Non-operational notes — they do not affect tick execution.
 
-- Prerequisite: this loop works **only on GitHub** — issues, labels, assignees, and
-  PRs are the single source of truth for loop state, and GitHub Actions is not
-  required (the local-ci design). See README, Prerequisites, for required permissions.
-- Install model: as an account-wide dispatcher, the skill is installed at the user
-  level (`~/.claude/skills`), while per-repo participation is a separate label
-  opt-in (`setup-labels.sh`) — see README, Install.
-- Running loops in parallel: if the session cwd has a `.loop/repos` allowlist,
-  collection (eligible) and inspection (reconcile) are restricted to those repos —
-  for per-project loop sessions; without the file, the whole account is in scope.
-  The scripts apply this automatically, so the tick has nothing extra to do
-  (see README, Usage).
-- Recommended companion: [codegraph](https://github.com/colbymchenry/codegraph) —
-  when a repo has a `.codegraph/` index, workers explore existing code via index
-  queries instead of repeated grep/Read scans, cutting tokens and tool calls.
-  Opt-in per repo with `codegraph init` — the loop works fine without it
-  (see README, Prerequisites).
-- Sources consulted for the design: [Keep Claude working toward a goal — official Claude Code docs](https://code.claude.com/docs/en/goal) ·
-  [loop-engineering discourse (YouTube)](https://www.youtube.com/watch?v=EH2MMQTaPEA) ·
-  [Reddit discussion](https://www.reddit.com/r/myclaw/comments/1u047p8/so_is_loop_engineering_the_next_ai_dev_buzzword/) ·
-  [agent loop internals analysis](https://internals.laxmena.com/p/why-claude-codes-agent-loop-is-over) ·
-  [Rails 8.1 release notes — origin of the `bin/ci` convention](https://guides.rubyonrails.org/8_1_release_notes.html)
+- Design history and rationale, plus the sources consulted for the design:
+  `references/issue-runner-rationale.md` (#454, Korean only) — the target of the `(rationale §N)` markers above.
+- Prerequisite: this loop works **only on GitHub** — issues, labels, assignees, and PRs are the single source of
+  truth for loop state, and GitHub Actions is not required (the local-ci design). Required permissions, the
+  install model (user-level global install + per-repo label opt-in via `setup-labels.sh`), running loops in
+  parallel (the `.loop/repos` allowlist) and the codegraph companion are in the README and in rationale §15.
