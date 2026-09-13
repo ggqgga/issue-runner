@@ -99,6 +99,13 @@ closeout 세 SKILL(한/영)과 `references/worker-template.md` 는 아래 규약
   3. 그 외 **빈 값**(fail-closed) — finish-classify 는 claim 증거 없음(`none`), closeout-eligible·
      verify-eligible 은 `issue` 빈 문자열, pr-state 는 `-`(이슈 축 없음)로 받는다.
 
+- **정지 미러(stop 축)도 같은 규칙이다(#517).** `scripts/pr-state.sh` 의 `stop:` 축·`scripts/resume-sweep.sh`
+  ④ 정지 미러 정리(`mirror_row`)·`scripts/loop-status.sh` 의 정지 미러 warn 은 짝을 위 `linked_issue`
+  (규칙 1→2→3, refs 1건 폴백 **포함**)로 고른다 — 정지 미러를 붙인 전이(verify-held·closeout-blocked)가
+  이슈를 고르는 자리(verify-eligible·closeout-eligible)와 같은 술어여야 붙인 곳과 떼는 곳이 같은 이슈를
+  본다. resume-sweep·loop-status 는 그 앞에 **head 가 `agent/issue-*` 인 PR 만** 후보로 거른다(루프가
+  판 브랜치만 뗀다 — 짝짓기가 아니라 후보 필터, #188).
+
   네 소비자 어디서도 `[0]` 을 쓰지 않는다(`loop-status.sh` 의 `linked()` 는 대시보드라 `[0]`·head
   폴백 꼬리를 유지한다 — 판정이 아니라 표시다) — GitHub 이 본문의 `Closes` 를 만난 순서일 뿐이라, 닫는 이슈가
   둘 이상인 묶음 디스패치에서는 "이 PR 이 이 이슈 한 쌍으로 붙었다" 를 증명하지 못한다
