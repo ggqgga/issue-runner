@@ -92,6 +92,16 @@ def hold_labels:  map(select(is_hold_label));
 def owner_labels: map(select(is_owner_label));
 def stage_labels: map(select(startswith("flow:")));
 
+# ── 보류 conflict 가 자동 재개 대상인가 (#346 반송 P2) ─────────────────────
+# 입력은 `hold:` **접미** 배열(loop-status 의 `holds_of` 출력 — `["conflict","policy"]` 꼴).
+# resume-sweep.sh 의 `sweep_issue … conflict` 는 `hold:policy`·`hold:ladder` 가 함께 붙어 있으면
+# 재개를 거부한다(other_hold 가드 — 라벨을 떼면 다른 사유가 조용히 사라진다). 그 건에 대시보드가
+# `n/상한` 을 그리면 아무도 채우지 않을 진행률이라, 횟수/상한 병기와 그 코멘트 조회는 이 술어가
+# 참인 **단독** conflict 에만 붙는다. 술어는 스윕의 거부 조건을 그대로 뒤집은 것 —
+# conflict ∧ ¬policy ∧ ¬ladder (needs-human·full-cycle 동존은 버킷 자체가 needs-human 이라 여기 안 온다).
+def conflict_resumable_holds:
+  (index("conflict") != null) and (index("policy") == null) and (index("ladder") == null);
+
 # ── 레포 짧은 이름 ──────────────────────────────────────────────────────────
 # `owner/repo` → repo 부분 소문자. `issue-runner` 만 `runner` 특례(화면 폭).
 def short_repo:

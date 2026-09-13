@@ -96,9 +96,11 @@
 #                  이슈들이 전부 `대기`(= 집을 수 있는 이슈) 로 떨어져, needs-human 칸이
 #                  "손댈 게 없는 것" 으로 찼던 오류의 **반대 방향**이 된다.
 #                  괄호는 needs-human 과 같은 꼴로 **사유 병기** — `#4772(ladder)`.
-#                  `conflict` 는 사유 뒤에 **재개 횟수/상한**을 잇는다(#346) — `#43(conflict, 0/1)`
+#                  **단독** `conflict` 는 사유 뒤에 **재개 횟수/상한**을 잇는다(#346) — `#43(conflict, 0/1)`
 #                  (횟수 = `<!-- conflict-resume: N -->` 마커 코멘트 수, 상한 = `CONFLICT_RESUME_LIMIT`;
-#                  재개 스윕이 같은 마커·같은 상수로 승격을 판정한다). 조회는 needs-human 의
+#                  재개 스윕이 같은 마커·같은 상수로 승격을 판정한다). policy·ladder 가 동존하는
+#                  conflict 는 스윕이 재개를 거부하므로 사유만 찍는다 — `#35(conflict, policy)`
+#                  (술어 `conflict_resumable_holds`, lib/loop.jq). 조회는 needs-human 의
 #                  질문(hold-note) 조회와 **같은 경로**(`gh issue view --json comments` · 같은 상한
 #                  `HOLD_NOTE_MAX` · 같은 3상태)를 타되, 보류 conflict 이슈마다 그 왕복이 **1회씩
 #                  순증**한다(한 이슈는 한 버킷이라 질문 조회와 겹치지 않는다). 상한은 질문 후보
@@ -1152,12 +1154,15 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
       # 보류 (#244) — `hold:*` 가 있고 `needs-human` 이 없는 건(사다리 재개 대기 · 정책 재심 전 ·
       # 충돌 재개 대기 #345). 표기는 needs-human 과 같은 꼴로 **사유를 병기**한다 — `#4772(ladder)`.
       # 사유가 없으면 이 버킷에 올 수 없다(판별 조건 자체가 `hold:*` 존재다), 그래서 `사유 없음`
-      # 갈래가 없다. `conflict` 는 사유 뒤에 **재개 횟수/상한**을 잇는다(#346) — `#43(conflict, 0/1)`:
+      # 갈래가 없다. **단독** `conflict` 는 사유 뒤에 **재개 횟수/상한**을 잇는다(#346) — `#43(conflict, 0/1)`:
       # 횟수는 셸 패스가 같은 코멘트 조회에서 센 `$conflictcount`(마커 코멘트 수), 상한은
       # `CONFLICT_RESUME_LIMIT`. 못 센 건(`$countunknown`)은 횟수를 **생략**한다 — `0/1` 은
       # "0회 재개됐다" 는 주장이라 모르는 채로 찍을 수 없다(질문 없음 과 같은 3상태 규율).
+      # policy·ladder 가 **동존**하는 conflict 는 상한 없이 사유만 찍는다(`#35(conflict, policy)`) —
+      # resume-sweep 이 그 건의 재개를 거부하므로 `0/1` 은 아무도 채우지 않을 진행률이다. 술어는
+      # `lib/loop.jq` 의 `conflict_resumable_holds` 한 자리(코멘트 조회 후보 추출과 같은 것).
       held:        bucket("held";        . as $i | pr_of($i.number) as $p
-                     | (if ($i.holds | index("conflict")) != null then $conflict_limit else null end) as $lim
+                     | (if ($i.holds | conflict_resumable_holds) then $conflict_limit else null end) as $lim
                      | (if $lim == null then null
                         else ($conflictcount | map(select(.n == $i.number)) | .[0].c) end) as $cnt
                      | (item($i; "#\($i.number)(" + ($i.holds | join(", "))
@@ -1687,7 +1692,7 @@ for repo in "${repos[@]}"; do
   #    결과는 3상태다 — 질문 있음 / 없음(`$noteless`) / **모름**(`$noteunknown`). 모름을
   #    "없음" 으로 접으면 없는 결함을 사람에게 들이밀고, "있음" 으로 접으면 진짜 결함을
   #    감춘다. 둘 다 거짓이라 모름은 모름으로 실어 warn `질문 유무 미확인` 으로 낸다.
-  # ⑵ 재개 횟수(#346): **보류 버킷**의 `hold:conflict` 에만 — `<!-- conflict-resume: N -->`
+  # ⑵ 재개 횟수(#346): **보류 버킷**의 **단독** `hold:conflict` 에만 — `<!-- conflict-resume: N -->`
   #    마커를 품은 코멘트 수(재개 스윕이 세는 것과 같은 규약 — `resume-sweep.sh` 의
   #    `count_markers`, 인용 제거 `unquoted` 는 `lib/loop.jq` 한 자리)를 `n/CONFLICT_RESUME_LIMIT`
   #    로 병기한다. 보류 conflict 는 루프가 재개할 건이라 질문이 아니라 "몇 번 남았나" 가
@@ -1699,7 +1704,9 @@ for repo in "${repos[@]}"; do
   #    (질문 없는 홀드가 더 급한 결함이다). 못 센 건(조회 실패·100건 상한·상한 초과)은
   #    `0/n` 으로 접지 않고 횟수를 생략한 채 warn `재개 횟수 미확인` 으로 낸다(`$countunknown`).
   #    ladder 는 여기서 안 센다 — 이 이슈(#346)의 요청 범위가 conflict 이고, ladder 까지
-  #    물으면 보류 칸 전체가 N+1 이 된다.
+  #    물으면 보류 칸 전체가 N+1 이 된다. policy·ladder 가 **동존**하는 conflict 도 안 센다 —
+  #    resume-sweep 이 재개를 거부하는 건이라 횟수는 필요 없는 정보이고(반송 P2), 술어는
+  #    보류 줄 렌더와 같은 `conflict_resumable_holds`(lib/loop.jq) 라 화면과 조회가 갈리지 않는다.
   noteless="[]"
   noteunknown="[]"
   conflictcount="[]"
@@ -1722,14 +1729,15 @@ for repo in "${repos[@]}"; do
   # 아래에서 정규식에 끼우는 순간 라벨이 패턴이 된다. `hold:policy`·`hold:conflict` 둘 다
   # 붙은 홀드는 어느 쪽 질문이든 질문이므로 `policy|conflict` 로 잇는다. 종류는 `note`
   # (질문 유무) | `count`(재개 횟수) — 한 이슈는 한 버킷이라 둘에 다 오는 번호는 없다.
-  cand_err=$(jq -r '(.buckets.human_wait[]
+  cand_err=$(jq -r -L "$SCRIPT_DIR/lib" 'include "loop";
+                    (.buckets.human_wait[]
                     | . as $i
                     | (["policy", "conflict"]
                        | map(. as $r | select($i.holds | index($r) != null))) as $rs
                     | select(($rs | length) > 0)
                     | "\($i.number) \($rs | join("|")) note"),
                     (.buckets.held[]
-                    | select(.holds | index("conflict") != null)
+                    | select(.holds | conflict_resumable_holds)
                     | "\(.number) conflict count")' "$tmpdir/repo.pre.json" 2>&1 > "$tmpdir/cands")
   # shellcheck disable=SC2181  # 위 대입의 종료코드를 봐야 한다(cand_err 은 stderr 만 담는다)
   if [ $? -ne 0 ]; then
