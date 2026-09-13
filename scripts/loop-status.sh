@@ -99,7 +99,10 @@
 #                  `conflict` 는 사유 뒤에 **재개 횟수/상한**을 잇는다(#346) — `#43(conflict, 0/1)`
 #                  (횟수 = `<!-- conflict-resume: N -->` 마커 코멘트 수, 상한 = `CONFLICT_RESUME_LIMIT`;
 #                  재개 스윕이 같은 마커·같은 상수로 승격을 판정한다). 조회는 needs-human 의
-#                  질문(hold-note) 조회와 **같은 코멘트 조회**를 탄다 — 새 조회를 열지 않는다.
+#                  질문(hold-note) 조회와 **같은 경로**(`gh issue view --json comments` · 같은 상한
+#                  `HOLD_NOTE_MAX` · 같은 3상태)를 타되, 보류 conflict 이슈마다 그 왕복이 **1회씩
+#                  순증**한다(한 이슈는 한 버킷이라 질문 조회와 겹치지 않는다). 상한은 질문 후보
+#                  (needs-human)부터 채우므로 넘치면 횟수 후보가 먼저 탈락한다.
 #                  못 셌으면 횟수를 생략하고 warn `재개 횟수 미확인`(3상태 — 0회와 모름은 다르다).
 #                  `질문 없음` 판정은 needs-human 줄에서만이다 — 보류의 conflict 노트는 질문이
 #                  아니라 재개 범위다(#344).
@@ -1688,9 +1691,12 @@ for repo in "${repos[@]}"; do
   #    마커를 품은 코멘트 수(재개 스윕이 세는 것과 같은 규약 — `resume-sweep.sh` 의
   #    `count_markers`, 인용 제거 `unquoted` 는 `lib/loop.jq` 한 자리)를 `n/CONFLICT_RESUME_LIMIT`
   #    로 병기한다. 보류 conflict 는 루프가 재개할 건이라 질문이 아니라 "몇 번 남았나" 가
-  #    사람에게 필요한 정보다(#344 — 노트는 질문이 아니라 재개 범위). **새 조회가 아니다** —
-  #    ⑴ 과 같은 `gh issue view --json comments` 한 왕복을 후보 집합만 넓혀 같이 탄다
-  #    (같은 상한 `HOLD_NOTE_MAX`, 같은 3상태). 못 센 건(조회 실패·100건 상한·상한 초과)은
+  #    사람에게 필요한 정보다(#344 — 노트는 질문이 아니라 재개 범위). 조회 **경로**는 ⑴ 과
+  #    같다(`gh issue view --json comments` · 같은 루프 · 같은 상한 `HOLD_NOTE_MAX` · 같은 3상태)
+  #    — 새 조회 경로를 만들지 않았다는 뜻이지 왕복이 공짜라는 뜻은 아니다: 한 이슈는 한
+  #    버킷이라 질문 후보와 겹치지 않으므로 보류 conflict 이슈마다 gh 호출이 **1회 순증**한다.
+  #    후보 순서는 질문(needs-human) → 횟수(보류) 라 상한에 닿으면 횟수 후보가 먼저 탈락한다
+  #    (질문 없는 홀드가 더 급한 결함이다). 못 센 건(조회 실패·100건 상한·상한 초과)은
   #    `0/n` 으로 접지 않고 횟수를 생략한 채 warn `재개 횟수 미확인` 으로 낸다(`$countunknown`).
   #    ladder 는 여기서 안 센다 — 이 이슈(#346)의 요청 범위가 conflict 이고, ladder 까지
   #    물으면 보류 칸 전체가 N+1 이 된다.
@@ -1727,7 +1733,7 @@ for repo in "${repos[@]}"; do
                     | "\(.number) conflict count")' "$tmpdir/repo.pre.json" 2>&1 > "$tmpdir/cands")
   # shellcheck disable=SC2181  # 위 대입의 종료코드를 봐야 한다(cand_err 은 stderr 만 담는다)
   if [ $? -ne 0 ]; then
-    echo "$SELF: $short needs-human 질문 대상 추출 실패(jq) — 질문 없음 표시를 건너뛴다: $(printf '%s' "$cand_err" | tr '\n' ' ' | cut -c1-200)" >&2
+    echo "$SELF: $short 코멘트 조회 대상 추출 실패(jq) — 질문 없음 표시·conflict 재개 횟수를 건너뛴다: $(printf '%s' "$cand_err" | tr '\n' ' ' | cut -c1-200)" >&2
     : > "$tmpdir/cands"
   fi
   if [ -s "$tmpdir/cands" ]; then
@@ -1770,10 +1776,12 @@ for repo in "${repos[@]}"; do
       if [ "$ckind" = "count" ]; then
         cstate=$(printf '%s' "$GH_OUT" | jq -r -L "$SCRIPT_DIR/lib" '
           include "loop";
-          [.comments[]? | .body // ""] as $b
+          if (has("comments") and (.comments | type == "array")) | not then "malformed" else
+          [.comments[] | .body // ""] as $b
           | if ($b | length) >= 100 then "capped"
             else ([$b[] | select(unquoted | test("<!--\\s*conflict-resume:\\s*[0-9]+\\s*-->"))] | length | tostring)
-            end' 2>/dev/null) || cstate=""
+            end
+          end' 2>/dev/null) || cstate=""
         case "$cstate" in
           capped) echo "$SELF: $short #$cand 코멘트가 조회 상한(100)에 닿아 재개 횟수를 못 셌다" >&2
                   mark_unknown "$cand" "코멘트 100건 상한" ;;
@@ -1792,12 +1800,16 @@ for repo in "${repos[@]}"; do
       # 옛 `hold-note: policy` 가 지금의 `conflict` 홀드를 "질문 있음" 으로 위장해, 이
       # 기능이 잡으라고 만들어진 상태(질문 없는 홀드)가 정확히 숨는다. `\s*` 는 생산자
       # (transition.sh)가 `hold-note: <사유>` 로 공백을 넣어 쓰기 때문에 필요하다.
+      # `comments` 키가 없거나 배열이 아닌 응답은 "코멘트 0건" 이 아니라 파싱 실패다 — 0건으로
+      # 접으면 거짓 `질문 없음`/`0/1` 이 된다(3상태 규율). 두 갈래가 같은 가드를 쓴다.
       nstate=$(printf '%s' "$GH_OUT" | jq -r --arg reasons "$creasons" '
-        [.comments[]? | .body // ""] as $b
+        if (has("comments") and (.comments | type == "array")) | not then "malformed" else
+        [.comments[] | .body // ""] as $b
         | ("<!--\\s*hold-note:\\s*(" + $reasons + ")") as $re
         | if ([$b[] | select(test($re))] | length) > 0 then "has"
           elif ($b | length) >= 100 then "capped"
-          else "none" end' 2>/dev/null) || nstate=""
+          else "none" end
+        end' 2>/dev/null) || nstate=""
       case "$nstate" in
         has)    ;;
         none)   nl_body="${nl_body}${nl_sep}${cand}"; nl_sep="," ;;
