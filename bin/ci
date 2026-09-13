@@ -260,50 +260,14 @@ for args in \
 done
 rm -rf "$tmp"
 
-echo "[closeout ① Reconcile] OPEN PR 의 사람 보류 게이트 — needs-human 을 resume 으로 태우지 않는다 (#271 ⑺)"
-# `resume` 는 `bounced` 재개 절차로 이어져 `closeout-redispatch` 를 거는데, 그 전이는
-# `needs-human`·`hold:*` 를 뗀다 — 사람이 조사하려고 방금 붙인 보류가 조용히 벗겨진다
-# (①-b 가 대상 필터로 명시 배제하는 바로 그 위험, #151).
-grep -qF 'needs-human' scripts/closeout-reconcile.sh \
-  || { echo "  ✗ closeout-reconcile.sh 의 OPEN 갈래에 needs-human 검사가 없다 (#271 ⑺)"; exit 1; }
-grep -qF 'human_hold' scripts/closeout-reconcile.sh \
-  || { echo "  ✗ closeout-reconcile.sh 에 human_hold 이벤트가 없다 (#271 ⑺)"; exit 1; }
+echo "[closeout ① Reconcile] SKILL 한/영 이벤트 목록에 human_hold 행선지가 있는가 (#271 ⑺)"
+# 스크립트가 내는 이벤트에 SKILL 쪽 목적지가 없으면 봇은 그 줄을 그냥 흘려보낸다 —
+# 사람이 붙인 보류가 아무 데도 도착하지 않고 PR 이 레인에 남는다. 판정 자체(needs-human
+# 있음/없음/미상 → human_hold·resume)는 scripts/tests/closeout-reconcile.test.sh 가 문다.
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qF 'human_hold' "$f" \
     || { echo "  ✗ $f 의 ① Reconcile 이벤트 목록에 human_hold 행선지가 없다 — 이벤트에 목적지가 없으면 봇이 무시한다 (#271 ⑺)"; exit 1; }
 done
-# 런타임 3케이스: needs-human 있음 → human_hold · 없음 → resume · 라벨 미상 → human_hold.
-# 스텁은 `gh api search/issues` 가 이미 `-q` 를 적용한 결과를 낸다고 보고 그 자리에 픽스처를
-# 꽂는다(실 gh 와 같은 계약: 이 스크립트는 `-q` 결과만 읽는다).
-hrun() {  # $1 = items JSON(스크립트가 -q 로 받는 형상)
-  tmp=$(mktemp -d); mkdir "$tmp/sc"
-  cp scripts/closeout-reconcile.sh "$tmp/sc/closeout-reconcile.sh"
-  cp -R scripts/lib "$tmp/sc/lib"   # SUT 사본이 source 하는 라이브러리 (#427)
-  cat > "$tmp/sc/gh" <<STUB
-#!/bin/sh
-case "\$*" in
-  *"api user"*) echo "tester" ;;
-  *"search/issues"*) echo '$1' ;;
-  *"pr view"*state*) echo 'OPEN' ;;
-  *) echo '' ;;
-esac
-STUB
-  chmod +x "$tmp/sc/gh"
-  hout=$(PATH="$tmp/sc:$PATH" bash "$tmp/sc/closeout-reconcile.sh" 2>/dev/null)
-  rm -rf "$tmp"
-}
-hrun '[{"repo":"o/r","num":80,"hh":"true"}]'
-printf '%s' "$hout" | jq -e 'select(.event=="human_hold" and .why=="needs-human")' >/dev/null 2>&1 \
-  || { echo "  ✗ closeout-reconcile: needs-human PR 이 human_hold 가 아니다 out='$hout'"; exit 1; }
-hrun '[{"repo":"o/r","num":80,"hh":"false"}]'
-printf '%s' "$hout" | jq -e 'select(.event=="resume")' >/dev/null 2>&1 \
-  || { echo "  ✗ closeout-reconcile: 보류 없는 OPEN PR 이 resume 이 아니다 out='$hout'"; exit 1; }
-hrun '[{"repo":"o/r","num":80,"hh":false}]'
-printf '%s' "$hout" | jq -e 'select(.event=="resume")' >/dev/null 2>&1 \
-  || { echo "  ✗ closeout-reconcile: 불리언 false(보류 없음)가 resume 이 아니다 — \`.hh // \"unknown\"\` 관용구는 false 에도 걸려 레인을 통째로 멈춘다 out='$hout'"; exit 1; }
-hrun '[{"repo":"o/r","num":80}]'
-printf '%s' "$hout" | jq -e 'select(.event=="human_hold")' >/dev/null 2>&1 \
-  || { echo "  ✗ closeout-reconcile: 라벨 미상(hh 필드 부재)이 human_hold 로 fail-closed 되지 않는다 out='$hout'"; exit 1; }
 
 echo "[worker] 반송 해소 보고 접두가 마커 집합 밖인지 — 한/영 템플릿 (#251 ②)"
 # #251 ② 는 판정기가 아니라 **문안**으로 닫혔다: 워커의 반송 해소 보고가 반송 마커로
@@ -342,17 +306,6 @@ for f in references/worker-template.md references/worker-template.en.md \
          skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -qF '<!-- bodat:worker -->' "$f" || { echo "  ✗ $f 에 sentinel 마커 주입 지시 없음"; exit 1; }
 done
-
-echo "[closeout] reconcile 빈-결과 스모크"
-tmp=$(mktemp -d); mkdir "$tmp/stub"
-cat > "$tmp/stub/gh" <<'EOF'
-#!/bin/sh
-case "$*" in *search/issues*) echo '{"items":[]}';; *) echo '';; esac
-EOF
-chmod +x "$tmp/stub/gh"
-out=$(PATH="$tmp/stub:$PATH" bash scripts/closeout-reconcile.sh 2>/dev/null); rc=$?
-[ "$rc" = 0 ] && [ -z "$out" ] || { echo "  ✗ reconcile 빈: rc=$rc out='$out'"; exit 1; }
-rm -rf "$tmp"
 
 echo "[closeout] references placeholder 검사"
 # macOS 기본 bash 3.2 는 declare -A 미지원 — case 분기로 파일별 placeholder 매핑.
@@ -655,55 +608,6 @@ merged_n=$(printf '%s\n' "$out" | jq -rs '[.[] | select(.event=="merged")] | len
 [ "$warn_n" = 1 ] && [ "$merged_n" = 0 ] || { echo "  ✗ reconcile dirty: warn=$warn_n merged=$merged_n (기대 1/0) out='$out'"; rm -rf "$tmp"; exit 1; }
 printf '%s' "$out" | jq -e 'select(.event=="warn") | .msg | test("dirty")' >/dev/null 2>&1 \
   || { echo "  ✗ reconcile dirty: warn 메시지 형식 변형 out='$out'"; rm -rf "$tmp"; exit 1; }
-rm -rf "$tmp"
-
-echo "[closeout] closeout-reconcile MERGED → cleanup --merged 호출 검사 (#62)"
-# MERGED 분기가 PR head 에서 이슈번호를 파싱해 cleanup-worktree.sh ... --merged 를
-# 부르는지 검사한다. 호출을 가로채는 stub cleanup-worktree.sh 로 인자를 캡처.
-grep -qE 'cleanup-worktree\.sh.*--merged' scripts/closeout-reconcile.sh \
-  || { echo "  ✗ closeout-reconcile.sh 에 cleanup-worktree.sh --merged 호출 없음"; exit 1; }
-grep -qF 'headRefName' scripts/closeout-reconcile.sh \
-  || { echo "  ✗ closeout-reconcile.sh 가 PR head(headRefName)에서 이슈번호 파싱 안 함"; exit 1; }
-# 런타임 검증: closeout-reconcile.sh 를 임시 scripts 디렉토리로 복사하고
-# cleanup-worktree.sh 를 인자 캡처 스텁으로 갈아끼워, MERGED 분기가 (a) 매칭
-# 브랜치에서 cleanup --merged 를 부르고 (b) cleanup 실패에도 merged_cleanup 을
-# 내며 (c) 비매칭 브랜치에선 cleanup 을 안 부르는지 확인한다.
-crun() {  # $1=headRefName → out 은 stdout, capture 파일은 $tmp/capture
-  tmp=$(mktemp -d); mkdir "$tmp/sc"
-  cp scripts/closeout-reconcile.sh "$tmp/sc/closeout-reconcile.sh"
-  cp -R scripts/lib "$tmp/sc/lib"   # SUT 사본이 source 하는 라이브러리 (#427)
-  cat > "$tmp/sc/cleanup-worktree.sh" <<CAP
-#!/bin/sh
-printf '%s\n' "\$*" >> "$tmp/capture"
-exit 1
-CAP
-  chmod +x "$tmp/sc/cleanup-worktree.sh"
-  cat > "$tmp/sc/gh" <<STUB
-#!/bin/sh
-case "\$*" in
-  *"api user"*) echo "tester" ;;
-  *"search/issues"*) echo '[{"repo":"o/r","num":80}]' ;;
-  *"pr view"*headRefName*) echo '$1' ;;
-  *"pr view"*state*) echo 'MERGED' ;;
-  *) echo '' ;;
-esac
-STUB
-  chmod +x "$tmp/sc/gh"
-  out=$(PATH="$tmp/sc:$PATH" bash "$tmp/sc/closeout-reconcile.sh" 2>/dev/null)
-}
-# (a)+(b): 매칭 브랜치 → cleanup --merged 호출(캡처) + cleanup 실패해도 merged_cleanup 출력
-crun "agent/issue-7"
-grep -qE '^o/r 7 --merged$' "$tmp/capture" 2>/dev/null \
-  || { echo "  ✗ closeout-reconcile 런타임: cleanup 호출 인자 불일치 (capture='$(cat "$tmp/capture" 2>/dev/null)')"; rm -rf "$tmp"; exit 1; }
-printf '%s' "$out" | jq -e 'select(.event=="merged_cleanup")' >/dev/null 2>&1 \
-  || { echo "  ✗ closeout-reconcile 런타임: cleanup 실패 시 merged_cleanup 미출력 out='$out'"; rm -rf "$tmp"; exit 1; }
-rm -rf "$tmp"
-# (c): 비매칭 브랜치(agent/issue- 접두 없음) → cleanup 호출 안 함, merged_cleanup 은 출력
-crun "some-other-branch"
-[ ! -f "$tmp/capture" ] \
-  || { echo "  ✗ closeout-reconcile 런타임: 비매칭 브랜치에서 cleanup 오호출 (capture='$(cat "$tmp/capture")')"; rm -rf "$tmp"; exit 1; }
-printf '%s' "$out" | jq -e 'select(.event=="merged_cleanup")' >/dev/null 2>&1 \
-  || { echo "  ✗ closeout-reconcile 런타임: 비매칭 브랜치 merged_cleanup 미출력 out='$out'"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
 echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4)"
