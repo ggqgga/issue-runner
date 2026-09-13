@@ -84,11 +84,13 @@ stub_rollup='{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}
 # 경로로 되돌리는 뮤테이션이 여기서 빨개진다(아래 13 참조).
 # 라벨은 기본 빈 배열 — 소유 라벨 제외 케이스(11-b)만 STUB_LABELS 로 심는다.
 # refs 는 기본 `[166]` — 연결 이슈 판정 케이스만 STUB_REFS 로 덮어쓴다(#495).
+# mergeable 은 기본 MERGEABLE — 미판정(UNKNOWN) 케이스만 STUB_MERGEABLE 로 덮어쓴다(#102).
 build_meta() {
   jq -n --arg capped_at "$1" --argjson labels "${STUB_LABELS:-[]}" \
+    --arg mergeable "${STUB_MERGEABLE:-MERGEABLE}" \
     --argjson refs "${STUB_REFS:-[166]}" '{
     headRefName: "agent/issue-166",
-    mergeable: "MERGEABLE",
+    mergeable: $mergeable,
     labels: $labels,
     closingIssuesReferences: [$refs[] | {number: .}],
     commits: (if $capped_at == "" then [] else [{committedDate: $capped_at}] end)
@@ -294,6 +296,15 @@ run_case "verifying 라벨→후보아님(verify-runner 소유)" no '[
 ]' "2026-07-05T03:55:00Z"
 unset STUB_LABELS
 
+# 11-c) mergeable 이 아직 계산되지 않은(UNKNOWN) PR → skip. GitHub 이 지연 계산하는 값이라
+#     "충돌 없음" 을 증명하지 못한 상태다 — 통과시키면 미판정 PR 이 머지 도크에 올라간다.
+STUB_MERGEABLE=UNKNOWN
+run_case "mergeable UNKNOWN→후보아님(미판정 skip)" no '[
+  {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:10:00Z"},
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"}
+]' "2026-07-05T03:55:00Z"
+unset STUB_MERGEABLE
+
 # ── #379: 미해결 사람 코멘트는 **최신 ✅ 이후**만 센다 ──────────────────────
 # 종전 필터는 PR 의 무마커 코멘트를 **전부** 셌다 — ✅ 이전에 남은 워커 보고·사람
 # 세션 메모까지 "미해결 사람 리뷰" 로 집계한 것이다. 그 코멘트들은 verify-runner 가
@@ -333,6 +344,15 @@ fi
 run_case "✅뒤 마커 코멘트→후보(#379)" yes '[
   {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"},
   {"body":"마감 검증: 통과\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:25:00Z"}
+]' "2026-07-05T04:10:00Z"
+
+# 18-b) 위 18) 의 자기 코멘트는 레거시 접두(`마감 검증:`)도 함께 갖고 있어, 센티널이
+#     죽어도 접두 폴백으로 살아남는다. 접두 어휘 **밖**의 자기-노트를 한 줄 더 둬
+#     이 SUT 가 센티널 술어(`lib/loop.jq` 의 `is_machine`)를 실제로 통과시키는지를 문다
+#     — 술어가 끊기면 마감 루프가 제 노트를 "미해결 사람 리뷰" 로 세어 제 큐를 지운다.
+run_case "✅뒤 센티널만 단 자기-노트(접두 밖)→후보(#72)" yes '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"},
+  {"body":"추가 보정 (e3cb586): revalidate 경로 보정 <!-- bodat:worker -->","createdAt":"2026-07-05T04:25:00Z"}
 ]' "2026-07-05T04:10:00Z"
 
 # 19) ✅ 가 아예 없음(🔄 만) + 무마커 코멘트 → 종전대로 탈락. ✅ 부재는 **긍정 게이트**가
@@ -422,6 +442,66 @@ run_case "스냅샷 N > ✅ 인덱스(삭제·오기)→탈락(#384)" no '[
   {"body":"머지 판정: ✅ 머지 가능 — 결정적 CI pass · 미해결 없음 · 코멘트 스냅샷 5\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"},
   {"body":"이 부분 다시 봐 주세요","createdAt":"2026-07-05T04:25:00Z"}
 ]' "2026-07-05T04:10:00Z"
+
+# ── 빈 스코프 — 후보가 한 건도 없으면 조용히 끝난다 ─────────────────────────
+# 필터 스크립트라 "후보 없음" 은 정상이다. 여기서 비0 으로 죽으면 closeout 틱이
+# 후보 0건인 평범한 상태마다 실패로 보고한다. 두 입력이 같은 답을 내야 한다 —
+# 검색이 **빈 배열**을 준 경우와 **아무것도 못 준 경우**(조회 실패).
+empty_case() {  # empty_case <이름> <STUB_PRS>
+  local name="$1" got rc
+  got=$(cd "$cwd" && PATH="$tmp/bin:$PATH" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" \
+    STUB_PRS="$2" STUB_META="$(build_meta "")" STUB_COMMENTS='[]' \
+    STUB_HEAD_AT="2026-07-05T04:10:00Z" STUB_HEAD_SHA=feed0070ab \
+    STUB_ROLLUP="$stub_rollup" bash "$SUT" 2>/dev/null); rc=$?
+  if [ "$rc" = 0 ] && [ -z "$got" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1)); echo "  ✗ $name — 기대 rc=0·무출력 실제 rc=$rc out=[$got]"
+  fi
+}
+empty_case "빈 스코프(검색 결과 0건)→rc=0·무출력" '[]'
+empty_case "검색 조회 실패(빈 응답)→rc=0·무출력" ''
+
+# ── 재검증 후보 분기 (#70) — 로컬 CI 옵트인 레포에서 ci-pass 의 0/1/2 를 나눠 받는다 ──
+# closeout-ci-pass.sh 는 캐시 부재를 exit 2(재검증 필요)로 fail(1)과 구분한다. 그 세 값이
+# 여기서 **후보 출력 + revalidate:true / 탈락 / 후보 출력 + revalidate:false** 로 갈려야
+# rebase 로 HEAD 가 바뀐 PR 이 "CI 미통과" 로 오인돼 조용히 사라지지 않는다.
+# 위 케이스들은 bin/ci 없는 레포(rollup 폴백)를 쓰므로 이 절만 옵트인 레포를 따로 세운다.
+rv_proj="$tmp/rv-proj"; rv_home="$tmp/rv-home"
+mkdir -p "$rv_proj/repo/bin" "$rv_home/.claude/.local-ci/fixture_slug"
+printf '#!/bin/sh\nexit 0\n' > "$rv_proj/repo/bin/ci"; chmod +x "$rv_proj/repo/bin/ci"
+: > "$tmp/rv-repos.conf"
+rv_result="$rv_home/.claude/.local-ci/fixture_slug/feed0070ab.result"
+rv_comments='[{"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"}]'
+
+rv_case() {  # rv_case <이름> <기대 revalidate: true|false|none>
+  local name="$1" want="$2" got rc verdict
+  got=$(cd "$cwd" && PATH="$tmp/bin:$PATH" HOME="$rv_home" \
+    ISSUE_RUNNER_REPOS_CONF="$tmp/rv-repos.conf" ISSUE_RUNNER_PROJECTS_ROOT="$rv_proj" \
+    STUB_PRS='[{"repo":"owner/repo","pr":5}]' STUB_META="$(build_meta "")" \
+    STUB_COMMENTS="$rv_comments" STUB_HEAD_AT="2026-07-05T04:10:00Z" \
+    STUB_HEAD_SHA=feed0070ab STUB_ROLLUP="$stub_rollup" \
+    bash "$SUT" 2>/dev/null); rc=$?
+  if [ "$want" = none ]; then
+    verdict=$([ -z "$got" ] && echo ok || echo no)
+  else
+    verdict=no
+    printf '%s' "$got" | jq -e --argjson w "$want" 'select(.pr == 5 and .revalidate == $w)' \
+      >/dev/null 2>&1 && verdict=ok
+  fi
+  if [ "$verdict" = ok ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1)); echo "  ✗ $name — 기대 revalidate=$want 실제 out=[$got](exit $rc)"
+  fi
+}
+
+rm -f "$rv_result"
+rv_case "로컬 CI 캐시 부재(ci-pass exit 2)→후보 + revalidate:true" true
+echo fail > "$rv_result"
+rv_case "로컬 CI 캐시 fail(ci-pass exit 1)→탈락" none
+echo pass > "$rv_result"
+rv_case "로컬 CI 캐시 pass(ci-pass exit 0)→후보 + revalidate:false" false
 
 # 12) 코멘트 조회 자체가 실패(gh 비정상 종료) → 후보 아님.
 #     반송되지 않았음을 **증명하지 못한** 상태를 통과로 처리하지 않는다(fail-closed).
