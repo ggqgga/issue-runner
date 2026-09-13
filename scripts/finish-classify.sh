@@ -1,132 +1,57 @@
 #!/usr/bin/env bash
 # finish-classify.sh <repo> <pr> [<issue>]
 #
-# 완결 유실 갭 판별자 (#88). PR 의 코멘트·타임스탬프·CI 를 읽어 종료 상태를 아래
-# 여섯 중 하나로 stdout 에 분류한다 (SKILL ② Maintain 규칙4 가 이 결과로 4a/4b/4c
-# 를 분기한다 — SKILL prose 를 얇게 유지하고 결정적으로 테스트 가능하게).
+# 완결 유실 갭 판별자 (#88). PR 의 코멘트·타임스탬프·CI 를 읽어 종료 상태를 아래 여섯 중
+# 하나로 stdout 에 분류한다 (SKILL ② Maintain 규칙4 가 이 결과로 4a/4b/4c 를 분기한다).
 #
-#   done_verdict   최신 `머지 판정:` 이 ✅ 이고, **두 시각(판정·head 커밋)을 모두 얻어**
-#                  그 판정이 head 커밋보다 늦음(또는 같음)을 증명함
-#                  → 4a 무접촉(closeout 픽업 대기)
-#   held           최신 `머지 판정:` 이 ⚠            → 4a 무접촉(워커 명시 보류·needs-human)
-#   stale_inline   🔄(최종 판정 없음) + 최신 검증자 CLEAN + 그 코멘트가 STALE_FINISH_MIN
-#                  초과            → 4b 인라인 최종 판정 대리 append(에이전트 없음)
+#   done_verdict   최신 `머지 판정:` 이 ✅ 이고, **두 시각(판정·head 커밋)을 모두 얻어** 그
+#                  판정이 head 커밋보다 늦음(또는 같음)을 증명함 → 4a 무접촉(closeout 픽업 대기)
+#   held           최신 `머지 판정:` 이 ⚠ → 4a 무접촉(워커 명시 보류·needs-human)
+#   stale_inline   🔄(최종 판정 없음) + 최신 검증자 CLEAN + 그 코멘트가 STALE_FINISH_MIN 초과
+#                  → 4b 인라인 최종 판정 대리 append(에이전트 없음)
 #   stale_reverify 🔄 + 검증자 부재 또는 미해결 BLOCKER + STALE_FINISH_MIN 초과
 #                  → 4c 완결 에이전트 재디스패치(검증자 재실행)
-#   no_verdict     `머지 판정:` 코멘트가 **한 건도 없음**(접두 매칭 **개수 0** 으로 확인한다 —
-#                  코멘트 조회 실패는 `comments_lookup`, 못 읽는 판정 본문은 개수 ≥ 1 이라
-#                  둘 다 이 계급이 아니다 · 🔄·✅·⚠ 어느 것도 없다 — 워커가
-#                  10단계 전에 죽었다) + **CI 가 초록**(실패 0 **이고 미완료 0** — #421)
-#                  + STALE_FINISH_MIN 초과 + **진행 증거 없음**(#396)
+#   no_verdict     `머지 판정:` 코멘트가 **한 건도 없음**(접두 매칭 **개수 0** — 조회 실패는
+#                  `comments_lookup`, 못 읽는 본문은 개수 ≥ 1 이라 둘 다 이 계급이 아니다)
+#                  + **CI 초록** + STALE_FINISH_MIN 초과 + **진행 증거 없음**(#396)
 #                  → closeout ①-b 재디스패치(`stale_reverify` 와 같은 조치)
-#   active         위 어디에도 안 걸림(진행 중·시간버퍼 미도달·우리 형상 아님) 또는
-#                  최신 `머지 판정: ✅` 의 신선도를 **증명하지 못함**(head 커밋보다 이르거나,
-#                  두 시각 중 하나라도 못 얻음 — 반송 뒤 재디스패치된 새 커밋이 아직
-#                  검증 안 됨, #171) → 무접촉(새 판정을 기다림)
-#                  또는 **진행 증거가 있음**(#206 — 아래 참조)
+#   active         위 어디에도 안 걸림(진행 중·시간버퍼 미도달·우리 형상 아님), 또는 최신
+#                  `머지 판정: ✅` 의 신선도를 **증명하지 못함**(head 커밋보다 이르거나, 두 시각
+#                  중 하나라도 못 얻음 — #171), 또는 **진행 증거가 있음**(#206) → 무접촉
 #
-# **`no_verdict` — 판정 코멘트가 0건인 초록 PR (#396).** 워커가 `머지 판정: 🔄` 를 찍기 **전**에
-# 죽으면(handoff 이전 사망) PR 은 CI 초록인데 판정 코멘트가 0건이다. 그 칸은 세 레인 어디에도
-# 안 들어갔다 — issue-runner ② Maintain 은 "CI green·리뷰 없음" 을 사람 리뷰 대기로 무접촉,
-# closeout ①-b 는 🔄/✅ 를 전제, 이 파일은 판정이 없으면 `active` 였다(무한 무접촉).
-# 그래서 **판정 부재 + CI 초록 + 증거 없음 + 시간버퍼 초과**를 별도 계급으로 낸다.
-#
-# **"초록" 은 실패 0 이 아니라 실패 0 + 미완료 0 이다**(#421 [P2-2]). 이 계급의 주장은 "CI 는
-# 끝났는데 판정만 없다" 이므로, 아직 도는 체크(check-run `status != COMPLETED` · local-ci 커밋
-# 상태 `pending`)가 하나라도 있으면 주장할 수 없다 — 그 창에 커밋·claim 만 낡으면 **아직 초록도
-# 아닌 PR** 이 재디스패치된다(CI 큐 대기 중인 PR 이 정확히 그 모양이다, #127·#200). 롤업 조회
-# 실패도 같은 처분(`ci_lookup=unknown` → active) — 이 파일의 "증명 못 하면 안 연다" 규율.
-#
-# 스테일 클록의 기준 시각은 `agent:claimed` 부착 시각과 head 커밋 시각 중 **더 최신** 쪽이다
-# (🔄 계열과 같은 max 규율 — 판정 코멘트가 없으니 그 두 축만 남는다). 반송 마커 시각도 같은
-# 클록에 합류한다(#308). 두 시각을 **하나도** 못 얻거나 조회가 `unknown` 이면 `active` 다 — 이
-# 파일의 규율 그대로, 되돌릴 수 없는 쪽(재디스패치)을 증명 없이 열지 않는다.
-#
-# 실무에서 이 계급을 여는 것은 시간버퍼(`STALE_FINISH_MIN`)가 아니라 **타임박스**인 경우가 많다:
-# 살아 있는 회차는 `agent:claimed` 가 붙어 있어 진행 증거 ③(claim 이 `ISSUE_TIMEBOX_HOURS` 안)
-# 가 참이므로, claim 이 그 상한을 넘길 때까지는 `active` 다. 버퍼만 보고 "왜 안 걸리나" 를
-# 고치려 들지 마라 — 그 게이트가 살아 있는 워커의 브랜치를 지킨다.
-#
-# **진행 증거 게이트 (#206).** 🔄 계열 두 갈래(stale_inline·stale_reverify)는 "워커가 죽었다"
-# 는 주장이다. 그 주장을 내기 전에 `progress-evidence.sh` 에 워커가 살아 있다는 증거가
-# 있는지 묻고, 있으면 `active` 로 떨어뜨린다. 증거는 세 가지다 —
-#   ① 최신 커밋이 STALL_MIN 이내   ② 그 head SHA 의 CI 티켓이 큐에 살아 있음
-#   ③ **현재 회차의 `agent:claimed` 가 ISSUE_TIMEBOX_HOURS 안에 붙어 아직 붙어 있음**
-# ②가 특히 중요하다: 박스 전역 직렬 CI 큐(#127) 대기는 워커가 통제할 수 없는 시간이라
-# 커밋이 한 시간 넘게 멈춰 있어도 워커는 살아 있다(#200 실측 72분·64분). 술어는
-# `progress-evidence.sh` **한 자리**에 있다 — `timebox-check.sh`(#200)가 부르는 그 자리다.
-# 두 벌로 복제하면 사람 눈에 안 보이는 두 번째 계산기가 다른 수를 센다.
-#
-# ③은 **첫 푸시 전 창** 전용이다(#206 attempt 2 codex BLOCKER). ①②는 워커가 이미 뭔가
-# 남긴 뒤에만 존재하는 증거라, 반송 직후 교체 워커가 디스패치됐지만 아직 아무것도 push
-# 하지 않은 구간에서는 둘 다 없다 — 그때 이 파일이 보는 값(판정 시각·head 시각)은 전부
-# **이전 attempt** 의 것이고 `STALE_FINISH_MIN` 을 넘겨 `stale_reverify` 가 난다. 그러면
-# `closeout-redispatch` 가 **지금 일하고 있는 워커의 `agent:claimed` 를 떼어낸다.**
-# 그 창을 덮는 유일한 신호가 "이번 회차가 언제 시작됐나" = `agent:claimed` 부착 시각이고,
-# 조회는 `claim-at.sh` **한 자리**다(존재가 아니라 시각을 쓰는 이유는 그 파일 주석 참조).
-#
-# 판정 실패(헬퍼가 `unknown` 이거나 아예 못 돔)는 "증거 없음" 이 **아니다** — 그 방향으로
-# 접으면 조회 실패 한 번에 살아 있는 워커의 브랜치를 채간다(되돌릴 수 없는 손해). 그래서
-# 여기선 증명 실패를 `active`(무접촉) 로 받는다. ✅ 갈래의 fail-closed 와 방향이 반대로
-# 보이지만 **같은 원리**다: 되돌릴 수 없는 쪽(머지·재디스패치)을 증명 없이 열지 않는다.
-#
-# 그 규율은 **판정 입력을 얻는 자리**에서 시작한다(#206 회차2). head 조회는 세 결말을
-# 갖는다 — `ok`(값을 얻음) · `unknown`(조회 실패) · `none`(조회는 됐는데 커밋 증거 없음).
-# 셋을 `head_sha=none` 하나에 실으면 하류가 실패를 부재로 읽어 살아 있는 워커를
-# 재디스패치한다. 그래서 조회의 **종료코드를 보존**해 `head_lookup` 플래그로 기억하고,
-# 진행 증거 헬퍼에도 같은 3값 어휘(`--commit-at unknown`)로 넘긴다.
-#
-# 판별 근거: 살아있는 워커는 `검증자 리뷰:` 코멘트 직후 수초 내 최종 판정을 찍는다.
-# 최신 검증자가 CLEAN 인데 STALE_FINISH_MIN 넘게 최종 판정이 없으면 워커 사망 확실.
-# 진행 중 fix 루프는 최신 검증자 코멘트가 recent 이거나 non-CLEAN 이라 자동 제외된다.
-#
-# 워커 활동 = 코멘트 **또는 커밋**. bounce 후 attempt N+1 워커는 같은 브랜치에서
-# 이어가며 커밋은 하되 종료 직전에만 판정 코멘트를 찍는다 — 코멘트 시각만 보면
-# 낡은 🔄 만 남아 살아있는 워커를 사망(stale_reverify)으로 오판한다(#110, 실증
-# BodaT PR #2237). head 커밋 시각(FC_HEAD_AT)을 스테일 클록의 max 에 합류시켜 방어한다.
-#
-# **최신 반송 마커 시각도 같은 클록에 든다(#308).** 반송 전이는 `agent:claimed` 를 떼므로
-# 반송 직후 디스패처가 다시 붙이기 전 창에서는 진행 증거 세 축이 전부 "old/none" 이다 —
-# 그 창의 CONFLICTING PR 이 `stale_reverify` 로 떨어져 **사인이 틀린 멱등 마커**
-# (`완결 유실(검증 전 사망)`)를 원장에 남겼다. 마커 판별은 `bounce-state.sh` 한 자리를
-# 되물어 얻는다(로직 두 벌 금지) — 아래 `bounce_epoch_after` 주석 참조.
-#
-# 최신 `머지 판정:`/`검증자 리뷰:` 판정은 코멘트 배열의 **마지막 매칭**을 쓴다
-# (재리뷰·재판정 대비). 한/영 병행 워커라 영문 접두(Merge verdict/Verifier review)도 본다.
+# 불변식:
+#   · **증명 못 하면 열지 않는다.** 되돌릴 수 없는 쪽(머지·재디스패치)은 판정 입력을 다 얻었을
+#     때만 연다 — 조회 실패(`unknown`)는 "증거 없음" 이 아니라 `active` 다.
+#   · **"초록" 은 실패 0 이 아니라 실패 0 + 미완료 0 이다**(#421). 롤업 조회 실패도 active.
+#   · 스테일 클록의 기준 시각은 `agent:claimed` 부착 시각 · head 커밋 시각(#110) · 최신 반송
+#     마커 시각(#308)의 **max** 다. 하나도 못 얻거나 `unknown` 이면 `active`.
+#   · 🔄 계열 두 갈래는 `progress-evidence.sh`(술어 한 자리)에 진행 증거를 먼저 묻고, 있으면
+#     `active` 로 떨어뜨린다. 증거 세 축은 그 파일의 머리 주석.
+#   · 반송 마커 판별은 `bounce-state.sh` 한 자리를 되물어 얻는다(로직 두 벌 금지).
+#   · 최신 `머지 판정:`/`검증자 리뷰:` 는 코멘트 배열의 **마지막 매칭**이다(재리뷰 대비).
+#     한/영 병행 워커라 영문 접두(Merge verdict/Verifier review)도 본다.
 #
 # 테스트/재현용 env 오버라이드 (없으면 gh/date 로 실측):
-#   FC_COMMENTS_FILE  코멘트 배열 JSON 이 담긴 **파일 경로** — 대용량 안전 경로(#171
-#                      반송 4회차 [P2]). 코멘트 전량을 환경변수 하나로 넘기면 exec 한계
-#                      (리눅스 MAX_ARG_STRLEN 128KB)를 넘는 순간 이 스크립트가 **시작조차
-#                      못 하고** 호출자의 판정이 비어 그 PR 이 매 스윕에서 조용히 빠진다.
-#                      FC_COMMENTS_JSON 보다 우선하며, 읽기 실패는 실조회로 **새지 않고**
-#                      빈 코멘트(=active, fail-closed)로 떨어진다.
-#   FC_COMMENTS_JSON  코멘트 배열 JSON([{body,createdAt},...]) — 실조회 대체(소용량 픽스처용).
-#                      둘 다 미지정 시 pr-comments.sh 로 **페이지네이션 전량** 조회한다
-#                      (`gh pr view --json comments` 의 첫 100건 상한 회피, #171).
+#   FC_COMMENTS_FILE  코멘트 배열 JSON 이 담긴 **파일 경로** — 대용량 안전 경로(#171).
+#                     FC_COMMENTS_JSON 보다 우선하며, 읽기 실패는 실조회로 **새지 않고**
+#                     빈 코멘트(= active, fail-closed)로 떨어진다.
+#   FC_COMMENTS_JSON  코멘트 배열 JSON([{body,createdAt},...]) — 소용량 픽스처용. 둘 다 미지정
+#                     시 `pr-comments.sh` 로 **페이지네이션 전량** 조회한다.
 #   FC_FAILING        실패 체크 수(정수) — statusCheckRollup 대체
-#   FC_HEAD_SHA       head 커밋 SHA — pr-head-at.sh --with-sha 실조회 대체(#206 진행 증거 ②).
-#                      미지정이면 `none`(큐 증거 없음)으로 본다.
-#   FC_QUEUE_LOG      queue.log 경로 — progress-evidence.sh 의 PE_QUEUE_LOG 로 전달(픽스처용).
-#   FC_HEAD_AT        head 커밋 시각(ISO8601) — pr-head-at.sh 실조회 대체(주입 = `ok`).
-#                      주입 경로는 호출자가 값을 준 것이므로 `unknown`(조회 실패)이 아니다 —
-#                      조회 실패 축은 실호출 경로에서만 나고, 테스트도 **실호출 자리를
-#                      스텁으로 물려** 문다(주입만 무는 테스트는 그 자리의 회귀에 눈먼다).
-#                      빈 값/파싱 불가 = **못 얻음**. 🔄 계열 갈래(#110 스테일 클록)에선
-#                      종전대로 epoch 0 으로 degrade 하지만, `✅` 갈래(#171 머지 게이트)
-#                      에선 증명 실패이므로 done_verdict 를 내지 않고 active 다.
-#   FC_ISSUE          연결 이슈 번호 — 세 번째 위치 인자의 env 판(진행 증거 ③).
-#                      둘 다 없으면 `gh pr view --json headRefName,closingIssuesReferences` 로
-#                      한 번 묻고, `lib/loop.jq` 의 `linked_issue` 로 브랜치 이슈를 고른다(#495 —
-#                      head 의 `agent/issue-N` ∈ refs → N, 아니면 refs 1건 → 그것, 아니면 없음.
-#                      `[0]` 은 닫는 이슈가 둘 이상일 때
-#                      남의 이슈를 가리킨다, #206 회차3). 조회 실패·무출력은 `unknown`.
-#   FC_CLAIMED_AT     `agent:claimed` 부착 시각(ISO8601) 또는 `none`/`unknown` —
-#                      claim-at.sh 실조회 대체. **설정돼 있으면 실조회로 새지 않는다**
-#                      (픽스처 테스트의 네트워크 무접속을 이 변수 하나가 지킨다).
+#   FC_HEAD_SHA       head 커밋 SHA — 미지정이면 `none`(큐 증거 없음)
+#   FC_QUEUE_LOG      queue.log 경로 — progress-evidence.sh 의 PE_QUEUE_LOG 로 전달
+#   FC_HEAD_AT        head 커밋 시각(ISO8601) — 주입 = `ok`(조회 실패 `unknown` 이 아니다).
+#                     빈 값/파싱 불가 = 못 얻음: 🔄 계열은 epoch 0 으로 degrade, `✅` 갈래는 active.
+#   FC_ISSUE          연결 이슈 번호(진행 증거 ③) — 세 번째 위치 인자의 env 판. 둘 다 없으면
+#                     `gh pr view --json headRefName,closingIssuesReferences` 로 한 번 묻고 `lib/loop.jq` 의
+#                     `linked_issue` 로 고른다(#495). 조회 실패·무출력은 `unknown`.
+#   FC_CLAIMED_AT     `agent:claimed` 부착 시각(ISO8601) 또는 `none`/`unknown` — claim-at.sh
+#                     실조회 대체. **설정돼 있으면 실조회로 새지 않는다**(픽스처 무접속 보장).
 #   FC_NOW            현재 epoch(초) — date 대체
 #   STALE_FINISH_MIN  시간버퍼(분) — 값은 `scripts/lib/constants.sh` (#427 로 한 자리로)
 #   ISSUE_TIMEBOX_HOURS  claim 신선도 상한(시간) — progress-evidence.sh 가 같은 파일에서 읽는다
+#
+# 근거: references/scripts-rationale.md finish-classify.sh §1–§9
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
