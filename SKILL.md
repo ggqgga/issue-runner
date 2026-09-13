@@ -27,12 +27,15 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   각 `bin/ci` 가 병렬 테스트 프로세스를 또 띄운다. 4 를 넘기면 동시 `bin/ci` 경합
   플레이크(`lessons.md` 의 #2672·#2685·#3077, `poll_health_timeout_test` 부하
   타이밍)가 늘어 워커가 무죄 입증에 시간을 쓰게 된다 — 5 이상은 실측 없이 올리지 마라.
-- `MAX_OPEN_PRS = 14` — 열린 PR 총수 적체 상한. 도달 시 신규 디스패치만 멈춘다
-  (보수는 계속) — 사람 머지가 밀릴 때 PR 끼리 rebase conflict 가 폭증하는 것을 막는
-  배압(backpressure).
+- `MAX_OPEN_PRS = 14` — **레포별** 열린 PR 수 적체 상한. 캡에 닿은 레포의 신규
+  디스패치만 멈춘다(보수는 계속, 다른 레포는 정상 디스패치) — 사람 머지가 밀릴 때
+  PR 끼리 rebase conflict 가 폭증하는 것을 막는 배압(backpressure).
   **2026-08-14 에 10→14 로 상향** — 사람 대기(needs-human·사람 게이트) PR 이 상시
   2~3건 캡을 영구 점유해 실효 캡이 7 로 떨어져 있었다(2026-08-13 실측: 10칸 중 3칸).
   14 는 그 상시 점유분을 흡수한 값이다. 사람 대기 PR 이 정리되면 다시 낮춰도 된다.
+  **2026-09-13 에 스코프 합산→레포별로 변경(#362)** — 2026-09-12 실측: 합산 캡은 runner 10 + bodat 5 = 15
+  로 캡을 채워 bodat 대기 15건이 20틱 넘게 한 번도 안 집혔다. conflict 는 **같은 레포의
+  PR 사이**에서만 나므로 합산은 근거보다 넓게 막고 한 레포의 적체가 다른 레포를 굶긴다.
 - `MAX_REPAIRS_PER_PR = 3` — PR 1개당 보수 디스패치 상한 (② Maintain 서킷 브레이커)
 - **스크립트가 읽는 상수 — 값은 `scripts/lib/constants.sh` 한 자리다** (#427). 이 절은 값을
   다시 적지 않는다: 산문과 코드가 값을 두 벌로 들면 갈린다(`ISSUE_TIMEBOX_HOURS` 는 실제로
@@ -419,8 +422,13 @@ N 도 디스패치당 1만 올린다.
    이득의 실체다: 워커가 PR 을 열고 `flow:verify` 로 넘기는 즉시 슬롯이 반납돼, 느린
    E2E·codex 대기가 더 이상 이 루프의 5슬롯을 붙잡지 않는다.
    `slots = MAX_AGENTS - in-flight`. slots ≤ 0 이면 건너뛴다.
-   **적체 배압**: 상태 무관 열린 PR 총수가 `MAX_OPEN_PRS` 이상이면 신규 디스패치를
-   건너뛰고 ④ Report 에 "머지 대기 적체 N개" warn 을 올린다 (보수는 ② 에서 계속 돈다).
+   **적체 배압 — 레포별 판정** (#362): 스코프 레포마다 상태 무관 열린 PR 수를 센다 —
+   `for r in <스코프 레포>: gh pr list --repo $r --state open --limit 100 --json number --jq length`.
+   `MAX_OPEN_PRS` 이상인 레포는 ③-2 후보에서 **그 레포 이슈만** 건너뛰고, 캡 미만
+   레포의 후보는 정상 디스패치한다(합산 캡은 한 레포의 적체가 다른 레포 대기열을 굶겼다).
+   캡에 닿은 레포마다 ④ Report 에 `머지 대기 적체 <repo> N개` warn 을 한 줄씩 올린다
+   (`<repo>` 는 ④ 의 레포 짧은 이름 — runner·bodat; 캡 미만 레포는 적지 않는다.
+   보수는 ② 에서 계속 돈다).
 2. `$SCRIPTS/eligible-issues.sh` 실행 → 우선순위 정렬된 후보(**stdout**).
    **stderr 의 `blocked:`·`blocked-summary:`·`warn:` 줄은 ④ Report 로 옮긴다** (#247) —
    `blocked: <repo>#<num> ← #<b>(<상태>)` 는 `막힘` 항목으로, `blocked-summary:` 의 N 은

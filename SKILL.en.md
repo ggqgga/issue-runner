@@ -26,9 +26,17 @@ maintenance must come before new work).
   process, so N concurrent ones share API/CPU and each is throttled to ~1/N
   (measured: 0 concurrent ~10 min vs 1–4 concurrent ~30 min). Throughput is roughly
   preserved while box load and orphan risk drop. Lower to 2 if it is still slow.
-- `MAX_OPEN_PRS = 14` — cap on total open PRs (backlog backpressure). When
-  reached, only new dispatches stop (maintenance continues) — prevents rebase
-  conflicts from multiplying across PRs while human merges lag
+- `MAX_OPEN_PRS = 14` — **per-repo** cap on open PRs (backlog backpressure). When
+  a repo reaches it, only new dispatches for that repo stop (maintenance continues,
+  other repos dispatch normally) — prevents rebase conflicts from multiplying across
+  PRs while human merges lag.
+  **Raised 10→14 on 2026-08-14** — PRs waiting on humans (needs-human · human gates)
+  permanently held 2–3 slots, dropping the effective cap to 7 (measured 2026-08-13:
+  3 of 10 slots). 14 absorbs that standing occupancy; lower it again once those clear.
+  **Changed from scope-wide sum to per-repo on 2026-09-13 (#362)** — measured 2026-09-12: the summed cap
+  filled up as runner 10 + bodat 5 = 15, and bodat's 15 waiting issues were never picked
+  for 20+ ticks. Conflicts only arise **between PRs of the same repo**, so the sum blocked
+  wider than its rationale and one repo's backlog starved the others' queues.
 - `MAX_REPAIRS_PER_PR = 3` — cap on maintenance dispatches per PR
   (② Maintain circuit breaker)
 - **Constants the scripts read — the values live in `scripts/lib/constants.sh`, in one
@@ -465,9 +473,14 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
    comments (② 4, waiting for human review) do not occupy a slot** — they are
    dormant with nothing for an agent to do, so they must not block new work.
    `slots = MAX_AGENTS - in-flight`. If slots ≤ 0, skip this phase.
-   **Backlog backpressure**: if the total number of open PRs (regardless of
-   state) is ≥ `MAX_OPEN_PRS`, skip new dispatches and raise a
-   "merge backlog: N PRs" warn in ④ Report (maintenance keeps running in ②).
+   **Backlog backpressure — judged per repo** (#362): count open PRs (regardless of
+   state) for each repo in scope —
+   `for r in <scope repos>: gh pr list --repo $r --state open --limit 100 --json number --jq length`.
+   A repo at or above `MAX_OPEN_PRS` has **only its own issues** skipped among the ③-2
+   candidates; candidates from repos under the cap dispatch normally (the summed cap let
+   one repo's backlog starve the other repos' queues). For each repo at the cap raise one
+   `머지 대기 적체 <repo> N개` ("merge backlog <repo> N") warn line in ④ Report (`<repo>` is ④'s repo short name —
+   runner·bodat; repos under the cap are not listed. Maintenance keeps running in ②).
 2. Run `$SCRIPTS/eligible-issues.sh` → priority-sorted candidates (**stdout**).
    **Carry its stderr `blocked:` / `blocked-summary:` / `warn:` lines into ④ Report** (#247):
    each `blocked: <repo>#<num> ← #<b>(<state>)` becomes a `blocked` item, the N in
