@@ -113,6 +113,14 @@ p "issue-runner 특례"    runner  short_repo '"ggqgga/issue-runner"'
 p "대문자 레포"          bodat   short_repo '"ggqgga/BoDAT"'
 p "owner 없음"           plain   short_repo '"plain"'
 
+echo "  [격자 ⑧] linked_issue — PR 연결 이슈 한 술어 (#495)"
+# head `agent/issue-N` 이 refs 에 있으면 그것 · 없으면 refs 가 정확히 1건일 때 그것 · 그 외 null.
+# 실데이터 PR #113(head agent/issue-109 · refs [108,109]) — `[0]` 이면 남의 이슈 #108 이다.
+li='linked_issue(.head; .refs)'
+p "head 있음·refs 다수 → head 의 N"   109  "$li" '{"head":"agent/issue-109","refs":[108,109]}'
+p "head 없음·refs 1 → 그 1건"        108  "$li" '{"head":"session/issues-110-109-108","refs":[108]}'
+p "head 없음·refs 다수 → null(fail-closed)" null "$li" '{"head":"session/issues-110-109-108","refs":[108,109]}'
+
 # ── 뮤테이션 방증 (MUT-M) — is_machine 을 한/영 **합집합**으로 넓히면 판정이 바뀐다 ──
 # 넓힌 판에서 "영문 접두(마커 없음)" 행만 뒤집히고 나머지는 그대로여야 한다: 그래야
 # 이 동결이 취향이 아니라 **게이트 방향**(미해결 사람 리뷰 수가 줄어 머지가 열린다)의

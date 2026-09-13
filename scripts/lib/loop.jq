@@ -115,3 +115,26 @@ def short_repo:
 # `resume-sweep.sh` 의 `JQ_UNQUOTE` 와 **글자 단위로 같아야** 한다 — `bin/ci` 가 두 벌을 대조한다
 # (한쪽만 고치면 loop-status 의 횟수와 스윕의 횟수가 갈린다).
 def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " ");
+
+# ── PR 연결 이슈 (#495) ─────────────────────────────────────────────────────
+# linked_issue(head; refs) — "이 PR 이 어느 이슈 한 쌍으로 붙었는가" 를 세 소비자
+# (finish-classify · closeout-eligible · pr-state)가 **같은 답**으로 얻는 자리.
+#   head : `headRefName` (문자열 · null 허용)
+#   refs : `closingIssuesReferences` 의 번호 배열 `[108,109]` (null 허용)
+# 규칙 — 순서대로 첫 참:
+#   ⑴ head 가 `agent/issue-N` 이고 그 N 이 refs 에 있으면 N   (브랜치가 집어간 이슈 = 증명된 짝)
+#   ⑵ refs 가 **정확히 1건**이면 그것                        (닫는 이슈가 하나면 추측이 아니다)
+#   ⑶ 그 외 null                                             (fail-closed — 짝을 증명할 축이 없다)
+# `[0]` 을 쓰지 않는 이유는 실데이터다: PR #113 head `agent/issue-109`·refs `[108,109]` — `[0]` 은
+# GitHub 이 본문의 `Closes` 를 만난 순서일 뿐이라 남의 이슈(#108)를 가리킨다(#206 회차3). 세
+# 소비자가 각자 다른 축(head 1순위+[0] 폴백 / [0] 하나 / head∩refs)을 쓰던 판은 `Closes` 가 둘
+# 이상인 PR 에서 서로 다른 이슈를 봤다(#452 §5 실측) — 그래서 한 자리다.
+# 출력은 **번호(숫자) 또는 null** — `last_index` 와 같은 규율이다. 셸로 꺼내는 소비처는
+# `// empty` 로 "없음" 을 빈 출력으로 받고, 문자열 꼴이 필요하면 소비처가 `tostring` 한다.
+def linked_issue(head; refs):
+  ((head // "") | if test("^agent/issue-[0-9]+")
+                  then (capture("^agent/issue-(?<n>[0-9]+)").n | tonumber) else null end) as $hn
+  | (refs // []) as $r
+  | if $hn != null and (($r | index($hn)) != null) then $hn
+    elif ($r | length) == 1 then $r[0]
+    else null end;

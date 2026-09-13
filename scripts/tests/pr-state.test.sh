@@ -232,7 +232,7 @@ expect "연결 이슈 없음 — 미러 축 없음" "H:policy" issue-runner "$NO
 expect "연결 이슈 없음 — 사다리 칸은 PR 라벨로 낸다" S2 verify-runner "$NOMM" \
   '["flow:verify"]' '-' OPEN "$C_PENDING"
 
-# ── 짝 이슈 판정 — head ∩ closingIssuesReferences (#449 codex 1회차 P1) ──
+# ── 짝 이슈 판정 — `lib/loop.jq` 의 `linked_issue` (#449 codex 1회차 P1 · #495 한 자리) ──
 # 실데이터: PR #113 head `agent/issue-109`, refs `[108,109]`. `[0]` 을 쓰면 108 의 라벨을 읽어
 # 109 의 홀드를 놓치고(승격) 108 의 무관한 홀드가 교정을 막는다. 스텁은 지도에 없는 이슈를
 # 물으면 exit 1 이라, 아래 첫 행은 **109 를 물었다는 것 자체**가 단언이다.
@@ -240,16 +240,19 @@ STUB_ISSUE_MAP_OVERRIDE=$(imap 108 '["hold:policy","agent-ready"]' 109 '["flow:v
 expect "짝 이슈 — refs[108,109] + head 109 → 109 의 라벨을 본다" S2 verify-runner "$NOMM" \
   '["flow:verify"]' 'x' OPEN "$C_PENDING" '[108,109]' 'agent/issue-109'
 STUB_ISSUE_MAP_OVERRIDE=""
-# refs 에 head 의 N 이 없으면 연결 없음(`-`) — 첫 참조로 추측하지 않는다.
-# 이슈 축이 없으니 `stop` 미러 축도 안 난다(108 의 hold:policy 가 상태를 뒤엎지 않는다).
+# head 가 `agent/issue-*` 꼴이 아니어도 refs 가 **정확히 1건**이면 그것이 짝이다 — 닫는 이슈가
+# 하나뿐인 PR 은 추측이 아니다. 108 의 hold:policy 를 읽어 정지로 판정한다(이슈 축이 산다).
 STUB_ISSUE_MAP_OVERRIDE=$(imap 108 '["hold:policy","agent-ready"]')
-expect "짝 이슈 — refs[108] + head 109 → 연결 없음(첫 참조 추측 금지)" S2 verify-runner "$NOMM" \
-  '["flow:verify"]' 'x' OPEN "$C_PENDING" '[108]' 'agent/issue-109'
-STUB_ISSUE_MAP_OVERRIDE=""
-# head 가 `agent/issue-*` 꼴이 아니면 짝을 증명할 축이 없다 → 연결 없음.
-STUB_ISSUE_MAP_OVERRIDE=$(imap 108 '["hold:policy","agent-ready"]')
-expect "짝 이슈 — head 가 agent/issue-* 아님 → 연결 없음" S2 verify-runner "$NOMM" \
+expect "짝 이슈 — head 가 agent/issue-* 아님 + refs[108] → 108 의 라벨을 본다" "H:policy" issue-runner \
+  '.mismatch | any(startswith("stop: "))' \
   '["flow:verify"]' 'x' OPEN "$C_PENDING" '[108]' 'feat/hand-written'
+STUB_ISSUE_MAP_OVERRIDE=""
+# head 가 `agent/issue-*` 꼴이 아니고 refs 가 둘 이상이면 짝을 증명할 축이 없다 → 연결 없음(`-`).
+# 첫 참조로 추측하지 않는다 — 이슈 축이 없으니 `stop` 미러 축도 안 난다(108 의 hold:policy 가
+# 상태를 뒤엎지 않는다).
+STUB_ISSUE_MAP_OVERRIDE=$(imap 108 '["hold:policy","agent-ready"]' 109 '["hold:policy","agent-ready"]')
+expect "짝 이슈 — head 가 agent/issue-* 아님 + refs[108,109] → 연결 없음(첫 참조 추측 금지)" S2 verify-runner "$NOMM" \
+  '["flow:verify"]' 'x' OPEN "$C_PENDING" '[108,109]' 'feat/hand-written'
 STUB_ISSUE_MAP_OVERRIDE=""
 
 # ── 조회 실패 → exit 2 · 무출력 (추측한 상태를 내지 않는다) ─────────────

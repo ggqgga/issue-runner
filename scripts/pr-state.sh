@@ -13,16 +13,17 @@
 #
 # ── 세 입력 ─────────────────────────────────────────────────────────────
 # 표의 "상태" 정의 그대로 세 축이다: PR 라벨 집합 · 연결 이슈 라벨 집합 · 마지막 판정 코멘트.
-#   ⑴ PR      `gh pr view --json state,labels,closingIssuesReferences`
-#   ⑵ 이슈    head 의 `agent/issue-N` 과 `closingIssuesReferences` 의 **교집합** — 없으면 `-`
-#             (이슈 축 없음. 미러 판정도 안 한다). `[0]` 을 쓰지 않는 이유는 실데이터다:
+#   ⑴ PR      `gh pr view --json state,labels,headRefName,closingIssuesReferences`
+#   ⑵ 이슈    `lib/loop.jq` 의 `linked_issue`(#495) — head 의 `agent/issue-N` 이
+#             `closingIssuesReferences` 에 있으면 N, 아니면 refs 가 정확히 1건일 때 그것, 아니면
+#             `-`(이슈 축 없음. 미러 판정도 안 한다). `[0]` 을 쓰지 않는 이유는 실데이터다:
 #             PR 이 이슈를 둘 이상 닫으면 첫 참조가 브랜치의 이슈가 아닐 수 있다
 #             (이 레포 PR #113 — head `agent/issue-109`, refs `[108,109]`). 엉뚱한 이슈의
 #             라벨을 읽으면 진짜 이슈의 홀드를 놓쳐 **승격**하거나, 무관한 홀드가 교정을 막는다.
-#             짝 판정 규칙은 `loop-status.sh` 의 `linked()`(#265)와 같지만 **폴백 꼬리가 없다**:
-#             거기는 대시보드라 못 찾으면 `[0]`·head 로 내려가 무엇이든 보여 주는 쪽이 맞고,
-#             여기는 그 답이 라벨 편집을 부르므로 **추측하느니 이슈 축을 버린다**(`-`).
-#             head 가 `agent/issue-*` 꼴이 아니어도 `-` 다 — 짝을 증명할 축이 없다.
+#             `loop-status.sh` 의 `linked()`(#265)와 달리 **폴백 꼬리가 없다**: 거기는
+#             대시보드라 못 찾으면 `[0]`·head 로 내려가 무엇이든 보여 주는 쪽이 맞고, 여기는
+#             그 답이 라벨 편집을 부르므로 **추측하느니 이슈 축을 버린다**(`-`). finish-classify·
+#             closeout-eligible 도 같은 술어라 세 소비자가 다른 이슈를 볼 수 없다.
 #   ⑶ 판정    `pr-comments.sh`(페이지네이션 전량) + `lib/loop.jq` 술어. 같은 코멘트 JSON 을
 #             `BOUNCE_COMMENTS_FILE` 로 `bounce-state.sh` 에 그대로 먹여 반송 축도 얻는다 —
 #             반송 마커 **문법**(구분자·조사·표식)은 loop.jq 의 접두 집합 밖이고 그 판정기는
@@ -99,13 +100,10 @@ meta=$(gh pr view "$pr" --repo "$repo" \
 pr_labels=$(printf '%s' "$meta" | jq -c '[.labels[].name]' 2>/dev/null) || exit 2
 [ -n "$pr_labels" ] || exit 2
 pr_state=$(printf '%s' "$meta" | jq -r '.state // ""' 2>/dev/null) || exit 2
-# 짝 이슈 = head 의 `agent/issue-N` ∩ closingIssuesReferences. 교집합이 없으면 `-` (위 ⑵).
-issue=$(printf '%s' "$meta" | jq -r '
-  [(.closingIssuesReferences // [])[].number] as $c
-  | (if ((.headRefName // "") | test("^agent/issue-[0-9]+"))
-     then (.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber)
-     else null end) as $hn
-  | if $hn != null and (($c | index($hn)) != null) then ($hn | tostring) else "-" end
+# 짝 이슈 = `lib/loop.jq` 의 `linked_issue`(#495 · 위 ⑵). 짝을 증명 못 하면 `-`.
+issue=$(printf '%s' "$meta" | jq -L "$SCRIPT_DIR/lib" -r 'include "loop";
+  linked_issue(.headRefName; [(.closingIssuesReferences // [])[].number])
+  | if . == null then "-" else tostring end
 ' 2>/dev/null) || exit 2
 [ -n "$issue" ] || exit 2
 
