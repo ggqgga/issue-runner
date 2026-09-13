@@ -150,7 +150,7 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 | 77 | 1247–1277 | SKILL.md · SKILL.en.md · scripts/lib/constants.sh | `STALL_MIN·MAX_TIMEBOX_GRACE·timebox-check.sh 배선 + SKILL 에 '이름 = 숫자' 부활 금지` | #200 · #427 | ⓒ (1258–1277) · ⓓ (1251–1257) | scripts/lib/constants.sh 머리 주석 「세 SKILL 의 ## 상수 절은 이제 값을 다시 적지 않고 이 파일을 가리킨다」 — 형태의 강제자는 이 가드뿐 | 블록 주석이 이미 적었다: 「## 상수 절이 값을 적지 않는 형태를 유지하는 한 이 검사가 그 형태의 강제자다」 | L6 (이 PR · 77-b) |
 | 78 | 1278–1303 | scripts/repo-flag.sh · scripts/repo-dir.sh | `repos.conf 3필드 이후 플래그 · 주석 줄 무시 · conf 부재 off · '-' 경로 폴백` | #109 | ⓐ⑵ | 신규 scripts/tests/repo-flag.test.sh (블록 4 와 한 벌) | 그 테스트 파일이 생기면 | L2 (이 PR) |
 | 79 | 1304–1356 | scripts/make-worktree.sh | `link-secrets off/on/회수/실파일 보호/남의 심링크 보호/깨진 심링크 7케이스` | #109 | ⓐ⑵ | scripts/tests/make-worktree.test.sh (#445, 블록 70) | 그 격자에 시크릿 심링크 절이 들어오면 | L2 (이 PR) |
-| 80 | 1357–1611 | scripts/claim-issue.sh | `create-only ref 잠금 · takeover D/F 충돌 · 스테일 동시 2회 · live-holder 지연 8케이스 (255줄)` | #108 | ⓐ⑵ | scripts/tests/claim-issue.test.sh (#281, 블록 57) | 그 격자로 이사하면 — bin/ci 단일 최대 이사 대상 |  |
+| 80 | 1357–1611 | scripts/claim-issue.sh | `create-only ref 잠금 · takeover D/F 충돌 · 스테일 동시 2회 · live-holder 지연 8케이스 (255줄)` | #108 | ⓐ⑵ | scripts/tests/claim-issue.test.sh (#281, 블록 57) | 그 격자로 이사하면 — bin/ci 단일 최대 이사 대상 | L2 (이 PR) |
 | 81 | 1612–1709 | SKILL{,.en}.md · skills/{verify-runner,closeout}/SKILL*.md · references/worker-template*.md · scripts/transition.sh | `사다리 참조 · --reason/--note 필수 · --add-label needs-human 금지 · policy-kept 순서 · hold:/verifying 대상 필터 · loop-status.sh --post <루프>` | #147 · #151 · #155 · #163 · #244 · #275 · #344 · #375 | ⓓ 6 · ⓒ 3 (아래 분해 표) | loop-conventions §9 · closeout-rationale §5 · issue-runner-rationale §11·§13 · state-machine.md 「정지와 반송」 | 부행마다 다르다 — 분해 표 참조 (81-f·81-g·81-h 는 ①-b 대상 필터·규칙0 문단이 스크립트 인자로 옮겨질 때) | L6 (이 PR · 81-a·81-h) |
 | 82 | 1710–1755 | SKILL{,.en}.md · skills/verify-runner/SKILL.md · skills/closeout/SKILL{,.en}.md · references/worker-template{,.en}.md | `transition.sh verify-pass\|closeout-pick\|handoff-verify · loop-status.sh · BLOCKED: 전이 실패 · --add-label flow:* 금지` | #144 | ⓓ 기계 계약 (+ⓑ 후보 1735–1744) | references/state-machine.md 「전이 실패의 공통 규칙 (세 SKILL 이 각자 14회 재진술하던 것)」 | BLOCKED 문구 축(1735–1744)은 지금 폐기 가능. 전이 호출 배선은 그 계약이 스크립트 인자로 옮겨질 때 | L3 (이 PR · 82-b 세 루프 SKILL 축만) |
 | 83 | 1756–1809 | scripts/loop-status.sh | `--state closed --search '"Epic #" in:body' · is:closed 금지 · --limit "$EPIC_CLOSED_LIMIT" · epic_of 1벌 · what: "닫힌 이슈" 금지` | #292 · #236 · #190 · #191 | ⓒ (+ⓐ 후보 1771–1781) | ci/guards/single-definition.sh (epic_of 축) · scripts/tests/loop-status.test.sh (쿼리 형태 축 — gh 인자 캡처) | 쿼리 형태 축은 그 스위트가 gh 인자를 캡처하면. epic_of 축은 정규식이 lib/loop.jq 로 가면 | L4 (#558 · 83-b) · L6 (이 PR · 83-c) |
@@ -242,6 +242,13 @@ L5 가 열두 자리의 실행비트를 먼저 걷어내면 나머지 leaf 의 d
 
 - **대상 행** — 4 · 6 · 33 · 34 · 35 · 78 · 79 · 80 · 84-c
 - **예상 규모** — 신규 scripts/tests/ 4파일(ci-gate · cleanup-worktree · repo-flag · setup-labels) + make-worktree·claim-issue 격자 증설. bin/ci −약 620줄(80 만 255줄). 가장 큰 leaf 라 80 은 따로 떼어도 된다.
+- **착지(#542)** — bin/ci 1,129 → 650줄(−479 순증감 — 인라인 삭제 −491 · 러너 호출 +12). 신규 4파일
+  (ci-gate 15단언 · cleanup-worktree 10 · repo-flag 9 · setup-labels 5) + 증설 둘(make-worktree 30→39 ·
+  claim-issue 24→48). 표 9행(4 · 6 · 33 · 34 · 35 · 78 · 79 · 80 · 84-c), 블록 8개 + 블록 72 의 ⑷ 절.
+  80(255줄)은 별도 커밋. 표 4행의 대체물 칸이 지목하던 `repo-dir.test.sh` 는 78행과 어긋난 이름이라
+  실제로 한 벌이 된 `repo-flag.test.sh` 로 정정했다. setup-labels 는 100자 상한을 소스 grep 이 아니라
+  **스텁이 GitHub validation 을 흉내내는 실행**으로 옮겨, 옛 `sl_n >= 20` 카나리(한 줄 grep 의 사각지대
+  보호)를 「세트 전량 생성 + 전수 --description」 계약으로 갈았다.
 
 ### L3 · SSOT 가 인수한 산문 단언 폐기 (ⓑ)
 
