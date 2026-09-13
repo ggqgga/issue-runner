@@ -155,7 +155,7 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 | 82 | 1710–1755 | SKILL{,.en}.md · skills/verify-runner/SKILL.md · skills/closeout/SKILL{,.en}.md · references/worker-template{,.en}.md | `transition.sh verify-pass\|closeout-pick\|handoff-verify · loop-status.sh · BLOCKED: 전이 실패 · --add-label flow:* 금지` | #144 | ⓓ 기계 계약 (+ⓑ 후보 1735–1744) | references/state-machine.md 「전이 실패의 공통 규칙 (세 SKILL 이 각자 14회 재진술하던 것)」 | BLOCKED 문구 축(1735–1744)은 지금 폐기 가능. 전이 호출 배선은 그 계약이 스크립트 인자로 옮겨질 때 | L3 (이 PR · 82-b 세 루프 SKILL 축만) |
 | 83 | 1756–1809 | scripts/loop-status.sh | `--state closed --search '"Epic #" in:body' · is:closed 금지 · --limit "$EPIC_CLOSED_LIMIT" · epic_of 1벌 · what: "닫힌 이슈" 금지` | #292 · #236 · #190 · #191 | ⓒ (+ⓐ 후보 1771–1781) | ci/guards/single-definition.sh (epic_of 축) · scripts/tests/loop-status.test.sh (쿼리 형태 축 — gh 인자 캡처) | 쿼리 형태 축은 그 스위트가 gh 인자를 캡처하면. epic_of 축은 정규식이 lib/loop.jq 로 가면 |  |
 | 84 | 1810–1849 | scripts/setup-labels.sh · scripts/lib/constants.sh | `gh label create "full-cycle" · 기존 18개 라벨 정의 생존 · RESUME_AFTER_MIN 정의 · --description 100자 이하` | #245 · #364 · #346 · #401 | ⓐ⑵ (1834–1849) · ⓓ (1815–1828) · ⓒ (1829–1833) | 신규 scripts/tests/setup-labels.test.sh (100자 상한·정의 존재를 행동으로) | 그 테스트 파일이 생기면. 라벨 이름 목록은 블록 7 과 한 자리로 합친다 |  |
-| 85 | 1850–1891 | scripts/finish-classify.sh · scripts/bounce-state.sh · skills/closeout/SKILL{,.en}.md | `bounce-state.sh 되묻기 배선 + 반송 마커 5분/35분 → active/stale_reverify + #308 문단 · 라벨 공백 창/label gap` | #308 | ⓐ⑵ (1862–1879) · ⓑ (1880–1891) · ⓓ (1853–1855) | scripts/tests/finish-classify.test.sh 1140–1200행 — #308 반송 마커 픽스처 11:25·11:30·11:29:59(경계) + 마커 부재(1173행)·시각 미상(1182행) 두 반례. bin/ci 주석의 「J절」 은 옛 이름이고 실제 자리는 여기다 · references/closeout-rationale.md §6 「①-b 반송 게이트」 | 산문 축(1880–1891)은 지금 폐기 가능. 스모크도 즉시 — 그 격자를 실측 확인했다 |  |
+| 85 | 1850–1891 | scripts/finish-classify.sh · scripts/bounce-state.sh · skills/closeout/SKILL{,.en}.md | `bounce-state.sh 되묻기 배선 + 반송 마커 5분/35분 → active/stale_reverify + #308 문단 · 라벨 공백 창/label gap` | #308 | ⓐ⑵ (1862–1879) · ⓑ (1880–1891) · ⓓ (1853–1855) | scripts/tests/finish-classify.test.sh 1140–1200행 — #308 반송 마커 픽스처 11:25·11:30·11:29:59(경계) + 마커 부재(1173행)·시각 미상(1182행) 두 반례. bin/ci 주석의 「J절」 은 옛 이름이고 실제 자리는 여기다 · references/closeout-rationale.md §7 「라벨 공백 창 (#308)」(:357-366 — L3 실측 정정) | 산문 축(1880–1891)은 지금 폐기 가능. 스모크도 즉시 — 그 격자를 실측 확인했다 | L3 (이 PR · 85-d) |
 | 86 | 1892–1939 | SKILL*.md · skills/*/SKILL*.md · references/worker-template*.md · references/{loop-conventions,*-rationale}.md | `(loop-conventions\|…rationale)(\.md)?'? §[0-9]+ 인용 ⊆ ^## §N 헤더 집합` | #507 · #451 · #453 | ⓒ | ci/guards/section-pointers.sh | 블록 주석이 이미 적었다: 「포인터를 앵커 링크로 바꾸고 링크 검사기가 들어오면 지운다」 |  |
 
 ## 이질 블록 분해 — 하위 가드 (부행)
@@ -224,7 +224,7 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 | 85-a | 1853–1855 | finish-classify 의 bounce-state.sh 되묻기 배선 | ⓓ | 기계 계약 |
 | 85-b | 1856–1861 | bounce-state.sh 실행비트 | ⓒ | ci/guards/exec-bit.sh |
 | 85-c | 1862–1879 | 반송 마커 5분/35분 → active/stale_reverify 행동 스모크 | ⓐ⑵ | finish-classify.test.sh 1140–1200행(#308 픽스처 + 경계 + 반례 2건) — 실측 확인 |
-| 85-d | 1880–1891 | 한/영 #308 문단 · 라벨 공백 창 / label gap | ⓑ | closeout-rationale §6 「①-b 반송 게이트」 |
+| 85-d | 1880–1891 | 한/영 #308 문단 · 라벨 공백 창 / label gap | ⓑ | closeout-rationale **§7** 「라벨 공백 창 (#308)」(:357-366 — L3 실측 정정: §6 「①-b 반송 게이트」 에는 #308 이 없다) |
 
 ## 행 처분 leaf 초안
 
