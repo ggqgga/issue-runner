@@ -5,8 +5,9 @@
 ## 명령
 
 - 전체 CI (머지 전 필수, GitHub Actions 미사용): `bin/ci`
-  — 모든 .sh 의 bash 문법 검사(bash -n) + shellcheck(설치 시) + repo-dir.sh 스모크 테스트
-  + 한/영 SKILL 구조 동기화 검사(`## ` 헤더 개수·순서)
+  — `ci/steps/NN-*.sh` 를 이름순으로 실행하는 러너다: bash 문법 검사 → shellcheck(설치 시)
+  → `ci/guards/*.sh` 문서 형태 가드 → 라벨·SKILL·프롬프트 계약 단계 → `scripts/tests/*.test.sh`
+  격자 러너 → 배선·전이 서술 계약 단계. 구조와 가드 은퇴 원칙은 `ci/README.md`
 - 스크립트는 macOS bash 3.2 호환 필수 — mapfile/연관배열 등 bash4 문법 금지
 
 ## 규칙

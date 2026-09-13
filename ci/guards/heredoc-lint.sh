@@ -16,5 +16,5 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-scripts/lint-heredoc.sh scripts/*.sh scripts/manual/*.sh scripts/lib/*.sh ci/guards/*.sh hooks/*.sh bin/ci \
+scripts/lint-heredoc.sh scripts/*.sh scripts/manual/*.sh scripts/lib/*.sh ci/guards/*.sh ci/steps/*.sh ci/lib.sh hooks/*.sh bin/ci \
   || { echo "  ↑ 백틱은 \\\` 로, 명령치환은 \\\$( 로 이스케이프하거나 <<'DELIM' 로 인용하라"; exit 1; }
