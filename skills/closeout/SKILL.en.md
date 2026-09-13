@@ -1125,13 +1125,16 @@ structure/empty-state confirmation from real-data render confirmation in the res
   - **After the smoke — what did it see?** Collect **only the verdict lines** the prompt
     produced (`<verdict> <original item line>` — the vocabulary is `pass`·`fail`·`보류`,
     the grammar is in the script header) into a file, call
-    `$SCRIPTS/smoke-tally.sh <result file>`, and branch below on that JSON:
+    `$SCRIPTS/smoke-tally.sh --checks <section file> <result file>` (the original checklist is
+    **the truth about the denominator** — counting the result file alone makes an item the
+    model omitted disappear into a `1/1 통과` false green, #467), and branch below on that JSON:
     `verdict` (`green`|`fail`|`held`|`skip`) · the denominator `denominator` · the held
     count `held` (broken down as `held_marked`·`held_unstepped`). **Do not read `verdict`
     alone** — fail and held can both be true, and even on the fail branch a non-zero
     `held` means the issue does not close. A non-zero `unparsed` means the prompt emitted
-    a line outside the grammar (it is counted as held, so that tick cannot be green) —
-    report it in one line in ④ Report. **On a degrade tick where the smoke never ran, do
+    a line outside the grammar **or omitted an item**, and a non-zero `duplicate` means one
+    item got two verdicts — either way that item counts as held, so that tick cannot be
+    green. Report it in one line in ④ Report. **On a degrade tick where the smoke never ran, do
     not make this call at all** — feeding a `스모크 skip: <reason>` line to the tally as a
     result file parses as a line outside the grammar, is counted as `보류`, and leaves a
     ticket that was never stepped sitting in "held". Degrade is owned by its own bullet below.

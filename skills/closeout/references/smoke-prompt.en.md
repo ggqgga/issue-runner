@@ -249,6 +249,9 @@ per line**, one line per check item:
 - `<original item line>` is the line from the deploy issue body copied **verbatim** — the
   `- [ ]` checkbox and the `[칸 ③]` marker must survive, since that is how the tally drops
   marked lines from the denominator. Do not paraphrase it.
+- **Exactly one verdict line per open item.** The tally cross-checks against the original
+  checklist, so an item you omit and an item you judge twice both count as `보류`, and that
+  tick cannot be green.
 - Example:
 
 ```
