@@ -137,11 +137,18 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   > line in the form 'When <situation>, do <specific action>'. No speculation or
   > generalities. If there are no failure facts, output 'NONE'."
 
-  If the result is not NONE, append to the `.loop/lessons.md` under the path
-  output by `$SCRIPTS/repo-dir.sh <repo>` (= `<repo-dir>/.loop/lessons.md` — the
-  only interpretation that makes record and read point at the same file even on
-  a repos.conf-mapped machine) in the form `- [YYYY-MM-DD PR#<pr>] <lesson>`.
-  **If the file exceeds 20 lines, delete the oldest lines** (context-rot defense).
+  If the result is not NONE, append one line `- [YYYY-MM-DD PR#<pr>] <lesson>` to
+  the `.loop/lessons.md` under the path output by `$SCRIPTS/repo-dir.sh <repo>`
+  (= `<repo-dir>/.loop/lessons.md` — the only interpretation that makes record and
+  read point at the same file even on a repos.conf-mapped machine), then trim to the
+  cap — **call `$SCRIPTS/lessons-trim.sh append <file> 20 "<line>"` in one place**
+  (it creates the file if absent). **Do not append by hand outside this call** —
+  another tick may be trimming the same file concurrently, and an append done
+  outside the lock can be lost if it lands in that trim's read→write window (#208
+  re-verification BLOCKER② — the same reason closeout steps 1 and 6 use this call).
+  **Cap: 20 entries** — on overflow, drop the oldest entries **until the entry count
+  is at or below the cap** (context-rot defense; the old prose rule "delete the
+  oldest line" netted zero against the append, so once over the cap it never shrank).
   Only a human moves lessons into CLAUDE.md.
 - `rejected` — a human rejected the PR. **If a worker is still alive, stop it first
   with `TaskStop` the same as `merged`** (orphan prevention). Perform the lessons step the same way.
@@ -157,9 +164,10 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   **Re-run the same transition idempotently**:
   `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr>` (the PR side has already moved, so
   it is a no-op; only the issue returns to `agent-ready` → a ③ candidate this tick). On success add
-  `#<num>(반쯤 이동 회수)` to `보수` in ④ Report. If the transition exits 1·2, report
-  `BLOCKED: transition failed verify-redispatch PR #<pr>(<repo_short>) — <one stderr line>` and move
-  on (the common rule — never silently; the next tick re-emits the same event).
+  `#<num>(반쯤 이동 회수)` to `보수` in ④ Report. If the transition exits non-zero, act per
+  `references/state-machine.md` 「전이 실패의 공통 규칙」 (the common rule for failed transitions)
+  — report `BLOCKED: transition failed verify-redispatch PR #<pr>(<repo_short>) — <one stderr line>`
+  and move on (the rule is not restated here).
   A PR with this event is **not** ② Maintain input (no `pr_open` — same shape as `harvesting`).
   A live worker (progress evidence via `progress-evidence.sh`) and any unprovable lookup are already
   filtered out by the script, so do not re-judge freshness here.
@@ -323,9 +331,10 @@ so it is a brake a human put there by hand. Per event:
   here**:
   `$SCRIPTS/transition.sh runner-held <repo> <number> <pr> --reason policy --note "미러 불일치 증거 부재 <attempts>회 — PR 과 이슈의 정지 라벨이 어긋난다"`
   (attaches `hold:policy` plus the question comment on both the issue and the PR). If the
-  transition exits 1·2, leave one line `BLOCKED: transition failed runner-held #<number>(exit N)`
-  in ④ Report — the next tick re-emits the same event (no new marker is added, so the round count
-  does not inflate). Once it lands, the issue carries a stop label and the PR drops out of mirror
+  transition exits non-zero, act per `references/state-machine.md` 「전이 실패의 공통 규칙」 —
+  leave one line `BLOCKED: transition failed runner-held #<number>(exit N)` in ④ Report; the
+  next tick re-emits the same event (no new marker is added, so the round count does not
+  inflate). Once it lands, the issue carries a stop label and the PR drops out of mirror
   cleanup on the next tick (it terminates itself). Report one warn line `미러 상한 #<pr>` in ④.
 - `resumed` — the hold (`reason` field: `ladder` → `hold:ladder`, `conflict` →
   `hold:conflict`, #345) is off and `agent-ready` is untouched (the
@@ -390,9 +399,10 @@ so it is a brake a human put there by hand. Per event:
   If the transition exits non-zero, **do not post the marker comment**; leave one line
   `BLOCKED: 전이 실패 policy-kept #<issue>(exit N)` in ④ Report instead — with no marker the next
   sweep **emits the same issue again** as `policy_review_due`. `policy-kept` only adds labels and
-  is idempotent, so re-running it *is* the recovery. Transition exit → marker disposition:
-  `0`=attached→post the marker · `1` (readback mismatch) · `2` (gh failure) · `64` (bad call
-  shape)=do not post the marker (the next sweep re-emits the re-review). **Only an issue whose
+  is idempotent, so re-running it *is* the recovery. What each exit code means and what to do
+  about it lives in `references/state-machine.md` 「전이 실패의 공통 규칙」 — not restated here.
+  The one thing specific to this spot is the **marker disposition**: on exit 0 post the marker,
+  on non-zero do not (the next sweep re-emits the re-review). **Only an issue whose
   marker remains** is **never asked twice** (until a human removes the label). Report it in ④ as
   `re-reviewed N (resumed n · kept m)`.
   **A PR-only hold always ends as "kept human"** (#395 → #421). The event's `pr` field splits the

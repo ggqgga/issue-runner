@@ -531,12 +531,11 @@ wording — a dropped colon or reordering lets the `bounce-state.sh` bounce safe
 do not re-issue** (prevents /loop spam, isomorphic to the step-6 spinoff marker). Re-dispatch
 eligibility is `open + agent-ready + ¬agent:claimed` (eligible-issues.sh), and the
 `closeout-redispatch` transition sets both in one call (do not hand-run `gh issue edit`).
-For both transitions above: **on exit 1 (readback mismatch) or 2 (gh failure), do NOT change
-that PR's terminal state** — report
+For both transitions above: **if either exits non-zero**, act per `references/state-machine.md`
+「전이 실패의 공통 규칙」 (the common rule for failed transitions) — report
 `BLOCKED: transition failed <transition> PR #<pr>(<repo_short>) — <one stderr line>` in
-④ Report instead (the point is to leave the half-moved labels for the next tick to catch —
-never pass over it silently). Once the re-dispatch lands, issue-runner Dispatch's make-worktree reuses
-the existing `agent/issue-N` worktree, so **the fix continues on the same PR branch and no new
+④ Report instead (the rule is not restated here). Once the re-dispatch lands, issue-runner
+Dispatch's make-worktree reuses the existing `agent/issue-N` worktree, so **the fix continues on the same PR branch and no new
 PR is created** (a repair, not a duplicate).
 
 Adopt candidates (rebase · `stale_inline`) are consumed by ② Pick; re-dispatch / needs-human
@@ -569,10 +568,10 @@ in ④ Report.
 (the PR body's `Closes #N`/`Refs #N`) in ③-1, if there is a linked issue call
 `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` **again** (idempotent — the PR
 side already matches and is a no-op; only the issue moves to `harvesting`).
-**If this mirror call exits 1 (readback mismatch) or 2 (gh failure), do not proceed to the
-merge** — skip this PR and report
+**If this mirror call exits non-zero, do not proceed to the merge** — per
+`references/state-machine.md` 「전이 실패의 공통 규칙」, skip this PR and report
 `BLOCKED: transition failed closeout-pick PR #<pr>(<repo_short>) — <one stderr line>`
-in ④ Report (so the next tick picks up the half-moved state where the PR is `harvesting`
+in ④ Report (what is left behind is the half-moved state where the PR is `harvesting`
 but the issue is not). This way "closing out"
 also shows on the issue list — the stage (verify→closeout) is then visible from the issue
 list alone (it shows only briefly, since a successful merge closes the issue via
@@ -647,8 +646,9 @@ merge, #96). No worktree (`make-worktree.sh`) is needed in this step — step 3 
   `needs-human`** — a duplicate is something the loop can decide, and handing it over piles
   up reasonless `needs-human` (the #4803 shape: closeout judged it a duplicate and still
   threw it at a human). → **dup exit** (no merge).
-  **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
-  report `BLOCKED: transition failed closeout-dup PR #<pr>(<repo_short>) — <one stderr line>`
+  **If the transition exits non-zero**, act per `references/state-machine.md`
+  「전이 실패의 공통 규칙」 — report
+  `BLOCKED: transition failed closeout-dup PR #<pr>(<repo_short>) — <one stderr line>`
   in ④ Report. A hunch ("looks like a duplicate") is not dup — if you cannot name the
   evidence commit, take the BLOCKER path below (`--reason policy`).
 - BLOCKER (including no-verdict, e.g. reason `검증자 미산출 — 타임아웃
@@ -673,8 +673,9 @@ merge, #96). No worktree (`make-worktree.sh`) is needed in this step — step 3 
   not invent a new exit state — also count it as `재디스패치 N` in ④ Report). Once the re-dispatch
   lands, issue-runner Dispatch reuses the same `agent/issue-N` worktree, so **the fix continues on
   the same PR branch** and no new PR appears.
-  **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
-  report `BLOCKED: transition failed closeout-redispatch PR #<pr>(<repo_short>) — <one stderr line>`
+  **If the transition exits non-zero**, act per `references/state-machine.md`
+  「전이 실패의 공통 규칙」 — report
+  `BLOCKED: transition failed closeout-redispatch PR #<pr>(<repo_short>) — <one stderr line>`
   in ④ Report, and **immediately re-run
   `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` to restore the `harvesting` claim on
   BOTH the PR and the issue** (the same call ③-1 makes to mirror the source issue — idempotent, and
@@ -753,10 +754,10 @@ merge, #96). No worktree (`make-worktree.sh`) is needed in this step — step 3 
   no-verdict that lands on this branch needs a spec/policy call, so the reason is `policy`
   (neither `conflict` nor `ladder`). A no-verdict is **always** this branch — with no verdict
   there is nothing to state as the reason a worker should fix.
-  **On exit 1 (readback mismatch) or 2 (gh failure), do NOT change that PR's terminal state** —
-  report `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
-  in ④ Report instead (the point is to leave the half-moved labels for the next tick to catch —
-  never pass over it silently).
+  **If the transition exits non-zero**, act per `references/state-machine.md`
+  「전이 실패의 공통 규칙」 — report
+  `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
+  in ④ Report instead.
 - CLEAN/WARN → `gh pr comment <pr> --repo <repo> --body "마감 검증: ✅ <CLEAN or WARN n>
   <!-- bodat:worker -->"`
   (this comment is the step-1 completion marker).
@@ -811,9 +812,9 @@ hook queried the cwd repo). Gate conditions: `$SCRIPTS/closeout-ci-pass.sh <repo
   with the new base is broken), do not merge: exit on hold fail-closed
   (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` +
   `blocked` exit, do not
-  invent a new exit state — if that transition exits 1·2, report
+  invent a new exit state — if that transition exits non-zero, report
   `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
-  in ④ Report). If 0, the cache is
+  in ④ Report, per 「전이 실패의 공통 규칙」 in `references/state-machine.md`). If 0, the cache is
   filled with pass, so join the exit-0 gate below. This path fires **independent of
   whether step 3 produced a doc commit** — step 3's cache supplement only runs after a
   doc push, so it cannot cover the rebase·no-doc-change case (where the worker's
@@ -898,8 +899,8 @@ dirty guard stays — if dirty, warn and hold; best-effort).
     — filing `policy` from the start saves that window and puts the note in question form
     (what a human must answer: take over, or open an issue and reissue) right away.
   Either branch is a blocked exit (this path alone uses `conflict`). For both transitions
-  (redispatch·blocked): **on exit 1 (readback mismatch) or
-  2 (gh failure), do NOT change that PR's terminal state** — report
+  (redispatch·blocked): **if either exits non-zero**, act per 「전이 실패의 공통 규칙」 in
+  `references/state-machine.md` — report
   `BLOCKED: transition failed <transition> PR #<pr>(<repo_short>) — <one stderr line>` in
   ④ Report instead.
 
@@ -946,9 +947,9 @@ comment.
   exit on hold fail-closed
   (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"`
   + `blocked` exit, follow the existing BLOCKER path — do not invent a new exit state; if
-  that transition exits 1·2, report
+  that transition exits non-zero, report
   `BLOCKED: transition failed closeout-blocked PR #<pr>(<repo_short>) — <one stderr line>`
-  in ④ Report).
+  in ④ Report, per 「전이 실패의 공통 규칙」 in `references/state-machine.md`).
 - **single-issue degrade**: if there is no `Plans/*.md`·`## Plan`, skip the doc edit.
   If there is no epic, skip the rollup. Reconcile only the issue's own checkboxes. If
   neither exists, this step is a no-op — **since there is no new doc commit·push, skip

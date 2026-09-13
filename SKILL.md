@@ -130,16 +130,23 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
   결과가 NONE이 아니면 `$SCRIPTS/repo-dir.sh <repo>` 출력 경로의 `.loop/lessons.md`
   (= `<repo-dir>/.loop/lessons.md` — repos.conf 매핑 머신에서도 기록·읽기가 같은 파일을
-  가리키게 하는 유일한 해석)에 `- [YYYY-MM-DD PR#<pr>] <교훈>` 형식으로 append.
-  **20줄 초과 시 가장 오래된 줄 삭제** (context rot 방어). lessons를 CLAUDE.md로 옮기는
-  것은 사람만 한다.
+  가리키게 하는 유일한 해석)에 `- [YYYY-MM-DD PR#<pr>] <교훈>` 형식으로 append 하고 캡까지
+  정리한다 — **`$SCRIPTS/lessons-trim.sh append <파일> 20 "<1줄>"` 한 자리로 부른다**
+  (파일이 없으면 새로 만든다). **append 를 이 호출 밖에서 손으로 하지 마라** — 다른 틱이
+  같은 파일을 동시에 정리 중일 수 있고, 잠금 밖에서 한 append 는 그 정리의 read→write 창에
+  겹치면 유실된다(#208 재검증 BLOCKER② — closeout 1·6단계가 같은 호출을 쓰는 이유다).
+  **캡: 항목 20개** — 초과 시 **항목 수가 캡 이하가 될 때까지** 가장 오래된 항목부터 지운다
+  (context rot 방어. 옛 산문의 "가장 오래된 줄 하나 삭제" 는 append(+1)·삭제(-1) 순증이 0
+  이라 한 번 캡을 넘으면 안 줄었다 — 그 결함을 스크립트가 수렴 규칙으로 고친다).
+  lessons를 CLAUDE.md로 옮기는 것은 사람만 한다.
   **라우팅 — `lessons.md` 는 구현 교훈 전용이다.** 이 파일은 ③-4d 에서 **워커 프롬프트에
   그대로 실린다. 그래서 담기는 것은 "다음 구현자가 같은 코드를 다시 짤 때 쓸 지식"뿐이다.
   교훈이 **검증 판정 계열**(검증자가 무엇을 오판했나 · false BLOCKER 를 어떻게 뒤집었나 ·
   BLOCKER vs WARN 경계)이면 여기 쓰지 말고 같은 디렉토리의 **`.loop/lessons-verifier.md`**
   에 append 하라 — 그 파일은 verify-runner ③-3 과 closeout 1단계가 검증자 프롬프트에
-  주입한다(캡·형식은 closeout 쪽 규칙을 따른다). 두 파일을 섞으면 양쪽 프롬프트가 서로
-  무관한 지식으로 희석된다.
+  주입한다. **이 파일도 같은 호출로 쓴다** — `$SCRIPTS/lessons-trim.sh append <파일> 20 "<1줄>"`
+  (closeout 1·6단계와 같은 자리·같은 캡. 손 append 는 #208 의 유실 창에 걸린다).
+  두 파일을 섞으면 양쪽 프롬프트가 서로 무관한 지식으로 희석된다.
 - `rejected` — 사람이 PR을 거부함. **살아있는 워커가 있으면 `merged` 와 동일하게
   `TaskStop` 으로 먼저 중단**(고아 방지). lessons 단계 동일하게 수행. 이슈는 재디스패치하지
   않는다 (agent-ready가 이미 제거됨).
@@ -151,9 +158,10 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
   "다음 틱이 잡게" 라고 넘긴 그 상태의 주체가 여기다(`references/state-machine.md` 회수 열).
   **같은 전이를 멱등 재실행하라**: `$SCRIPTS/transition.sh verify-redispatch <repo> <이슈> <pr>`
   (PR 쪽은 이미 이동해 있어 no-op 이고 이슈만 `agent-ready` 로 돌아온다 → 이번 틱 ③ 후보).
-  성사되면 ④ Report 의 `보수` 에 `#<num>(반쯤 이동 회수)` 한 줄. 전이가 exit 1·2 면 ④ Report 에
-  `BLOCKED: 전이 실패 verify-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>` 만 남기고 다음
-  이벤트로 간다(공통 규칙 — 조용히 넘어가지 않는다. 다음 틱이 같은 이벤트를 다시 낸다).
+  성사되면 ④ Report 의 `보수` 에 `#<num>(반쯤 이동 회수)` 한 줄. 전이가 비0이면
+  `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
+  `BLOCKED: 전이 실패 verify-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>` 만 남기고
+  다음 이벤트로 간다(규칙은 여기서 다시 적지 않는다).
   이 이벤트가 난 PR 은 **② Maintain 입력이 아니다**(`pr_open` 이 안 나온다 — `harvesting` 과
   같은 모양). 살아 있는 워커(`progress-evidence.sh` 진행 증거 있음)와 증명 실패는 스크립트가
   이미 걸러 이 이벤트를 내지 않으니, 여기서 신선도를 다시 재지 마라.
@@ -285,7 +293,8 @@ PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·
   회를 채웠다(#397 — `attempts`/`limit` 를 `3/3` 으로 읽는다). 스크립트는 라벨을 한 번도
   건드리지 않았다(증거 없이 사람 게이트를 벗기지 않는 게 그 갈래의 규율). 여기서 **사람 몫으로
   올려라**: `$SCRIPTS/transition.sh runner-held <repo> <number> <pr> --reason policy --note "미러 불일치 증거 부재 <attempts>회 — PR 과 이슈의 정지 라벨이 어긋난다"`
-  (이슈와 PR 양쪽에 `hold:policy` + 질문 코멘트). 전이가 exit 1·2 면 ④ Report 에
+  (이슈와 PR 양쪽에 `hold:policy` + 질문 코멘트). 전이가 비0이면
+  `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
   `BLOCKED: 전이 실패 runner-held #<number>(exit N)` 한 줄 — 다음 틱이 같은 이벤트를 다시 낸다
   (마커를 더 쌓지 않으므로 회차가 부풀지 않는다). 성사되면 이슈에 정지 라벨이 생겨 그 PR 은
   다음 틱부터 미러 정리 대상에서 빠진다(자연 종료). ④ Report 의 warn 에 `미러 상한 #<pr>` 한 줄.
@@ -340,9 +349,10 @@ PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·
   전이가 **비0이면 마커 코멘트를 올리지 말고** ④ Report 에
   `BLOCKED: 전이 실패 policy-kept #<이슈>(exit N)` 한 줄만 남겨라 — 마커가 없으니 다음 스윕이
   같은 건을 `policy_review_due` 로 **다시 낸다**. `policy-kept` 는 붙이기만 하는 멱등 전이라
-  재호출이 곧 복구다. 전이 exit → 마커 처분:
-  `0`=붙었다→마커 남긴다 · `1`(readback 불일치)·`2`(gh 실패)·`64`(호출 형태 오류)=마커
-  남기지 않는다(다음 스윕이 재심을 다시 낸다). **마커가 남은 건만**
+  재호출이 곧 복구다. exit 코드별 뜻과 조치는 `references/state-machine.md` 의
+  「전이 실패의 공통 규칙」 이 SSOT 다 — 여기서 다시 적지 않는다. 이 자리에서만 다른 것은
+  **마커 처분** 하나다: exit 0 이면 마커를 남기고, 비0이면 남기지 않는다(다음 스윕이 재심을
+  다시 낸다). **마커가 남은 건만**
   **두 번 묻지 않는다**(사람이 라벨을 뗄 때까지). ④ Report 에 `재심 N(재개 n·유지 m)`.
   **PR 단독 홀드는 언제나 "사람 몫 유지" 로 끝난다**(#395 → #421). 이벤트의 `pr` 필드가 축을
   가른다 — `pr` 이 채워져 있고 `number` 가 `null` 이면 **열린 연결 이슈가 없는 PR** 의
