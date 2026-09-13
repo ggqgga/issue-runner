@@ -22,7 +22,7 @@
 #   · **stdout = 후보 JSON 배열 하나뿐.** 디스패처 파이프라인이 이걸 SSOT 로 읽으므로
 #     어떤 진단도 stdout 으로 새면 안 된다(한 바이트도 더하지 않는다).
 #   · stderr = 진단. 게이트에 탈락한 이슈마다 `blocked: <owner/repo>#<num> ← #<b>(<상태>)`,
-#     스캔 끝에 `blocked-summary: 막힘 N건 (needs-human 블로커 M건)`, 검색 창 경고는 `warn: `.
+#     스캔 끝에 `blocked-summary: 막힘 N건 (사람 게이트 블로커 M건)`, 검색 창 경고는 `warn: `.
 #     ④ Report 가 이 셋을 그대로 옮긴다(SKILL.md ③-2 · ④) — 게이트 탈락이 조용히
 #     `continue` 로 빠지면 "15개 놀고 있는데 루프가 멍때린다" 로만 보인다.
 set -euo pipefail
@@ -184,13 +184,21 @@ BLOCKER_Q='.state + "\t" + ([.labels[].name] | join(","))'
 # `hold:conflict` 는 `hold:*` 이면서도 **needs-human**이다 — 충돌은 루프가 재시도로 못 푸는
 # 사람 몫이라, `loop-status.sh` 가 needs-human 버킷을 `needs-human` ∪ `hold:conflict` 로
 # 정의한다(같은 이슈 #244). 여기서만 일반 `hold:*` 갈래로 보내면 같은 라벨을 두 스크립트가
-# 다르게 읽고, 막힌 하위가 아래 `blocked_human` 카운트에서 빠져 needs-human 경보에 안 잡힌다.
+# 다르게 읽고, 막힌 하위가 아래 `blocked_human` 카운트에서 빠져 사람 게이트 경보에 안 잡힌다.
 # 그래서 **일반 `hold:*` 보다 앞**에 둔다 — `case` 는 첫 일치가 이기므로 순서가 판정의 전부다.
-# 순서는 loop-status 의 버킷 우선순위와 같다: needs-human > 보류 > 단계 라벨(뒤가 이김) > 대기.
+# `테스트`(배포 뒤 검증, e2e-test 가 비운다)·`deploy-wait`(배포대기)도 사람 게이트다(#431) —
+# `loop-status.sh` 가 이 둘을 needs-human 바로 뒤·`hold:*` 앞 버킷으로 두고, 블로커 warn
+# `블로커 배포대기 …` 도 `human_wait ∪ test_wait ∪ deploy_wait` 로 묶는다. 갈래가 없으면
+# `대기`(= 곧 집힐 것)로 찍혀 대시보드의 `배포대기` 줄과 어긋나고, 아래 `blocked_human`
+# 카운트(같은 집합)에서도 빠진다.
+# 순서는 loop-status 의 버킷 우선순위와 같다:
+#   needs-human > 테스트 > 배포대기 > 보류 > 단계 라벨(뒤가 이김) > 대기.
 blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
   case ",$1," in
     *",needs-human,"*)   printf 'needs-human' ;;
     *",hold:conflict,"*) printf 'needs-human' ;;
+    *",테스트,"*)         printf '테스트' ;;
+    *",deploy-wait,"*)   printf '배포대기' ;;
     *",hold:"*)          printf '보류' ;;
     *",harvesting,"*)    printf 'closeout' ;;
     *",flow:ready,"*)    printf '마감대기' ;;
@@ -357,9 +365,11 @@ while [ "$i" -lt "$count" ]; do
     # 탈락을 말한다 — 조용한 continue 는 ④ Report 를 "신규 0" 한 줄로 만든다(#247).
     echo "blocked: $repo#$num ← #$blocker_num($blocker_state)" >&2
     blocked_n=$((blocked_n + 1))
-    if [ "$blocker_state" = "needs-human" ]; then
-      blocked_human=$((blocked_human + 1))
-    fi
+    # 사람 게이트 = `blocker_state_of` 의 needs-human·테스트·배포대기 — loop-status 의
+    # `blocker_human_wait` warn(`human_wait ∪ test_wait ∪ deploy_wait`)과 같은 집합 (#431).
+    case "$blocker_state" in
+      needs-human|테스트|배포대기) blocked_human=$((blocked_human + 1)) ;;
+    esac
     continue
   fi
 
@@ -390,7 +400,7 @@ done
 if [ "$blocked_n" = 0 ]; then
   echo "blocked-summary: 막힘 0건" >&2
 else
-  echo "blocked-summary: 막힘 ${blocked_n}건 (needs-human 블로커 ${blocked_human}건)" >&2
+  echo "blocked-summary: 막힘 ${blocked_n}건 (사람 게이트 블로커 ${blocked_human}건)" >&2
 fi
 
 # 정렬 키 = (우선순위, 오래된 순) 둘뿐. 같은 P 는 **FIFO**(created asc)고, 에픽 축은 없다 (#401).
