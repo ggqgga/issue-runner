@@ -9,14 +9,7 @@ description: issue-runner 가 연 PR 을 받아 test plan(E2E)·codex 리뷰를 
 CID·PR 까지 마치고 `flow:verify` 로 넘긴 PR 을 받아 **느린 외부툴 검증(E2E test:system
 + codex 리뷰)을 한 번에 하나씩 직렬로** 돌린다. 통과하면 `머지 판정: ✅`+`flow:ready`
 로 closeout 에 넘기고, 실패하면 issue-runner 로 재디스패치한다. **머지는 절대 하지
-않는다**(closeout 독점).
-
-**존재 이유.** 예전에는 이 검증을 issue-runner 가 디스패치한 **타임박스된 일회성
-워커** 안에서 인라인으로 시켰다. E2E 는 헤드리스 크롬 10개를 띄우고 codex 는 외부
-CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초과되면 PR 이 드롭됐다
-(동시 5워커면 5배로 샜다). 검증을 **버리지 않고 매 틱 재집는 전용 루프**가 소유하면
-드롭이 원천 불가하고, 직렬(MAX_VERIFY=1)이라 크롬 부하 피크가 한 세트로 고정돼 박스가
-안 터진다. 이것이 issue-runner(생산)→verify-runner(검증)→closeout(마감) 3루프 분리다.
+않는다**(closeout 독점). (3루프 분리의 존재 이유 — 근거: verify-runner-rationale §1)
 
 > **소유권·정지·전이 실패 규칙의 SSOT 는 `references/state-machine.md` 다**(#393). 어느 상태를 어느 루프가 들고
 > 있고(소유 라벨 `flow:verify`·`verifying`·`flow:ready`·`harvesting`), 기계 정지(`hold:*`)와 사람 정지(`needs-human`)가
@@ -27,6 +20,10 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
 > warn·note·막힘 채널 경계(§2) · 스크립트 stderr → ④ Report 릴레이(§3) · 센티널 마커(§4) · `Closes #N`
 > 전용 줄(§5) · 레포 짧은 이름(§6) · 파이프라인 스냅샷 규율(§7) · 라벨 부재 폴백(§8) · 검증 사다리 칸
 > 규율(§9) · 표면 교정 판정(§10) — 아래 산문은 그 절들을 가리키지 재진술하지 않는다.
+>
+> **설계 근거·사고 이력·버린 대안은 `references/verify-runner-rationale.md` 다**(#455). 이 파일은 틱 골격만
+> 담는다 — 문단 끝 `(근거: verify-runner-rationale §N)` 가 그 문서의 절을 가리킨다. 규범이 아니므로 틱 수행
+> 중에는 읽지 않아도 된다.
 
 ## 상수
 
@@ -38,16 +35,14 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
   #375 · Plans/review-round-cap-and-gate-signals.md). 카운트는 PR 본문 `<!-- verify-attempt: N -->`
   주석(N = 지금까지의 codex BLOCKER 반송 수, issue-runner repair-count 동형). 읽기·증가는
   `$SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt [--bump]` 한 자리다(#444). N < 2 면 ③-3 이
-  codex 를 부르고, **N = 2 면 codex 없이 ③-3′ 자체 리뷰로 판정해 완료**한다 — 리뷰어(codex)는
-  같은 diff 에 회차마다 다른 답을 내므로(같은 head 세 번 → P1 → P2 → CLEAN 실측) 세 번째부터는
-  게이트가 아니라 발산이다. 옛 상한(3회 초과 → `hold:policy`)은 폐기 —
-  **리뷰 반송은 사람 결정 사유가 아니다.** 사람 호출(`needs-human`)은 여전히 재심이 "사람 몫
-  유지" 로 끝났을 때만 붙는다(#244 — issue-runner ① 의 `policy-kept` 가 유일한 생산자다).
+  codex 를 부르고, **N = 2 면 codex 없이 ③-3′ 자체 리뷰로 판정해 완료**한다. 사람 호출
+  (`needs-human`)은 재심이 "사람 몫 유지" 로 끝났을 때만 붙는다(#244 — issue-runner ① 의
+  `policy-kept` 가 유일한 생산자다). (근거: verify-runner-rationale §2)
 - `STALE_FINISH_MIN` — `finish-classify.sh` 시간버퍼(분). 재사용. **값은 `scripts/lib/constants.sh`** (#427).
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
 - `VERIFIER = codex:codex-rescue` — diff correctness 검증자 서브에이전트 타입.
-  **출력 계약은 issue-runner `SKILL.md` 의 `## 상수` 절 `VERIFIER` 항목이 SSOT 다**(#427 —
-  세 SKILL 이 각자 SSOT 를 자칭하던 것을 한 곳으로). 여기선 그 계약을 다시 적지 않는다:
+  **출력 계약은 issue-runner `SKILL.md` 의 `## 상수` 절 `VERIFIER` 항목이 SSOT 다**(#427).
+  여기선 그 계약을 다시 적지 않는다:
   read-only·BLOCKER/WARN/NIT·CLEAN·BLOCKER 는 게이트, 그대로 적용된다(이 레인에선 미해결
   BLOCKER 가 있으면 통과 판정 금지). 검증자는 이 SKILL.md 를 안 읽으므로 호출
   프롬프트(`references/verify-prompt.md`)에 계약 문안이 담겨 있다. **폴백**: (a) codex 미설치(Agent 툴 subagent_type 목록에 없거나 unknown
@@ -57,12 +52,11 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
   시각 + 이 값을 데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict
   미산출로 간주한다 — codex 외부 CLI 스톨이 틱을 무한정 묶는 것을 막는 방어선(#96).
   **값은 `scripts/lib/constants.sh` 의 `CODEX_GATE_TIMEOUT`(초)을 분으로 환산한 것**이다
-  (#427 — 종전 산문은 "900s = 10분" 이라 두 값이 어긋나 있었다. 게이트가 기다리는 시간보다
-  스폰 데드라인이 짧으면 정상 리뷰를 끊어 놓고 "미산출" 로 적게 된다).
+  (#427 · 근거: verify-runner-rationale §3).
 - `AUX_REVIEWERS = pr-review-toolkit:silent-failure-hunter, pr-review-toolkit:pr-test-analyzer`
   — **보조 리뷰어**(비게이트). Codex 와 같은 동봉 diff 를 받아 조용한 실패(삼킨 예외·근거 없는
-  폴백)와 테스트 갭을 찾는다. 판정에 **들어가지 않는다**(BLOCKER 는 `VERIFIER` 만) — Codex 와
-  겹치는지 대조 기록을 쌓는 단계이고 게이트 승격은 사람이 정한다(사용자 결정 2026-09-05).
+  폴백)와 테스트 갭을 찾는다. 판정에 **들어가지 않는다**(BLOCKER 는 `VERIFIER` 만) — 게이트
+  승격은 사람이 정한다(근거: verify-runner-rationale §4).
   타입이 없으면(플러그인 미설치) 건너뛰고 코멘트에 `보조 리뷰: 미설치` 를 적는다. 데드라인은
   `VERIFIER_TIMEOUT_MIN` 과 같다 — 넘기면 `TaskStop` 하고 `보조 리뷰: 타임아웃` 으로 적는다.
 - 절대 금지: PR 머지(closeout 독점) · main/release 직접 push · `harvesting` PR 접촉
@@ -75,32 +69,26 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
 - `verifying`(#275) = **이 루프의 점유 라벨**(closeout 의 `harvesting` 과 같은 자리 — PR 과
   연결 이슈 양쪽). ② Pick 이 집는 순간 `flow:verify` 를 이것으로 바꾸고, ④ 의 모든 종료
   상태가 뗀다(passed·redispatched·held 는 출구 전이가, flake_retry 는 `verify-unpick` 이).
-  그래서 "`verifying` = 지금 이 순간 검증이 돌고 있다" 가 항상 참이고, 재시도 대기는
-  검증대기(`flow:verify`)다. 이슈 사다리: `agent:claimed` → `flow:verify` → `verifying` →
-  `flow:ready` → `harvesting`.
+  이슈 사다리: `agent:claimed` → `flow:verify` → `verifying` → `flow:ready` → `harvesting`.
+  (근거: verify-runner-rationale §5)
 
 ## ⓪ 표면 교정 직접 수정 (WARN/NIT 중 표면만)
 
 검증에서 **주석·문서 문자열이 사실과 다르다**고 실측된 건은 반송하지 말고 이 루프가
-**직접 고친다**. 반송 한 바퀴(이슈→디스패치→구현→검증→마감)를 한 줄 고치자고 돌리는 게
-낭비이고, 이 레포에선 틀린 주석이 실제 결함의 진원이기 때문이다(오서술 하나 고치려고 PR
-하나가 따로 돈 전례가 있다).
+**직접 고친다**(근거: verify-runner-rationale §6).
 
 **판정 기준·받는 것·막는 것은 `references/loop-conventions.md` §10 한 벌이다** — closeout
-3단계 "표면 교정 흡수" 와 **같은 한 줄**을 쓴다(두 루프가 다른 경계를 쓰면 같은 발견이 어느
-루프에 걸리느냐로 갈린다). 기준을 통과하면 여기서 고치고, 하나라도 걸리면 이슈 발행(또는
-재디스패치) 대상이다.
+3단계 "표면 교정 흡수" 와 **같은 한 줄**을 쓴다. 기준을 통과하면 여기서 고치고, 하나라도
+걸리면 이슈 발행(또는 재디스패치) 대상이다.
 
 절차 (통과 판정 PR 한정 — 재디스패치·보류 건은 손대지 않는다):
 1. 대상 worktree 에서 주석만 수정 → `git commit` → PR head 브랜치로 push.
 2. **재게이트**: 새 SHA 로 `$SCRIPTS/run-local-ci.sh <repo> <issue>` 를 돌려 캐시를
-   채운다(커밋을 얹으면 로컬 CI 캐시가 SHA 기준이라 `ci=revalidate` 가 되고, 안 채우면
-   closeout 이 막힌다). 비0이면 그 커밋을 되돌리고 WARN 으로만 보고하라(exit 2 는 CI 실패가
+   채운다. 비0이면 그 커밋을 되돌리고 WARN 으로만 보고하라(exit 2 는 CI 실패가
    아니라 폐기 — 실행 직전 worktree HEAD 가 움직인 것, 현재 HEAD 로 재호출).
 3. **공개**: `검증자 리뷰:` 코멘트에 `verify-runner 직접 수정: <파일> — <무엇을>` 을
-   명시한다. 자기가 고친 것을 자기가 그린라이트하는 구조라, 그 사실이 closeout·사람에게
-   보여야 한다.
-4. E2E 는 재실행하지 않는다(주석은 실행되지 않는다 — 결정적 CI 재통과로 충분).
+   명시한다.
+4. E2E 는 재실행하지 않는다.
 
 ## ① Reconcile
 
@@ -112,12 +100,10 @@ CLI 라 느린데, 워커가 그 느린 일을 끝내기 전 죽거나 시간초
 - **드롭 회수는 구조로 자동**이다 — 두 갈래:
   - `flow:verify`(검증대기) 는 아직 안 집은 것이거나 flake_retry 가 `verify-unpick` 으로
     되돌린 것 — 다음 틱 verify-eligible 에 FIFO 로 다시 잡힌다.
-  - `verifying`(점유) 이 틱 시작에 남아 있으면 **무조건 이전 틱이 죽은 것**이다(이 루프는
-    단일·직렬이고 모든 정상 종료가 이 라벨을 뗀다). verify-eligible 이 그걸 **먼저**
-    내보내 그대로 다시 집되(재개), 그 줄의 `orphan:true` 를 읽어 ④ Report 에
-    `고아 재집 #<pr>` 한 줄을 남긴다(사망 증거 — 다음 사람이 왜 두 번 돌았는지 안다).
-  별도 스윕이 필요 없다(closeout ①-b 가 하던 완결 유실 회수 중 **검증 단계** 몫을 이
-  재집이 흡수).
+  - `verifying`(점유) 이 틱 시작에 남아 있으면 **무조건 이전 틱이 죽은 것**이다.
+    verify-eligible 이 그걸 **먼저** 내보내 그대로 다시 집되(재개), 그 줄의
+    `orphan:true` 를 읽어 ④ Report 에 `고아 재집 #<pr>` 한 줄을 남긴다.
+  별도 스윕은 두지 않는다(근거: verify-runner-rationale §7).
 - 이 스캔은 `gh api` 조회뿐이라 비용 0 — 조용한 틱에도 매 틱 돈다.
 
 ## ② Pick — 한 번에 1 PR (MAX_VERIFY=1)
@@ -126,10 +112,7 @@ verify-eligible 출력의 **첫 후보 1개만** 집는다(고아 우선·그 �
 점유를 선언한다(closeout ② 의 `closeout-pick` 과 같은 꼴):
 `$SCRIPTS/transition.sh verify-pick <repo> <issue|-> <pr>` — PR 과 연결 이슈 양쪽에서
 `flow:verify` 를 떼고 `verifying` 을 붙인다(멱등 — 고아 재집은 이미 `verifying` 이라
-no-op 로 통과한다). 이 라벨이 루프 현황(`loop-status.sh`)에서 `검증대기`(`flow:verify`)
-줄과 `verify-runner`(`verifying` — 지금 들고 있음, 수십 분) 줄을 가르는 근거다(#276).
-단일 루프·동시성 1 이라 레이스는 없다 — 점유 라벨은 경합 방지가 아니라
-**가시성과 사망 증거**(① 의 고아 판정) 용이다.
+no-op 로 통과한다). (근거: verify-runner-rationale §5)
 - **전이가 비0이면 이 PR 을 집지 마라** — `references/state-machine.md` 의
   「전이 실패의 공통 규칙」 대로 ④ Report 에
   `BLOCKED: 전이 실패 verify-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올리고
