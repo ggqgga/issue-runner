@@ -153,5 +153,26 @@ else
   echo "  ✗ bounce-comment.sh 실행 비트 없음"
 fi
 
+# ── human-review 채널 (#334 — ①-c 시정의 손타이핑을 대체) ──────────────────
+STUB_CAPTURE="$tmp/cap10"
+PATH="$tmp/bin:$PATH" STUB_CAPTURE="$STUB_CAPTURE" \
+  bash "$SUT" human-review owner/repo 42 166 "재심: 좁힌다 — 이렇게 고쳐라" >/dev/null 2>&1
+rc=$?
+body=$(get_body "$STUB_CAPTURE")
+check_eq "human-review rc=0" "0" "$rc"
+check_eq "human-review 본문 — 반송 마커 접두 + 인용" \
+  "재디스패치: #166 — 사람 재심이 시정 방향(재심: 좁힌다 — 이렇게 고쳐라) <!-- bodat:worker -->" "$body"
+# 인용에 개행이 섞여도 **한 줄**로 접힌다 — 반송 마커는 첫 줄 접두로 판정되므로.
+STUB_CAPTURE="$tmp/cap11"
+PATH="$tmp/bin:$PATH" STUB_CAPTURE="$STUB_CAPTURE" \
+  bash "$SUT" human-review owner/repo 42 166 "$(printf '판정이 맞다\n고쳐라')" >/dev/null 2>&1
+body=$(get_body "$STUB_CAPTURE")
+check_eq "human-review — 인용 안 개행을 한 줄로 접는다" \
+  "재디스패치: #166 — 사람 재심이 시정 방향(판정이 맞다 고쳐라) <!-- bodat:worker -->" "$body"
+STUB_CAPTURE="$tmp/cap12"; : > "$STUB_CAPTURE"
+rc=0
+PATH="$tmp/bin:$PATH" STUB_CAPTURE="$STUB_CAPTURE" bash "$SUT" human-review owner/repo 42 166 >/dev/null 2>&1 || rc=$?
+check_eq "human-review 인용 누락 → exit 2 · gh 미호출" "2:0" "$rc:$(wc -c < "$STUB_CAPTURE" | tr -d ' ')"
+
 echo "bounce-comment.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]
