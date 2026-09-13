@@ -181,11 +181,14 @@ BLOCKER_Q='.state + "\t" + ([.labels[].name] | join(","))'
 # 사람이 답해야 풀리는 게이트라 하위가 영원히 대기한다). 그다음이 기계 정지(`hold:*`)인
 # `보류` (#244) — 기계 정지가 `needs-human` 을 떼고 사유 라벨만 남기게 된 뒤로, 이 줄이
 # 없으면 홀드된 블로커가 `대기`(= 곧 집힐 것)로 읽혀 하위가 왜 안 풀리는지 안 보인다.
-# `hold:conflict` 는 `hold:*` 이면서도 **needs-human**이다 — 충돌은 루프가 재시도로 못 푸는
-# 사람 몫이라, `loop-status.sh` 가 needs-human 버킷을 `needs-human` ∪ `hold:conflict` 로
-# 정의한다(같은 이슈 #244). 여기서만 일반 `hold:*` 갈래로 보내면 같은 라벨을 두 스크립트가
-# 다르게 읽고, 막힌 하위가 아래 `blocked_human` 카운트에서 빠져 사람 게이트 경보에 안 잡힌다.
-# 그래서 **일반 `hold:*` 보다 앞**에 둔다 — `case` 는 첫 일치가 이기므로 순서가 판정의 전부다.
+# `hold:conflict` 는 **누가 들고 있느냐로 갈린다**(#345/#346): 단독이면 창 뒤 재개 스윕이
+# `CONFLICT_RESUME_LIMIT` 회 되돌리는 기계 정지라 `보류`(루프가 푼다), `needs-human` 이 겹쳐
+# 있거나 사람이 `full-cycle` 로 인수했으면 `needs-human`(사람이 푼다). 옛 정의(#244 — "충돌은
+# 그 자체가 사람 몫") 는 #344/#345 로 사유가 갈리기 전의 것이다. `loop-status.sh` 의 needs-human
+# 버킷(`needs-human` ∪ (`hold:conflict` ∧ `full-cycle`))과 같은 집합이어야 한다 — 갈리면 같은
+# 라벨을 두 스크립트가 다르게 읽고, 막힌 하위가 아래 `blocked_human` 카운트에서 빠지거나
+# (거꾸로) 루프가 곧 풀 건이 사람 게이트 경보로 울린다. 그래서 `full-cycle` 판별을 **일반
+# `hold:*` 보다 앞**에 둔다 — `case` 는 첫 일치가 이기므로 순서가 판정의 전부다.
 # `테스트`(배포 뒤 검증, e2e-test 가 비운다)·`deploy-wait`(배포대기)도 사람 게이트다(#431) —
 # `loop-status.sh` 가 이 둘을 needs-human 바로 뒤·`hold:*` 앞 버킷으로 두고, 블로커 warn
 # `블로커 배포대기 …` 도 `human_wait ∪ test_wait ∪ deploy_wait` 로 묶는다. 갈래가 없으면
