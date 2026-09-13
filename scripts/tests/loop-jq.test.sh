@@ -120,6 +120,9 @@ li='linked_issue(.head; .refs)'
 p "head 있음·refs 다수 → head 의 N"   109  "$li" '{"head":"agent/issue-109","refs":[108,109]}'
 p "head 없음·refs 1 → 그 1건"        108  "$li" '{"head":"session/issues-110-109-108","refs":[108]}'
 p "head 없음·refs 다수 → null(fail-closed)" null "$li" '{"head":"session/issues-110-109-108","refs":[108,109]}'
+# head 만으로는 짝을 세우지 않는다 — `Refs #N`·`(no-issue)` PR(refs 빈 배열)은 이슈 축을 포기한다.
+# head 단독 폴백을 되살리는 뮤테이션이 여기서 빨개진다(§5 규약 — 결정 근거는 loop.jq 머리 주석).
+p "head 있음·refs 빈 → null(head 단독 폴백 없음)" null "$li" '{"head":"agent/issue-109","refs":[]}'
 
 # ── 뮤테이션 방증 (MUT-M) — is_machine 을 한/영 **합집합**으로 넓히면 판정이 바뀐다 ──
 # 넓힌 판에서 "영문 접두(마커 없음)" 행만 뒤집히고 나머지는 그대로여야 한다: 그래야

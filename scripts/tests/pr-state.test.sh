@@ -247,6 +247,14 @@ expect "짝 이슈 — head 가 agent/issue-* 아님 + refs[108] → 108 의 라
   '.mismatch | any(startswith("stop: "))' \
   '["flow:verify"]' 'x' OPEN "$C_PENDING" '[108]' 'feat/hand-written'
 STUB_ISSUE_MAP_OVERRIDE=""
+# head 의 N 이 refs 에 **없어도** refs 가 1건이면 그것이다(head 109 ∉ refs [108] → 108) — head 와
+# 본문이 서로 다른 이슈를 가리키는 모순 PR 에서 라벨 편집 대상이 head 가 아니라 `Closes` 쪽이라는
+# 실질 행동(종전 `-`)을 고정한다. 술어 ⑴ 이 "head ∈ refs" 조건부라는 것의 실물.
+STUB_ISSUE_MAP_OVERRIDE=$(imap 108 '["hold:policy","agent-ready"]')
+expect "짝 이슈 — head 109 ∉ refs[108] → 108 의 라벨을 본다(refs 1건)" "H:policy" issue-runner \
+  '.mismatch | any(startswith("stop: "))' \
+  '["flow:verify"]' 'x' OPEN "$C_PENDING" '[108]' 'agent/issue-109'
+STUB_ISSUE_MAP_OVERRIDE=""
 # head 가 `agent/issue-*` 꼴이 아니고 refs 가 둘 이상이면 짝을 증명할 축이 없다 → 연결 없음(`-`).
 # 첫 참조로 추측하지 않는다 — 이슈 축이 없으니 `stop` 미러 축도 안 난다(108 의 hold:policy 가
 # 상태를 뒤엎지 않는다).
