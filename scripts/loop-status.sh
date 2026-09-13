@@ -315,7 +315,12 @@
 #   아니라 거짓 음성 방향이다(뜨면 참이다). 같은 에픽에 `종료 미상` 과 `전부 종료` 가 함께
 #   보이는 건 모순이 아니라 "개수는 못 셌지만 열린 leaf 는 없다" 는 두 사실이다.
 #   warn 2종(불변식 위반 — 위 ★warn 정의★ 와 같은 자리에 판정이 산다):
-#     · 에픽 leaf 전부 종료 — leaf ≥1 전부 닫힘인데 에픽 이슈가 열려 있다(에픽 스윕 대상).
+#     · 에픽 leaf 전부 종료 — leaf ≥1 전부 닫힘인데 에픽 이슈가 열려 있다. 꼬리는 셋으로 갈린다
+#       (#441): 스윕 마커(`<!-- epic-sweep -->` 코멘트)가 **없으면** `닫아라(에픽 스윕 대상)` —
+#       스윕이 닫는다. 마커가 **있으면** 스윕이 한 번 닫았다가 되돌려진 에픽(사람 재오픈 또는
+#       코멘트만 남은 실패 잔여)이라 스윕 게이트가 다시 닫지 않는다 → `사람 몫(스윕 되돌림)`.
+#       마커를 못 봤으면(조회 실패·상한) `스윕 대상 여부 미확인(<사유>)` — 어느 쪽이라고 단정하지
+#       않는다. 마커 조회는 이 warn 후보에만 건다(예외 ④ · 상한 EPIC_MARK_MAX).
 #     · 에픽 내 P 혼재     — 열린 leaf 의 P 라벨이 둘 이상 갈린다(닫힌 leaf 는 위와 같이 제외).
 #   파생 병기 — `파생` 줄 항목에 `(Epic #N)`/`(에픽 없음)` 을 붙이는 것(파생이 에픽 밖으로
 #   새는지 관측)은 **그 레포 이슈 본문 어딘가에 실제 `Epic #N` 줄이 하나라도 있을 때만**
@@ -389,6 +394,10 @@
 # "인계 창을 넘긴 무소속 PR" 과 "인계 창을 넘긴 issue-runner 칸(flow:claimed) PR" 이라 정상적으로는 한 줌이고(창 안
 # PR 은 조회하지 않는다), 상한은 `CLAIM_TIME_MAX`(기본 20).
 # ③(#292) 에픽 닫힌 leaf 조회 — 아래 단서가 붙은 **유일한 검색 사용처**다.
+# ④(#441) `에픽 leaf 전부 종료` warn 후보에 한해 코멘트 전량 조회(`pr-comments.sh` — 스윕과
+# 같은 읽기)를 1건씩 더 쓴다 — 스윕 마커 유무로 `닫아라(스윕 대상)` 와 `사람 몫(스윕 되돌림)` 을
+# 가른다. 대상은 "스윕이 곧 닫을(또는 닫았다 되돌려진) 에픽" 이라 한 줌이고, 상한은
+# `EPIC_MARK_MAX`(기본 20) — 넘는 후보는 `미확인` 으로 남긴다(거짓 `스윕 대상` 을 만들지 않는다).
 # 그 밖의 이슈·PR **개별** `gh view` 는 여전히 금지(N+1).
 # `gh search` / `gh issue list --search` 는 **원칙 금지** — 인덱스 지연 + 부정 라벨 오파싱
 # (#21, eligible-issues.sh 주석 참조). 예외는 에픽 닫힌 leaf 하나뿐이고(#292), 그 예외가
@@ -603,6 +612,15 @@ case "$claim_time_max" in
   ""|*[!0-9]*) snapshot_abort "CLAIM_TIME_MAX 형식 오류: $claim_time_max (0 이상 정수만)" ;;
 esac
 CLAIM_TIME_MAX=$claim_time_max
+
+# ── 스윕 마커 조회 상한 — EPIC_MARK_MAX (#441) ─────────────────────────────
+# 레포당 이 개수까지만 `에픽 leaf 전부 종료` 후보의 코멘트 전량을 읽는다. 넘는 후보는 조회하지
+# 않고 `스윕 대상 여부 미확인(조회 상한)` 으로 남긴다(거짓 `스윕 대상`·`사람 몫` 을 만들지 않는다).
+epic_mark_max=${EPIC_MARK_MAX:-20}
+case "$epic_mark_max" in
+  ""|*[!0-9]*) snapshot_abort "EPIC_MARK_MAX 형식 오류: $epic_mark_max (0 이상 정수만)" ;;
+esac
+EPIC_MARK_MAX=$epic_mark_max
 
 # ── 에픽 닫힌 leaf 조회 상한 — EPIC_CLOSED_LIMIT (#292) ────────────────────
 # 에픽 leaf 를 찾는 **검색 스코프** 조회(`--search '"Epic #" in:body'`)의 행 상한.
@@ -1274,10 +1292,19 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
       + ($iss | map(select((.ladder | length) > 0 and (has(.ln; "agent-ready") | not)))
         | map({kind: "stranded", repo_short: $rs, issue: .number,
                text: "좌초형 #\(.number)(\($rs)) — 사다리 라벨(\(.ladder | join(" "))) 인데 agent-ready 없음"}))
-      # 에픽 leaf 전부 종료 (#260) — leaf ≥1 전부 닫힘인데 에픽 이슈는 열려 있다(스윕 대상).
+      # 에픽 leaf 전부 종료 (#260) — leaf ≥1 전부 닫힘인데 에픽 이슈는 열려 있다. 꼬리는 스윕
+      # 마커로 가른다(#441): 마커 있음 = 스윕이 닫았다 되돌려진 에픽이라 스윕 게이트가 다시 안
+      # 닫는다(사람 몫) · 없음 = 스윕 대상 · 못 봤음(`$epicmarkunknown`) = 단정하지 않는다.
+      # 예비 패스(둘 다 `[]`)는 전부 스윕 대상으로 나온다 — 그 결과는 후보 추출에만 쓴다.
       + ($epics | map(select(.total > 0 and .closed == .total))
-        | map({kind: "epic_all_closed", repo_short: $rs, issue: .number,
-               text: "에픽 leaf 전부 종료 #\(.number)(\($rs)) — 닫아라(에픽 스윕 대상)"}))
+        | map(. as $e
+            | {kind: "epic_all_closed", repo_short: $rs, issue: $e.number,
+               text: ("에픽 leaf 전부 종료 #\($e.number)(\($rs)) — "
+                      + (if ($epicmarkunknown | map(.n) | index($e.number)) != null
+                         then "스윕 대상 여부 미확인(\($epicmarkunknown | map(select(.n == $e.number)) | .[0].why))"
+                         elif ($epicmarked | index($e.number)) != null
+                         then "사람 몫(스윕 되돌림: 마커 있음 — 직접 닫거나 마커 코멘트를 지워라)"
+                         else "닫아라(에픽 스윕 대상)" end))}))
       # 에픽 내 P 혼재 (#260) — **열린** leaf 의 P 가 둘 이상 갈린다(닫힌 leaf 의 P 는 제외).
       + ($epics | map(select((.priorities | length) > 1))
         | map(. as $e
@@ -1556,6 +1583,7 @@ for repo in "${repos[@]}"; do
   fi
 
   # build_snapshot <noteless 배열> <noteunknown 배열> <claimtimes 배열> <claimcapped 배열>
+  #                <epicmarked 배열> <epicmarkunknown 배열> <출력 파일>
   #                 <출력 파일> — BUILD_JQ 한 패스(순수 · 부작용 없음).
   build_snapshot() {
     jq -n \
@@ -1575,8 +1603,10 @@ for repo in "${repos[@]}"; do
       --argjson noteunknown "$2" \
       --argjson claimtimes "$3" \
       --argjson claimcapped "$4" \
+      --argjson epicmarked "$5" \
+      --argjson epicmarkunknown "$6" \
       --arg repo "$repo" --arg rs "$short" --arg since "$since" \
-      -L "$SCRIPT_DIR/lib" "$BUILD_JQ" > "$5"
+      -L "$SCRIPT_DIR/lib" "$BUILD_JQ" > "$7"
   }
   build_fail() {
     exit_code=1
@@ -1590,7 +1620,7 @@ for repo in "${repos[@]}"; do
   # 실제로 필요할 때만 두 번째 패스를 돈다(jq 는 로컬 · gh 호출 0).
   # 같은 이유로 사망 의심 꼬리표의 claim 시각 후보(#177)도 이 패스의 warn 목록에서 뽑는다 —
   # "꼬리표가 붙는 건" 의 정의는 BUILD_JQ 만이 안다.
-  if ! build_snapshot '[]' '[]' '[]' '[]' "$tmpdir/repo.pre.json"; then
+  if ! build_snapshot '[]' '[]' '[]' '[]' '[]' '[]' "$tmpdir/repo.pre.json"; then
     build_fail
     continue
   fi
@@ -1749,16 +1779,69 @@ for repo in "${repos[@]}"; do
     [ -z "$cc_body" ] || claimcapped="[$cc_body]"
   fi
 
-  if [ "$noteless" = "[]" ] && [ "$noteunknown" = "[]" ] && [ "$claimtimes" = "[]" ] && [ "$claimcapped" = "[]" ]; then
-    # 질문 없는 홀드도 미확인도 claim 시각도 상한 초과도 없으면 예비 패스의 결과가 곧
-    # 최종 결과다(재집계 불필요 — 넷 다 빈 값으로 돈 패스라 결과가 같다).
+  # ── 스윕 마커 유무 — `에픽 leaf 전부 종료` 후보에만 (#441) ─────────────────
+  # 종전 문구 "닫아라(에픽 스윕 대상)" 는 마커가 있는 에픽(스윕이 닫았다 되돌려진 것)엔 거짓이다
+  # — epic-sweep.sh 의 마커 게이트가 그 에픽을 다시 닫지 않으므로(note · 쓰기 0) 종료는 사람
+  # 몫이다. 읽기는 스윕과 **같은 자리**(`pr-comments.sh` 전량 · 같은 정규식)로 한다 — 두 판정이
+  # 갈리면 대시보드가 스윕의 판정을 거짓으로 예고한다. 결과는 3상태: 있음(`$epicmarked`) /
+  # 없음(기본) / **모름**(`$epicmarkunknown` — 조회 실패·상한). 모름을 "없음" 으로 접으면
+  # 사람 몫인 에픽이 "스윕이 닫는다" 로 보여 이 이슈가 고치려던 자리 그대로다.
+  epicmarked="[]"
+  epicmarkunknown="[]"
+  em_sep=""; em_body=""
+  eu_sep=""; eu_body=""
+  mark_epic_unknown() {  # mark_epic_unknown <번호> <사유>
+    eu_body="${eu_body}${eu_sep}{\"n\":$1,\"why\":\"$2\"}"; eu_sep=","
+  }
+  em_err=$(jq -r '[.warns[] | select(.kind == "epic_all_closed" and .issue != null) | .issue]
+                  | reduce .[] as $n ([]; if index($n) then . else . + [$n] end)
+                  | .[]' "$tmpdir/repo.pre.json" 2>&1 > "$tmpdir/ecands")
+  # shellcheck disable=SC2181  # 위 대입의 종료코드를 봐야 한다(em_err 은 stderr 만 담는다)
+  if [ $? -ne 0 ]; then
+    echo "$SELF: $short 스윕 마커 조회 대상 추출 실패(jq) — 마커 조회를 건너뛴다(전부 종료 warn 은 종전 문구로 남는다): $(printf '%s' "$em_err" | tr '\n' ' ' | cut -c1-200)" >&2
+    : > "$tmpdir/ecands"
+  fi
+  if [ -s "$tmpdir/ecands" ]; then
+    eseen=0
+    # fd 3 으로 읽는다 — 루프 안에서 gh 를 부르므로 stdin 을 목록에 묶으면 안 된다.
+    while IFS= read -r enum <&3; do
+      case "$enum" in ""|*[!0-9]*) continue ;; esac
+      eseen=$((eseen + 1))
+      if [ "$eseen" -gt "$EPIC_MARK_MAX" ]; then
+        mark_epic_unknown "$enum" "조회 상한($EPIC_MARK_MAX) 초과"
+        continue
+      fi
+      # `run_gh` 는 gh 전용이 아니라 명령 실행기다 — 헬퍼의 stderr 를 같은 규약으로 받는다.
+      if ! run_gh "$SCRIPT_DIR/pr-comments.sh" "$repo" "$enum"; then
+        echo "$SELF: $short #$enum 스윕 마커 코멘트 조회 실패: $GH_ERR" >&2
+        mark_epic_unknown "$enum" "코멘트 조회 실패"
+        continue
+      fi
+      # 정규식은 epic-sweep.sh `marker_count` 와 같은 문자열 — 스윕이 보는 마커를 그대로 본다.
+      mcount=$(printf '%s' "$GH_OUT" \
+        | jq -r '[.[]? | select((.body // "") | test("<!--\\s*epic-sweep\\s*-->"))] | length' 2>/dev/null) || mcount=""
+      case "$mcount" in
+        "") echo "$SELF: $short #$enum 스윕 마커 코멘트 응답 파싱 실패" >&2
+            mark_epic_unknown "$enum" "응답 파싱 실패" ;;
+        0)  ;;
+        *)  em_body="${em_body}${em_sep}${enum}"; em_sep="," ;;
+      esac
+    done 3< "$tmpdir/ecands"
+    [ -z "$em_body" ] || epicmarked="[$em_body]"
+    [ -z "$eu_body" ] || epicmarkunknown="[$eu_body]"
+  fi
+
+  if [ "$noteless" = "[]" ] && [ "$noteunknown" = "[]" ] && [ "$claimtimes" = "[]" ] && [ "$claimcapped" = "[]" ] \
+     && [ "$epicmarked" = "[]" ] && [ "$epicmarkunknown" = "[]" ]; then
+    # 질문 없는 홀드도 미확인도 claim 시각도 상한 초과도 스윕 마커(있음·모름)도 없으면 예비
+    # 패스의 결과가 곧 최종 결과다(재집계 불필요 — 여섯 다 빈 값으로 돈 패스라 결과가 같다).
     # mv 실패를 흘리면 바로 아래 jq 가 **직전 레포의** 스냅샷을 읽어 붙인다 — 부분 실패가
     # "성공(남의 데이터)" 으로 접히는 경로라 여기서 끊는다.
     if ! mv "$tmpdir/repo.pre.json" "$tmpdir/repo.json"; then
       build_fail
       continue
     fi
-  elif ! build_snapshot "$noteless" "$noteunknown" "$claimtimes" "$claimcapped" "$tmpdir/repo.json"; then
+  elif ! build_snapshot "$noteless" "$noteunknown" "$claimtimes" "$claimcapped" "$epicmarked" "$epicmarkunknown" "$tmpdir/repo.json"; then
     build_fail
     continue
   fi
