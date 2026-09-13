@@ -89,7 +89,7 @@ mkparent() {
 
 # run <parent> [부모PR] [본문파일] — OUT/ERR/RC/CALLS 를 채운다.
 run() {
-  : > "$tmp/calls.log"
+  : > "$tmp/calls.log"; rm -f "$tmp/sent-body.md"
   OUT=$(SO_CALLS="$tmp/calls.log" SO_PARENT="$tmp/parent.json" SO_BODY_OUT="$tmp/sent-body.md" \
         PATH="$tmp/stub:$PATH" \
         bash "$SUT" ggqgga/BodaT "$1" "${2:-77}" \
@@ -202,19 +202,24 @@ PATH="$tmp/stub:$PATH" bash "$SUT" ggqgga/BodaT 4979 77 --title T --body-file "$
 # ⑪ 출처 줄 — 슬롯이 있으면 둘째 줄로 치환, 슬롯 없는 옛 본문이면 둘째 줄에 끼워 넣는다(#411)
 mkparent $'Epic #4962\n\n## 배경\n어쩌고.' 'P1'
 run 4979 77
-[ "$(sed -n 2p "$tmp/sent-body.md")" = "Spinoff of PR #77 (issue #4979)" ] && ok \
-  || bad "⑪ 슬롯 치환 — 둘째 줄이 출처 줄이 아니다: [$(sed -n 2p "$tmp/sent-body.md")]"
-[ "$(grep -c 'Spinoff of PR #' "$tmp/sent-body.md")" = 1 ] && ok || bad "⑪ 출처 줄이 정확히 하나가 아니다"
+[ "$RC" = 0 ] && [ "$(sed -n 2p "$tmp/sent-body.md")" = "Spinoff of PR #77 (issue #4979)" ] && ok \
+  || bad "⑪ 슬롯 치환 — 둘째 줄이 출처 줄이 아니다(rc=$RC): [$(sed -n 2p "$tmp/sent-body.md")]"
+# 슬롯이 엉뚱한 자리(산문 뒤)에 있으면 걷어 내고 둘째 줄에 다시 세운다 — 정확히 1줄.
+printf '<EPIC_LINE>\n산문 한 줄.\n<ORIGIN_LINE>\n\n## 배경\n내용.\n' > "$tmp/body-misplaced.md"
+run 4979 77 "$tmp/body-misplaced.md"
+[ "$RC" = 0 ] && [ "$(sed -n 2p "$tmp/sent-body.md")" = "Spinoff of PR #77 (issue #4979)" ] \
+  && [ "$(grep -c 'Spinoff of PR #' "$tmp/sent-body.md")" = 1 ] && ok \
+  || bad "⑪ 엉뚱한 자리의 출처 줄 — 둘째 줄로 옮기고 하나만 남겨야(rc=$RC): [$(head -4 "$tmp/sent-body.md" | tr '\n' '|')]"
 printf '<EPIC_LINE>\n\n## 배경\n슬롯 없는 옛 본문.\n' > "$tmp/body-noslot.md"
 run 4979 77 "$tmp/body-noslot.md"
-[ "$(sed -n 2p "$tmp/sent-body.md")" = "Spinoff of PR #77 (issue #4979)" ] && ok \
-  || bad "⑪ 슬롯 없음 — 둘째 줄에 끼워 넣지 않았다: [$(sed -n 2p "$tmp/sent-body.md")]"
+[ "$RC" = 0 ] && [ "$(sed -n 2p "$tmp/sent-body.md")" = "Spinoff of PR #77 (issue #4979)" ] && ok \
+  || bad "⑪ 슬롯 없음 — 둘째 줄에 끼워 넣지 않았다(rc=$RC): [$(sed -n 2p "$tmp/sent-body.md")]"
 # 단발 부모(epic=-) + 슬롯이 하나도 없는 손본문 — 첫 줄이 `## 배경` 이라 그 다음에 끼우면 본문 절을 가른다.
 # 빈 줄을 먼저 세우고 둘째 줄에 출처를 둔다(템플릿 렌더 결과와 같은 꼴).
 mkparent $'## 배경\n단발.' 'P1'
 printf '## 배경\n내용.\n' > "$tmp/body-bare.md"
 run 4979 77 "$tmp/body-bare.md"
-[ "$(sed -n '1p;2p;3p' "$tmp/sent-body.md" | tr '\n' '|')" = "|Spinoff of PR #77 (issue #4979)|## 배경|" ] && ok \
+[ "$RC" = 0 ] && [ "$(sed -n '1p;2p;3p' "$tmp/sent-body.md" | tr '\n' '|')" = "|Spinoff of PR #77 (issue #4979)|## 배경|" ] && ok \
   || bad "⑪ 단발+슬롯 없음 — 본문 절을 갈랐다: [$(head -3 "$tmp/sent-body.md" | tr '\n' '|')]"
 
 # ⑩ 실행 비트 — closeout 6단계가 `$SCRIPTS/spinoff-issue.sh` 로 직접 exec 한다(PR#173 함정).
