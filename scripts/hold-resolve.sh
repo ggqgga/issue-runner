@@ -37,11 +37,12 @@
 # ── 판정 순서(계약 — 뒤집지 마라: 해소 → 착수 → 멱등 → 결정문) ─────────────────────
 #   0) PR·이슈 양쪽 경계 0            → H ? keep : pick             (보류가 없었다 — 라벨만 있으면 보류 유지)
 #   1) 이슈측 단독 경계(PR 경계 0)     → H ? keep : restore          (r·f·D 무관 — 비교하지 않고 양측 경계 복구)
-#   2) 해소: f > max(h, r)             → L ? active : H ? keep : pick (마커보다 이른 ✅ 는 반송 이전 코드의 판정;
+#   2) 해소: f > max(h, r) ∧ head ≤ f  → L ? active : H ? keep : pick (마커보다 이른 ✅ 는 반송 이전 코드의 판정;
+#                                                                     ✅ 뒤에 커밋이 또 있으면 낡은 ✅ — #171, 3) 으로;
 #                                                                     L = 아직 돌고 있는 레인 — flow:ready 는 완료라 pick)
 #      F 가 `마감 검증: ✅ 기각 승계` 면 `resume: step2` 를 덧붙인다(③-1 재실행 금지 — 같은 P1 재생산)
-#   3) 착수: head 시각 > max(h,r) 코멘트 시각(c)
-#        조회 실패                     → blocked head_lookup         (값 없이 되돌리기 판단을 하지 않는다)
+#   3) 착수: head 시각 > max(h,r,f) 코멘트 시각(c)
+#        head 조회 실패                → blocked head_lookup         (값 없이 어느 갈래도 열지 않는다 — 2) 앞에서 확인)
 #        c ∧ r > h                     → active                      (이 보류의 반송 뒤 워커가 착수 — 옛 마커는 아님)
 #        c ∧ r 없음 ∧ A               → active                      (그 레인이 들고 있다)
 #        c ∧ r 없음 ∧ ¬A              → ambiguous new_commit        (반송 없는 새 커밋 — 사람에게)
@@ -64,7 +65,7 @@
 #     `note: <문구>`              restore·ambiguous 가 `closeout-blocked --note` 에 그대로 넘길 고정 문구
 #                                 (사람 산문의 방향 독해와 달리 가변부가 없어 스크립트가 낸다 — SKILL 손타이핑 금지, #212)
 #     `resume: step2`             pick 인데 F 가 `마감 검증: ✅ 기각 승계` — ③ 을 2단계부터
-#     `pr_decision: <한 줄>` · `issue_decision: <한 줄>`   direction 의 결정문 본문(개행 접음·200자)
+#     `pr_decision: <한 줄>` · `issue_decision: <한 줄>`   direction 의 결정문 본문(개행만 접음 — 자르지 않는다)
 #   exit 0 (판정 있음) · 64 usage. 판정 실패는 exit 가 아니라 `blocked` 토큰이다 — 호출자가 ④ Report 에 올린다.
 #
 # macOS bash 3.2 대상(연관배열·mapfile 금지).
@@ -128,8 +129,9 @@ d_after() {  # d_after <json> <경계> → 경계 뒤 마지막 결정문 인덱
     [ .[].body // "" ] | to_entries | map(select(.key > $h and (.value | is_human_decision))) | (last | .key) // -1' 2>/dev/null
 }
 
-body_at() {  # body_at <json> <인덱스> → 본문을 한 줄로 접어(개행·탭 → 공백) 200자
-  printf '%s' "$1" | jq -r --argjson i "$2" '.[$i].body // ""' | tr '\n\t' '  ' | sed 's/  */ /g; s/^ //; s/ $//' | cut -c1-200
+body_at() {  # body_at <json> <인덱스> → 본문을 한 줄로 접는다(개행·탭 → 공백). **자르지 않는다** — 결정문의 뒤쪽
+  # "이렇게 고쳐라" 가 잘리면 앞쪽 "판정이 틀렸다" 만 보고 기각으로 읽힌다(codex 2회차 P1).
+  printf '%s' "$1" | jq -r --argjson i "$2" '.[$i].body // ""' | tr '\n\t' '  ' | sed 's/  */ /g; s/^ //; s/ $//'
 }
 created_at() { printf '%s' "$1" | jq -r --argjson i "$2" '.[$i].createdAt // ""'; }
 to_epoch() {  # ISO8601 Z → epoch (BSD/GNU) · 실패면 빈 값
@@ -172,9 +174,18 @@ if [ "$h_pr" -lt 0 ]; then
   out=$(keep_or restore); echo "$out"; [ "$out" = restore ] && printf 'note: %s\n' "$NOTE_RESTORE"; exit 0
 fi
 
-# 2) 해소 — PR 배열 안에서만
+# head 시각 — 해소(✅ 신선도, #171)와 착수(새 커밋) 둘 다 쓴다. 못 얻으면 어느 갈래도 열지 않는다(fail-closed).
+if [ "${HR_HEAD_AT+set}" = set ]; then head_at="$HR_HEAD_AT"; else head_at=$("$here/pr-head-at.sh" "$repo" "$pr" 2>/dev/null) || head_at=""; fi
+[ -n "$head_at" ] || blocked head_lookup
+head_ep=$(to_epoch "$head_at"); [ -n "$head_ep" ] || blocked head_lookup
+after_head() {  # after_head <인덱스> → 0 = head 커밋이 그 코멘트보다 **늦다**(코멘트가 낡았다) · 시각 파싱 실패는 blocked
+  local ep; ep=$(to_epoch "$(created_at "$pr_json" "$1")"); [ -n "$ep" ] || blocked head_lookup
+  [ "$head_ep" -gt "$ep" ]
+}
+
+# 2) 해소 — PR 배열 안에서만. ✅ 는 **현재 head 이후**여야 한다(#171 — 그 뒤에 커밋이 또 있으면 낡은 ✅).
 base=$h_pr; [ "$r_pr" -gt "$base" ] && base=$r_pr
-if [ "$f_pr" -gt "$base" ]; then
+if [ "$f_pr" -gt "$base" ] && ! after_head "$f_pr"; then
   # 해소여도 아직 돌고 있는 레인(L)이 들고 있으면 무접촉 — 새 ✅ 를 방금 찍은 검증자가 flow:ready 로 넘기기 전
   # 창에서 pick 하면 closeout-pick 이 그 레인의 라벨을 걷어낸다(codex 1회차 P1). flow:ready 는 완료 상태라 pick.
   if [ "$H" = 0 ] && [ "$L" = 1 ]; then echo active; exit 0; fi
@@ -185,12 +196,9 @@ if [ "$f_pr" -gt "$base" ]; then
   exit 0
 fi
 
-# 3) 착수 — head 시각 vs max(h, r) 코멘트 시각
-if [ "${HR_HEAD_AT+set}" = set ]; then head_at="$HR_HEAD_AT"; else head_at=$("$here/pr-head-at.sh" "$repo" "$pr" 2>/dev/null) || head_at=""; fi
-[ -n "$head_at" ] || blocked head_lookup
-head_ep=$(to_epoch "$head_at"); base_ep=$(to_epoch "$(created_at "$pr_json" "$base")")
-{ [ -n "$head_ep" ] && [ -n "$base_ep" ]; } || blocked head_lookup
-if [ "$head_ep" -gt "$base_ep" ]; then
+# 3) 착수 — head 시각 vs max(h, r, f) 코멘트 시각 (✅ 뒤의 새 커밋도 착수다 — 그 ✅ 는 위에서 낡은 것으로 판정됐다)
+[ "$f_pr" -gt "$base" ] && base=$f_pr
+if after_head "$base"; then
   # "반송 뒤 착수" 는 **이 보류 뒤의** 마커(r > h)만이다 — 옛 회차의 마커가 남은 PR 에서 사람이 직접 push 한
   # 형상을 active 로 두면 아무 레인도 없이 영구 정체한다(보조 리뷰 실측). 4) 멱등 분기와 같은 기준.
   if [ "$r_pr" -gt "$h_pr" ]; then echo active; exit 0; fi

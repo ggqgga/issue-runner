@@ -96,6 +96,9 @@ verify_bounce_then_commit|H,V|H|1|-|agent:claimed|late|active|7v
 resolved_but_verifier_live|H,F|H|1|-|verifying|early|active|3v
 resolved_ready_lane|H,F|H|1|-|flow:ready|early|pick|3r
 old_marker_then_human_push|R,H|H|1|-|agent-ready|late|ambiguous|10o
+stale_f_newer_head_noone|H,F|H|1|-|agent-ready|late|ambiguous|3s
+stale_f_newer_head_lane|H,F|H|1|-|agent:claimed|late|active|3s2
+resolved_head_lookup_fail|H,F|H|1|-|agent-ready|none|blocked|3n
 legacy_no_sentinel_is_machine|H,L|H|1|-|agent-ready|early|ambiguous|-
 '
 while IFS='|' read -r id pr is num prl isl head want row; do
@@ -131,6 +134,9 @@ GOT=$(HR_PR_COMMENTS_JSON="$(mkjson 'H')" HR_ISSUE_COMMENTS_JSON=none HR_PR_LABE
 ck "이슈 코멘트 조회 실패 → blocked" blocked
 GOT=$(HR_PR_COMMENTS_JSON='[{"body":"마감 검증: ⚠ 보류\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:00:00Z"},{"body":"","createdAt":"2026-07-05T11:01:00Z"}]' HR_ISSUE_COMMENTS_JSON='[]' HR_PR_LABELS='[]' HR_ISSUE_LABELS='["agent-ready"]' HR_HEAD_AT='2026-07-05T10:00:00Z' bash "$SUT" owner/repo 42 1 2>&1)
 ck "빈 본문은 결정문이 아니다 → ambiguous" ambiguous
+long=$(printf '판정이 틀렸다고 처음엔 생각했는데 %0300d — 그래도 귀속 미상 분기는 이렇게 고쳐라' 0)
+GOT=$(HR_PR_COMMENTS_JSON="[{\"body\":\"마감 검증: ⚠ 보류\\n<!-- bodat:worker -->\",\"createdAt\":\"2026-07-05T11:00:00Z\"},{\"body\":\"$long\",\"createdAt\":\"2026-07-05T11:01:00Z\"}]" HR_ISSUE_COMMENTS_JSON='[]' HR_PR_LABELS='[]' HR_ISSUE_LABELS='["agent-ready"]' HR_HEAD_AT='2026-07-05T10:00:00Z' bash "$SUT" owner/repo 42 1 2>&1)
+has "긴 결정문을 자르지 않는다(뒤쪽 시정 신호 보존)" '이렇게 고쳐라' 
 bash "$SUT" owner/repo >/dev/null 2>&1; rc=$?; [ "$rc" = 64 ] && ok || bad "인자 부족 exit $rc (기대 64)"
 [ -x "$SUT" ] && ok || bad "hold-resolve.sh 실행 비트 없음"
 
