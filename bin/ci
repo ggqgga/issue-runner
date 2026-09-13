@@ -1898,6 +1898,8 @@ echo "[#507] SKILL 의 rationale·conventions §N 포인터 — 실재하는 절
 # 문서명 없는 `rationale §N` 은 인용 파일의 자리로 루프를 정한다(루트 SKILL* → issue-runner,
 # skills/<루프>/SKILL* → <루프>). 문서 파일이 아직 없는 루프(closeout, #453 진행 중)는 인용이 0건인 동안만
 # 건너뛴다 — 인용이 생기면 그 문서도 있어야 한다.
+# 허용 형태(실측 전수): `<문서명>[.md][`] §N` 과 `·` 로 잇는 나열 `§N·§M` 만 — `§3, §4`·`§3~§5`·대문자
+# `Rationale` 은 형태 자체가 없으니 잡지 않는다. 새 형태를 쓰려면 sec_re 를 같이 넓혀라.
 # 만료 조건: 포인터를 앵커 링크로 바꾸고 링크 검사기가 들어오면 지운다.
 sec_re='(loop-conventions|([a-z-]+-)?rationale)(\.md)?`? §[0-9]+(·§[0-9]+)*'
 sec_fail=0; sec_n=0
@@ -1905,10 +1907,12 @@ for doc in loop-conventions issue-runner-rationale verify-runner-rationale close
   [ -f "references/$doc.md" ] || continue
   sec_h=$(grep -oE '^## §[0-9]+' "references/$doc.md" | sed 's/^## §//')
   [ -n "$sec_h" ] || { echo "  ✗ references/$doc.md: '## §N' 헤더가 0개 — 형식이 바뀌었으면 이 검사도 같이 옮겨라"; exit 1; }
-  sec_d=$(printf '%s\n' "$sec_h" | sort -n | uniq -d | tr '\n' ' ')
-  [ -z "$sec_d" ] || { echo "  ✗ references/$doc.md: 절 번호 중복 — §${sec_d% }"; sec_fail=1; }
+  sec_d=$(printf '%s\n' "$sec_h" | sort -n | uniq -d | sed 's/^/§/' | tr '\n' ' ')
+  [ -z "$sec_d" ] || { echo "  ✗ references/$doc.md: 절 번호 중복 — ${sec_d% }"; sec_fail=1; }
 done
 for f in SKILL.md SKILL.en.md skills/*/SKILL*.md references/worker-template*.md; do
+  # 아래 `grep … || true` 는 미매치(exit 1)와 파일 부재(exit 2)를 같이 삼킨다 — 부재는 여기서 먼저 닫는다.
+  [ -f "$f" ] || { echo "  ✗ $f 없음 — 인용 파일 목록이 실제 파일과 어긋났다"; exit 1; }
   case "$f" in
     SKILL*.md) sec_own=issue-runner-rationale ;;
     skills/*/SKILL*.md) sec_own="$(basename "$(dirname "$f")")-rationale" ;;
