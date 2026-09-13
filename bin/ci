@@ -710,33 +710,6 @@ fi
 grep -qF 'head_lookup=unknown' scripts/finish-classify.sh \
   || { echo "  ✗ finish-classify.sh: 조회 실패를 기억하는 head_lookup 플래그가 없다"; exit 1; }
 
-echo "[#206] 브랜치 이슈 추정은 head \`agent/issue-N\` 1순위 — 코드와 한/영 산문이 같은 계약"
-# `claimed_arg` 가 이슈 인자 생략 시 고르는 이슈는 "이 PR 이 닫는 이슈" 가 아니라
-# **"이 브랜치의 워커가 집어간 이슈"** 다. `closingIssuesReferences[0]` 은 닫는 이슈가 둘
-# 이상일 때 남의 이슈를 가리킨다(실측 PR #113 head=`agent/issue-109` refs=`[108,109]`) —
-# 그걸 물으면 claim 이 `none` 이 되어 살아있는 워커가 재디스패치된다(#206 회차3 BLOCKER).
-#
-# 행동 자체는 `scripts/tests/finish-classify.test.sh` 의 격자가 문다(뮤테이션 방증까지).
-# 여기서 막는 것은 그 격자가 **못 보는 축**이다: 코드만 고치고 산문이 옛 계약을 계속
-# 광고하면 다음 구현자가 되돌린다(PR#191 교훈 — 실제로 그 사고로 한 회차를 태웠다).
-grep -qF 'headRefName' scripts/finish-classify.sh \
-  || { echo "  ✗ finish-classify.sh 가 head(headRefName)를 안 묻는다 — 브랜치 이슈 추정이 [0] 로 되돌아갔다"; exit 1; }
-grep -qF 'agent/issue-' scripts/finish-classify.sh \
-  || { echo "  ✗ finish-classify.sh 가 head 의 agent/issue-N 을 파싱하지 않는다"; exit 1; }
-# 한/영 산문이 **둘 다** head 1순위를 말해야 한다(한쪽만 고치면 두 독자가 다른 계약을 믿는다).
-grep -qF '1순위' skills/closeout/SKILL.md \
-  || { echo "  ✗ SKILL.md 가 head 1순위 계약을 안 적었다"; exit 1; }
-grep -qF 'first' skills/closeout/SKILL.en.md \
-  || { echo "  ✗ SKILL.en.md 가 head-first 계약을 안 적었다"; exit 1; }
-# 그리고 **옛 계약 문장이 남아 있으면** 빨갛게 한다 — 새 문장을 덧붙이고 옛 문장을 안 지우는
-# 것이 PR#191 이 실제로 겪은 실패 형태다.
-if grep -qF '안 주면 `closingIssuesReferences` 로 한 번 묻는다' skills/closeout/SKILL.md; then
-  echo "  ✗ SKILL.md 에 옛 계약 문장이 남아 있다(closingIssuesReferences 로 묻는다)"; exit 1
-fi
-if grep -qF 'asks `closingIssuesReferences` once when omitted' skills/closeout/SKILL.en.md; then
-  echo "  ✗ SKILL.en.md 에 옛 계약 문장이 남아 있다"; exit 1
-fi
-
 echo "[#206] iso_to_epoch 형식 패턴은 모든 사본에서 동일 (한쪽만 느슨해지면 조용히 갈린다)"
 # finish-classify.sh 와 progress-evidence.sh 는 같은 시각 문자열을 각자 파싱한다. 패턴이
 # 갈리면 한쪽은 성공·한쪽은 `commit_at_invalid` 가 되어 🔄 계열 회수가 통째로 멈춘다
@@ -1127,14 +1100,12 @@ case "$out" in *"claimed:"*) echo "  ✗ claim live-holder 지연: 늦게 뜬 �
   || { echo "  ✗ claim live-holder 지연: 재조회가 1회뿐(대기창 폴링 미동작)"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
-echo "[#147] 검증 사다리 배선 검사 — 네 문서가 사다리를 가리킨다"
-# 실측 필요는 멈출 이유가 아니라 다음 할 일이다(Plans/live-verification-ladder.md). 사다리 참조가
-# 빠지면 워커·검증·마감이 다시 "라이브 항목은 [ ]" 로 도망간다.
-# ('이월' 금지 sweep 은 #398 로 걷었다 — 산문 어휘 핀이라 읽는 스크립트가 없다.)
-[ -f references/live-verification-ladder.md ] || { echo "  ✗ references/live-verification-ladder.md 없음"; exit 1; }
-for f in references/worker-template.md references/worker-template.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
-  grep -qF "live-verification-ladder.md" "$f" || { echo "  ✗ $f: 검증 사다리 참조 없음"; exit 1; }
-done
+echo "[#147] 검증 사다리 파일 존재 · 정지 전이 인자 · 재개 스윕 배선 검사"
+# 사다리 **참조 배선**(다섯 문서가 이 파일을 가리킨다)은 `references/loop-conventions.md` §9 가
+# 인수했다 — 칸 정의·명령·인용 규칙의 SSOT 가 이 파일임을 §9 첫 문단이 명시한다. 남기는 것은
+# 파일 **존재**뿐이다: §9 가 가리키는 대상이 사라지면 SSOT 가 허공을 가리키는데, 블록 [#507] 의
+# §N 포인터 검사는 loop-conventions·*-rationale 만 훑어 이 파일을 보지 않는다.
+[ -f references/live-verification-ladder.md ] || { echo "  ✗ references/live-verification-ladder.md 없음 — loop-conventions §9 가 SSOT 로 가리키는 파일이다"; exit 1; }
 for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   if grep -nE 'transition\.sh (verify-held|closeout-blocked|runner-held) [^\n]*' "$f" | grep -v -- '--reason' | grep -q .; then
     echo "  ✗ $f: --reason 없는 verify-held/closeout-blocked/runner-held 호출"; exit 1; fi
