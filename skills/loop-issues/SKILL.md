@@ -22,7 +22,7 @@ description: 이슈를 issue-runner 루프에 넘기기 전 마감 체크리스�
 4. **의존성**: 선행 이슈가 있으면 본문에 **전용 라인** `Blocked by #N` (한 줄에 하나,
    라인 시작 위치). 산문 속 언급은 디스패처가 읽지 못한다. 또는 `blocked-by:<N>`
    **라벨**로도 표기할 수 있다(이슈 목록에서 블로킹이 바로 보임 —
-   `scripts/block-issue.sh <owner/repo> <issue#> <blocker#>`로 부착). 본문 라인과
+   `scripts/manual/block-issue.sh <owner/repo> <issue#> <blocker#>`로 부착). 본문 라인과
    라벨은 **OR**로 합쳐지고 `<N>`은 **이슈 번호**다 — 블로커 이슈가 CLOSED되면 게이트가
    자동 해제한다. 둘 중 하나면 충분하다.
 

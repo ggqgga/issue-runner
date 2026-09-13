@@ -12,6 +12,7 @@
 ## 규칙
 
 - scripts/*.sh 는 결정론적이어야 한다 — LLM 판단이 필요한 일은 SKILL.md(디스패처/워커 프롬프트)로.
+  `scripts/manual/` 은 예외(루프가 부르지 않는 수동 도구).
 - 상태의 단일 진실 원천은 GitHub(라벨·assignee·PR). 스크립트에 로컬 상태 파일을 두지 않는다
   (예외: ~/.claude/.local-ci 캐시 — local-ci hook 계약. 그 안의 `.queue/` 는 박스 전역 CI 큐의
   티켓·실행권 — `scripts/ci-queue.sh` 만 만지고, 결과 파일을 손으로 써 넣지 않는다).

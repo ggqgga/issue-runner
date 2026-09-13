@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 루프가 부르지 않는 수동 도구 — 사람이 직접 실행한다.
 # usage: block-issue.sh <owner/repo> <issue#> <blocker#> [<blocker#>...]
 # 대상 이슈에 blocked-by:<N> 라벨을 부착해 블로커 관계를 이슈 목록에서 가시화한다(#85).
 # <N> 은 **이슈 번호**다 — 블로커 PR 이 머지되면 Closes #N 으로 그 이슈가 닫히므로,

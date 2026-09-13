@@ -32,7 +32,7 @@ context — the issue body is the only spec.
    `Blocked by #N` in the body (one per line, at the start of the line). Mentions
    buried in prose are invisible to the dispatcher. You may also express it with a
    `blocked-by:<N>` **label** (blocking is then visible right in the issue list —
-   attach via `scripts/block-issue.sh <owner/repo> <issue#> <blocker#>`). The body
+   attach via `scripts/manual/block-issue.sh <owner/repo> <issue#> <blocker#>`). The body
    line and the label are combined with **OR**, and `<N>` is the **issue number** —
    when the blocker issue is CLOSED the gate releases automatically. Either one
    suffices.

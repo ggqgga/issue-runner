@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # codex-review-gate-smoke.sh — `codex-review-gate.sh --prompt` 의 **실호출** 스모크 (#283)
+# 루프가 부르지 않는 수동 도구 — 사람이 직접 실행한다.
 #
 #   scripts/codex-review-gate-smoke.sh [--model M] [--effort E] [--keep]
 #
@@ -23,7 +24,7 @@
 set -u
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-GATE="$DIR/codex-review-gate.sh"
+GATE="$DIR/../codex-review-gate.sh"
 MODEL=""; EFFORT=""; KEEP=0
 while [ $# -gt 0 ]; do
   case "$1" in
