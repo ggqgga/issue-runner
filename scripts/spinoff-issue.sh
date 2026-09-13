@@ -17,6 +17,9 @@
 #    치환하고, epic 이 있는데 첫 줄이 `Epic #N` 이 아니면 **맨 앞에 끼워 넣는다**.
 #    에픽은 sub-issue 링크도 라벨도 아닌 본문 **첫 줄**로 잇는다 — 그 줄이 없으면 그 파생은
 #    에픽 밖 고아가 되어 `loop-status.sh` 에픽 절의 leaf 집계에서 영영 안 보인다(#260·#261).
+#    `<ORIGIN_LINE>` 전용 줄은 `Spinoff of PR #<부모 PR#> (issue #<부모 이슈#>)` 로 치환하고,
+#    슬롯이 없으면 **둘째 줄**에 끼워 넣는다(#411) — 어느 PR·이슈에서 왔는지가 산문이 아니라
+#    전용 줄에 있어야 사람이 뒤지지 않는다(실측 2026-09-13: 최근 파생 30건 중 12건만 적혀 있었다).
 # ⑶ 발행: `gh issue create --label agent-ready --label spinoff --label <P> [--label 추가]`.
 #    `agent-ready` 생략 불가 — `eligible-issues.sh` 의 자격이 `open + agent-ready +
 #    ¬agent:claimed` 라 없으면 이슈는 생성되고도 루프가 **영원히 안 집는다**.
@@ -91,12 +94,28 @@ tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
 rendered="$tmp/body.md"
 
-# ⑵ 본문 — `<EPIC_LINE>` 전용 줄 치환 + 첫 줄 보장
+# ⑵ 본문 — `<EPIC_LINE>` 전용 줄 치환 + 첫 줄 보장 · `<ORIGIN_LINE>` 치환 + 둘째 줄 보장(#411)
 if [ "$epic" = "-" ]; then epic_line=""; else epic_line="Epic #$epic"; fi
-awk -v rep="$epic_line" '$0 == "<EPIC_LINE>" { print rep; next } { print }' "$body_file" > "$rendered"
+origin_line="Spinoff of PR #$pr (issue #$parent)"
+awk -v rep="$epic_line" -v org="$origin_line" \
+  '$0 == "<EPIC_LINE>" { print rep; next } $0 == "<ORIGIN_LINE>" { print org; next } { print }' \
+  "$body_file" > "$rendered"
 if [ -n "$epic_line" ] && [ "$(head -1 "$rendered")" != "$epic_line" ]; then
   { printf '%s\n\n' "$epic_line"; cat "$rendered"; } > "$tmp/body2.md"
   mv "$tmp/body2.md" "$rendered"
+fi
+[ -s "$rendered" ] || { echo "spinoff-issue: 본문 렌더가 비었다 — $body_file" >&2; exit 1; }
+if [ "$(sed -n 2p "$rendered")" != "$origin_line" ]; then
+  # 출처 줄은 존재가 아니라 **둘째 줄 위치**가 계약이다(첫 줄 = 에픽 줄 또는 빈 줄, 둘째 줄 = 출처).
+  # 슬롯이 없는 옛 본문(또는 슬롯 앞에 산문이 남은 본문)은 다른 자리의 출처 줄을 걷어 낸 뒤, 첫 줄이
+  # 에픽 줄도 빈 줄도 아니면 빈 줄을 먼저 세우고 그 다음에 끼운다 — 본문 절 한가운데를 가르지 않는다.
+  grep -vxF -- "$origin_line" "$rendered" > "$tmp/body2.md" || true
+  first_line=$(head -1 "$tmp/body2.md")
+  if [ -z "$epic_line" ] && [ -n "$first_line" ]; then
+    { printf '\n%s\n' "$origin_line"; cat "$tmp/body2.md"; } > "$rendered"
+  else
+    { head -1 "$tmp/body2.md"; printf '%s\n' "$origin_line"; tail -n +2 "$tmp/body2.md"; } > "$rendered"
+  fi
 fi
 
 # ⑶⑷ 발행 — 라벨 부재면 setup-labels 1회 + 재시도 1회, 그래도 안 되면 무라벨 폴백

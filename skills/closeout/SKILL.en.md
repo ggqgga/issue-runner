@@ -93,7 +93,7 @@ Idempotency marker table (for re-judging finished steps — prevents duplicate w
 | 3 reconcile | plan-doc diff (merge commit) + epic comment | if included in the merge, done |
 | 4 deploy | `배포 대기:` comment / `deployed:<sha>` | if present, do not re-request |
 | 5 post | `✅ 스모크` comment / deploy issue CLOSED + verification·deploy-complete comment | if present, do not re-smoke (including when the deploy lane (deploy-cycle) finished verification and closed it) |
-| 6 spinoff | created-issue-number comment | if present, do not re-issue |
+| 6 spinoffs | the `파생 판정:` comment (#411 — posted last, after every branch action) · the created issue-number (`파생:`) comment | `파생 판정:` present → step 6 done (including ⓔ = 0) · only `파생:` present → do not re-file that issue |
 
 **The step-1 marker judgment is one place, `closeout-step1-marker.sh`** — it ANDs ⒜ is the latest
 `마감 검증:` a `⚠ 보류` ⒝ is the marker earlier than the current head commit ⒞ does the marker precede the
@@ -756,11 +756,29 @@ pass/fail (mark structure/empty-state checks distinctly from real-data render ch
   attempted `navigate_page` while judging unreachability, `close_page` that tab too), and a normal no-op tick
   with no smoke target never opens the browser either.
 
-**Step 6 — spinoff issues.** Fill `references/spinoff-issue.md` with the `follow-up:` items from the worker's
-PR body plus the adjacent work step 1's diff review flagged, and file them as agent-ready issues. The whole
-issuance procedure — inheritance (#261) · the body's first line `Epic #N` · labels · the missing-label
-fail-closed · readback right after issuance · the parent PR marker — is **one call to
-`$SCRIPTS/spinoff-issue.sh`** (#447). Do not assemble `gh issue create` by hand here.
+**Step 6 — spinoff issues.** The input is the worker PR body's `follow-up:` items plus the adjacent work
+step 1's diff review flagged. **Do not transcribe the input into issues — judge every item first; an issue is
+only the last of five branches, ⓔ** (user decision 2026-09-13, #411). The reviewer is input, not the decider —
+"codex said P2, so it's an issue" is not a verdict (rationale: closeout-rationale §15).
+
+| Nature of the item | Handling |
+|---|---|
+| ⓐ Ends inside this PR's files and changes no behavior (comments, terms, anchors, guard tokens, test names — what `references/loop-conventions.md` §10 accepts) | **Absorb** — the class step 3's surface-correction commit should have taken. If it is past the merge and there is no commit to ride, do not issue it; write `흡수 누락:` in the verdict comment below |
+| ⓑ A scenario outside the loop's normal operation (a human rewriting history · settings outside the docs · a limit set past its cap) | **Reject** — `기각: <reason>` in the verdict comment |
+| ⓒ The target code is being changed by a sibling PR, or the line is no longer in `origin/<default>` at issuance time (check with `git grep`) | If it already merged and the code is gone, **reject**. If the sibling has **not read its body yet** — the linked issue is waiting as `agent-ready` (no `agent:claimed`) or the PR is `flow:verify` (before the verifier picks it — a worker reads the body when its round starts, the verifier when it picks) — **append the finding to the sibling's linked issue body** — `gh issue edit <sibling issue> --repo <repo> --body-file` adding a `## 인접 지적 (closeout 6단계, PR #<origin>)` section + one line of what and why at the end (skip if a section for the same origin PR already exists — idempotent). **Re-read the sibling's state right after the edit** — if another loop claimed or picked it meanwhile (`agent:claimed`·`verifying`), it already read the pre-edit body, so **send this item back to ⓔ** (the race window is seconds, but losing it loses the defect for good). The body is the only **consumed input** (workers read the issue body, the verifier receives `<ISSUE_BODY>`). PR comments are not a channel (#379). closeout does not bounce another lane's PR (ownership). If the sibling is already running (`flow:claimed`·`verifying` — the body has been consumed), past ✅ (`flow:ready`·`harvesting`), or has no linked issue, nobody will read it, so **judge it ⓔ** |
+| ⓓ A fork only a human can settle ("one of the two") | **Raise it to a machine-hold state, no issue** — the target must be an **open** issue (the resume sweep scans `--state open` only — a `hold:policy` on a closed issue is never seen): the parent epic (open) → else the deploy-wait issue step 4 filed (if it was closed meanwhile, `gh issue reopen <number> --repo <repo>` first). On that issue run `$SCRIPTS/transition.sh closeout-blocked <repo> <that issue> - --reason policy --note "<the one-line question a human must answer>"` (PR slot is `-` — the origin PR is already merged). That attaches `hold:policy` and leaves the question as a `사람 확인(policy):` comment, which the resume sweep ③ re-review carries into human-wait. A comment alone is invisible to every tick because `loop-status.sh` counts by labels only. One line in ④ Report: `사람 결정 요청 #<number>` |
+| ⓔ What remains after ⓐ–ⓓ: a **real defect that must be fixed** — code outside this PR, or inside it when step 3 passed it on as "changes behavior". The source (verifier P2 · a P1 downgraded to WARN as out of scope · worker `follow-up:` items) is not a condition — follow-up items go through ⓐ–ⓓ first too | **Issue** — fill `references/spinoff-issue.md` and file an agent-ready issue with the command below. The body's second line `Spinoff of PR #<pr> (issue #<parent>)` origin line is filled by the script |
+
+Leave the verdict as one comment on the original PR — `파생 판정: ⓐ N · ⓑ N · ⓒ N · ⓓ N · ⓔ N — <branch and one-line reason per item>`
+(ending with `<!-- bodat:worker -->`). **That comment is the step-6 completion marker** (① Reconcile marker table) —
+post it **last, after every branch action** (ⓒ body edit · ⓓ transition · ⓔ issuance) has succeeded. If the tick is
+cut short, the next tick re-runs step 6 for lack of the marker; ⓒ skips when a section for the same origin PR exists
+and ⓔ is blocked by the `파생:` marker, so the only repeat is ⓓ's (idempotent) transition. If ⓔ is 0, step 6 ends
+with that comment — zero issuance is the normal case.
+The whole issuance procedure for ⓔ — inheritance (#261) · the body's first line `Epic #N` · the second line
+`Spinoff of PR #<pr> (issue #<parent>)` origin line (#411) · labels · the missing-label fail-closed · readback
+right after issuance · the parent PR marker — is **one call to `$SCRIPTS/spinoff-issue.sh`** (#447). Do not
+assemble `gh issue create` by hand here.
 
 - **Deciding the parent (the input to inheritance — this is this step's judgment, not the script's).** The
   parent is **the N in the closing PR's head branch `agent/issue-<N>`**, first. Use
@@ -779,7 +797,8 @@ fail-closed · readback right after issuance · the parent PR marker — is **on
 
   The rules' SSOT is that script's header comment. What it does: reads the parent **once** via
   `spinoff-inherit.sh` to get `epic=`·`priority=` → fills the body's dedicated `<EPIC_LINE>` slot with
-  `Epic #N` (a blank line when there is no epic), guaranteeing it is the **first line** → issues with
+  `Epic #N` (a blank line when there is no epic), guaranteeing it is the **first line** → fills the `<ORIGIN_LINE>` slot with
+  `Spinoff of PR #<pr> (issue #<parent>)`, guaranteeing it is the **second line** (#411) → issues with
   `--label agent-ready --label spinoff --label "$priority"` plus the convention labels you passed → on a
   missing label, per the `references/loop-conventions.md` §8 "issue filing" row → reads the labels and the
   `Epic #N` first line back and tops them up → leaves the marker

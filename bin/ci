@@ -634,7 +634,8 @@ for f in skills/closeout/references/verifier-prompt.md \
     *deploy-check-issue.md) phs="<PR> <SHA> <SUMMARY> <DEPLOY_CMD> <LIVE_CHECKS> <VERIFY_URL>" ;;
     # <EPIC_LINE>: 파생이 부모의 에픽을 본문 **첫 줄**(`Epic #N`)로 물려받는 자리 (#261).
     # 지우면 파생이 에픽 밖 고아가 되고 loop-status 에픽 절의 leaf 집계에서 사라진다.
-    *spinoff-issue.md)      phs="<EPIC_LINE> <BACKGROUND> <REASON> <PLAN> <TEST_PLAN> <RELATED>" ;;
+    # <ORIGIN_LINE>: 둘째 줄 `Spinoff of PR #<pr> (issue #<부모>)` — spinoff-issue.sh 가 채운다 (#411).
+    *spinoff-issue.md)      phs="<EPIC_LINE> <ORIGIN_LINE> <BACKGROUND> <REASON> <PLAN> <TEST_PLAN> <RELATED>" ;;
   esac
   # shellcheck disable=SC2086
   for ph in $phs; do
@@ -671,6 +672,33 @@ bash scripts/tests/spinoff-inherit.test.sh
 
 echo "[test] spinoff-issue.sh 파생 발행 격자 — 상속·Epic 첫 줄·라벨 3단 fail-closed·부모 PR 마커 (#447)"
 bash scripts/tests/spinoff-issue.test.sh
+
+echo "[#411] closeout 6단계 판정 표(ⓐ~ⓔ)·파생 판정 코멘트·출처 줄 — 검증자 잔여를 필사하지 않는다 (한/영)"
+# 6단계가 리뷰어 항목을 그대로 이슈로 옮겨 WARN 잔여 파생이 33건+ 쌓였다(2026-09-13 실측, 사람과 다시
+# 읽으니 이슈가 맞는 것 0/10). 판정 표 다섯 갈래·판정 코멘트·출처 줄이 6단계 구간(`**6단계 —` ~ `## ⑤`)에
+# 있어야 하고, 템플릿엔 <EPIC_LINE> 바로 다음 줄에 <ORIGIN_LINE> 슬롯이, 표면 교정 판정 SSOT(loop-conventions
+# §10)엔 "이 PR 이 도입한 가드" 흡수 문장이 있어야 한다. 출처 줄 치환 자체는 spinoff-issue.test ⑪ 이 문다.
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  case "$f" in *.en.md) s6='^\*\*Step 6 —' ;; *) s6='^\*\*6단계 —' ;; esac
+  s6_line=$(grep -nE "$s6" "$f" | head -1 | cut -d: -f1 || true)   # 무매치는 아래 진단이 잡는다(pipefail 로 조용히 죽지 않게)
+  d_line=$(grep -nE '^## ⑤' "$f" | head -1 | cut -d: -f1 || true)
+  [ -n "$s6_line" ] && [ -n "$d_line" ] || { echo "  ✗ $f: 6단계/⑤ 앵커 없음"; exit 1; }
+  seg=$(sed -n "${s6_line},${d_line}p" "$f")
+  for tok in '| ⓐ ' '| ⓑ ' '| ⓒ ' '| ⓓ ' '| ⓔ ' '파생 판정:' 'Spinoff of PR #'; do
+    printf '%s\n' "$seg" | grep -qF -- "$tok" \
+      || { echo "  ✗ $f: 6단계 구간에 '$tok' 없음 (판정 표·판정 코멘트·출처 줄)"; exit 1; }
+  done
+done
+# 슬롯은 **줄 전체**로 문다 — 머리 주석에도 같은 문자열이 있어 -F 부분 일치는 슬롯을 지워도 초록이다.
+# 자리도 문다: <EPIC_LINE> 바로 다음 줄이어야 "둘째 줄" 계약이 참이다.
+origin_slot=$(grep -A1 -xF '<EPIC_LINE>' skills/closeout/references/spinoff-issue.md | tail -1 || true)
+[ "$origin_slot" = "<ORIGIN_LINE>" ] \
+  || { echo "  ✗ spinoff-issue.md: <EPIC_LINE> 다음 줄이 <ORIGIN_LINE> 이 아니다(없거나 자리가 틀림, 실제=[$origin_slot])"; exit 1; }
+# §10 은 예시(받는 것)보다 규칙(막는 것)이 판정을 바꾼다 — 종전 "새 가드" 평서 금지가 머리 기준과 충돌하던 자리.
+for tok in '이 PR 이 도입한 가드' '다른 동작을 **새로 무는**'; do
+  grep -qF -- "$tok" references/loop-conventions.md \
+    || { echo "  ✗ loop-conventions.md §10: '$tok' 없음 — 표면 교정 판정이 #411 이전 문구로 되돌아갔다"; exit 1; }
+done
 
 echo "[closeout] ③-1 네이티브↔폴백 프롬프트 동기화 검사 (#207 attempt8)"
 # 이 이슈의 뿌리는 SKILL.md 가 폴백(general-purpose)이 diff 를 동봉한다고 적어놓고
