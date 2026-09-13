@@ -150,10 +150,8 @@ for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md; do
     echo "  ✗ $f: 회차 카운터를 산문으로 직접 읽거나 쓴다 — attempt-counter.sh 를 부르라 (#444)"; exit 1; fi
 done
 
-echo "[#449] 규칙0 은 pr-state.sh 한 자리 — 판정→목표 라벨 매핑 산문 0"
+echo "[#449] 규칙0 은 pr-state.sh 한 자리 — 배선·진입점 선언"
 # `references/state-machine.md` 가 표 SSOT 이고 `pr-state.sh` 가 그 표를 기계가 읽는 진입점이다.
-# 산문이 "마지막 판정 → flow:<칸>" 매핑을 다시 들면 표와 두 벌이 되고, 그 차이는 라벨이
-# 어긋난 뒤에야 보인다(#281 미러가 갈리는 자리).
 # 만료 조건: 한/영 ② Maintain 규칙0 이 매핑을 스크립트에 위임하는 형태를 유지하는 한
 # 이 가드가 그 형태의 강제자다.
 for f in SKILL.md SKILL.en.md; do
@@ -161,9 +159,6 @@ for f in SKILL.md SKILL.en.md; do
     || { echo "  ✗ $f: 규칙0 에 pr-state.sh 배선 없음 (#449)"; exit 1; }
   grep -qF 'mismatch' "$f" \
     || { echo "  ✗ $f: 규칙0 이 pr-state.sh 의 mismatch 를 처분하지 않는다 (#449)"; exit 1; }
-  # 산문 회귀 — 판정 기호에서 목표 flow 라벨을 직접 유도하는 매핑 화살표.
-  if grep -nE '(머지 판정|Merge verdict): (✅|🔄)[^\n]*→ *`?flow:' "$f" | grep -q .; then
-    echo "  ✗ $f: 규칙0 의 판정→flow 라벨 매핑 산문이 되살아났다 — pr-state.sh 의 mismatch 를 쓰라 (#449)"; exit 1; fi
 done
 # 표(SSOT)가 이 진입점을 가리키는지 — 표만 고치고 스크립트를 안 고치는 드리프트 방지.
 grep -qF 'pr-state.sh' references/state-machine.md \
@@ -1253,16 +1248,14 @@ for f in references/worker-template.md references/worker-template.en.md; do
   grep -qF -- 'transition.sh handoff-verify' "$f" \
     || { echo "  ✗ $f 에 transition.sh handoff-verify 배선 없음"; exit 1; }
 done
-# 전이 실패(exit 1 readback 불일치 · 2 gh 실패)를 조용히 넘기지 않는다는 보고 규약이
-# 호출부 문서마다 살아 있는지. 이게 빠지면 라벨이 반쯤 이동한 채 루프가 다음으로 넘어간다.
-# (문구는 파일마다 다르다 — 워커 템플릿은 종료 보고에 적는 `전이 실패: handoff-verify`,
-#  루프 SKILL 은 ④ Report 에 올리는 `BLOCKED: …`, 영문 closeout 은 그 영어판.)
+# 전이 실패(exit 1 readback 불일치 · 2 gh 실패)를 조용히 넘기지 않는다는 보고 규약 —
+# **워커 템플릿 축만** 여기서 본다. 세 루프 SKILL 의 `BLOCKED: 전이 실패 …` 는
+# `references/state-machine.md` 「전이 실패의 공통 규칙」 이 인수했다(그 절 제목이 "세 SKILL 이
+# 각자 14회 재진술하던 것" 이다 · 문구까지 그 자리에 있다). 워커 템플릿은 ④ Report 가 없어
+# 그 절의 범위 밖이라 종료 보고 문구(`전이 실패: handoff-verify`)를 여기서 계속 문다.
 check_phrase() {
   grep -qF -- "$2" "$1" || { echo "  ✗ $1 에 전이 실패 보고 규약('$2') 없음"; exit 1; }
 }
-check_phrase skills/verify-runner/SKILL.md   'BLOCKED: 전이 실패'
-check_phrase skills/closeout/SKILL.md        'BLOCKED: 전이 실패'
-check_phrase skills/closeout/SKILL.en.md     'BLOCKED: transition failed'
 check_phrase references/worker-template.md    '전이 실패: handoff-verify'
 check_phrase references/worker-template.en.md '전이 실패: handoff-verify'
 # 산문 회귀 가드 — 위 파일들에서 손수 라벨을 옮기는 형태가 되살아나면 실패.
