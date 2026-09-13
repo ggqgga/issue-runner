@@ -612,9 +612,23 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
   no-op 이고(단 URL 도달 불가를 판정하느라 `navigate_page` 를 시도해 에러 탭이 열렸으면 그 탭도
   `close_page` 한다), 스모크 대상이 없는 정상 no-op 틱도 브라우저를 열지 않는다.
 
-**6단계 — 파생 이슈.** 워커 PR 본문의 `follow-up:` 항목 + 1단계 diff 리뷰가 짚은 인접 작업을
-`references/spinoff-issue.md` 로 채워 agent-ready 이슈로 발행한다. 발행 절차 전체 — 상속(#261) · 본문 첫
-줄 `Epic #N` · 라벨 · 라벨 부재 fail-closed · 발행 직후 readback · 부모 PR 마커 — 는
+**6단계 — 파생 이슈.** 입력은 워커 PR 본문의 `follow-up:` 항목 + 1단계 diff 리뷰가 짚은 인접 작업이다.
+**입력을 이슈로 옮겨 적지 않는다 — 항목마다 먼저 판정하고, 이슈는 다섯 갈래 중 마지막 ⓔ 뿐이다**
+(사용자 결정 2026-09-13, #411). 리뷰어는 입력이지 결정권자가 아니다 — "codex 가 P2 로 냈으니 이슈" 는
+판정이 아니다 (근거: closeout-rationale §15).
+
+| 항목의 성격 | 처리 |
+|---|---|
+| ⓐ 이 PR 파일 안에서 끝나고 동작이 안 바뀐다(주석·용어·앵커·가드 토큰·테스트 이름 — `references/loop-conventions.md` §10 이 받는 것) | **흡수** — 3단계 표면 교정 커밋이 먹었어야 할 부류. 머지 뒤라 커밋 자리가 없으면 이슈가 아니라 아래 판정 코멘트에 `흡수 누락:` 으로 적는다 |
+| ⓑ 루프 정상 동작 밖 시나리오(사람의 히스토리 재작성 · 문서 밖 설정값 · 상한 초과 설정) | **기각** — 판정 코멘트에 `기각: <사유>` |
+| ⓒ 대상 코드를 형제 PR 이 바꾸는 중이거나, 발행 시점에 `origin/<default>` 에 그 줄이 없다(`git grep` 으로 확인) | 이미 머지돼 사라졌으면 **기각**. 형제 PR 이 열려 있고 검증 전(`flow:claimed`·`flow:verify`·`verifying`)이면 **지적을 형제의 연결 이슈 본문에 붙인다** — `gh issue edit <형제 이슈> --repo <repo> --body-file` 로 본문 끝에 `## 인접 지적 (closeout 6단계, PR #<원본>)` 절 + 무엇을 왜 한 줄(같은 원본 PR 번호의 절이 이미 있으면 건너뛴다 — 멱등). 본문이 유일하게 **읽히는 입력**이다(워커는 이슈 본문을, 검증자는 `<ISSUE_BODY>` 를 받는다). PR 코멘트는 전달 채널이 아니다(#379). 다른 레인의 PR 을 closeout 이 반송하지는 않는다(소유권). 형제가 이미 ✅ 뒤(`flow:ready`·`harvesting`)거나 연결 이슈가 없으면 읽는 이가 없으니 **ⓔ 로 판정**한다 |
+| ⓓ 사람이 정해야 하는 갈림길("둘 중 하나로") | **기계 정지 상태로 올린다, 이슈는 만들지 않는다** — 부모 에픽(없으면 4단계가 방금 만든 배포 대기 이슈)에 `$SCRIPTS/transition.sh closeout-blocked <repo> <그 이슈> - --reason policy --note "<사람이 답해야 할 질문 한 줄>"` (PR 자리는 `-` — 원본 PR 은 이미 머지됐다). `hold:policy` 가 붙고 질문이 `사람 확인(policy):` 코멘트로 남아 재개 스윕 ③ 재심 → 사람대기로 이어진다. 코멘트만 남기면 `loop-status.sh` 가 라벨로만 세므로 아무 틱에도 안 보인다. ④ Report 에 `사람 결정 요청 #<번호>` 한 줄 |
+| ⓔ ⓐ~ⓓ 어디에도 들지 않고 남는, 고쳐야 하는 **실제 결함** — 이 PR 밖 코드든, 3단계가 "동작이 바뀐다" 며 넘긴 이 PR 안의 것이든. 출처(검증자 P2 · 범위 밖이라 WARN 으로 낮춘 P1 · 워커 `follow-up:` 항목)는 판정 조건이 아니다 — follow-up 항목도 ⓐ~ⓓ 를 먼저 거친다 | **이슈** — 아래 발행 명령으로 `references/spinoff-issue.md` 를 채워 agent-ready 이슈로 발행. 본문 둘째 줄 `Spinoff of PR #<pr> (issue #<부모>)` 출처 줄은 스크립트가 채운다 |
+
+판정 결과는 원본 PR 코멘트 한 줄로 남긴다 — `파생 판정: ⓐ N · ⓑ N · ⓒ N · ⓓ N · ⓔ N — <항목별 갈래·한 줄 사유>`
+(마지막에 `<!-- bodat:worker -->`). ⓔ 가 0이면 6단계는 이 코멘트로 끝난다 — 발행 0건이 정상이다.
+ⓔ 의 발행 절차 전체 — 상속(#261) · 본문 첫 줄 `Epic #N` · 둘째 줄 `Spinoff of PR #<pr> (issue #<부모>)`
+출처 줄(#411) · 라벨 · 라벨 부재 fail-closed · 발행 직후 readback · 부모 PR 마커 — 는
 **`$SCRIPTS/spinoff-issue.sh` 한 호출**이다(#447). 여기서 `gh issue create` 를 손으로 조립하지 마라.
 
 - **부모 결정 (상속의 입력 — 이건 스크립트가 아니라 이 단계의 판단이다).** 부모 = 마감 중인 PR 의 **head
@@ -633,7 +647,8 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
 
   규칙의 SSOT 는 그 스크립트의 머리 주석이다. 하는 일: `spinoff-inherit.sh` 로 부모를 **한 번** 읽어
   `epic=`·`priority=` 를 받고 → 본문의 `<EPIC_LINE>` 전용 줄을 `Epic #N`(에픽 없으면 빈 줄)로 채워
-  **첫 줄**을 보장하고 → `--label agent-ready --label spinoff --label "$priority"` + 넘긴 규약 라벨로
+  **첫 줄**을 보장하고 → `<ORIGIN_LINE>` 전용 줄을 `Spinoff of PR #<pr> (issue #<부모>)` 로 채워 **둘째 줄**을
+  보장하고(#411) → `--label agent-ready --label spinoff --label "$priority"` + 넘긴 규약 라벨로
   발행하고 → 라벨 부재면 `references/loop-conventions.md` §8 「이슈 발행」 행 대로 → 라벨·`Epic #N` 첫
   줄을 readback 해 보강하고 → 부모 PR 에 `파생: #<새번호> (Epic #<N|없음> · <P>)` 마커를 남긴다. stdout 은
   새 이슈 번호 한 줄이다.

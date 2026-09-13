@@ -11,6 +11,8 @@
 #      그 건은 라벨 readback 을 **하지 않는다**(#223) + PR 마커는 그래도 남는다
 #   ⑹ 발행 자체 실패는 exit 1·무출력(빈 번호를 정상값으로 흘리지 않는다)
 #   ⑺ readback 에서 라벨이 빠졌으면 `--add-label` 로 보강한다
+#   ⑪ 출처 줄 `Spinoff of PR #<pr> (issue #<부모>)` 가 **둘째 줄**에 실린다 — 슬롯이 있으면 치환,
+#      없으면 끼워 넣는다(#411)
 #
 # bats 미도입 레포라 다른 scripts/tests/*.test.sh 와 같은 순수 bash assert 관행을 따른다.
 set -uo pipefail
@@ -48,6 +50,10 @@ case "$*" in
     exit 0 ;;
   *"issue create"*)
     n=$(grep -c 'issue create' "$SO_CALLS")
+    # 렌더된 본문을 잡아 둔다(임시 파일이라 호출 뒤엔 사라진다) — 출처 줄 단언용(#411)
+    if [ -n "${SO_BODY_OUT:-}" ]; then
+      prev=; for a in "$@"; do [ "$prev" = "--body-file" ] && cp "$a" "$SO_BODY_OUT"; prev=$a; done
+    fi
     case "${SO_CREATE:-ok}" in
       labelfail)  [ "$n" = 1 ] && { echo "could not add label: 'spinoff' not found" >&2; exit 1; } ;;
       labelfail2) case "$*" in *--label*) echo "could not add label: 'spinoff' not found" >&2; exit 1 ;; esac ;;
@@ -69,6 +75,7 @@ bad() { fail=$((fail + 1)); echo "  ✗ $1"; }
 
 cat > "$tmp/body.md" <<'EOF'
 <EPIC_LINE>
+<ORIGIN_LINE>
 
 ## 배경
 파생 사유.
@@ -83,9 +90,10 @@ mkparent() {
 # run <parent> [부모PR] — OUT/ERR/RC/CALLS 를 채운다.
 run() {
   : > "$tmp/calls.log"
-  OUT=$(SO_CALLS="$tmp/calls.log" SO_PARENT="$tmp/parent.json" PATH="$tmp/stub:$PATH" \
+  OUT=$(SO_CALLS="$tmp/calls.log" SO_PARENT="$tmp/parent.json" SO_BODY_OUT="$tmp/sent-body.md" \
+        PATH="$tmp/stub:$PATH" \
         bash "$SUT" ggqgga/BodaT "$1" "${2:-77}" \
-        --title "파생 제목" --body-file "$tmp/body.md" 2>"$tmp/err.log")
+        --title "파생 제목" --body-file "${BODY:-$tmp/body.md}" 2>"$tmp/err.log")
   RC=$?
   ERR=$(cat "$tmp/err.log")
   CALLS=$(cat "$tmp/calls.log")
@@ -190,6 +198,18 @@ PATH="$tmp/stub:$PATH" bash "$SUT" ggqgga/BodaT >/dev/null 2>&1; rc=$?
 # ⑨ 본문 파일 없음 → exit 64 (발행 시도조차 하지 않는다)
 PATH="$tmp/stub:$PATH" bash "$SUT" ggqgga/BodaT 4979 77 --title T --body-file "$tmp/nope.md" >/dev/null 2>&1; rc=$?
 [ "$rc" = 64 ] && ok || bad "⑨ 본문 파일 없음 exit $rc (기대 64)"
+
+# ⑪ 출처 줄 — 슬롯이 있으면 둘째 줄로 치환, 슬롯 없는 옛 본문이면 둘째 줄에 끼워 넣는다(#411)
+mkparent $'Epic #4962\n\n## 배경\n어쩌고.' 'P1'
+run 4979 77
+[ "$(sed -n 2p "$tmp/sent-body.md")" = "Spinoff of PR #77 (issue #4979)" ] && ok \
+  || bad "⑪ 슬롯 치환 — 둘째 줄이 출처 줄이 아니다: [$(sed -n 2p "$tmp/sent-body.md")]"
+[ "$(grep -c 'Spinoff of PR #' "$tmp/sent-body.md")" = 1 ] && ok || bad "⑪ 출처 줄이 정확히 하나가 아니다"
+printf '<EPIC_LINE>\n\n## 배경\n슬롯 없는 옛 본문.\n' > "$tmp/body-noslot.md"
+BODY="$tmp/body-noslot.md" run 4979 77
+[ "$(sed -n 2p "$tmp/sent-body.md")" = "Spinoff of PR #77 (issue #4979)" ] && ok \
+  || bad "⑪ 슬롯 없음 — 둘째 줄에 끼워 넣지 않았다: [$(sed -n 2p "$tmp/sent-body.md")]"
+unset BODY
 
 # ⑩ 실행 비트 — closeout 6단계가 `$SCRIPTS/spinoff-issue.sh` 로 직접 exec 한다(PR#173 함정).
 [ -x "$SUT" ] && ok || bad "⑩ spinoff-issue.sh 실행 비트 없음"

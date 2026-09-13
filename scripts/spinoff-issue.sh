@@ -17,6 +17,9 @@
 #    치환하고, epic 이 있는데 첫 줄이 `Epic #N` 이 아니면 **맨 앞에 끼워 넣는다**.
 #    에픽은 sub-issue 링크도 라벨도 아닌 본문 **첫 줄**로 잇는다 — 그 줄이 없으면 그 파생은
 #    에픽 밖 고아가 되어 `loop-status.sh` 에픽 절의 leaf 집계에서 영영 안 보인다(#260·#261).
+#    `<ORIGIN_LINE>` 전용 줄은 `Spinoff of PR #<부모 PR#> (issue #<부모 이슈#>)` 로 치환하고,
+#    슬롯이 없으면 **둘째 줄**에 끼워 넣는다(#411) — 어느 PR·이슈에서 왔는지가 산문이 아니라
+#    전용 줄에 있어야 사람이 뒤지지 않는다(실측 2026-09-13: 최근 파생 30건 중 12건만 적혀 있었다).
 # ⑶ 발행: `gh issue create --label agent-ready --label spinoff --label <P> [--label 추가]`.
 #    `agent-ready` 생략 불가 — `eligible-issues.sh` 의 자격이 `open + agent-ready +
 #    ¬agent:claimed` 라 없으면 이슈는 생성되고도 루프가 **영원히 안 집는다**.
@@ -91,11 +94,19 @@ tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
 rendered="$tmp/body.md"
 
-# ⑵ 본문 — `<EPIC_LINE>` 전용 줄 치환 + 첫 줄 보장
+# ⑵ 본문 — `<EPIC_LINE>` 전용 줄 치환 + 첫 줄 보장 · `<ORIGIN_LINE>` 치환 + 둘째 줄 보장(#411)
 if [ "$epic" = "-" ]; then epic_line=""; else epic_line="Epic #$epic"; fi
-awk -v rep="$epic_line" '$0 == "<EPIC_LINE>" { print rep; next } { print }' "$body_file" > "$rendered"
+origin_line="Spinoff of PR #$pr (issue #$parent)"
+awk -v rep="$epic_line" -v org="$origin_line" \
+  '$0 == "<EPIC_LINE>" { print rep; next } $0 == "<ORIGIN_LINE>" { print org; next } { print }' \
+  "$body_file" > "$rendered"
 if [ -n "$epic_line" ] && [ "$(head -1 "$rendered")" != "$epic_line" ]; then
   { printf '%s\n\n' "$epic_line"; cat "$rendered"; } > "$tmp/body2.md"
+  mv "$tmp/body2.md" "$rendered"
+fi
+if ! grep -qF -- "$origin_line" "$rendered"; then
+  # 옛 본문 파일(슬롯 없음)도 출처 줄 없이 나가지 않는다 — 첫 줄(에픽 줄 또는 빈 줄) 다음에 끼운다.
+  { head -1 "$rendered"; printf '%s\n' "$origin_line"; tail -n +2 "$rendered"; } > "$tmp/body2.md"
   mv "$tmp/body2.md" "$rendered"
 fi
 
