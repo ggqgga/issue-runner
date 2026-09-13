@@ -406,8 +406,8 @@ claimed_arg() {
     # `[0]` 을 쓰면 그 PR 의 claim 조회가 #108 로 가 `none` 이 나오고, 증거 ③ 이 조용히
     # 꺼져 **지금 일하고 있는 워커**가 `stale_reverify` → 재디스패치된다(워크트리 경합).
     # head 단독 폴백도 없다 — `Refs #N`·`(no-issue)` PR(refs 빈 배열)은 증거 ③ 을 포기한다
-    # (그 PR 은 ①커밋·②판정 시각 축으로만 잰다). closeout-eligible·pr-state 가 같은 술어를
-    # 부른다 — 세 소비자가 다른 이슈를 볼 수 없다.
+    # (그 PR 은 ①커밋·②판정 시각 축으로만 잰다). closeout-eligible·verify-eligible·pr-state 가
+    # 같은 술어를 부른다 — 네 소비자가 다른 이슈를 볼 수 없다.
     #
     # 조회는 여전히 **한 번**이다(head 를 같은 응답에서 받는다 — 라운드트립을 늘리지 않는다).
     # `-q` 대신 별도 `jq` 를 쓰는 것은 `claim-at.sh` 와 같은 규율이다: 스텁이 실제 응답

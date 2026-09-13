@@ -89,20 +89,21 @@ closeout 세 SKILL(한/영)과 `references/worker-template.md` 는 아래 규약
   닫지 않고 잇기만 할 때는 같은 자리에 `Refs #N`. **백틱 안·문장 속 언급은 무시된다** —
   훅 `hooks/require-issue-in-pr.sh` 가 전용 줄만 인정한다. 정말 관련 이슈가 없으면 본문에
   `(no-issue)`.
-- **소비 — 세 소비자가 같은 술어다.** `scripts/finish-classify.sh`(브랜치 이슈의 claim 조회)·
-  `scripts/closeout-eligible.sh`(후보 행의 `issue`)·`scripts/pr-state.sh`(이슈 축)는 전부
+- **소비 — 네 소비자가 같은 술어다.** `scripts/finish-classify.sh`(브랜치 이슈의 claim 조회)·
+  `scripts/closeout-eligible.sh`(후보 행의 `issue`)·`scripts/verify-eligible.sh`(후보 행의 `issue`
+  — verify-pass·verify-redispatch 가 옮길 이슈)·`scripts/pr-state.sh`(이슈 축)는 전부
   `scripts/lib/loop.jq` 의 `linked_issue(head; refs)` **한 자리**를 부른다(#495):
   1. head 브랜치 `agent/issue-N` 의 N 이 `closingIssuesReferences` 에 있으면 **N**
      (브랜치가 집어간 이슈 = 증명된 짝).
   2. 아니면 `closingIssuesReferences` 가 **정확히 1건**이면 그것(닫는 이슈가 하나면 추측이 아니다).
-  3. 그 외 **빈 값**(fail-closed) — finish-classify 는 claim 증거 없음(`none`), closeout-eligible 은
-     `issue` 빈 문자열, pr-state 는 `-`(이슈 축 없음)로 받는다.
+  3. 그 외 **빈 값**(fail-closed) — finish-classify 는 claim 증거 없음(`none`), closeout-eligible·
+     verify-eligible 은 `issue` 빈 문자열, pr-state 는 `-`(이슈 축 없음)로 받는다.
 
-  세 소비자 어디서도 `[0]` 을 쓰지 않는다(`loop-status.sh` 의 `linked()` 는 대시보드라 `[0]`·head
+  네 소비자 어디서도 `[0]` 을 쓰지 않는다(`loop-status.sh` 의 `linked()` 는 대시보드라 `[0]`·head
   폴백 꼬리를 유지한다 — 판정이 아니라 표시다) — GitHub 이 본문의 `Closes` 를 만난 순서일 뿐이라, 닫는 이슈가
   둘 이상인 묶음 디스패치에서는 "이 PR 이 이 이슈 한 쌍으로 붙었다" 를 증명하지 못한다
   (#206 회차3 · 이 레포 PR #113 head `agent/issue-109`·refs `[108,109]`). **`Closes` 를 여러 개
-  쓰려면 head 가 그중 하나를 가리켜야 한다** — 아니면 세 소비자 모두 연결 이슈를 못 보고
+  쓰려면 head 가 그중 하나를 가리켜야 한다** — 아니면 네 소비자 모두 연결 이슈를 못 보고
   (같은 답으로) 마감·미러 정리가 멈춘다. 연결 이슈는 하나만 쓰는 것이 기본이다. head **단독**
   폴백도 없다 — `Refs #N`·`(no-issue)` PR 은 head 가 `agent/issue-N` 이어도 연결 이슈가 없다
   (finish-classify 는 그 PR 의 claim 증거 ③ 을 포기하고 커밋·판정 시각 축으로만 잰다).

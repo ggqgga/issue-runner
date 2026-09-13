@@ -69,11 +69,12 @@ esac
 STUB
 chmod +x "$tmp/bin/gh"
 
-# meta <pr> <issue> <labels-json-array-of-strings>
+# meta <pr> <issue> <labels-json-array-of-strings> [refs-json-array-of-numbers]
+# refs 기본은 `[issue]` — 연결 이슈 판정 케이스(7)만 넷째 인자로 다중 참조를 심는다(#495).
 meta() {
-  jq -c -n --arg pr "$1" --arg issue "$2" --argjson l "$3" \
+  jq -c -n --arg pr "$1" --arg issue "$2" --argjson l "$3" --argjson refs "${4:-[$2]}" \
     '{headRefName: ("agent/issue-" + $issue), mergeable: "MERGEABLE",
-      labels: [$l[] | {name: .}], closingIssuesReferences: [{number: ($issue|tonumber)}]}' \
+      labels: [$l[] | {name: .}], closingIssuesReferences: [$refs[] | {number: .}]}' \
     > "$STUB_META_DIR/$1.json"
 }
 
@@ -198,6 +199,15 @@ out=$(run_sut '[]' '[]'); rc=$?
 ck "후보 0: exit 0" "$rc" 0
 ck "후보 0: 출력 없음" "$(printf '%s' "$out" | grep -c . || true)" 0
 ck "후보 0: stderr 없음(빈 결과 ≠ 실패)" "$(grep -c . "$tmp/err" || true)" 0
+
+# ── 7) 연결 이슈 = `lib/loop.jq` 의 `linked_issue`(#495) — 다른 세 소비자와 같은 답 ────
+# head `agent/issue-166` 이 refs 에 있으면 그것이다. `closingIssuesReferences[0]` 이면 남의
+# 이슈 #165 를 실어 verify-pass/verify-redispatch 가 closeout(166)과 다른 이슈를 옮긴다.
+reset
+meta 91 166 '["flow:verify"]' '[165,166]'
+out=$(run_sut '[]' '[{"repo":"owner/repo","pr":91}]')
+ck "연결 이슈: refs[165,166]+head 166 → issue=166(head 의 N)" \
+  "$(printf '%s\n' "$out" | jq -r 'select(.pr==91)|.issue')" "166"
 
 echo "verify-eligible.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]

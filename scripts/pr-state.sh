@@ -23,7 +23,7 @@
 #             `loop-status.sh` 의 `linked()`(#265)와 달리 **폴백 꼬리가 없다**: 거기는
 #             대시보드라 못 찾으면 `[0]`·head 로 내려가 무엇이든 보여 주는 쪽이 맞고, 여기는
 #             그 답이 라벨 편집을 부르므로 **추측하느니 이슈 축을 버린다**(`-`). finish-classify·
-#             closeout-eligible 도 같은 술어라 세 소비자가 다른 이슈를 볼 수 없다.
+#             closeout-eligible·verify-eligible 도 같은 술어라 네 소비자가 다른 이슈를 볼 수 없다.
 #   ⑶ 판정    `pr-comments.sh`(페이지네이션 전량) + `lib/loop.jq` 술어. 같은 코멘트 JSON 을
 #             `BOUNCE_COMMENTS_FILE` 로 `bounce-state.sh` 에 그대로 먹여 반송 축도 얻는다 —
 #             반송 마커 **문법**(구분자·조사·표식)은 loop.jq 의 접두 집합 밖이고 그 판정기는

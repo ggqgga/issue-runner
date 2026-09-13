@@ -117,8 +117,8 @@ def short_repo:
 def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " ");
 
 # ── PR 연결 이슈 (#495) ─────────────────────────────────────────────────────
-# linked_issue(head; refs) — "이 PR 이 어느 이슈 한 쌍으로 붙었는가" 를 세 소비자
-# (finish-classify · closeout-eligible · pr-state)가 **같은 답**으로 얻는 자리.
+# linked_issue(head; refs) — "이 PR 이 어느 이슈 한 쌍으로 붙었는가" 를 네 소비자
+# (finish-classify · closeout-eligible · verify-eligible · pr-state)가 **같은 답**으로 얻는 자리.
 #   head : `headRefName` (문자열 · null 허용)
 #   refs : `closingIssuesReferences` 의 번호 배열 `[108,109]` (null 허용)
 # 규칙 — 순서대로 첫 참:
@@ -126,9 +126,10 @@ def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\
 #   ⑵ refs 가 **정확히 1건**이면 그것                        (닫는 이슈가 하나면 추측이 아니다)
 #   ⑶ 그 외 null                                             (fail-closed — 짝을 증명할 축이 없다)
 # `[0]` 을 쓰지 않는 이유는 실데이터다: PR #113 head `agent/issue-109`·refs `[108,109]` — `[0]` 은
-# GitHub 이 본문의 `Closes` 를 만난 순서일 뿐이라 남의 이슈(#108)를 가리킨다(#206 회차3). 세
-# 소비자가 각자 다른 축(head 1순위+[0] 폴백 / [0] 하나 / head∩refs)을 쓰던 판은 `Closes` 가 둘
-# 이상인 PR 에서 서로 다른 이슈를 봤다(#452 §5 실측) — 그래서 한 자리다.
+# GitHub 이 본문의 `Closes` 를 만난 순서일 뿐이라 남의 이슈(#108)를 가리킨다(#206 회차3). 소비자가
+# 각자 다른 축(head 1순위+[0] 폴백 / [0] 하나 / head∩refs)을 쓰던 판은 `Closes` 가 둘 이상인
+# PR 에서 서로 다른 이슈를 봤다(#452 §5 실측) — 그래서 한 자리다. verify-eligible 이 `[0]` 인
+# 채로 남으면 검증(verify-pass·verify-redispatch)과 마감(closeout)이 다른 이슈를 옮긴다.
 # head **단독** 폴백은 일부러 없다 — `Refs #N`·`(no-issue)` PR(refs 빈 배열)은 head 가
 # `agent/issue-N` 이어도 null 이다. 그 PR 은 finish-classify 의 claim 증거 ③ 을 잃지만(커밋·
 # 판정 시각 축은 그대로), 대신 어느 소비자도 본문이 닫지 않는 이슈를 마감·미러 대상으로
