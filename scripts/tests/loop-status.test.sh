@@ -127,6 +127,19 @@ if [ "${1:-}" = "api" ]; then
   if [ -f "$f.fail" ]; then echo "gh: connection refused" >&2; exit 1; fi
   case "$path" in
     */issues/*/comments*)
+      # 에픽 스윕 마커 조회 (#441) — `pr-comments.sh` 는 `--paginate` + `--jq` 로 온다(대시보드
+      # 코멘트 조회는 둘 다 없다). 스텁은 **원본 코멘트 배열**을 들고 SUT 가 넘긴 --jq 를 그대로
+      # 적용한다 — 필터를 흉내 내면 헬퍼 계약이 틀려도 통과한다(timeline 스텁과 같은 규율).
+      case "$args" in *--paginate*)
+        num=$(printf '%s' "$path" | sed -n 's|.*/issues/\([0-9][0-9]*\)/comments.*|\1|p')
+        printf 'epic-marker %s %s\n' "$repo" "$num" >> "$STUB_CALL_LOG"
+        if [ -f "$f.epic_comments.$num.fail" ]; then echo "gh: HTTP 502 Bad Gateway" >&2; exit 1; fi
+        jqf=""; prev=""
+        for a in "$@"; do case "$prev" in --jq|-q) jqf="$a";; esac; prev="$a"; done
+        if [ -z "$jqf" ]; then echo "gh stub: 코멘트 전량 조회는 --jq 로 불러야 한다: $args" >&2; exit 1; fi
+        if [ -f "$f.epic_comments.$num.json" ]; then jq -c "$jqf" "$f.epic_comments.$num.json" || exit 1; fi
+        exit 0 ;;
+      esac
       if [ "${3:-}" = "-X" ] || [ "${3:-}" = "--method" ]; then :; fi
       printf 'dash-comments-get %s\n' "$repo" >> "$STUB_CALL_LOG"
       if [ -f "$f.dash.comments.json" ]; then cat "$f.dash.comments.json"; else echo '[]'; fi; exit 0 ;;
@@ -866,6 +879,42 @@ echo '[]' > "$tmp/fx/ggqgga_EpicBadJson.issues_closed.json"
 : > "$tmp/fx/ggqgga_EpicBadJson.epic_closed.notarray"
 echo '[]' > "$tmp/fx/ggqgga_EpicBadJson.pr_open.json"
 echo '[]' > "$tmp/fx/ggqgga_EpicBadJson.pr_closed.json"
+
+# ── 픽스처: ggqgga/EpicMark (epicmark) — 전부 종료 에픽의 **스윕 마커** 유무 (#441) ──────
+# `<!-- epic-sweep -->` 마커가 있는데 열려 있는 에픽은 스윕이 한 번 닫았다가 되돌려진 것이라
+# 스윕 대상이 아니다(epic-sweep.sh 마커 게이트 — note · 쓰기 0). 종전 문구 "닫아라(에픽 스윕
+# 대상)" 는 그 에픽엔 거짓이었다 — 사람 몫이다. 셋을 한 픽스처에 둔다:
+#   #10 마커 있음 → `사람 몫(스윕 되돌림)` · #11 마커 없음 → 종전 문구 그대로 ·
+#   #12 코멘트 조회 실패 → 어느 쪽이라고 단정하지 않는다(미확인).
+# 마커 조회는 **전부 종료 warn 후보에만** 건다 — #13 은 열린 leaf 가 있어 조회 0.
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicMark.issues.json" <<'FX'
+[
+ {"number":10,"title":"되돌려진 에픽","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":11,"title":"스윕이 닫을 에픽","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":12,"title":"마커 미확인 에픽","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":13,"title":"진행 중 에픽","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
+ {"number":14,"title":"열린 leaf","createdAt":"@NOW@","body":"Epic #13","labels":[{"name":"agent-ready"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_EpicMark.issues_closed.json" <<'FX'
+[
+ {"number":101,"body":"Epic #10","closedAt":"@NOW@","labels":[]},
+ {"number":111,"body":"Epic #11","closedAt":"@NOW@","labels":[]},
+ {"number":121,"body":"Epic #12","closedAt":"@NOW@","labels":[]}
+]
+FX
+cp "$tmp/fx/ggqgga_EpicMark.issues_closed.json" "$tmp/fx/ggqgga_EpicMark.epic_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicMark.pr_open.json"
+echo '[]' > "$tmp/fx/ggqgga_EpicMark.pr_closed.json"
+# REST `issues/{n}/comments` 원본 모양(body·created_at) — pr-comments.sh 의 --jq 가 이걸 먹는다.
+cat > "$tmp/fx/ggqgga_EpicMark.epic_comments.10.json" <<'FX'
+[{"body":"잡담","created_at":"2026-09-12T00:00:00Z"},
+ {"body":"leaf 전부 종료로 자동 종료 — leaf #101 <!-- epic-sweep --><!-- bodat:worker -->","created_at":"2026-09-12T01:00:00Z"}]
+FX
+cat > "$tmp/fx/ggqgga_EpicMark.epic_comments.11.json" <<'FX'
+[{"body":"잡담 — 마커 없음","created_at":"2026-09-12T00:00:00Z"}]
+FX
+: > "$tmp/fx/ggqgga_EpicMark.epic_comments.12.fail"
 
 # ── 픽스처: ggqgga/EpicCap (epiccap) — 새 조회가 **자기 상한**에 닿는다 ─────────────
 # `EPIC_CLOSED_LIMIT` 를 낮춰 1000행짜리 픽스처 없이 상한 경로를 재현한다
@@ -1612,8 +1661,10 @@ has_sub "③ warn 에픽 내 P 혼재(닫힌 leaf 의 P0 는 안 낀다)" "$tmp/
   "    - 에픽 내 P 혼재 #300(epics) — P0 1 · P1 2"
 no_sub "④ leaf 없는 에픽은 warn 없음" "$tmp/out" "전부 종료 #400"
 no_sub "① 정상 진행 에픽은 warn 없음" "$tmp/out" "전부 종료 #100"
-ck "epics: 추가 gh 호출 0(닫힌 이슈 목록에서 이미 받은 본문으로만 판정)" \
+ck "epics: leaf 판정에 개별 이슈 조회 0(닫힌 이슈 목록에서 이미 받은 본문으로만 판정)" \
   "$(grep -c '^comments \|^timeline ' "$STUB_CALL_LOG")" 0
+# 예외 ④(#441) — 전부 종료 warn 후보(#200)에만 스윕 마커 조회 1건이 나간다(leaf 판정과 무관).
+ck "epics: 스윕 마커 조회는 전부 종료 후보 #200 의 1건뿐" "$(grep -c '^epic-marker ' "$STUB_CALL_LOG")" 1
 
 run --repo ggqgga/Epics --since 24h --json
 ck "⑦ --json: epics[] 형태 — #100(진행 중)" \
@@ -1701,6 +1752,28 @@ STUB_DIR="$tmp/fx" PATH="$tmp/bin:$PATH" EPIC_CLOSED_LIMIT=천 \
   "$SUT" --repo ggqgga/EpicCap --since 24h >"$tmp/out" 2>"$tmp/err"; RC=$?
 ck "EPIC_CLOSED_LIMIT 형식 오류: exit 1" "$RC" 1
 has_sub "EPIC_CLOSED_LIMIT 형식 오류: stdout 에도 사유" "$tmp/out" "EPIC_CLOSED_LIMIT 형식 오류: 천"
+
+# ── (#441) 전부 종료 warn 문구 — 스윕 마커 있음(되돌림)은 사람 몫, 없음은 스윕 대상 ────
+run --repo ggqgga/EpicMark --since 24h
+ck "epicmark: exit 0" "$RC" 0
+has_sub "(#441) 마커 있음 + 열림 → 사람 몫(스윕 되돌림) — 종전 문구면 스윕이 닫을 것처럼 읽혔다" "$tmp/out" \
+  "    - 에픽 leaf 전부 종료 #10(epicmark) — 사람 몫(스윕 되돌림: 마커 있음 — 직접 닫거나 마커 코멘트를 지워라)"
+no_sub "(#441) 마커 있는 에픽에 '닫아라(에픽 스윕 대상)' 가 붙지 않는다(반증)" "$tmp/out" \
+  "#10(epicmark) — 닫아라"
+has_sub "(#441) 마커 없음 → 종전 문구 그대로(스윕이 닫는다)" "$tmp/out" \
+  "    - 에픽 leaf 전부 종료 #11(epicmark) — 닫아라(에픽 스윕 대상)"
+has_sub "(#441) 코멘트 조회 실패 → 어느 쪽이라고 단정하지 않는다" "$tmp/out" \
+  "    - 에픽 leaf 전부 종료 #12(epicmark) — 스윕 대상 여부 미확인(코멘트 조회 실패)"
+ck "(#441) 마커 조회는 전부 종료 후보 3건에만(열린 leaf 가 있는 #13 은 안 묻는다)" \
+  "$(grep -c '^epic-marker ' "$STUB_CALL_LOG")" 3
+check "(#441) #13 마커 조회 없음" \
+  "$(grep -qxF "epic-marker ggqgga/EpicMark 13" "$STUB_CALL_LOG" && echo no || echo ok)"
+has_sub "(#441) 조회 실패 사유는 stderr 에도" "$tmp/err" "#12 스윕 마커 코멘트 조회 실패"
+# 상한 — 넘는 후보는 조회하지 않고 미확인으로 남긴다(거짓 `스윕 대상` 을 만들지 않는다).
+EPIC_MARK_MAX=1 run --repo ggqgga/EpicMark --since 24h
+ck "(#441) EPIC_MARK_MAX=1: 마커 조회는 1건뿐" "$(grep -c '^epic-marker ' "$STUB_CALL_LOG")" 1
+has_sub "(#441) EPIC_MARK_MAX=1: 상한 밖 후보는 미확인(조회 상한)" "$tmp/out" \
+  "(epicmark) — 스윕 대상 여부 미확인(조회 상한(1) 초과)"
 
 # ── (#327) 전용 줄 끝 앵커 — 문장형 `Epic #N …` 은 leaf 가 아니다 ──────────
 run --repo ggqgga/EpicAnchor --since 24h

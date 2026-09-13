@@ -211,9 +211,11 @@ event:
 
 exit 1 means this tick had a read/write **failure** — leave it alone, the next tick retries
 (the `<!-- epic-sweep -->` marker in the rationale comment keeps it idempotent, so comments
-never pile up). One exception: the `에픽 close 실패(N회 시도)` warn is **not** retried next
-tick (the marker stays and reads as a human revert) — copy its why into Report verbatim so a
-human closes it. exit 64 means no scope (`.loop/repos` missing): call it once more naming the
+never pile up). Two exceptions: the `에픽 close 실패(N회 시도)` warn and the `종료 근거 코멘트
+실패 + 되읽기 실패` warn (#441 — the comment could not be re-read to see whether it landed) may
+**not** be retried next tick (the marker stays and reads as a human revert) — copy their why into
+Report verbatim so a human closes the epic or deletes the marker comment. `loop-status.sh`'s
+`에픽 leaf 전부 종료` warn keeps showing that epic as `사람 몫(스윕 되돌림)`. exit 64 means no scope (`.loop/repos` missing): call it once more naming the
 repos touched this tick with `--repo <owner/repo>`, and if there are none, leave one warn line
 `epic-sweep: 스코프 없음`.
 

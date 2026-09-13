@@ -18,6 +18,9 @@
 #   ⑦-b (#377) 코멘트 성공·close 실패의 중간 상태는 **같은 틱 안에서** close 를 재시도해 살린다
 #      (다음 틱은 마커를 보고 사람 되돌림으로 읽으므로 이월할 수 없다) — 재시도 상한을 다 쓰면
 #      warn + rc 1 이고 그 why 가 "다음 틱이 재시도하지 않는다" 를 말한다.
+#   ⑦-c (#441) 코멘트 쓰기의 **거짓 실패**(서버엔 붙었는데 클라이언트가 rc≠0) 는 코멘트를 **되읽어**
+#      마커가 있으면 서버 반영으로 간주하고 close 로 진행한다 — 안 그러면 다음 틱이 마커를 되돌림으로
+#      읽어 영영 안 닫는다. 되읽기까지 실패하면 fail-closed(닫지 않음 · warn 이 사람 조치를 말한다).
 #   ⑧ `deploy-wait` 에픽은 건드리지 않는다 · `full-cycle`·`needs-human` 에픽은 닫는다.
 #   ⑨ 조회·쓰기 실패는 "해당 없음" 으로 위장되지 않는다(warn + exit 1) — 코멘트가 실패하면
 #      close 까지 가지 않는다(다음 틱이 코멘트부터 다시 시도).
@@ -98,6 +101,8 @@ case "${1:-} ${2:-}" in
     done
     jq --arg b "$body" '. + [{body: $b, created_at: "2026-09-12T00:00:00Z"}]' "$STUB_COMMENTS" \
       > "$STUB_COMMENTS.tmp" && mv "$STUB_COMMENTS.tmp" "$STUB_COMMENTS"
+    # 거짓 실패(⑦-c) — 서버엔 붙었는데(위에서 이미 반영) 클라이언트는 실패로 본다.
+    [ -z "${STUB_COMMENT_GHOST:-}" ] || exit 1
     exit 0 ;;
   "issue close")
     [ -z "${STUB_CLOSE_FAIL:-}" ] || exit 1
@@ -117,6 +122,12 @@ if [ "${1:-}" = "api" ]; then
       cat "$STUB_SEARCH"; exit 0 ;;
     */comments*)
       [ -z "${STUB_COMMENTS_FAIL:-}" ] || { echo "gh: comments boom" >&2; exit 1; }
+      # 처음 N 번은 성공, 그 뒤는 실패 — 되읽기(⑦-c)만 골라 실패시킨다(마커 게이트는 통과).
+      if [ "${STUB_COMMENTS_FAIL_AFTER:-0}" -gt 0 ]; then
+        n=$(cat "$STUB_COMMENTS_CNT" 2>/dev/null || echo 0)
+        n=$((n + 1)); printf '%s' "$n" > "$STUB_COMMENTS_CNT"
+        [ "$n" -le "$STUB_COMMENTS_FAIL_AFTER" ] || { echo "gh: comments boom(after)" >&2; exit 1; }
+      fi
       # pr-comments.sh 가 주는 `--jq` 를 그대로 적용해야 그 헬퍼의 계약(줄줄이 오브젝트)이
       # 재현된다 — 고정 문자열을 돌려주면 헬퍼를 통과하는지가 확인되지 않는다.
       jqf=""
@@ -170,7 +181,9 @@ reset() {
   comments '[]'
   : > "$tmp/gh.log"
   : > "$tmp/close.cnt"
+  : > "$tmp/comments.cnt"
   STUB_EPICS_FAIL=""; STUB_SEARCH_FAIL=""; STUB_COMMENT_FAIL=""; STUB_CLOSE_FAIL=""
+  STUB_COMMENT_GHOST=""; STUB_COMMENTS_FAIL_AFTER=0
   STUB_DEPLOY_FAIL=""; STUB_PR_FAIL=""; STUB_PR_EMPTY=""
   STUB_CLOSE_FAIL_TIMES=0
   STUB_COMMENTS_FAIL=""; STUB_JQ_FAIL_PAT=""
@@ -189,7 +202,8 @@ run() {
 export STUB_LOG="$tmp/gh.log" STUB_EPICS="$tmp/epics.json" STUB_SEARCH="$tmp/search.json"
 export STUB_COMMENTS="$tmp/comments.json" STUB_DEPLOY="$tmp/deploy.json" STUB_DEPLOY_FAIL=""
 export STUB_PRS="$tmp/prs.json" STUB_PR_FAIL="" STUB_PR_EMPTY=""
-export STUB_CLOSE_CNT="$tmp/close.cnt"
+export STUB_CLOSE_CNT="$tmp/close.cnt" STUB_COMMENTS_CNT="$tmp/comments.cnt"
+export STUB_COMMENT_GHOST="" STUB_COMMENTS_FAIL_AFTER=0
 export STUB_EPICS_FAIL="" STUB_SEARCH_FAIL="" STUB_COMMENT_FAIL="" STUB_CLOSE_FAIL=""
 export STUB_CLOSE_FAIL_TIMES=0
 export STUB_COMMENTS_FAIL="" STUB_JQ_FAIL_PAT=""
@@ -447,6 +461,32 @@ check "close 2회(실패 1 + 성공 1)" "$([ "$(count_cmd 'issue close')" = 2 ] 
 check "코멘트는 1회뿐" "$([ "$(count_cmd 'issue comment')" = 1 ] && echo ok || echo no)"
 check "warn 없음" "$(no_ev warn)"
 check "rc 0" "$([ "$RC" = 0 ] && echo ok || echo no)"
+
+echo "── ⑦-c 코멘트 쓰기 거짓 실패 — 되읽어 마커가 있으면 close 로 진행한다 (#441) ──"
+# 서버엔 코멘트가 붙었는데 클라이언트가 실패로 본 틱. 여기서 warn 으로 끝내면 다음 틱은 그
+# 마커를 되돌림으로 읽어(⑦) 영영 닫지 않는다 — 그래서 실패 응답을 믿기 전에 되읽는다.
+reset
+search "$(jq -n --argjson a "$(leaf 101 100 closed)" '[$a]')"
+STUB_COMMENT_GHOST=1
+run
+check "거짓 실패 → closed 이벤트(회귀 단언 — 되읽기 없으면 warn 으로 끝났다)" "$(has_ev closed)"
+check "거짓 실패 → close 1회" "$([ "$(count_cmd 'issue close')" = 1 ] && echo ok || echo no)"
+check "거짓 실패 → 코멘트는 1회뿐(다시 쓰지 않는다)" "$([ "$(count_cmd 'issue comment')" = 1 ] && echo ok || echo no)"
+check "거짓 실패 → 코멘트 조회 2회(게이트 1 + 되읽기 1)" \
+  "$([ "$(count_cmd 'api .*comments')" = 2 ] && echo ok || echo no)"
+check "거짓 실패 → warn 없음" "$(no_ev warn)"
+check "거짓 실패 → rc 0" "$([ "$RC" = 0 ] && echo ok || echo no)"
+# 되읽기까지 실패하면 마커 유무를 모른다 — 닫지 않는다(fail-closed). 이 갈래를 안 물면
+# "되읽기 실패 = 마커 없음 = 다음 틱 재시도" 로 접혀 마커가 남은 에픽이 조용히 굳는다.
+reset
+search "$(jq -n --argjson a "$(leaf 101 100 closed)" '[$a]')"
+STUB_COMMENT_GHOST=1
+STUB_COMMENTS_FAIL_AFTER=1
+run
+check "거짓 실패 + 되읽기 실패 → close 안 함" "$([ "$(count_cmd 'issue close')" = 0 ] && echo ok || echo no)"
+check "거짓 실패 + 되읽기 실패 → warn 이 사람 조치(마커 삭제/직접 종료)를 말한다" \
+  "$(ev warn | jq -r '.why' | grep -q '마커 코멘트를 지우' && echo ok || echo no)"
+check "거짓 실패 + 되읽기 실패 → rc 1" "$([ "$RC" = 1 ] && echo ok || echo no)"
 
 echo "── ⑧ deploy-wait 에픽은 건드리지 않는다 ──"
 reset
