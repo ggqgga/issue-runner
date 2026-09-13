@@ -134,22 +134,17 @@ no-op 로 통과한다). (근거: verify-runner-rationale §5)
 **`fail` 원인 분류 — 코드 회귀 vs 인프라 자가체크.** `fail` 을 본 즉시 캐시 로그
 (`~/.claude/.local-ci/<slug>/<sha>.log`, slug=`repo-dir.sh` 경로의 `/`·공백→`_`)를
 읽어 **어느 step 이 죽었는지** 확인한다. 판별 기준은 한 가지다 — **그 실패가 PR diff
-와 인과로 닿는가.** 닿지 않는 실패는 반송해도 워커가 고칠 수 없어 반송 자체가 낭비다
-(무한 반송 → 이슈만 오염).
+와 인과로 닿는가.** (근거: verify-runner-rationale §8)
 
 인과로 안 닿는 대표 부류(**재디스패치 금지**):
-- **툴 자가체크** — 툴이 "내 버전이 최신인가"를 자기 자신에게 묻고 실패하는 것.
-  전례: brakeman `--ensure-latest` 는 상류가 패치 릴리스를 내는 순간 **스캔을 시작도
-  안 하고** exit 5 로 죽어(출력이 버전 한 줄뿐, 경고 리포트 없음) 코드와 무관하게
-  전 브랜치를 동시에 빨갛게 만들었다. PR 7건이 12틱 묶였고 재실행은 영원히 무의미했다
-  (`bin/brakeman` 에서 그 플래그를 제거해 해소 — #2768).
+- **툴 자가체크** — 툴이 "내 버전이 최신인가"를 자기 자신에게 묻고 실패하는 것
+  (전례: brakeman `--ensure-latest`, #2768 — 근거 §8).
 - **환경·네트워크** — 젬/npm advisory DB fetch 실패, 레지스트리 타임아웃, 디스크·포트.
 - **base 자체가 빨강** — 같은 실패가 `origin/<base>` 에서도 재현되면 PR 무죄다
   (`git -C <wt> checkout origin/<base>` 후 그 step 만 단독 재현).
 
 **전 브랜치 동시 빨강은 이 부류의 지문이다.** 이번 틱 verify-eligible 이 전부 `fail`
-이고 실패 step·메시지가 같으면 코드 회귀가 아니다 — 그 PR 들이 서로 다른 파일을 건드리는데
-같은 지점에서 죽을 확률은 없다.
+이고 실패 step·메시지가 같으면 코드 회귀가 아니다.
 
 처리: 사유를 **한 번만** PR 코멘트로 남기고(같은 마커가 이미 있으면 재발행 금지 —
 /loop 스팸 방지) flake_retry 로 ④ Report 에 올린다(④ 의 flake_retry 가 `verify-unpick`
@@ -180,17 +175,13 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
   `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
   의 칸 ②③ 을 시도한 뒤 그 결과(시도한 칸·명령·실패 출력 마지막 20줄)를 코멘트에
   인용한다.
-- **실패 시 플레이크 판별 (자기포화 방어, #981).** `test:system` 스위트는 10코어에
-  크롬 10개 병렬이라 한적한 박스에서도 스위트 자기포화로 저장-계열 어서션이 런당
-  ~1개 깜빡인다(단독 실행은 통과). 그래서 스위트 실패 시 **곧바로 진짜 실패로
-  판정하지 말고**: 실패한 테스트 **파일만 단독 재실행**한다(`bin/rails test
+- **실패 시 플레이크 판별 (자기포화 방어, #981 — 근거 §9).** 스위트 실패 시 **곧바로
+  진짜 실패로 판정하지 말고**: 실패한 테스트 **파일만 단독 재실행**한다(`bin/rails test
   <실패파일>`). ⓐ 단독 통과 → 자기포화 플레이크로 간주하고 스위트를 **1회 재실행**;
   재실행도 (다른 테스트에서) 실패하면 같은 파일-단독 확인을 반복하되, **스위트를
   최대 3회**까지만 돌린다(무한 금지). 3회 내 모든 실패가 매번 단독-통과면 E2E=pass
   (플레이크 소진)로 코멘트에 `E2E: pass (자기포화 플레이크 n건 단독 재확인)` 명시.
   ⓑ 단독도 실패 → **진짜 E2E 실패** → ④ 재디스패치(`E2E 실패: <파일::테스트>`).
-  직렬 레인이라 이 느린 재확인을 감당한다(예전 per-test 재시도 하네스가 게이트에서
-  하던 일을 여기서 루프 수준으로, 부하 없이).
 
 **3. codex correctness 리뷰 — 내장 리뷰어. 먼저 회차를 읽는다:
 `N=$($SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt)`(마커 없으면 `0`,
@@ -218,8 +209,8 @@ N < 2 면 `$SCRIPTS/codex-review-gate.sh --base origin/<default>
 <review.md 본문>
 <!-- bodat:worker -->"`
 
-**3′. 3회차 자체 리뷰 — codex 없이 (N = 2).** codex 는 이 PR 에 이미 두 번 답했고 워커가 두 번 고쳤다.
-세 번째 판정은 `general-purpose` 서브에이전트(read-only)가 낸다 — 입력은 **직전 `재검증 실패:` 코멘트**
+**3′. 3회차 자체 리뷰 — codex 없이 (N = 2).** 세 번째 판정은 `general-purpose` 서브에이전트(read-only)가 낸다 —
+입력은 **직전 `재검증 실패:` 코멘트**
 (2회차 codex 의 P1 제목들)와 `git diff origin/<default>...HEAD`, 출력은 **지적별 `해소`/`미해소` + 한 줄 근거**.
 이 리뷰는 게이트가 아니다 — E2E(③-2)·결정적 CI(③-1)만 게이트다. 결과를 PR 코멘트로 남긴다 —
 **closeout 2단계 머지 게이트가 읽는 형식 그대로**(`검증자 리뷰:` 접두 + `BLOCKER 0`; 미해소는 WARN 으로 센다):
@@ -229,6 +220,7 @@ N < 2 면 `$SCRIPTS/codex-review-gate.sh --base origin/<default>
 미해소가 남아도 ④ **passed** 로 간다. 남은 지적은 **PR 본문에 `follow-up:` 줄로 적는다**(한 지적 한 줄,
 `follow-up: <지적 제목> — 3회차 자체 리뷰 미해소`, `gh pr edit --body` 로 본문 끝에 추가) — closeout 6단계는
 PR 본문의 `follow-up:` 항목만 파생 이슈 입력으로 읽으므로 이 줄이 없으면 지적이 조용히 버려진다.
+(근거: verify-runner-rationale §2)
 
 **3-b. 보조 리뷰 (`AUX_REVIEWERS`, 비게이트).** ③-3 의 Codex 스폰과 **같은 시점**에, 같은 동봉
 diff·이슈 본문으로 `AUX_REVIEWERS` 두 타입을 각각 `run_in_background: true` 로 스폰한다(직렬 레인의
