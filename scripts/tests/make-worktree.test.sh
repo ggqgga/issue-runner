@@ -141,6 +141,18 @@ rm -f "$wt/added.txt"
 mkwt --sync o/r 9
 [ "$RC" = 0 ] && ok || bad "⑨ 충돌 해소 뒤에도 rc=$RC (기대 0)"
 
+# ⑨-b `--branch` 로 다른 head 를 동기화할 때 **지금 물고 있는 로컬 브랜치를 옮기지 않는다**
+#      (#467 2회차 P1-1). 갈아타지 않고 reset 하면 `agent/issue-9` 가 feature/x 의 head 를
+#      가리키게 되고, 뒤따르는 커밋이 엉뚱한 브랜치 이름으로 푸시된다.
+git -C "$wt" checkout -q -B agent/issue-9 origin/agent/issue-9
+ISSUE9_BEFORE=$(git -C "$wt" rev-parse agent/issue-9)
+mkwt --sync --branch feature/x o/r 9
+[ "$RC" = 0 ] && ok || bad "⑨-b rc=$RC err=[$ERR]"
+[ "$(git -C "$wt" symbolic-ref --short HEAD)" = "feature/x" ] && ok \
+  || bad "⑨-b HEAD 브랜치가 feature/x 가 아니다: $(git -C "$wt" symbolic-ref --short HEAD 2>/dev/null)"
+[ "$(git -C "$wt" rev-parse agent/issue-9)" = "$ISSUE9_BEFORE" ] && ok \
+  || bad "⑨-b agent/issue-9 가 남의 head 로 옮겨졌다(엉뚱한 이름으로 푸시될 상태)"
+
 # ⑩ 값 옵션이 마지막에 와도 무한루프/셸 에러가 아니라 즉시 usage 비0 (#467 P2-3)
 mkwt --sync o/r 9 --branch
 [ "$RC" != 0 ] && ok || bad "⑩ --branch 값 누락인데 rc=0"

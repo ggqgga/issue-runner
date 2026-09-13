@@ -25,6 +25,8 @@
 #   · worktree 가 없으면 종전 생성 경로 그대로(원격 브랜치가 있으면 그 위에 만들므로 이미 동기).
 #   · `--branch <ref>` 로 head 브랜치를 지정할 수 있다(기본 `agent/issue-<N>`). verify-runner 의
 #     head 는 `agent/issue-*` 가 아닐 수 있어 그 자리를 산문으로 두면 이 옵션 없이는 못 옮긴다.
+#     지정한 브랜치가 지금 체크아웃된 것과 다르면 **먼저 갈아탄다**(`checkout -B`) — 안 그러면
+#     `reset --hard` 가 지금 물고 있는 로컬 브랜치를 남의 head 로 옮긴다. 갈아타지 못하면 exit 3.
 #   · 동기화 결과 SHA 를 `synced: <sha>` 로 먼저 출력한다 — **마지막 줄은 여전히 worktree
 #     절대경로**다(호출자 셋이 마지막 줄로 경로를 읽는 종전 계약, 깨지 마라).
 set -euo pipefail
@@ -163,6 +165,17 @@ $f"
       if [ -n "$clash" ]; then
         echo "sync: 새로 추적될 경로가 미추적 파일로 있어 덮지 않는다 — $wt" >&2
         printf '%s\n' "$clash" | sed 's/^/  충돌: /' >&2
+        exit 3
+      fi
+    fi
+    # **다른 브랜치에 체크아웃돼 있으면 먼저 갈아탄다** (#467 2회차 P1-1). `--branch` 로 head 를
+    # 지정했는데 worktree 가 아직 `agent/issue-N` 에 있으면, `reset --hard origin/<ref>` 는
+    # **지금 체크아웃된 그 로컬 브랜치**를 남의 head 로 옮겨 버린다(agent/issue-N 이 feature/x 를
+    # 가리키게 되고, 뒤따르는 커밋이 엉뚱한 이름으로 푸시된다). detached 면 현재 브랜치는 빈 값.
+    cur=$(git -C "$wt" symbolic-ref --short HEAD 2>/dev/null) || cur=
+    if [ "$cur" != "$branch" ]; then
+      if ! git -C "$wt" checkout -q -B "$branch" "origin/$branch" 2>/dev/null; then
+        echo "sync: $branch 로 갈아타지 못했다(다른 worktree 가 물고 있나?) — 덮지 않는다: $wt" >&2
         exit 3
       fi
     fi
