@@ -657,15 +657,20 @@ mirror_labels() {  # mirror_labels <repo> <num> <resume|escalate|resume-conflict
 #      붙인 `needs-human`·`hold:*` 를 루프가 떼면, 이 파일 ②갈래가 세운 규율("사유 없는
 #      needs-human 은 사람이 붙였을 수 있으니 손대지 않는다")을 정면으로 어긴다.
 #      `loop-status.sh` 의 무소속 warn 도 같은 경계로 좁혀 둔다(#188).
-#   ⑵ `closingIssuesReferences` 로 **증명된** 링크 **이면서** head 의 `agent/issue-N` 의 그
-#      `N` 이 그 목록 안에 있을 때만. head 를 *단독 출처*로 쓰지는 않는다(브랜치 이름은
-#      "이 홀드가 이슈 #N 과 한 쌍으로 붙었다" 를 증명하지 못한다 — `Refs #N`(Closes 아님)
-#      PR 은 전이가 `issue=-` 로 걸려 **PR 에만** 정지가 남는 것이 정상인데, head 로 이으면
-#      그 정상 상태가 불일치로 둔갑해 사람 게이트를 벗겨낸다). 하지만 **교차 검증**에는
-#      쓴다: `closingIssuesReferences[0]` 을 무조건 짝으로 쓰면 닫는 이슈가 둘 이상일 때
-#      브랜치의 이슈가 아닌 쪽을 본다 — 이 레포 실데이터에 그 모양이 있다(PR #113
-#      head=`agent/issue-109` refs=`[108,109]` — `[0]` 은 #108 이다). 둘의 교집합이라
-#      `Refs` 전용 PR(refs 가 빔)은 종전대로 짝이 빈 값으로 떨어진다.
+#   ⑵ 짝은 `lib/loop.jq` 의 `linked_issue(head; refs)` **한 자리**다(#495 · #517): head 의
+#      `agent/issue-N` 의 N 이 `closingIssuesReferences` 안에 있으면 N, 아니면 refs 가 **정확히
+#      1건**이면 그것, 그 외 빈 값. 정지 미러를 **붙인** 전이(verify-held·closeout-blocked)가
+#      이슈를 고르는 자리(verify-eligible·closeout-eligible)도 같은 술어라, 여기가 다른 답을
+#      내면 붙인 곳과 떼는 곳이 다른 이슈를 본다 — 종전 엄격 교집합(head N ∈ refs 만)은
+#      head=`agent/issue-109`·refs=`[108]` 꼴에서 짝 없음으로 넘겨 pr-state 의 `stop:` warn 이
+#      영구 반복되는데 아무도 안 고치는 칸을 만들었다(#517). head 를 *단독 출처*로 쓰지는
+#      않는다(브랜치 이름은 "이 홀드가 이슈 #N 과 한 쌍으로 붙었다" 를 증명하지 못한다 —
+#      `Refs #N`(Closes 아님) PR 은 전이가 `issue=-` 로 걸려 **PR 에만** 정지가 남는 것이
+#      정상인데, head 로 이으면 그 정상 상태가 불일치로 둔갑해 사람 게이트를 벗겨낸다).
+#      하지만 **교차 검증**에는 쓴다: `closingIssuesReferences[0]` 을 무조건 짝으로 쓰면 닫는
+#      이슈가 둘 이상일 때 브랜치의 이슈가 아닌 쪽을 본다 — 이 레포 실데이터에 그 모양이
+#      있다(PR #113 head=`agent/issue-109` refs=`[108,109]` — `[0]` 은 #108 이다). `Refs`
+#      전용 PR(refs 가 빔)은 종전대로 짝이 빈 값으로 떨어진다.
 #      ①의 `list_mirror_prs`(head 기준)와 규칙이 다른 것은 의도다: 저쪽은 **이 스윕이 방금
 #      되돌린 이슈**의 PR 이라 짝이 스윕 자신의 행동으로 정해져 있다.
 #   ⑶ 편집은 **`closes` 전건이 정지 라벨 0개일 때만**. 짝 인정만으로는 묶음 디스패치가
@@ -683,9 +688,10 @@ mirror_row() {  # mirror_row <PR row-json> — "<PR><TAB><짝 이슈|빈값><TAB
     include "loop";
     [.labels[]?.name] as $ln
     | [((.closingIssuesReferences // [])[].number)] as $closes
+    # ⑴ 루프가 판 브랜치만 · ⑵ 짝은 linked_issue 한 자리(#495·#517) — 직접 구현 두 벌 금지
     | (if ((.headRefName // "") | test("^agent/issue-[0-9]+"))
-       then ((.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber)) else null end) as $hn
-    | (if $hn != null and (($closes | index($hn)) != null) then ($hn | tostring) else "" end) as $issue
+       then (linked_issue(.headRefName; $closes) | if . == null then "" else tostring end)
+       else "" end) as $issue
     | [(.number|tostring), $issue, ($closes | map(tostring) | join(" ")),
        ($ln | stop_labels | sort | join(" "))]   # 집합 정의는 lib/loop.jq (#426)
     | @tsv' 2>/dev/null
@@ -978,9 +984,9 @@ sweep_hold_mirror() {  # sweep_hold_mirror <repo> <PR row-json>
   stops=$(printf '%s' "$tsv" | cut -f4)
 
   [ -n "$stops" ] || return 0   # 정지 라벨이 없는 PR = 정상(대다수) — 조회도 하지 않는다
-  # 짝이 없다(사람 세션 PR · Closes 링크 없는 PR · 브랜치의 N 이 닫는 목록에 없는 PR).
-  # 근거는 위 짝짓기 규칙 주석 — 셋 다 "PR 에만 정지가 남는 것이 정상일 수 있는" 상태라
-  # 대조가 성립하지 않는다.
+  # 짝이 없다(사람 세션 PR · Closes 링크 없는 PR · 브랜치의 N 이 닫는 목록에 없고 닫는
+  # 이슈가 둘 이상인 PR). 근거는 위 짝짓기 규칙 주석 — 셋 다 "PR 에만 정지가 남는 것이
+  # 정상일 수 있는" 상태라 대조가 성립하지 않는다.
   [ -n "$issue" ] || return 0
 
   # ── ⑵-b 맨몸 `needs-human` 은 **기계가 만들 수 없는 모양**이다 → 떼지 않는다 ──────

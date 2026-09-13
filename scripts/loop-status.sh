@@ -1034,7 +1034,8 @@ def prio_of($l):
     if $b.state == "OPEN PR" then "PR #\($b.n)" else "#\($b.n)(\(blocker_bucket($b.n)))" end;
   # `closes` 는 **증명된** 링크(`closingIssuesReferences`)만 담는다 — `issue` 는 `linked()`
   # 라 head 폴백이 섞여 있어 "이 PR 이 저 이슈와 한 쌍으로 전이됐다" 를 증명하지 못한다.
-  # 정지 미러 판정(#265)만 이 좁은 쪽을 쓴다(근거는 그 warn 블록 주석).
+  # 정지 미러 판정(#265)만 이 `closes` 를 `lib/loop.jq` `linked_issue` 에 넣어 짝을 고른다
+  # (#517 — 근거는 그 warn 블록 주석).
   ($prs_open | map({number, headRefName, createdAt, ln: [.labels[].name], issue: linked(.),
                     closes: [((.closingIssuesReferences // [])[].number)]})) as $po
 | ($prs_closed | map({number, headRefName, mergedAt, closedAt, ln: [.labels[].name], issue: linked(.)})) as $pc
@@ -1292,16 +1293,20 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
       #      warn 이 #188 로 세운 경계, resume-sweep ②갈래의 "사람이 붙였을 수 있으니
       #      손대지 않는다" 와 같은 규율). 그래서 warn 도 안 낸다 — 교정 못 하는 후보를
       #      얹으면 조치 불가능한 잡음이다.
-      #   ⑵ `closingIssuesReferences` 로 **증명된** 링크 **이면서** head 의 `agent/issue-N` 의
-      #      그 `N` 이 그 목록 안에 있을 때만. `linked()` 의 head 폴백(refs 가 비었을 때)은
-      #      여기서 쓰지 않는다: 브랜치 이름이 `agent/issue-N` 이라는 사실만으로는 "이 홀드가
-      #      이슈 #N 과 한 쌍으로 붙었다" 를 증명하지 못한다. `Refs #N`(Closes 아님) PR 은
-      #      전이가 `issue=-` 로 걸려 **PR 에만** 정지가 남는 것이 정상인데, head 로 이으면
-      #      그 정상 상태가 불일치로 둔갑해 사람 게이트를 벗겨내는 교정을 부른다.
-      #      하지만 **교차 검증**에는 쓴다 — `closes[0]` 을 무조건 짝으로 보면 닫는 이슈가
-      #      둘 이상인 PR 에서 브랜치의 이슈가 아닌 쪽을 본다(이 레포 실데이터: PR #113
-      #      head=`agent/issue-109` refs=`[108,109]`). 둘의 교집합이라 `Refs` 전용 PR 은
-      #      종전대로 짝이 안 선다.
+      #   ⑵ 짝은 `lib/loop.jq` 의 `linked_issue(head; refs)` **한 자리**다(#495 · #517) — head 의
+      #      `agent/issue-N` 의 N 이 `closingIssuesReferences` 안에 있으면 N, 아니면 refs 가
+      #      **정확히 1건**이면 그것, 그 외 없음. pr-state 의 `stop:` 축·교정 갈래(resume-sweep
+      #      ④)·정지 미러를 붙인 전이가 이슈를 고르는 자리(verify-eligible·closeout-eligible)가
+      #      전부 같은 술어라 여기만 좁으면(종전 엄격 교집합 head N ∈ refs) head=`agent/issue-109`
+      #      ·refs=`[108]` 꼴에서 pr-state 는 warn 을 내는데 경보·교정은 짝 없음으로 조용한
+      #      칸이 생긴다(#517). `linked()` 의 head 폴백(refs 가 비었을 때)은 여기서 쓰지
+      #      않는다: 브랜치 이름이 `agent/issue-N` 이라는 사실만으로는 "이 홀드가 이슈 #N 과
+      #      한 쌍으로 붙었다" 를 증명하지 못한다. `Refs #N`(Closes 아님) PR 은 전이가
+      #      `issue=-` 로 걸려 **PR 에만** 정지가 남는 것이 정상인데, head 로 이으면 그 정상
+      #      상태가 불일치로 둔갑해 사람 게이트를 벗겨내는 교정을 부른다.
+      #      `closes[0]` 도 쓰지 않는다 — 닫는 이슈가 둘 이상인 PR 에서 브랜치의 이슈가
+      #      아닌 쪽을 본다(이 레포 실데이터: PR #113 head=`agent/issue-109` refs=`[108,109]`).
+      #      `Refs` 전용 PR 은 종전대로 짝이 안 선다.
       #   ⑵-b PR 의 정지 라벨에 `hold:` 접두가 **하나도 없으면**(맨몸 `needs-human`) 대상
       #      밖이다 — 기계가 만들 수 없는 모양이라 사람이 손으로 세운 브레이크이고, 교정
       #      갈래도 떼지 않는다(근거는 아래 그 `select` 옆 주석).
@@ -1327,8 +1332,7 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
       + ([$iss[] | select((stops_of(.ln) | length) == 0) | . as $i
           | $po[] | . as $p
           | select(($p.headRefName // "") | test("^agent/issue-[0-9]+"))
-          | select(($p.headRefName | capture("^agent/issue-(?<n>[0-9]+)").n | tonumber) == $i.number)
-          | select((($p.closes // []) | index($i.number)) != null)
+          | select(linked_issue($p.headRefName; $p.closes) == $i.number)
           | select([$p.closes[] | . as $cn
                     | (($iss + $cls) | map(select(.number == $cn))
                        | if length > 0 then (stops_of(.[0].ln) | length) == 0 else false end)] | all)

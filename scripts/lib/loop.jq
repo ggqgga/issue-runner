@@ -119,6 +119,8 @@ def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\
 # ── PR 연결 이슈 (#495) ─────────────────────────────────────────────────────
 # linked_issue(head; refs) — "이 PR 이 어느 이슈 한 쌍으로 붙었는가" 를 네 소비자
 # (finish-classify · closeout-eligible · verify-eligible · pr-state)가 **같은 답**으로 얻는 자리.
+# 정지 미러(stop 축)를 보는 resume-sweep ④ `mirror_row`·loop-status 의 정지 미러 warn 도 같은
+# 술어다(#517) — 그 둘은 앞에 head `agent/issue-*` 후보 필터를 한 번 더 걸 뿐, 짝은 여기서 나온다.
 #   head : `headRefName` (문자열 · null 허용)
 #   refs : `closingIssuesReferences` 의 번호 배열 `[108,109]` (null 허용)
 # 규칙 — 순서대로 첫 참:

@@ -1997,7 +1997,7 @@ has_line "(#265) PR 에만 정지 라벨 → warn" "$tmp/out" \
   "    - 정지 미러 불일치 #20(mirror) ↔ PR #120(mirror) — 이슈 없음 · PR hold:policy needs-human"
 has_line "(#265) needs-human 없이 hold:* 만 남아도 warn (#244 대비)" "$tmp/out" \
   "    - 정지 미러 불일치 #50(mirror) ↔ PR #150(mirror) — 이슈 없음 · PR hold:conflict"
-no_sub "(#265) 둘 다 없음(#10)은 조용하다" "$tmp/out" "정지 미러 불일치 #10"
+no_sub "(#265) 둘 다 없음(#10)은 조용하다" "$tmp/out" "정지 미러 불일치 #10("   # `#10(` — #108 행(#517)의 접두가 아니다
 no_sub "(#265) 둘 다 있음(#30)은 조용하다 — 살아 있는 사람 게이트" "$tmp/out" "정지 미러 불일치 #30"
 no_sub "(#265) 이슈에만 있음(#40)은 이 축 밖(#244)" "$tmp/out" "정지 미러 불일치 #40"
 no_sub "(#265) 연결 이슈 없는 held PR #160 은 대조 상대가 없다" "$tmp/out" "PR #160"
