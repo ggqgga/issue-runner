@@ -247,19 +247,16 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 2. **사람 코멘트 확인(✅ 를 찍기 전 필수, #379).** `$SCRIPTS/pr-comments.sh <repo> <pr>` 로
    코멘트 전량을 읽고 **그 자리에서 배열 길이(= 전체 코멘트 수)를 적어 둔다** — 다음
    단계 ✅ 본문의 `코멘트 스냅샷 <전체 코멘트 수>` 가 된다. 아래에서 세는 **사람 코멘트
-   수와는 다른 수**다(전체 ≥ 사람): 사람 코멘트 수를 스냅샷 자리에 적으면, 그게 0 일 때
-   경계가 0 으로 내려앉아 closeout-eligible 이 PR 의 무마커 코멘트를 **전부** 다시 센다
-   (#379 가 없앤 바로 그 역방향). 이어서
+   수와는 다른 수**다(전체 ≥ 사람). 이어서
    `<!-- bodat:worker -->` 마커도 없고 레거시 3접두(`머지 판정`·
    `검증자 리뷰`·`마감 검증`)로도 시작하지 않는 코멘트(=사람 코멘트 — `loop.jq` 의 `is_machine`
    여집합이다. `references/loop-conventions.md` §4 소비 축)를 **전부** 훑는다 —
-   검증 중(verifying 동안)에 달린 것도 포함한다. **이 확인이 다음 단계의 `미해결 없음`
-   을 사실로 만드는 유일한 자리다**: closeout-eligible 은 최신 ✅ **이전**의 무마커
-   코멘트를 "검증자가 이미 확인한 것"으로 치고 세지 않는다(#379) — 그 전제를 참으로
-   만드는 게 바로 이 단계다. 그 중 답을 기다리는 것(질문·수정 요구·BLOCKER 지적)이
+   검증 중(verifying 동안)에 달린 것도 포함한다. 그 중 답을 기다리는 것(질문·수정
+   요구·BLOCKER 지적)이
    하나라도 있으면 ✅ 를 찍지 말고 아래 **held** 경로로 간다: `검증 보류: <코멘트 번호
    인용> — 사람 확인 필요` + `--reason policy`. 결정·보고·인수 메모(예 "사용자 결정 —
    …", "리베이스 해소: …")는 답을 기다리는 것이 아니다 — 확인한 것으로 친다.
+   (근거: verify-runner-rationale §10)
 3. 최종 그린라이트:
    `gh pr comment <pr> --repo <repo> --body "머지 판정: ✅ 머지 가능 — 결정적 CI pass · E2E <pass 또는 '해당 없음'> · 검증자 <CLEAN 또는 'BLOCKER 0 / WARN n'> · <사람 코멘트 0건이면 '미해결 없음', 아니면 '사람 코멘트 N건 확인'> · 코멘트 스냅샷 <2번의 전체 코멘트 수>
 <!-- bodat:worker -->"`
@@ -267,11 +264,9 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    이 그 접두로 집는다.)
    3′ 경로면 검증자 칸을 `BLOCKER 0 / WARN <m> · 자체 리뷰(codex 2회 소진 · 3회차)` 로, 미해소가 있으면
    `미해결 없음` 대신 `잔여: <지적 제목들>` 로 쓴다(사람용 요약 — 기계 입력은 3′ 가 PR 본문에 적은 `follow-up:` 줄이다).
-   ` · 코멘트 스냅샷 <수>` 는 **2번에서 코멘트를 읽은 시점**을 박아 두는 스냅샷 토큰이다(#384):
-   읽기와 이 게시 사이(수 초)에 끼어든 사람 코멘트는 ✅ 보다 앞 인덱스에 앉아 "확인된 것"
-   으로 새는데, closeout-eligible 이 그 수를 경계로 쓰면 그 구간을 다시 집어 경합 창이
-   닫힌다. 그러니 이 수는 **2번에서 실제로 읽은 배열 길이**여야 한다 — 게시 직전에 다시
-   세지 말고, 바로 앞 `사람 코멘트 N건 확인` 의 N(사람 코멘트 수)과 헷갈리지 마라.
+   ` · 코멘트 스냅샷 <수>` 는 **2번에서 실제로 읽은 배열 길이**여야 한다(#384) — 게시 직전에
+   다시 세지 말고, 바로 앞 `사람 코멘트 N건 확인` 의 N(사람 코멘트 수)과 헷갈리지 마라.
+   (근거: verify-runner-rationale §10)
 4. 라벨 인계: `$SCRIPTS/transition.sh verify-pass <repo> <issue|-> <pr>` — PR 과 원 이슈를
    한 호출로 옮긴다(전이 표 SSOT = `transition.sh` 상단 주석). **closeout 계약 무변경**
    (기존 `머지 판정: ✅` 마커 재사용 — `closeout-eligible.sh` 가 그걸로 집는다) + 이슈
@@ -285,7 +280,7 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    이 PR 을 놓아두고 ④ Report warn 한 줄, #444). **N 은 codex BLOCKER 반송 수만 센다.**
    codex BLOCKER 반송은 N+1 ≤ `CODEX_REVIEW_LIMIT` 에서만 일어난다(N = 2 면 ③-3′ 가 codex 를 부르지
    않았으니 codex BLOCKER 자체가 없다). E2E·결정적 CI 실패는 회차와 무관하게 반송한다 — 그건 게이트다 —
-   **그리고 N 을 올리지 않는다**(카운터를 같이 올리면 E2E 실패 두 번에 codex 를 한 번도 못 받고 3′ 로 간다).
+   **그리고 N 을 올리지 않는다**(근거: verify-runner-rationale §2).
 2. 재디스패치: 실패 사유 코멘트(멱등 마커) —
    codex BLOCKER 면 `$SCRIPTS/bounce-comment.sh reverify-fail <repo> <pr> <issue> <N+1> "<사유>"`,
    E2E·CI 실패면 같은 명령에 `<N>`(현재 값 그대로 — 마커의 attempt 번호는 codex 회차다).
@@ -304,11 +299,9 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    `flow:verify` 를 떼고 원 이슈를 `agent-ready`(+`flow:verify`·`agent:claimed` 제거)로 되돌린다.
    **전이가 비0이면** `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
    `BLOCKED: 전이 실패 verify-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>`.
-   그 반쯤 이동한 상태(PR 은 `flow:verify`/`verifying` 상실 · 이슈는 `agent:claimed` 유지)를
-   **다시 집는 주체는 이 루프가 아니다** — 세 게이트 전부에서 빠지기 때문이다(#394).
-   회수는 **issue-runner ① Reconcile** 이 한다: `reconcile.sh` 가 그 형상을
-   `half_moved_redispatch` 이벤트로 내고 디스패처가 같은 전이를 **멱등 재실행**한다
-   (`references/state-machine.md` 의 회수 열). 여기서 할 일은 보고 한 줄뿐이다.
+   그 반쯤 이동한 상태를 **다시 집는 주체는 이 루프가 아니다** — 회수는 **issue-runner
+   ① Reconcile** 이 한다(`references/state-machine.md` 의 회수 열). 여기서 할 일은 보고
+   한 줄뿐이다(#394 — 근거: verify-runner-rationale §11).
    → issue-runner Dispatch 가 기존 `agent/issue-<issue>` worktree/브랜치를 재사용해
    같은 PR 브랜치에서 워커를 다시 붙인다(새 PR 안 생김). 워커는 위 `재검증 실패:`
    코멘트를 읽고 고친 뒤 다시 `flow:verify` 로 넘긴다(worker-template 절차). **redispatched 종료.**
@@ -341,24 +334,20 @@ E2E 인프라 흔들림 등, 판정 아님): 점유를 풀고 검증대기로 �
 PR·이슈 양쪽 `verifying` 제거 + `flow:verify` 재부착, 멱등). 그러고 ④ Report 에 warn 으로
 올린다 → 다음 틱이 `flow:verify` FIFO 로 재집는다(드롭 없음). **전이가 비0이면**
 `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
-`BLOCKED: 전이 실패 verify-unpick PR #<pr>(<repo_short>) — <stderr 한 줄>` — `verifying`
-이 남아도 ① 이 고아로 먼저 재집으니 드롭은 아니고, 대신 `고아 재집` 이 "사망" 이 아니라
-"unpick 실패" 였음을 이 줄이 말해 준다. 판정(pass/fail)이 선 경우엔 이 상태로 빠지지 마라.
+`BLOCKED: 전이 실패 verify-unpick PR #<pr>(<repo_short>) — <stderr 한 줄>`
+(근거: verify-runner-rationale §12). 판정(pass/fail)이 선 경우엔 이 상태로 빠지지 마라.
 
 ## ⑤ Drain — 다음 후보로 즉시 이어가기
 
 ③④ 가 집은 PR 을 종료 상태(passed·redispatched·held·flake_retry)에 닿게 한 **직후**,
 결과를 ④ Report 용으로 누적하고 **다음 틱을 기다리지 말고 ①② 로 되돌아간다**:
-- ② Pick 이 **새 후보를 집으면**(이번 PR 은 passed→flow:ready 로, redispatched/held→
-  `verifying` 제거로 이미 큐에서 빠졌다. flake_retry 만 flow:verify 가 남는데(unpick
-  결과) — 같은 PR 재선정 방지 위해 이 틱 드레인에서는 **이번 틱에 이미 처리한 PR 번호를
-  건너뛴다**) 그 PR 로 ③ 을 이어간다.
+- ② Pick 이 **새 후보를 집으면** 그 PR 로 ③ 을 이어간다. 같은 PR 재선정 방지 위해 이 틱
+  드레인에서는 **이번 틱에 이미 처리한 PR 번호를 건너뛴다**(근거: verify-runner-rationale §12).
 - ② Pick 후보가 **0이면**(또는 남은 게 이번 틱 처리분뿐이면) 드레인을 멈추고 ④ Report.
 
-무한루프 방지: 각 반복은 큐를 최소 1 줄인다(passed→flow:ready 소멸·redispatched/held→
-`verifying` 소멸 — 출구 전이가 뗀다). 같은 PR 이 두 번 집히면(flake_retry 반복 등) 그 PR 을 skip 하고
+무한루프 방지: 같은 PR 이 두 번 집히면(flake_retry 반복 등) 그 PR 을 skip 하고
 ④ Report 에 `BLOCKED: 재선정 루프 — #<pr>` 로 보고해 드레인을 끊는다. 한 틱 드레인은
-최대 verify-eligible 스냅샷 길이만큼만 돈다.
+최대 verify-eligible 스냅샷 길이만큼만 돈다. (근거: verify-runner-rationale §12)
 
 ## ④ Report
 
@@ -379,16 +368,8 @@ warn(flake_retry·동봉 실패·전이 실패 등)이 있으면 경로·사유�
 
 비운영 참고 — 틱 수행에는 영향 없다.
 
-- 역할 분담: issue-runner = 생산(구현+결정적CI+PR, `flow:verify` 로 넘김·검증 안 함),
-  verify-runner = 검증(E2E+codex 직렬, `머지 판정: ✅` 로 넘김·머지 안 함), closeout =
-  마감(머지 독점). 세 루프는 라벨 소유로 충돌을 막는다 — `flow:verify`·`verifying`=
-  verify-runner, `harvesting`=closeout(closeout-eligible 은 앞 둘을 제외한다). issue-runner
-  는 셋 다 안 건드리고 in-flight 로도 안 센다.
-- 컷오버 불변식: verify-runner 가 살아있어야(이 루프가 돌아야) 워커의 `flow:verify`
-  PR 이 검증돼 `머지 판정: ✅` 로 흐른다. 이 루프가 죽으면 flow:verify PR 이 검증 없이
-  적체하지만(closeout 이 안 집음·issue-runner 도 안 집음) **드롭·오분류는 없다** —
-  라벨(`flow:verify` 또는 검증 도중 죽었으면 `verifying`)이 남아 루프 재기동 시 그대로
-  재집힌다.
+- 설계 근거·사고 이력·버린 대안: `references/verify-runner-rationale.md`
+  (세 루프 역할 분담과 컷오버 불변식은 그 문서 §13).
 - 운용: issue-runner·closeout 와 별도의 `/loop` 세션(예 `/loop 10m /verify-runner`).
 - 의존: 결정적 헬퍼는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)의
   `verify-eligible.sh`·`closeout-ci-pass.sh`·`run-local-ci.sh`·`make-worktree.sh`·
