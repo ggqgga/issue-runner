@@ -510,6 +510,7 @@ FX
 #                                               #346 — 재개 횟수/상한 병기 = `conflict-resume` 마커 수 / CONFLICT_RESUME_LIMIT)
 #   #39   hold:conflict 단독 + 마커 1(+인용 1)  보류 `#39(conflict, 1/1)` (코드 인용 속 마커는 안 센다 — resume-sweep 의 JQ_UNQUOTE 와 같은 규율)
 #   #38   hold:conflict 단독 + 코멘트 조회 실패  보류 `#38(conflict)` — 횟수 미상은 `0/1` 로 접지 않고 warn `재개 횟수 미확인`
+#   #36   hold:conflict 단독 + 코멘트 100건      보류 `#36(conflict)` — 첫 100건 상한에 닿았으면 "적게 센 값" 이 아니라 모름
 #   #37   hold:conflict + needs-human           needs-human `#37(대기, conflict, 질문 없음)` (종전대로 — 횟수 아닌 질문 조회)
 #   #49   hold:conflict + full-cycle            needs-human (사람이 인수한 충돌 — 스윕이 절대 재개 안 함)
 #   #44   needs-human 단독                      needs-human `사유 없음` + note(정상 상태)
@@ -525,6 +526,7 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Holds.issues.json" <<'FX'
  {"number":43,"title":"충돌 — 스윕이 재개하는 기계 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
  {"number":39,"title":"충돌 — 이미 1회 재개됨(상한 도달)","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
  {"number":38,"title":"충돌 — 코멘트 조회 실패","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
+ {"number":36,"title":"충돌 — 코멘트 100건 상한","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
  {"number":37,"title":"충돌 + 사람이 세운 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"},{"name":"needs-human"}]},
  {"number":49,"title":"충돌 — 사람이 full-cycle 로 인수","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"},{"name":"full-cycle"}]},
  {"number":44,"title":"사람이 직접 세운 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"needs-human"}]},
@@ -565,6 +567,9 @@ cat > "$tmp/fx/ggqgga_Holds.comments.39.json" <<'FX'
              {"body":"충돌 재개 1/1 — 워커 한 회차 더\n<!-- conflict-resume: 1 -->\n<!-- bodat:worker -->"}]}
 FX
 : > "$tmp/fx/ggqgga_Holds.comments.38.fail"
+# `--json comments` 는 첫 100건만 준다 — 100건이면 뒤가 잘렸을 수 있어 마커가 있어도 횟수는 모름.
+jq -n '{comments: [range(100) | {body: "충돌 재개 — 워커 한 회차 더\n<!-- conflict-resume: 1 -->\n<!-- bodat:worker -->"}]}' \
+  > "$tmp/fx/ggqgga_Holds.comments.36.json"
 
 # ── 픽스처: ggqgga/Verifying (verifying) — verify-runner 점유 칸 (#276 · 라벨은 #275) ──
 # `verifying` 은 verify-runner 가 **지금 들고 있는** 이슈다(집는 순간 flow:verify 를 떼고
@@ -1615,18 +1620,21 @@ ck "--json: buckets 키 = 종전 12개 + verifying + test_wait" \
 # ── ⑮ (#244) 보류 칸 — hold:* 만 붙은(needs-human 없는) 이슈는 대기가 아니다 ───
 run --repo ggqgga/Holds --since 24h
 ck "holds: exit 0" "$RC" 0
-has_line "holds 헤더 — 열림 13(보류 7 + needs-human 4 + 대기 1 + 막힘 1)" "$tmp/out" \
-  "파이프라인 holds — 열림 13 · 스코프 holds · 창 24h"
+has_line "holds 헤더 — 열림 14(보류 8 + needs-human 4 + 대기 1 + 막힘 1)" "$tmp/out" \
+  "파이프라인 holds — 열림 14 · 스코프 holds · 창 24h"
 # (#346) 단독 hold:conflict 는 ladder 와 같은 꼴로 사유 뒤에 **재개 횟수/상한**을 병기한다 —
 # `#43(conflict, 0/1)`. 횟수 = `<!-- conflict-resume: N -->` 마커 코멘트 수, 상한 = CONFLICT_RESUME_LIMIT.
 # 못 센 건(#38, 조회 실패)은 `0/1` 로 접지 않고 사유만 찍는다(횟수 미상 ≠ 0회).
-has_line "보류 7 — 사유 병기, 번호 내림차순, 열린 연결 PR 병기 · 단독 hold:conflict 는 재개 횟수/상한 병기(#346)" "$tmp/out" \
-  "  보류           7  #48(ladder) #46(ladder) #43(conflict, 0/1) #41(policy, PR #72) #40(ladder, PR #70) #39(conflict, 1/1) #38(conflict)"
+has_line "보류 8 — 사유 병기, 번호 내림차순, 열린 연결 PR 병기 · 단독 hold:conflict 는 재개 횟수/상한 병기(#346)" "$tmp/out" \
+  "  보류           8  #48(ladder) #46(ladder) #43(conflict, 0/1) #41(policy, PR #72) #40(ladder, PR #70) #39(conflict, 1/1) #38(conflict) #36(conflict)"
 has_sub "(#346) conflict 재개 0회 → 0/1" "$tmp/out" "#43(conflict, 0/1)"
 has_sub "(#346) conflict 재개 1회 — 코드 인용 속 마커는 안 센다(2/1 아님)" "$tmp/out" "#39(conflict, 1/1)"
 no_sub "(#346) 조회 실패건은 0/1 로 접지 않는다" "$tmp/out" "#38(conflict, 0/1)"
 has_sub "(#346) 횟수 미상은 warn 으로 드러난다" "$tmp/out" \
   "    - 재개 횟수 미확인 #38(holds) — 조회 실패"
+no_sub "(#346) 코멘트 100건 상한에 닿은 건은 적게 센 값을 찍지 않는다" "$tmp/out" "#36(conflict, 100/1)"
+has_sub "(#346) 코멘트 100건 상한도 모름이다" "$tmp/out" \
+  "    - 재개 횟수 미확인 #36(holds) — 코멘트 100건 상한"
 has_line "needs-human 4 — needs-human ∪ (hold:conflict ∧ full-cycle) ∪ 재심 끝난 hold:policy · conflict+needs-human 은 종전대로(질문 판정)" "$tmp/out" \
   "  needs-human    4  #49(대기, conflict) #44(대기, 사유 없음) #42(대기, policy) #37(대기, conflict, 질문 없음)"
 no_sub "(#346) needs-human 줄의 conflict 엔 횟수를 안 붙인다" "$tmp/out" "#37(대기, conflict, 0/1"
@@ -1640,8 +1648,8 @@ no_sub "보류: #46 은 검증대기 줄에 없다" "$tmp/out" "  검증대기  
 no_sub "보류: #48 은 막힘 줄에 없다" "$tmp/out" "#48 ←"
 # 코멘트 조회는 한 자리다 — needs-human 버킷의 policy·conflict(질문 유무) + **보류 버킷의 conflict**
 # (재개 횟수, #346). 보류로 간 ladder·policy(#40·#41·#46·#48)엔 여전히 안 묻는다(새 조회를 열지 않는다).
-ck "holds: 코멘트 조회 6건(#42·#49·#37 질문 + #43·#39·#38 횟수)" "$(grep -c '^comments ' "$STUB_CALL_LOG")" 6
-for n in 42 49 37 43 39 38; do
+ck "holds: 코멘트 조회 7건(#42·#49·#37 질문 + #43·#39·#38·#36 횟수)" "$(grep -c '^comments ' "$STUB_CALL_LOG")" 7
+for n in 42 49 37 43 39 38 36; do
   check "holds: 코멘트 조회 #$n" "$(grep -qxF "comments ggqgga/Holds $n" "$STUB_CALL_LOG" && echo ok || echo no)"
 done
 for n in 40 41 46 48; do
@@ -1650,7 +1658,7 @@ for n in 40 41 46 48; do
 done
 # 사람이 직접 세운 정지(#44)는 note 1건, warn 은 무소속 PR #71 + 횟수 미확인 #38
 # 무소속 PR warn — 정지 라벨이 있는 쪽 둘은 빠지고, 없는 쪽 하나만 남는다
-has_line "holds: warn 2(무소속 PR #71 + 재개 횟수 미확인 #38)" "$tmp/out" "  warn           2"
+has_line "holds: warn 3(무소속 PR #71 + 재개 횟수 미확인 #38·#36)" "$tmp/out" "  warn           3"
 has_sub "holds: #71 은 종전대로 무소속 warn" "$tmp/out" \
   "    - 무소속 PR #71(holds) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #45 도 정지 라벨 없음"
 no_sub "holds: 연결 이슈가 보류인 PR #70 은 warn 아님" "$tmp/out" "무소속 PR #70"
@@ -1662,14 +1670,22 @@ run --repo ggqgga/Holds --since 24h --json
 # (#346) conflict 항목엔 `resume_count`(마커 수 · 못 셌으면 null)·`resume_limit` 가 붙고, 다른 사유엔 둘 다 null.
 ck "--json: held 버킷 항목(번호·holds·재개 횟수/상한)" \
   "$(jq -c '.repos[0] | [.buckets.held[] | {n:.number, h:.holds, p:.pr, c:.resume_count, l:.resume_limit}]' < "$tmp/out")" \
-  '[{"n":48,"h":["ladder"],"p":null,"c":null,"l":null},{"n":46,"h":["ladder"],"p":null,"c":null,"l":null},{"n":43,"h":["conflict"],"p":null,"c":0,"l":1},{"n":41,"h":["policy"],"p":72,"c":null,"l":null},{"n":40,"h":["ladder"],"p":70,"c":null,"l":null},{"n":39,"h":["conflict"],"p":null,"c":1,"l":1},{"n":38,"h":["conflict"],"p":null,"c":null,"l":1}]'
+  '[{"n":48,"h":["ladder"],"p":null,"c":null,"l":null},{"n":46,"h":["ladder"],"p":null,"c":null,"l":null},{"n":43,"h":["conflict"],"p":null,"c":0,"l":1},{"n":41,"h":["policy"],"p":72,"c":null,"l":null},{"n":40,"h":["ladder"],"p":70,"c":null,"l":null},{"n":39,"h":["conflict"],"p":null,"c":1,"l":1},{"n":38,"h":["conflict"],"p":null,"c":null,"l":1},{"n":36,"h":["conflict"],"p":null,"c":null,"l":1}]'
 ck "--json: open_total 에 보류가 합산된다" \
-  "$(jq '.repos[0].open_total' < "$tmp/out")" 13
+  "$(jq '.repos[0].open_total' < "$tmp/out")" 14
 ck "--json: held 항목에도 repo_short" \
   "$(jq '[.repos[0].buckets.held[] | select(has("repo_short") | not)] | length' < "$tmp/out")" 0
 # 상한은 scripts/lib/constants.sh 의 CONFLICT_RESUME_LIMIT 한 자리 — env 로 올리면 분모가 따라온다
 CONFLICT_RESUME_LIMIT=3 run --repo ggqgga/Holds --since 24h
 has_sub "(#346) 상한은 CONFLICT_RESUME_LIMIT 를 읽는다(0/3)" "$tmp/out" "#43(conflict, 0/3)"
+# 조회 상한(HOLD_NOTE_MAX)은 질문 후보(needs-human)부터 채운다 — 넘치면 횟수 후보가 먼저 탈락하고,
+# 탈락한 건은 `0/1` 이 아니라 횟수 생략 + warn `조회 상한 초과`. 질문 판정(#37)은 그대로 산다.
+HOLD_NOTE_MAX=3 run --repo ggqgga/Holds --since 24h
+ck "HOLD_NOTE_MAX=3: 조회는 질문 후보 3건뿐" "$(grep -c '^comments ' "$STUB_CALL_LOG")" 3
+has_sub "HOLD_NOTE_MAX=3: 질문 후보는 상한 안에서 판정된다" "$tmp/out" "#37(대기, conflict, 질문 없음)"
+no_sub "HOLD_NOTE_MAX=3: 안 물어본 횟수를 0/1 로 찍지 않는다" "$tmp/out" "#43(conflict, 0/1)"
+has_sub "HOLD_NOTE_MAX=3: 횟수 후보 탈락은 warn 으로" "$tmp/out" \
+  "    - 재개 횟수 미확인 #43(holds) — 조회 상한(3) 초과"
 
 run --repo ggqgga/Epics --since 24h
 ck "epics: exit 0" "$RC" 0

@@ -1053,9 +1053,8 @@ unq_sweep=$(grep -o 'def unquoted:.*;' scripts/resume-sweep.sh | head -1)
 [ -n "$unq_sweep" ] || { echo "  ✗ scripts/resume-sweep.sh 에 def unquoted(JQ_UNQUOTE) 가 없다 (#346)"; exit 1; }
 [ "$unq_lib" = "$unq_sweep" ] \
   || { echo "  ✗ def unquoted 정의가 lib/loop.jq 와 resume-sweep.sh 에서 다르다 — 한 벌로 맞춰라 (#346)"; exit 1; }
-# 소비 배선 — loop-status 가 횟수를 셀 때 그 정의를 실제로 include 한다(정의만 있고 안 쓰면 인용 마커가 센다).
-grep -qF 'select(unquoted | test("<!--\\s*conflict-resume:' scripts/loop-status.sh \
-  || { echo "  ✗ scripts/loop-status.sh 가 conflict-resume 마커를 unquoted 로 걸러 세지 않는다 (#346)"; exit 1; }
+# 소비 배선(loop-status 가 실제로 unquoted 로 걸러 세는가)은 문구 grep 이 아니라 동작으로 문다 —
+# loop-status.test.sh 의 Holds #39(인용 마커 1 + 실제 마커 1 → `1/1`, `2/1` 아님).
 
 echo "[test] epic-sweep.sh — leaf 전부 종료 에픽 자동 종료·전용 줄 판정·상한 보류·멱등 (#258)"
 # closeout ① 이 `"$SCRIPTS/epic-sweep.sh"` 로 직접 exec 하므로 실행 비트도 여기서 문다
