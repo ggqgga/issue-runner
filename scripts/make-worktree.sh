@@ -35,7 +35,8 @@ pos=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --sync)   sync=1; shift ;;
-    --branch) branch_override=${2:-}; shift 2 ;;
+    --branch) [ $# -ge 2 ] || { echo "usage: make-worktree.sh [--sync] [--branch <ref>] <owner/repo> <num>" >&2; exit 1; }
+              branch_override=$2; shift 2 ;;
     --)       shift ;;
     -*)       echo "usage: make-worktree.sh [--sync] [--branch <ref>] <owner/repo> <num>" >&2; exit 1 ;;
     *)        pos[${#pos[@]}]=$1; shift ;;
@@ -137,6 +138,33 @@ if [ -d "$wt" ]; then
     if [ -n "$st" ]; then
       echo "sync: worktree 에 미커밋 변경이 있어 덮지 않는다 — $wt" >&2
       exit 3
+    fi
+    # **새로 추적될 경로가 지금 미추적 파일로 있으면 덮지 않는다.** `reset --hard` 는 "추적
+    # 안 되는 파일" 을 일반적으로 건드리지 않지만, 대상 커밋이 **그 경로를 추가**하면 얘기가
+    # 다르다 — 체크아웃이 그 자리를 덮어써 스크래치 파일이나 우리가 깐 시크릿 심링크가
+    # 소리 없이 사라진다. 그래서 "새로 추가되는 경로 ∩ 지금 미추적 경로" 를 미리 잰다.
+    if ! added=$(git -C "$wt" diff --name-only --diff-filter=A HEAD "origin/$branch" 2>/dev/null); then
+      echo "sync: 추가 경로 목록을 못 읽었다 — 덮지 않는다: $wt" >&2
+      exit 3
+    fi
+    if [ -n "$added" ]; then
+      addf=$(mktemp) || exit 1
+      printf '%s\n' "$added" > "$addf"
+      # `--exclude-standard` 는 gitignore 된 경로를 빼므로, 우리가 깐 시크릿 심링크
+      # (`.env`·`config/master.key` — 대개 gitignore 대상)는 따로 후보에 더한다.
+      untracked=$(git -C "$wt" ls-files --others --exclude-standard 2>/dev/null)
+      for f in $secret_files; do
+        [ -e "$wt/$f" ] && untracked="$untracked
+$f"
+      done
+      clash=$(printf '%s\n' "$untracked" | grep -v '^[[:space:]]*$' | sort -u \
+              | grep -Fx -f "$addf" || true)
+      rm -f "$addf"
+      if [ -n "$clash" ]; then
+        echo "sync: 새로 추적될 경로가 미추적 파일로 있어 덮지 않는다 — $wt" >&2
+        printf '%s\n' "$clash" | sed 's/^/  충돌: /' >&2
+        exit 3
+      fi
     fi
     git -C "$wt" reset --hard "origin/$branch" >/dev/null
     echo "synced: $(git -C "$wt" rev-parse HEAD)"

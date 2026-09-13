@@ -125,6 +125,26 @@ mkwt --sync --branch agent/issue-9 o/r 88
   || bad "⑧ 메인 체크아웃 HEAD 가 움직였다 — reset --hard 가 메인을 덮었다"
 printf '%s\n' "$ERR" | grep -q 'worktree 루트가 아니다' && ok || bad "⑧ 사유가 stderr 에 없다"
 
+# ⑨ 새로 추적될 경로가 **미추적 파일**로 있으면 덮지 않는다(#467 P1-1). `reset --hard` 는
+#    미추적 파일을 보통 안 건드리지만, 대상 커밋이 그 경로를 **추가**하면 체크아웃이 덮어써
+#    스크래치 파일·시크릿 심링크가 소리 없이 사라진다.
+git -C "$work" checkout -q agent/issue-9
+echo newfile > "$work/added.txt"; git -C "$work" add added.txt
+git -C "$work" commit -qm "add added.txt"; git -C "$work" push -q origin agent/issue-9
+git -C "$wt" reset --hard "$NEW" >/dev/null 2>&1
+printf 'scratch-i-care-about\n' > "$wt/added.txt"     # 같은 경로가 지금은 미추적 파일
+mkwt --sync o/r 9
+[ "$RC" = 3 ] && ok || bad "⑨ 미추적 충돌 rc=$RC (기대 3)"
+grep -q 'scratch-i-care-about' "$wt/added.txt" && ok || bad "⑨ 미추적 파일이 덮였다(유실)"
+printf '%s\n' "$ERR" | grep -q '충돌: added.txt' && ok || bad "⑨ 충돌 경로가 stderr 에 없다: [$ERR]"
+rm -f "$wt/added.txt"
+mkwt --sync o/r 9
+[ "$RC" = 0 ] && ok || bad "⑨ 충돌 해소 뒤에도 rc=$RC (기대 0)"
+
+# ⑩ 값 옵션이 마지막에 와도 무한루프/셸 에러가 아니라 즉시 usage 비0 (#467 P2-3)
+mkwt --sync o/r 9 --branch
+[ "$RC" != 0 ] && ok || bad "⑩ --branch 값 누락인데 rc=0"
+
 echo "── 계약(usage·실행비트) ──────────────────────────────────────────"
 
 # ⑧ 인자 부족 → 비0 (종전과 같이 exit 1)
