@@ -1831,6 +1831,7 @@ check "미러 ⑩: removed 에 새 사유"           "$(printf '%s' "$out" | jq 
 #   222 agent/issue-344 [398,344]  둘 다 깨끗                   **편집** · 짝은 398 이 아니라 344
 #   223 agent/issue-345 [345,397]  345 깨끗 · 397 정지 有       무편집 — 묶음 디스패치 갈래
 #   224 agent/issue-346 [346]      346 이 `hold:policy` **만**  무편집 — has_stop 접두 갈래
+#   225 agent/issue-347 [395,396]  브랜치의 N 이 closes 밖 · closes 2건  무편집 · 이슈 조회조차 안 함(짝 없음)
 setup "needs-human,hold:policy" 10 0
 mirror_prs '[
  {"number":220,"headRefName":"agent/issue-342","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
@@ -1842,7 +1843,9 @@ mirror_prs '[
  {"number":223,"headRefName":"agent/issue-345","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
   "closingIssuesReferences":[{"number":345},{"number":397}]},
  {"number":224,"headRefName":"agent/issue-346","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
-  "closingIssuesReferences":[{"number":346}]}
+  "closingIssuesReferences":[{"number":346}]},
+ {"number":225,"headRefName":"agent/issue-347","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
+  "closingIssuesReferences":[{"number":395},{"number":396}]}
 ]'
 mirror_issue 399 OPEN "agent-ready"
 mirror_issue 108 OPEN "agent-ready"
@@ -1852,6 +1855,8 @@ mirror_issue 342 OPEN "agent-ready,needs-human,hold:conflict"
 mirror_issue 344 OPEN "agent-ready"
 mirror_issue 345 OPEN "agent-ready"
 mirror_issue 346 OPEN "agent-ready,hold:policy"
+mirror_issue 395 OPEN "agent-ready"
+mirror_issue 396 OPEN "agent-ready"
 run
 check "미러 격자2: exit 0"                      "$([ "$RC" = 0 ] && echo ok || echo no)"
 # ① 순서 역전(#113 모양) — `[0]`(#399)만 보면 깨끗해 보이지만 브랜치의 이슈 #342 는 정지 중이다
@@ -1877,6 +1882,11 @@ check "미러 ⑭: PR 라벨 그대로"                  "$([ "$(mpl 223)" = "ne
 check "미러 ⑮(이슈가 hold: 접두만): 무편집"     "$(none 'pr edit 224')"
 check "미러 ⑮: PR 라벨 그대로"                  "$([ "$(mpl 224)" = "needs-human,hold:policy" ] && echo ok || echo no)"
 check "미러 ⑮: 이벤트 없음"                     "$([ -z "$(mev 224)" ] && echo ok || echo no)"
+# ⑥ 브랜치의 N 이 closes 에 없고 closes 가 **둘 이상** → 짝을 증명할 축이 없다(`linked_issue`
+#    규칙⑶ 빈 값) → 무편집·무조회. 둘 다 깨끗해도 그렇다 — `[0]`·head 단독 폴백이 되살아나면
+#    이 칸에서 편집이 몰래 돈다(⑫ 의 1건 폴백과 짝을 이루는 경계).
+check "미러 ⑯(브랜치 N ∉ closes · closes 2건): 무편집"  "$(none 'pr edit 225')"
+check "미러 ⑯: 이슈 조회조차 안 한다(395·396)"        "$([ "$(none 'issue view 395 .*json labels,state')" = ok ] && [ "$(none 'issue view 396 .*json labels,state')" = ok ] && echo ok || echo no)"
 
 # ── (#331 쌍둥이 정합) ⑶ 전건 게이트는 **CLOSED 도** 판정한다 ──────────────
 # 여기 `read_labels_state` 는 닫는 이슈를 번호로 실제 조회하므로 상태와 무관하게 라벨을
