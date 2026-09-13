@@ -11,10 +11,10 @@
   <img alt="Platform: macOS · Linux" src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux-blue.svg">
   <img alt="Runs on Claude Code" src="https://img.shields.io/badge/Claude_Code-%2Floop-8957e5.svg">
   <img alt="Requires gh + jq" src="https://img.shields.io/badge/requires-gh%20%C2%B7%20jq-2ea043.svg">
-  <img alt="Deploy: always human" src="https://img.shields.io/badge/deploy-always_human-d29922.svg">
+  <img alt="Deploy: deploy-cycle lane" src="https://img.shields.io/badge/deploy-deploy--cycle_lane-d29922.svg">
 </p>
 
-<p><strong>An issue&nbsp;→&nbsp;PR factory. The loops own <code>main</code>; you own the release.</strong><br>
+<p><strong>An issue&nbsp;→&nbsp;PR factory. The loops own <code>main</code>; the deploy-cycle lane owns the release.</strong><br>
 Pair it with <code>/closeout</code> — the dock that verifies and merges.<br>
 Two loops, one repo, the deploy gate runs in the deploy-cycle lane.</p>
 

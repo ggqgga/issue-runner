@@ -11,10 +11,10 @@
   <img alt="Platform: macOS · Linux" src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux-blue.svg">
   <img alt="Runs on Claude Code" src="https://img.shields.io/badge/Claude_Code-%2Floop-8957e5.svg">
   <img alt="Requires gh + jq" src="https://img.shields.io/badge/requires-gh%20%C2%B7%20jq-2ea043.svg">
-  <img alt="Deploy: always human" src="https://img.shields.io/badge/deploy-always_human-d29922.svg">
+  <img alt="Deploy: deploy-cycle lane" src="https://img.shields.io/badge/deploy-deploy--cycle_lane-d29922.svg">
 </p>
 
-<p><strong>이슈&nbsp;→&nbsp;PR 공장. 루프가 <code>main</code> 을 소유하고, 릴리스는 당신 몫.</strong><br>
+<p><strong>이슈&nbsp;→&nbsp;PR 공장. 루프가 <code>main</code> 을 소유하고, 릴리스는 deploy-cycle 레인 몫.</strong><br>
 검증·머지까지 잇는 도크 <code>/closeout</code> 과 짝을 이룬다.<br>
 두 루프, 한 레포, 배포 게이트는 deploy-cycle 레인이 돈다.</p>
 
