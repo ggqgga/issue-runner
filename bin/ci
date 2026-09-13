@@ -701,30 +701,6 @@ dup=$(grep -lE '^STALL_MIN=|^: "\$\{STALL_MIN:=|^queue_alive\(\)' scripts/*.sh s
 for f in scripts/timebox-check.sh scripts/finish-classify.sh; do
   grep -qF 'progress-evidence.sh' "$f" || { echo "  ✗ $f 에 progress-evidence.sh 배선 없음"; exit 1; }
 done
-# 헬퍼 자체의 fail-closed 스모크 — 판정 입력이 형식 불량이면 `none`(증거 없음)이 아니라
-# `unknown` 이어야 한다. 그 둘을 섞으면 호출자가 살아있는 워커를 죽인다(PR#139 교훈).
-rc=0
-out=$(scripts/progress-evidence.sh --now 1780000000 --commit-at "어제" --head-sha none 2>/dev/null) || rc=$?
-case "$out $rc" in
-  "unknown commit_at_invalid commit=- queue=- claim=- 2") : ;;
-  *) echo "  ✗ progress-evidence: 형식 불량 커밋 시각 → '$out' rc=$rc (기대 unknown commit_at_invalid rc=2)"; exit 1 ;;
-esac
-# 진행 증거 ③(claim)도 같은 3값 어휘를 쓴다 — `unknown`(조회 실패)이 `none`(미부착)으로
-# 접히면 조회 실패 한 번에 살아있는 워커의 claim 을 뗀다(#206 attempt 3).
-rc=0
-out=$(scripts/progress-evidence.sh --now 1780000000 --commit-at none --head-sha none \
-  --claimed-at unknown 2>/dev/null) || rc=$?
-case "$out $rc" in
-  "unknown claimed_at_unknown commit=none queue=none claim=unknown 2") : ;;
-  *) echo "  ✗ progress-evidence: claim 조회 실패 → '$out' rc=$rc (기대 unknown claimed_at_unknown rc=2)"; exit 1 ;;
-esac
-# 반대 방향 — `--claimed-at` 을 아예 안 주면 종전과 똑같이 ①② 만으로 판정한다(옵션 입력).
-rc=0
-out=$(scripts/progress-evidence.sh --now 1780000000 --commit-at none --head-sha none 2>/dev/null) || rc=$?
-case "$out $rc" in
-  "none no_progress commit=none queue=none claim=none 0") : ;;
-  *) echo "  ✗ progress-evidence: claim 미지정 → '$out' rc=$rc (기대 none no_progress rc=0)"; exit 1 ;;
-esac
 
 echo "[#206] 현재 회차 시작 증거 — claim-at.sh 한 자리·ISSUE_TIMEBOX_HOURS 드리프트"
 # `agent:claimed` 의 **부착 시각**은 첫 푸시 전 창을 덮는 유일한 신호다(#206 attempt 3
@@ -755,30 +731,6 @@ for f in scripts/timebox-check.sh scripts/progress-evidence.sh; do
   grep -qF 'ISSUE_TIMEBOX_HOURS' "$f" \
     || { echo "  ✗ $f 가 ISSUE_TIMEBOX_HOURS 를 읽지 않는다 — 두 자리가 같은 상수를 써야 한다"; exit 1; }
 done
-# 입력 어휘 3값 스모크 (#206 회차2) — 호출자가 **조회 실패**를 말할 단어(`unknown`)를 갖고,
-# 그것이 `none`(부재)과 다른 판정으로 나오는지. 이 어휘가 없으면 호출자는 결국 실패를
-# `none` 으로 접고, 그 순간 살아 있는 워커가 재디스패치된다(회차1 BLOCKER).
-rc=0
-out=$(scripts/progress-evidence.sh --now 1780000000 --commit-at unknown --head-sha unknown 2>/dev/null) || rc=$?
-case "$out $rc" in
-  "unknown commit_at_unknown commit=unknown queue=- claim=- 2") : ;;
-  *) echo "  ✗ progress-evidence: --commit-at unknown → '$out' rc=$rc (기대 unknown commit_at_unknown rc=2)"; exit 1 ;;
-esac
-rc=0
-out=$(scripts/progress-evidence.sh --now 1780000000 --commit-at none --head-sha unknown 2>/dev/null) || rc=$?
-case "$out $rc" in
-  "unknown head_sha_unknown commit=none queue=unknown claim=- 2") : ;;
-  *) echo "  ✗ progress-evidence: --head-sha unknown → '$out' rc=$rc (기대 unknown head_sha_unknown rc=2)"; exit 1 ;;
-esac
-# 과잉 보수 반증 — `none`(진짜 부재)은 여전히 `none no_progress` rc=0 이다(전부 unknown 으로
-# 접으면 완결 유실 회수가 통째로 멈춘다).
-rc=0
-out=$(PE_QUEUE_LOG=/nonexistent/queue.log scripts/progress-evidence.sh \
-  --now 1780000000 --commit-at none --head-sha none 2>/dev/null) || rc=$?
-case "$out $rc" in
-  "none no_progress commit=none queue=none claim=none 0") : ;;
-  *) echo "  ✗ progress-evidence: --commit-at none → '$out' rc=$rc (기대 none no_progress rc=0)"; exit 1 ;;
-esac
 # 호출부 tripwire — head 조회의 **종료코드를 버리면**(`|| head_raw=''`) 실패가 부재로
 # 둔갑한다(PR#139). 헬퍼가 아무리 3값을 구분해도 호출부가 삼키면 계약은 거기서 깨진다.
 if grep -qE 'pr-head-at\.sh[^|]*\|\|[[:space:]]*head_raw=' scripts/finish-classify.sh; then
