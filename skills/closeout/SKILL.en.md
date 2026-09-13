@@ -791,18 +791,22 @@ hook queried the cwd repo). Gate conditions: `$SCRIPTS/closeout-ci-pass.sh <repo
 (exit 0) + the worker's `검증자 리뷰:` comment shows BLOCKER 0 + recheck
 `gh pr view <pr> --repo <repo> --json mergeable` ≠ CONFLICTING.
 - **Revalidate the rebased HEAD (`revalidate:true` precondition gate, #70).** If the
-  candidate ② Pick took has `revalidate` true (= `closeout-ci-pass.sh` returned exit 2 —
-  the current HEAD's local-CI cache is empty due to a rebase etc., i.e. "not run, not
-  fail"), then **before** evaluating the exit-0 gate above, revalidate the current HEAD:
-  obtain a worktree via `$SCRIPTS/make-worktree.sh <repo> <N>` (`<N>` parsed from the PR
-  head `agent/issue-N`, same as step 3) → **sync that worktree to the rebased remote
-  head** (`make-worktree.sh` returns an existing worktree as-is, so it may still have the
-  pre-rebase SHA checked out — unlike step 3, this path makes no new commit, so the sync
-  is the only freshness guarantee): `git -C <wt> fetch origin` then
-  `git -C <wt> reset --hard origin/agent/issue-<N>` to align the worktree HEAD to the PR's
-  current (rebased) head SHA (this is exactly the SHA `closeout-ci-pass.sh` looks up via
-  `gh pr view headRefOid` — without the sync, run-local-ci caches the old SHA and it stays
-  permanently exit 2) → fill the **current HEAD** cache with
+  candidate ② Pick took has `revalidate` true (= `closeout-ci-pass.sh` exited 2 — the
+  current HEAD's local-CI cache is empty due to a rebase etc., i.e. "not run, not fail"),
+  then **before** evaluating the exit-0 gate above, revalidate the current HEAD: a single
+  call to `$SCRIPTS/make-worktree.sh --sync <repo> <N>` obtains the worktree **and forces
+  it to the rebased remote head** (`<N>` parsed from the PR head `agent/issue-N`, same as
+  step 3;
+  the `fetch` + `reset --hard origin/<branch>` procedure and the trap that "an existing
+  worktree is returned as-is, so the pre-rebase SHA may still be checked out" are owned by
+  that script's header comment — #445). Unlike step 3, this path makes no new commit, so
+  **the sync is the only freshness guarantee**: the SHA it aligns to is exactly the one
+  `closeout-ci-pass.sh` looks up via `gh pr view headRefOid`, and without it run-local-ci
+  caches the old SHA and stays permanently exit 2. If `--sync` exits **3 (uncommitted
+  changes in the worktree — it refused to overwrite)** or **4 (no such head branch on the
+  remote)**, do not merge: skip this PR and report
+  `BLOCKED: worktree 동기화 실패 PR #<pr>(<repo_short>) — <one stderr line>` in ④ Report.
+  Then fill the **current HEAD** cache with
   `$SCRIPTS/run-local-ci.sh <repo> <N>`. If `run-local-ci.sh` exits nonzero (integration
   with the new base is broken), do not merge: exit on hold fail-closed
   (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` +
@@ -1017,61 +1021,73 @@ the ①② attempt results ride along so ⑦ does not repeat the same rungs.
 if it is tests-only or a one-line comment, being merged means it entered the promotion scope,
 and that fact must be visible to a human.
 
-- **Issuance command (required form — do not substitute prose).**
+- **Issuance command (required form — do not substitute prose).** The whole issuance
+  procedure — the title shape · the body sections · the labels · the missing-label
+  three-rung ladder · the label readback right after issuance · the PR marker — is
+  **a single call to `$SCRIPTS/deploy-wait-issue.sh`** (#446). Never assemble
+  `gh issue create` by hand here: the 8/8 miss behind this fix was the command sitting
+  mid-prose.
 
   ```
-  gh issue create --repo <repo> --title "배포 대기: PR #<pr> — <summary>[ (승격만)]" \
-    --body-file <body-file> --label deploy-wait [--label P1]
+  $SCRIPTS/deploy-wait-issue.sh <repo> <pr> --sha <merge sha> \
+    --title "<one-line summary>" --summary-file <change-summary file> --items-file <items file|없음> \
+    [--verify-url <production base URL>] [--deploy-cmd <deploy entrypoint>] \
+    [--parent-issue <parent issue#>] [--hardware]
   ```
+
+  **The title regex (`배포 대기: PR #<M>`), the section names (`## 검증 URL` ·
+  `## 라이브/하드웨어 검증 항목`), `없음` and `(승격만)` are a parsing contract read by
+  deploy-cycle and deploy-bodat**, and its SSOT is now that script's header comment, not
+  this prose (to change a literal, fix those consumers first). What it does: enforces the
+  item shape (`없음` on its own, or **every line** a `- [ ] ` checkbox — one prose line → exit
+  65 **before** issuing) → appends
+  ` (승격만)` to the title when there are zero checkboxes → creates the issue with
+  `--label deploy-wait` (plus the P inherited via `--parent-issue`, plus `needs:hardware`
+  only when `--hardware` is given **and the label actually exists in the repo**) → on a
+  missing label calls `setup-labels.sh` once and retries once → and if that still fails
+  **creates the issue with no `--label` at all** so the ticket is never lost
+  (`loop-status.sh` still counts it as deploy-waiting via the `배포 대기:` title fallback)
+  → reads the labels back and tops them up → leaves the marker `배포 대기: #<number>` on
+  the PR. stdout is the issue number, one line. Omit `--verify-url` when the production
+  base URL is unknown (step 5 then falls back to "URL unreachable").
+  - **exit 0** → the marker is in place: **exit as approval-required**.
+  - **exit 65 (shape violation before issuance — no issue exists yet)** — `<LIVE_CHECKS>`
+    was prose. Move the background/rationale into `## 변경 요약`, leave only `없음` or
+    `- [ ]` lines in the items file, and **call it again**.
+    **Never end step 4 on exit 65** — if it still exits 65 on the second call, move the
+    prose into `## 변경 요약` and **issue it** with `--items-file 없음` (a `(승격만)`
+    ticket). "A merged PR always gets a promotion ticket" outranks the shape discipline —
+    withholding the ticket over a shape error returns us to the state where we cannot even
+    tell whether there is anything to promote (2026-08-16). In that case also report
+    `BLOCKED: 배포 대기 항목 형태 위반 — PR #<pr>` in ④ Report.
+  - **exit 1 (no issue created)** — report
+    `BLOCKED: 배포 대기 이슈 발행 실패 — PR #<pr>` in ④ Report. A merged PR that ends
+    without a ticket makes the promotion scope invisible to humans.
+  - **exit 2 (the issue exists — its number is on stdout)** — labels or the marker went
+    wrong, and that state is not normal (deploy-cycle cannot find it by the lane mark).
+    Report `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` in ④ Report and
+    demand the **three-step human recovery** (skipping the second step leaves the ticket
+    label-less forever — `setup-labels.sh` only creates the label *definition*, it does not
+    attach it to an existing issue): ⑴ rerun `$SCRIPTS/setup-labels.sh <repo>`
+    ⑵ `gh issue edit <number> --repo <repo> --add-label deploy-wait` to attach it **to that
+    issue** ⑶ `gh issue view <number> --repo <repo> --json labels` to confirm. Do not
+    duplicate that label edit here (#223) — it just fails again, and that failure cuts off
+    the marker and the report (the ticket exists but nobody knows = exactly the loss the
+    fallback exists to prevent). Never let it pass silently.
 
   `deploy-wait` is the bucket label `loop-status.sh` uses to separate deploy-waiting from
   needs-human, and it is **the lane mark the deploy-cycle loop picks this ticket up by** —
-  that one label is required.
-  **closeout does not attach `needs-human` (#243, plan step 2) — do not revert it.** At filing
-  time there is nothing for a human to do: ⑴ the dispatch gate **requires** `label:agent-ready`
-  (`scripts/eligible-issues.sh`), which a deploy-pending issue never has, so it is not a
-  candidate to begin with; ⑵ deploy-bodat collects by **title regex** (`배포 대기: PR #<M>`),
-  not by label. Attaching it would be a duplicate mark that blurs what `needs-human` means
-  (= a human's share is left) (#190). The party that **does** attach it is deploy-cycle — on a
-  promotion/deploy/smoke failure, with a reason comment (BoDAT #5197, its hidden HALT file was
-  retired). That is why the loop-status bucket puts needs-human **ahead of** deploy-waiting
-  (2026-09-13) — so that failure mark never hides inside the deploy-waiting row.
-  After issuance leave the
-  marker `gh pr comment <pr> --repo <repo> --body "배포 대기: #<created-number>"`, then
-  **exit as approval-required**.
-- **Missing label — fail closed, never lose the ticket (same shape as the step-6 spinoff
-  rule).** `gh issue create` fails **without creating the issue** when any `--label` does not
-  exist in the repo. Existing opted-in repos lack `deploy-wait` until `setup-labels.sh` is
-  rerun, so without this rule the first closeout after upgrading ends with the PR merged but
-  no ticket and no marker. On a `'deploy-wait' not found`-style failure, run
-  `$SCRIPTS/setup-labels.sh <repo>` **once** and retry the same command **once**. If the
-  retry also fails, do not loop — file it with **no `--label` at all** (no lost ticket —
-  `loop-status.sh` still counts it as deploy-waiting via the `배포 대기:` title fallback).
-  The result is an issue with **no labels whatsoever**, and that state is not normal — the
-  deploy-cycle loop cannot find it by its lane mark — so
-  report `BLOCKED: deploy-wait label attach failed on deploy issue — #<number>` in ④ Report
-  and demand a **three-step human recovery** (skipping the second step leaves the ticket
-  labelless even if the human does exactly what was asked — `setup-labels.sh` only recreates
-  the label *definition*, it never attaches labels to an existing issue): ⑴
-  **`$SCRIPTS/setup-labels.sh <repo>` rerun** to restore the `deploy-wait` label definition,
-  ⑵ `gh issue edit <number> --repo <repo> --add-label deploy-wait` to attach it **to that
-  issue**, then ⑶ `gh issue view <number> --repo <repo> --json labels` to confirm it landed.
-  Never pass over it silently.
-- **Verify right after issuance (same shape as step 6) — runs only when the issuance
-  that carried `--label` succeeded.** Check with
-  `gh issue view <number> --repo <repo> --json labels` that
-  `deploy-wait` actually landed; if it is missing, top it up with
-  `gh issue edit <number> --repo <repo> --add-label deploy-wait`
-  (the 8/8 miss behind this fix was not only the command sitting mid-prose — step 4 never
-  had this verify step at all, while step 6 did and did not leak).
-  **An issue filed by the fallback above with no `--label` at all is excluded from this
-  verify·top-up** (#223). On that path the issuance and its one retry both failed, so
-  "this repo cannot take the label right now" is already settled — calling the same label
-  edit again here just fails again, and that failure cuts off the PR marker
-  `배포 대기: #N` and the ④ Report line `BLOCKED: deploy-wait label attach failed …`
-  that follow (the ticket exists but nobody knows = exactly the loss the fallback exists
-  to prevent). Recovery for a fallback ticket is owned by the three-step human recovery
-  above — do not duplicate the attempt here.
+  that one label is mandatory.
+  **closeout does not attach `needs-human` (#243, plan step 2) — do not revert this.**
+  Nothing is a human's at issuance time: ⑴ the dispatch gate **requires**
+  `label:agent-ready` (`scripts/eligible-issues.sh`) and a deploy-wait issue has none, so
+  it is not a candidate at all, and ⑵ deploy-bodat collects by **title regex**
+  (`배포 대기: PR #<M>`), not by label. Attaching it would blur what `needs-human` means
+  (= a human's turn remains) into a duplicate mark (#190). **The one that attaches that
+  label is deploy-cycle** — on a promotion/deploy/smoke failure, together with a reason
+  comment (BoDAT #5197, hidden stop-files abolished). Hence the loop-status buckets put
+  needs-human **before** deploy-waiting (2026-09-13), so that failure mark cannot hide in
+  the deploy-waiting column.
 
 Why this rule was flipped: the previous rule created no issue when `<LIVE_CHECKS>` was `없음`,
 justified by "④ Report's `승격 대기 N커밋` holds the unpromoted state". But that Report line
@@ -1103,81 +1119,94 @@ a Chrome smoke to judge it. Parse `## 검증 URL` (`<VERIFY_URL>`) and
 `## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body, fill
 `references/smoke-prompt.en.md`'s placeholders
 (**substitute that section untouched — do not pre-filter the marked lines out.**
-The marker/denominator/held rules below are carried
-in the same wording inside `smoke-prompt.en.md`, so the prompt applies them itself;
-filtering once more before substitution creates a second calculator for real-hardware
-items), load the chrome-devtools MCP tools via
+The prompt prints a `[칸 ③]` marked line as `보류` without stepping it, and **the counting
+is done by `$SCRIPTS/smoke-tally.sh` alone** (#448) — filtering once more before
+substitution creates a second calculator for real-hardware items), load the
+chrome-devtools MCP tools via
 ToolSearch, then **entry cleanup (idempotent — crash-resume defense): via `list_pages`,
 if a prior tick died before cleanup and left a smoke page, `close_page` it first.** Then
 `navigate_page` to `<VERIFY_URL>`, and compare each item via
 `evaluate_script`/`take_snapshot` to produce a per-item pass/fail (distinguish
 structure/empty-state confirmation from real-data render confirmation in the result).
-- **No items to step through — do not smoke.** Step 4 files a deploy issue for every
-  merged PR, so `(승격만)` issues exist too — but if `## 라이브/하드웨어 검증 항목` holds
-  no `- [ ]` at all, do not open Chrome; mark it complete. A smoke with zero items to
-  compare has not passed anything, it **looked at nothing**, yet it prints as
-  `✅ 스모크 0/0 통과` and reads as verified (a false green). Leave the reason as a
-  comment instead: `스모크 생략: 밟을 항목 0`. That issue is a container the deploy-cycle
-  lane closes once the promotion is done, not a verification subject.
+- **The tally lives in `$SCRIPTS/smoke-tally.sh`, one place (#448).** The arithmetic —
+  marker detection, denominator exclusion, held summation — is owned by that script's
+  header comment, not by this SKILL and not by the prompt: the same rules used to sit in
+  both as prose, which is exactly "two calculators for real-hardware items". Never count
+  by hand here.
+  - **Before the smoke — is there anything to step?** Write the deploy issue's
+    `## 라이브/하드웨어 검증 항목` section to a file and call
+    `$SCRIPTS/smoke-tally.sh --checks <section file>` (check-mode JSON: `open` ·
+    `steppable` · `held_marked` · `skipped`). If `steppable` is 0, **do not open Chrome** —
+    a smoke with zero items to compare has not passed anything, it **looked at nothing**,
+    yet it prints as `✅ 스모크 0/0 통과` and reads as verified (a false green). But **how
+    it ends splits in two**: treating a section left with marked lines only as "no items"
+    finalizes a ticket carrying real-hardware items without ever taking the held path
+    below — exactly what this section forbids.
+    - **`open` is 0 (a `없음` section)** → leave the comment `스모크 생략: 밟을 항목 0` and
+      mark it **complete**. That issue is a container the deploy-cycle lane closes once the
+      promotion is done, not a verification subject.
+    - **`steppable` is 0 but `held_marked` is not (marked lines only)** → do not open
+      Chrome, and it is **not complete**. Finish exactly like the real-hardware branch
+      below: leave
+      `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` (`<n>` = `held_marked`)
+      plus `보류 내역: 표식 <a>건 · 표식 없는 미밟음 0건` (`<a>` = `held_marked`), and
+      **do not close the issue** — rung ③ is `e2e-test`'s (deploy-cycle ⑦'s) job after the deploy.
+  - **After the smoke — what did it see?** Collect **only the verdict lines** the prompt
+    produced (`<verdict> <original item line>` — the vocabulary is `pass`·`fail`·`보류`,
+    the grammar is in the script header) into a file, call
+    `$SCRIPTS/smoke-tally.sh --checks <section file> <result file>` (the original checklist is
+    **the truth about the denominator** — counting the result file alone makes an item the
+    model omitted disappear into a `1/1 통과` false green, #467), and branch below on that JSON:
+    `verdict` (`green`|`fail`|`held`|`skip`) · the denominator `denominator` · the held
+    count `held` (broken down as `held_marked`·`held_unstepped`). **Do not read `verdict`
+    alone** — fail and held can both be true, and even on the fail branch a non-zero
+    `held` means the issue does not close. A non-zero `unparsed` means the prompt emitted
+    a line outside the grammar **or omitted an item**, and a non-zero `duplicate` means one
+    item got two verdicts — either way that item counts as held, so that tick cannot be
+    green. Report it in one line in ④ Report. **On a degrade tick where the smoke never ran, do
+    not make this call at all** — feeding a `스모크 skip: <reason>` line to the tally as a
+    result file parses as a line outside the grammar, is counted as `보류`, and leaves a
+    ticket that was never stepped sitting in "held". Degrade is owned by its own bullet below.
 - **Real-hardware items still open — do not close even on green (Chrome cannot step rung ③).**
-  Among the `- [ ]` lines in `## 라이브/하드웨어 검증 항목`, a line **carrying the
-  `[칸 ③]` prefix marker** is a real-hardware item — step 4 enforces that marker as shape,
-  of the same grade as `없음` and `- [ ]` (the `<LIVE_CHECKS>` shape discipline above), so
-  reuse that marker here instead of inventing a second predicate. The rationale (why such
-  a line is real hardware) is that the action the marker points at is ladder rung ③ (a
-  TEST-worker profile #18 dry run), which Chrome cannot step — but keep the rationale as
-  rationale and **decide by the marker**. Interpreting the sentence lets the same line
-  read as real hardware in one tick and as an ordinary item in the next (#309).
-  **Drop marked lines from the `<n>/<n>` denominator** — pretending Chrome compared
-  them makes both a pass and a fail a lie (the same false green as "no items" above). If dropping them leaves zero items to
-  compare, do not open Chrome — skip the smoke exactly like the "no items" bullet above.
-  And if **even one** such line remains, **do not close the deploy issue even when
-  everything else passes** — rung ③ is `e2e-test`'s job after the deploy, so closing here finalizes a
-  ticket whose real-hardware items never met the TEST worker once. Leave the reason as a
-  comment instead: `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다`. That issue is a
-  container the deploy-cycle lane's ⑦ closes after it steps rung ③.
-  **Unmarked lines — do not catch them by a string; hand them to rung ③ fail-closed.**
-  Deploy issues filed before this discipline and still open carry no `[칸 ③]` at all
-  (anything filed before #309 merged). And **no fixed string exists** that picks the
-  real-hardware lines out of that backlog — a full census of the 27 open `- [ ]` lines
-  across the 10 open backlog tickets (bodat #5119·#5115·#5110·#5108·#5107·#5105·#5095·
-  #5094·#5078·#5065) on 2026-09-12: `TEST 워커 프로필 #18` matches **0 lines** (it is
-  nowhere in any body) · `TEST 워커` matches 1 (of 6 real-hardware lines) · `워커` matches
-  7, dragging in non-hardware lines such as a `/pcs` screen check and a server-log grep
-  while still missing the line stepped over `ssh test`. Every candidate is wrong in
-  **both directions**, and an approximation that errs toward erasing more is worse than
-  the original bug. So decide by **what stepping it produced**, not by a string:
-  - Unmarked lines are **stepped with Chrome first.** Never promote one to real hardware
-    by reading the sentence's meaning — that is the moment a second calculator for
-    "real-hardware items" is born.
-  - **Stepped, and the value differed from the expectation → fail** → the fail branch
-    below (file the follow-up issue). Chrome actually saw the screen or the value, so
-    this is a genuine defect.
-  - **The means of stepping it lives outside the browser, so Chrome could not even try**
-    (a worker box · `ssh` · driving the AdsPower client · a server shell `bin/rails
-    runner` · a `log/*.out` grep — anything needing a tool the production console screen
-    does not have) → **print it as neither a pass nor a fail; count it as held, exactly
-    like a marked line** — drop it from the denominator and **add it to** the marked
-    count in `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다`, leaving the issue open.
-    **Do not file a follow-up issue** — it is not a defect, only a different lane, and
-    dropping it into fail files a `needs-human` follow-up whose recorded reason is a
-    false "smoke failure" (#309 attempt 1 leaked exactly this way).
-  - The basis for this branch is **whether Chrome actually stepped the line**, not what
-    the line means. "Could not step it" is an observation, not an interpretation, so it
-    does not conflict with the no-promotion rule above — there is still one calculator.
+  Decide **by the `[칸 ③]` prefix marker alone** — step 4 enforces that marker as shape, of
+  the same grade as `없음` and `- [ ]`, so never invent a second predicate here. The
+  rationale (why such a line is real hardware) is that the action the marker points at is
+  ladder rung ③ (a TEST-worker profile #18 dry run), which Chrome cannot step — keep the
+  rationale as rationale and **decide by the marker**. Interpreting the sentence lets the
+  same line read as real hardware in one tick and as an ordinary item in the next (#309).
+  If `held` is non-zero, **do not close the deploy issue even when everything else
+  passes**: finish with the comment
+  `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` (`<n>` = `held`).
+  Rung ③ is `e2e-test`'s job after the deploy, so closing here finalizes a ticket whose
+  real-hardware items never met the TEST worker once. That issue is a container the
+  deploy-cycle lane's ⑦ closes after it steps rung ③.
+  - **Holding an unmarked line is an observation, not an interpretation.** The prompt
+    **steps unmarked lines first**: stepped and the value differed from the expectation →
+    `fail` (Chrome actually saw the screen or the value, so it is a genuine defect → the
+    fail branch below); the means of stepping it lives outside the browser (a worker box ·
+    `ssh` · driving the AdsPower client · a server shell `bin/rails runner` · a
+    `log/*.out` grep) so it **could not even try** → `보류` (= `held_unstepped`). Never
+    promote a line to real hardware by reading its meaning — that is the moment a second
+    calculator is born. **Never file a follow-up issue for such a held line** — it is not
+    a defect, only a different lane, and dropping it into fail files a `needs-human`
+    follow-up whose recorded reason is a false "smoke failure" (#309 attempt 1 leaked
+    exactly this way). Deploy issues filed before this discipline carry no `[칸 ③]` at all,
+    and **no fixed string exists** that picks the real-hardware lines out of that backlog
+    (a full census of the 27 open `- [ ]` lines across the 10 open backlog tickets on
+    2026-09-12: `TEST 워커 프로필 #18` matches 0 lines · `TEST 워커` matches 1 of 6
+    real-hardware lines · `워커` drags in non-hardware lines while still missing the line
+    stepped over `ssh test` — every candidate is wrong in **both directions**, and an
+    approximation that errs toward erasing more is worse than the original bug). So decide
+    by **what stepping it produced**, not by a string.
   - **Do not backfill the marker in its place.** Not every held line is rung ③ (some only
-    need a server shell). Keep the marker string single, but split the breakdown into one
-    comment line: `보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건 — 재고 · 4단계 표식 누락 · 또는 4단계가 수단을 적어 보낸 비-칸③ 줄`.
-  - **Exactly one category of newly filed line reaches this fail-closed branch.** The
-    step-4 shape discipline forces `[칸 ③]` on real-hardware lines, so an unmarked line is
-    **usually** one Chrome can step, and it is decided by the first branch (marker) or the
-    second (step it, pass/fail). The exception is a line step 4 sent to ⑦ with the means
-    written on it because it **is not rung ③ yet needs a tool outside the browser** (the
-    last sentence of step 4's "an unmarked line must be one Chrome can step" bullet) —
-    that line obeys the discipline and still cannot be stepped by Chrome, so it lands
-    here. Hence the **third category** in the breakdown above: recording such a line as a
-    "missing marker" **misrecords** a step 4 that followed the rule as one that broke it
-    (the verdict is the same; only the record is wrong). Once those two are set aside,
+    need a server shell). Keep the marker string single, and print the breakdown from the
+    numbers the script produced, in one comment line:
+    `보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건 — 재고 · 4단계 표식 누락 · 또는 4단계가 수단을 적어 보낸 비-칸③ 줄`
+    (`<a>` = `held_marked` · `<b>` = `held_unstepped`). Why the **third category** stays: a
+    line step 4 sent to ⑦ with the means written on it because it is not rung ③ yet needs
+    a tool outside the browser obeys the discipline and still lands here, and recording it
+    as a "missing marker" **misrecords** a step 4 that followed the rule as one that broke
+    it (the verdict is the same; only the record is wrong). Once those two are set aside,
     anything left in this branch is the signal that the ticket is **backlog, or that the
     step-4 shape discipline was violated**.
 - **Already-closed deploy issue — skip the smoke.** If the deploy issue is already
@@ -1195,25 +1224,26 @@ structure/empty-state confirmation from real-data render confirmation in the res
   unreachable. **Since no
   browser was started at all, there is nothing to clean up — the browser cleanup below
   is a no-op (not a leak).**
-- **green (all pass)** → a `✅ 스모크: <n>/<n> 통과` comment on the deploy issue + the
+- **green (`verdict=green` — all pass, zero held)** → a `✅ 스모크: <n>/<n> 통과` (`<n>/<n>` = `pass`/`denominator`) comment on the deploy issue + the
   original PR (this comment is the step-5 completion marker — a resumed tick does not
   re-smoke). Then remove the `needs-human` label from the deploy issue and close the
   deploy issue (the only remaining gate was verification and it passed, so closeout
   finalizes — the recommended option of the open decision).
-  **Unless the real-hardware exception above applies** — if even one rung-③ item
-  (a marked line, or a line held unstepped by the fail-closed branch above) is
-  still `- [ ]`, stop at the label cleanup, leave the issue open, and finish with the
+  **A non-zero `held` never reaches this branch** — `verdict` comes out `held` instead,
+  and the real-hardware bullet above owns it: stop at the label cleanup, leave the issue
+  open, and finish with the
   `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` comment (verification was not the only
   remaining gate — rung ③ is). Since #243 a step-4 issue
   never carries `needs-human` in the first place — this removal is harmless leftover
   cleanup for issues filed before that (`--remove-label` is a no-op for an absent label).
 - **fail (any item fails)** — **only lines Chrome actually stepped reach here.** Lines
-  held unstepped by the fail-closed branch above are not failures, so drop them from the
+- **fail (`verdict=fail` — `fail` is one or more)** — **only lines Chrome actually stepped reach here.** Lines
   publish targets below (filing a follow-up with a "smoke failure" reason for a line that
   was never stepped records a non-defect as a defect — #309). → do not fix it directly; use the existing publish path: an
-  agent-ready issue via `references/spinoff-issue.md` if auto-fixable (**use step 6's
-  "issuance command" form verbatim** — `spinoff-inherit.sh` inheritance plus
-  `--label agent-ready --label spinoff --label "$priority"`;
+  agent-ready issue via `references/spinoff-issue.md` if auto-fixable (**the same single
+  call as step 6** —
+  `$SCRIPTS/spinoff-issue.sh <repo> <parent-issue#> <parent-pr#> --title "<title>" --body-file <body-file>`,
+  which carries the inheritance, labels, readback and marker;
   no prose substitute here either), a `--label needs-human` issue if live verification is needed.
   If the same failure recurs `REPAIR_RECUR_LIMIT`
   times, escalate to `needs-human` (**exhausted exit**). Do not close the deploy issue.
@@ -1242,80 +1272,66 @@ structure/empty-state confirmation from real-data render confirmation in the res
 
 **Step 6 — spinoff issues.** Fill `references/spinoff-issue.md` with the worker PR
 body's `follow-up:` items + adjacent work the step-1 diff review flagged, and issue an
-agent-ready issue. **A spinoff inherits its parent's epic and priority mechanically,
-every time** (#261) — `$SCRIPTS/spinoff-inherit.sh` emits `epic=` for the body's first
-line `Epic #N` and `priority=` for the P label. Record the created number in a comment
-on the original PR (a duplicate-issuance marker).
+agent-ready issue. The whole issuance procedure — inheritance (#261) · the body's first
+line `Epic #N` · labels · the missing-label fail-closed ladder · the readback right after
+issuance · the parent-PR marker — is **a single call to `$SCRIPTS/spinoff-issue.sh`**
+(#447). Never assemble `gh issue create` by hand here: the prose-only step leaks
+(measured 2026-08-13 on BoDAT: step 6 attached only the convention labels and dropped
+`agent-ready`, stranding 17 open issues outside the loop, while step 4 — whose command
+literally carried the label — was correct on all 186).
 
-- **Deciding the parent (the input to inheritance).** The parent is, first and foremost,
-  the **N in the closing PR's head branch `agent/issue-<N>`**. Use
-  `closingIssuesReferences` only to **cross-check** that N appears in that list, or as a
-  **fallback** when the head branch is not of the form `agent/issue-*` — `[0]` is not
-  guaranteed to be the branch's issue (measured: `PR #113` had `head=agent/issue-109` but
-  `closingIssuesReferences=[108, 109]`, so `[0]` was **#108**, the wrong issue. The same
-  trap silently switched off an evidence source at `finish-classify.sh:317-318`). If
-  neither source yields a parent, **do not issue** — report
-  `BLOCKED: spinoff parent unknown — PR #<pr>` in ④ Report (never issue without inheritance).
+- **Deciding the parent (the input to inheritance — this stays this step's judgment, not
+  the script's).** The parent is, first and foremost, the **N in the closing PR's head
+  branch `agent/issue-<N>`**. Use `closingIssuesReferences` only to **cross-check** that N
+  appears in that list, or as a **fallback** when the head branch is not of the form
+  `agent/issue-*` — `[0]` is not guaranteed to be the branch's issue (measured: `PR #113`
+  had `head=agent/issue-109` but `closingIssuesReferences=[108, 109]`, so `[0]` was
+  **#108**, the wrong issue. The same trap silently switched off an evidence source at
+  `finish-classify.sh:317-318`). If neither source yields a parent, do not pass `-` to the
+  script — **do not issue** and report `BLOCKED: spinoff parent unknown — PR #<pr>` in
+  ④ Report (never issue without inheritance).
 - **Issuance command (required form — do not substitute prose).** Write the filled
   `spinoff-issue.md` to a file and pass it via `--body-file` (the template is
-  **body-only** — labels written there render into the issue body; labels must come
-  from the command line):
+  **body-only** — labels written there render into the issue body; the script passes
+  labels on the command line):
 
   ```
-  eval "$($SCRIPTS/spinoff-inherit.sh <repo> <parent-issue#>)"   # epic= · priority=
-  gh issue create --repo <repo> --title "<title>" --body-file <body-file> \
-    --label agent-ready --label spinoff --label "$priority" [--label <repo-convention label>...]
+  $SCRIPTS/spinoff-issue.sh <repo> <parent-issue#> <parent-pr#> \
+    --title "<title>" --body-file <body-file> [--label <repo-convention label>...]
   ```
 
-  `spinoff-inherit.sh` reads the parent **once** and emits exactly two lines,
-  `epic=<N|->` and `priority=<P0|P1>` (read-only — it never edits the parent).
-  **On exit 1 (no output), stop issuing** — report it as the same BLOCKED as an unknown
-  parent above. Fill the body file's `<EPIC_LINE>` slot with the single line `Epic #N`
-  when `epic=N`, or with an **empty line** when `epic=-` — an epic is linked by that
-  **dedicated body line**, not by a sub-issue link or a label (#260: `loop-status.sh`'s
-  epic section counts leaves by that line; a prose `… epic #N …` is not a signal).
-  Never raise `priority` by hand — bumping a spinoff to P1 because it "looks urgent" is
-  exactly today's inflation; raising it is a human's call at the epic level.
+  That script's header comment is the SSOT for the rules. What it does: reads the parent
+  **once** through `spinoff-inherit.sh` for `epic=`/`priority=` → fills the body's
+  `<EPIC_LINE>` dedicated line with `Epic #N` (an empty line when there is no epic) and
+  guarantees it is the **first line** (an epic is linked by that dedicated body line, not
+  by a sub-issue link or a label — `loop-status.sh`'s epic section counts leaves by it) →
+  creates the issue with `--label agent-ready --label spinoff --label "$priority"` plus the
+  convention labels you passed → on a missing label, calls `setup-labels.sh` once and
+  retries once, and if that still fails **creates the issue without labels** (never lose
+  the issuance) → reads the labels and the `Epic #N` first line back and tops up what is
+  missing → leaves the marker `파생: #<new number> (Epic #<N|없음> · <P>)` on the parent PR.
+  stdout is the new issue number, one line.
+  - **exit 0** — copy the `marker:` line from stderr into ④ Report's `파생` item verbatim
+    (that is how spinoffs leaking outside their epic stay observable every tick).
+  - **exit 1 (no issue was created; no output)** — unknown parent, inheritance failure, or
+    issuance failure. Report `BLOCKED: spinoff parent unknown — PR #<pr>` or
+    `BLOCKED: spinoff issuance failed — PR #<pr>` in ④ Report.
+  - **exit 2 (the issue exists — its number is on stdout)** — labels, body or marker went
+    wrong. Report `BLOCKED: spinoff issue labeling failed — #<number>` in ④ Report
+    (recovery is a human's: rerun `setup-labels.sh`, then `gh issue edit --add-label`).
+    Do not pile another attempt on top of it here.
 
-  **`--label agent-ready` is not optional** — `eligible-issues.sh` gates dispatch on
-  `open + agent-ready + ¬agent:claimed`, so without it the issue is created but
-  issue-runner **never picks it up** (measured 2026-08-13 on BoDAT: step 6 attached only
-  the 3-axis convention labels and dropped agent-ready, stranding 17 open issues outside
-  the loop — while step 4, whose command literally carries the label (back then
-  `--label needs-human`, today `--label deploy-wait`, #243), was
-  correct on all 186. The step with a command did not leak; the prose-only step did).
-  `--label "$priority"` is **not optional** either — without one the issue falls into the
-  non-P0 bin (the same bin as P1; #401 — the axis is `P0` and everything else, and order
-  inside one bin is oldest-first FIFO). Do not invent that value; use exactly what the
-  helper emitted (if the parent carries no P label, or carries a transitional `P2`, the
-  helper hands you `P1`).
-  Add the other axes per repo convention (BoDAT: `difficulty:*`·`frontend` (only when UI is
-  touched)·`needs:hardware` — the repo CLAUDE.md label section is the SSOT), but **never let
-  convention labels displace `agent-ready`** —
-  that is exactly the observed failure shape.
-  `--label spinoff` is the provenance mark — `loop-status.sh`'s `파생` line counts spinoff
-  issues in the window by this label alone (no title heuristic). Without it the issue is
-  invisible in the inventory.
-- **Missing-label fail-closed (isomorphic to ② Pick's harvesting top-up).**
-  `gh issue create` **fails without creating the issue** when a `--label` does not exist
-  (unlike the harmless `--remove-label`). On a `'agent-ready' not found` / `'spinoff' not found`-type failure,
-  call `$SCRIPTS/setup-labels.sh <repo>` **once** and retry the same command **once**.
-  If the retry also fails, do not loop further — **create the issue without labels**
-  (never lose the issuance) and report `BLOCKED: spinoff issue labeling failed —
-  #<number>` in ④ Report.
-- **Verify right after issuance.** Check with
-  `gh issue view <number> --repo <repo> --json labels,body` that
-  ⑴ **both** `agent-ready` and `spinoff` actually landed; if either is missing, top it up with
-  `gh issue edit <number> --repo <repo> --add-label agent-ready --add-label spinoff`.
-  ⑵ **Check the `Epic` line in the same place** — if the helper emitted `epic=N` but the new
-  issue's **first line is not `Epic #N`**, the `<EPIC_LINE>` substitution leaked. Fix it
-  **immediately** with `gh issue edit <number> --repo <repo> --body-file <corrected body file>`
-  (right alongside the label top-up). Skip this and the spinoff stays an orphan outside the
-  epic, invisible forever to `loop-status.sh`'s leaf rollup.
-- **Marker comment on the original PR.** After issuing, comment
-  `파생: #<new number> (Epic #<N|없음> · <P>)` on the original PR — the inheritance result is
-  readable at a glance, and ④ Report's `파생` item uses the **same shape** (so spinoffs leaking
-  outside their epic are observable every tick).
+  The only thing to pass with `--label` is the **repo convention axis** (BoDAT:
+  `difficulty:*`·`frontend` (only when UI is touched)·`needs:hardware` — the repo
+  CLAUDE.md label section is the SSOT). `agent-ready`, `spinoff` and P are attached by the
+  script, so never repeat them — this is exactly where the observed failure shape
+  (convention labels displacing `agent-ready`) is cut off at the source. Without
+  `agent-ready` the dispatch gate (`eligible-issues.sh`: `open + agent-ready +
+  ¬agent:claimed`) means the issue is created and **never picked up**; without `spinoff`,
+  `loop-status.sh`'s `파생` line cannot see it in the inventory. Never raise `priority` by
+  hand — bumping a spinoff to P1 because it "looks urgent" is exactly today's inflation;
+  raising it is a human's call at the epic level (the helper carries a parent's `P0` and
+  folds everything else into `P1`, #401).
 - **Do not issue what step 3 already absorbed.** A finding that passed step 3's
   "absorb surface corrections" criterion (does this flip the pass/fail of any test?)
   and rode along in that commit is not remaining work. When one finding mixes surface

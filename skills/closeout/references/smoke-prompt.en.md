@@ -11,7 +11,7 @@ pass/fail.
    renders"), use LLM interpretation to resolve the target path/element and confirm the
    actual render. **But not every line gets a pass/fail** — the two categories in the
    「held」 section below are lines you must not step or could not step, so print them as
-   `보류` and drop them from the denominator.
+   `보류` (the tally script drops them from the denominator).
 3. A data-zero screen can only be demonstrated up to the empty state — distinguish
    "structure/empty-state confirmed" from "real-data render confirmed" in the result.
 4. **Cleanup (common exit — leak prevention):** after producing the verdict, always
@@ -212,12 +212,12 @@ tunnels using that port. If the socket can't be found (`-S` fails), don't swallo
 cannot find them, do not invent them — report `스모크 skip: tunnel route unknown (<repo>)`.
 
 **Held (`보류`) — a line you did not step is neither a pass nor a fail.** Print the two
-categories below as `보류` and **keep them out of both the numerator and the
-denominator.** Pretending Chrome compared them makes both a pass and a fail a lie.
+categories below as `보류`; pretending Chrome compared them makes both a pass and a fail a
+lie. **The counting is not your job**: dropping held lines from the denominator and
+summing them is done by `scripts/smoke-tally.sh`, the consumer of the output contract
+below (there is exactly one calculator).
 - **A line carrying the `[칸 ③]` prefix marker** — a real-hardware item (a TEST-worker
-  profile #18 dry run) that Chrome cannot step. **Do not even try.** Only still-open
-  `- [ ]` lines count — a marked line already ticked `- [x]` is not held either (same
-  scope as Step 5). Decide **by the
+  profile #18 dry run) that Chrome cannot step. **Do not even try.** Decide **by the
   marker only** — never read a sentence's meaning to promote an unmarked line to real
   hardware, or to demote a marked one to an ordinary item.
 - **An unmarked line whose means of stepping lives outside the browser, so you could not
@@ -236,14 +236,37 @@ step 5) either misreads that line as a whole-smoke degrade or leaves it in the d
 and manufactures a false green. The per-item verdict vocabulary is `pass`·`fail`·`보류`,
 **those three only.**
 
-**Output contract.** One line per check item with `pass`/`fail`/`보류` and a rationale,
-then a final summary `스모크: <passed>/<total> 통과` (or `스모크 skip: <reason>`).
-**`<total>` is the number of lines Chrome actually stepped — `보류` lines go into neither
-the numerator nor the denominator.** If there is even one held line, print the breakdown
-on the line after the summary: `보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건`.
-If dropping the held lines leaves zero stepped lines, do not print `스모크: 0/0 통과` —
-that is not a pass, it is having looked at nothing (a false green). Print
-`스모크 생략: 밟을 항목 0` in the summary slot instead, together with the breakdown above.
+**Output contract — the verdict-line grammar (a parser reads it).** Print **one verdict
+per line**, one line per check item:
+
+```
+<verdict> <original item line> — <rationale>
+```
+
+- `<verdict>` is the **first token** on the line and is one of `pass`·`fail`·`보류` only
+  (case-insensitive; `held` is accepted as a synonym of `보류`). Even if the rationale
+  contains another verdict word, the parser reads only the first token.
+- `<original item line>` is the line from the deploy issue body copied **verbatim** — the
+  `- [ ]` checkbox and the `[칸 ③]` marker must survive, since that is how the tally drops
+  marked lines from the denominator. Do not paraphrase it.
+- **Exactly one verdict line per open item.** The tally cross-checks against the original
+  checklist, so an item you omit and an item you judge twice both count as `보류`, and that
+  tick cannot be green.
+- Example:
+
+```
+pass - [ ] worker cards render on /pcs — 12 cards confirmed
+보류 - [ ] [칸 ③] TEST worker profile #18 dry run — outside Chrome
+```
+
+- **Do not add the numbers up yourself.** `<passed>/<total>`, the held breakdown and the
+  `no 0/0` rule are produced by closeout step 5 feeding these lines to
+  `scripts/smoke-tally.sh`. A line already ticked `- [x]` is not a verdict subject — copy
+  it verbatim if you print it and the tally drops it for you.
+- Never mix lines outside this grammar (summaries, prose paragraphs) into the list — the
+  parser counts them as `보류`, so that tick cannot be green.
+- Only when **the whole smoke** could not run, print the single line
+  `스모크 skip: <reason>` instead of verdict lines.
 Read-only — make no direct changes.
 
 --- verify URL ---
