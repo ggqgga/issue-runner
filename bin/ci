@@ -1738,8 +1738,12 @@ echo "[#292] loop-status 에픽 닫힌 leaf 조회 — 검색 쿼리 형태·단
 #    금지는 주석이 왜 안 쓰는지 설명하며 그 문자열을 인용하니 주석을 세면 자기 근거를 금지한다.
 #    한 번만 뽑아 둘 다 이 변수로 본다 — 파일이 없으면 빈 문자열이라 아래 첫 검사가
 #    바로 빨개진다(fail-closed).
+#    `grep -q` 에는 here-string 으로 먹인다 — `printf … | grep -q` 는 grep 이 첫 일치에서 닫는
+#    순간 printf 가 SIGPIPE(141)를 받고 `set -o pipefail` 이 그것을 실패로 세어, 입력이 파이프
+#    버퍼(부하 시 16KB)를 넘으면 **코드가 멀쩡한데 빨개진다**(실측 2026-09-13 `8b071443`
+#    local-ci failure — 같은 입력을 8배로 늘리면 50/50 재현). here-string 은 파이프가 아니다.
 ls_code=$(grep -vE '^[[:space:]]*#' scripts/loop-status.sh || true)
-printf '%s\n' "$ls_code" | grep -qF -- "--state closed --search '\"Epic #\" in:body'" \
+grep -qF -- "--state closed --search '\"Epic #\" in:body'" <<<"$ls_code" \
   || { echo "  ✗ scripts/loop-status.sh 의 에픽 닫힌 leaf 조회(코드)가 예상 형태가 아니다(--state closed 플래그 + \"Epic #\" in:body)"; exit 1; }
 if printf '%s\n' "$ls_code" | grep -nF -- 'is:closed'; then
   echo "  ✗ scripts/loop-status.sh 검색 쿼리(코드)에 is:closed 가 들어갔다 — gh 가 오파싱한다(#236). --state closed 플래그로"
@@ -1747,7 +1751,7 @@ if printf '%s\n' "$ls_code" | grep -nF -- 'is:closed'; then
 fi
 #    `--limit` 이 `EPIC_CLOSED_LIMIT` 로 전달되는지도 코드 줄에서 센다 — 리터럴 상한으로
 #    되돌리면 창이 PR 이전으로 돌아가는데 상한 판정은 env 를 읽어 `capped` 도 안 뜬다.
-printf '%s\n' "$ls_code" | grep -qF -- '--limit "$EPIC_CLOSED_LIMIT"' \
+grep -qF -- '--limit "$EPIC_CLOSED_LIMIT"' <<<"$ls_code" \
   || { echo "  ✗ scripts/loop-status.sh 의 에픽 닫힌 leaf 조회가 --limit \"\$EPIC_CLOSED_LIMIT\" 로 안 간다(#292)"; exit 1; }
 # ⑵ `epic_of` 정규식은 이 파일에 **한 벌**뿐이어야 한다(이슈 #292 개발 계획 3항).
 #    복제본이 생기면 두 계산기가 서로 다른 leaf 를 세고, 그 차이는 출력에 안 보인다.
