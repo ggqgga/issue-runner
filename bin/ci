@@ -689,8 +689,8 @@ echo "[#411] closeout 6단계 판정 표(ⓐ~ⓔ)·파생 판정 코멘트·출�
 # §10)엔 "이 PR 이 도입한 가드" 흡수 문장이 있어야 한다. 출처 줄 치환 자체는 spinoff-issue.test ⑪ 이 문다.
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   case "$f" in *.en.md) s6='^\*\*Step 6 —' ;; *) s6='^\*\*6단계 —' ;; esac
-  s6_line=$(grep -nE "$s6" "$f" | head -1 | cut -d: -f1)
-  d_line=$(grep -nE '^## ⑤' "$f" | head -1 | cut -d: -f1)
+  s6_line=$(grep -nE "$s6" "$f" | head -1 | cut -d: -f1 || true)   # 무매치는 아래 진단이 잡는다(pipefail 로 조용히 죽지 않게)
+  d_line=$(grep -nE '^## ⑤' "$f" | head -1 | cut -d: -f1 || true)
   [ -n "$s6_line" ] && [ -n "$d_line" ] || { echo "  ✗ $f: 6단계/⑤ 앵커 없음"; exit 1; }
   seg=$(sed -n "${s6_line},${d_line}p" "$f")
   for tok in '| ⓐ ' '| ⓑ ' '| ⓒ ' '| ⓓ ' '| ⓔ ' '파생 판정:' 'Spinoff of PR #'; do
@@ -700,7 +700,7 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
 done
 # 슬롯은 **줄 전체**로 문다 — 머리 주석에도 같은 문자열이 있어 -F 부분 일치는 슬롯을 지워도 초록이다.
 # 자리도 문다: <EPIC_LINE> 바로 다음 줄이어야 "둘째 줄" 계약이 참이다.
-origin_slot=$(grep -A1 -xF '<EPIC_LINE>' skills/closeout/references/spinoff-issue.md | tail -1)
+origin_slot=$(grep -A1 -xF '<EPIC_LINE>' skills/closeout/references/spinoff-issue.md | tail -1 || true)
 [ "$origin_slot" = "<ORIGIN_LINE>" ] \
   || { echo "  ✗ spinoff-issue.md: <EPIC_LINE> 다음 줄이 <ORIGIN_LINE> 이 아니다(없거나 자리가 틀림, 실제=[$origin_slot])"; exit 1; }
 # §10 은 예시(받는 것)보다 규칙(막는 것)이 판정을 바꾼다 — 종전 "새 가드" 평서 금지가 머리 기준과 충돌하던 자리.

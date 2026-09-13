@@ -104,6 +104,7 @@ if [ -n "$epic_line" ] && [ "$(head -1 "$rendered")" != "$epic_line" ]; then
   { printf '%s\n\n' "$epic_line"; cat "$rendered"; } > "$tmp/body2.md"
   mv "$tmp/body2.md" "$rendered"
 fi
+[ -s "$rendered" ] || { echo "spinoff-issue: 본문 렌더가 비었다 — $body_file" >&2; exit 1; }
 if [ "$(sed -n 2p "$rendered")" != "$origin_line" ]; then
   # 출처 줄은 존재가 아니라 **둘째 줄 위치**가 계약이다(첫 줄 = 에픽 줄 또는 빈 줄, 둘째 줄 = 출처).
   # 슬롯이 없는 옛 본문(또는 슬롯 앞에 산문이 남은 본문)은 다른 자리의 출처 줄을 걷어 낸 뒤, 첫 줄이
