@@ -430,6 +430,8 @@ SELF=$(basename "$0")
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/lib/scope.sh
 . "$SCRIPT_DIR/lib/scope.sh"   # scope_lines · scope_file 기본값 — 판정은 한 자리 (#427)
+# shellcheck source=scripts/lib/constants.sh
+. "$SCRIPT_DIR/lib/constants.sh"   # CONFLICT_RESUME_LIMIT — 보류 conflict 의 `n/상한` 분모 (#346 · 값은 한 자리 #427)
 
 usage() {
   {
@@ -611,6 +613,14 @@ case "$hold_note_max" in
   ""|*[!0-9]*) snapshot_abort "HOLD_NOTE_MAX 형식 오류: $hold_note_max (0 이상 정수만)" ;;
 esac
 HOLD_NOTE_MAX=$hold_note_max
+
+# ── 보류 conflict 재개 상한 — CONFLICT_RESUME_LIMIT (#346, 값은 lib/constants.sh) ──
+# 보류 줄의 `#N(conflict, <재개 횟수>/<상한>)` 분모. 재개 스윕(resume-sweep.sh)이 같은 상수로
+# 승격을 판정하므로 여기서 다른 값을 쓰면 대시보드가 스윕과 다른 상한을 말한다. 형식이
+# 틀리면 jq 에 넘기기 전에 환경 실패로 죽인다(다른 상한과 같은 이유).
+case "$CONFLICT_RESUME_LIMIT" in
+  ""|*[!0-9]*) snapshot_abort "CONFLICT_RESUME_LIMIT 형식 오류: $CONFLICT_RESUME_LIMIT (0 이상 정수만)" ;;
+esac
 
 # ── claim 시각 조회 상한 — CLAIM_TIME_MAX (#177) ───────────────────────────
 # 레포당 이 개수까지만 `gh api .../timeline` 을 쓴다. 넘는 후보는 조회하지 않고 `경과 미상`
@@ -1121,13 +1131,22 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
                                  + (if $p then ", PR #\($p.number)" else "" end) + ")")
                         + {stage: $i.stage, holds: $i.holds, note_missing: $nomiss,
                            pr: (if $p then $p.number else null end)})),
-      # 보류 (#244) — `hold:*` 가 있고 `needs-human` 이 없는 건(사다리 재개 대기 · 정책 재심 전).
-      # 표기는 needs-human 과 같은 꼴로 **사유를 병기**한다 — `#4772(ladder)`. 사유가 없으면 이
-      # 버킷에 올 수 없다(판별 조건 자체가 `hold:*` 존재다), 그래서 `사유 없음` 갈래가 없다.
+      # 보류 (#244) — `hold:*` 가 있고 `needs-human` 이 없는 건(사다리 재개 대기 · 정책 재심 전 ·
+      # 충돌 재개 대기 #345). 표기는 needs-human 과 같은 꼴로 **사유를 병기**한다 — `#4772(ladder)`.
+      # 사유가 없으면 이 버킷에 올 수 없다(판별 조건 자체가 `hold:*` 존재다), 그래서 `사유 없음`
+      # 갈래가 없다. `conflict` 는 사유 뒤에 **재개 횟수/상한**을 잇는다(#346) — `#43(conflict, 0/1)`:
+      # 횟수는 셸 패스가 같은 코멘트 조회에서 센 `$conflictcount`(마커 코멘트 수), 상한은
+      # `CONFLICT_RESUME_LIMIT`. 못 센 건(`$countunknown`)은 횟수를 **생략**한다 — `0/1` 은
+      # "0회 재개됐다" 는 주장이라 모르는 채로 찍을 수 없다(질문 없음 과 같은 3상태 규율).
       held:        bucket("held";        . as $i | pr_of($i.number) as $p
+                     | (if ($i.holds | index("conflict")) != null then $conflict_limit else null end) as $lim
+                     | (if $lim == null then null
+                        else ($conflictcount | map(select(.n == $i.number)) | .[0].c) end) as $cnt
                      | (item($i; "#\($i.number)(" + ($i.holds | join(", "))
+                                 + (if $cnt != null then ", \($cnt)/\($lim)" else "" end)
                                  + (if $p then ", PR #\($p.number)" else "" end) + ")")
-                        + {holds: $i.holds, pr: (if $p then $p.number else null end)})),
+                        + {holds: $i.holds, pr: (if $p then $p.number else null end),
+                           resume_count: $cnt, resume_limit: $lim})),
       # 테스트 — deploy-cycle ⑤ 가 배포 뒤 검증 항목을 옮겨 발행한 `테스트` 라벨 이슈(BoDAT #5197).
       # 사람 호출이 아니다(`e2e-test` 스킬이 사용자 호출로 비운다) — needs-human 뒤·배포대기 앞.
       test_wait:   bucket("test_wait";   item(.; "#\(.number)")),
@@ -1187,6 +1206,11 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
       + ($noteunknown | sort_by(-.n)
         | map({kind: "hold_note_unknown", repo_short: $rs, issue: .n,
                text: "질문 유무 미확인 #\(.n)(\($rs)) — \(.why)"}))
+      # 보류 conflict 의 재개 횟수를 못 셌다 (#346) — 같은 이유로 stdout warn. 보류 줄엔 횟수가
+      # 빠진 채 `#N(conflict)` 로 찍히므로, 이 줄이 없으면 "안 센 것" 과 "0회" 를 못 가른다.
+      + ($countunknown | sort_by(-.n)
+        | map({kind: "resume_count_unknown", repo_short: $rs, issue: .n,
+               text: "재개 횟수 미확인 #\(.n)(\($rs)) — \(.why)"}))
       # 단계 라벨 중복
       + ($iss | map(select((.ladder | length) > 1))
         | map({kind: "dup_stage", repo_short: $rs, issue: .number,
@@ -1593,8 +1617,8 @@ for repo in "${repos[@]}"; do
   fi
 
   # build_snapshot <noteless 배열> <noteunknown 배열> <claimtimes 배열> <claimcapped 배열>
-  #                <epicmarked 배열> <epicmarkunknown 배열> <출력 파일>
-  #                — BUILD_JQ 한 패스(순수 · 부작용 없음).
+  #                <epicmarked 배열> <epicmarkunknown 배열> <conflictcount 배열> <countunknown 배열>
+  #                <출력 파일> — BUILD_JQ 한 패스(순수 · 부작용 없음).
   build_snapshot() {
     jq -n \
       --slurpfile issues_in "$tmpdir/issues.json" \
@@ -1615,8 +1639,11 @@ for repo in "${repos[@]}"; do
       --argjson claimcapped "$4" \
       --argjson epicmarked "$5" \
       --argjson epicmarkunknown "$6" \
+      --argjson conflictcount "$7" \
+      --argjson countunknown "$8" \
+      --argjson conflict_limit "$CONFLICT_RESUME_LIMIT" \
       --arg repo "$repo" --arg rs "$short" --arg since "$since" \
-      -L "$SCRIPT_DIR/lib" "$BUILD_JQ" > "$7"
+      -L "$SCRIPT_DIR/lib" "$BUILD_JQ" > "$9"
   }
   build_fail() {
     exit_code=1
@@ -1630,35 +1657,59 @@ for repo in "${repos[@]}"; do
   # 실제로 필요할 때만 두 번째 패스를 돈다(jq 는 로컬 · gh 호출 0).
   # 같은 이유로 사망 의심 꼬리표의 claim 시각 후보(#177)도 이 패스의 warn 목록에서 뽑는다 —
   # "꼬리표가 붙는 건" 의 정의는 BUILD_JQ 만이 안다.
-  if ! build_snapshot '[]' '[]' '[]' '[]' '[]' '[]' "$tmpdir/repo.pre.json"; then
+  if ! build_snapshot '[]' '[]' '[]' '[]' '[]' '[]' '[]' '[]' "$tmpdir/repo.pre.json"; then
     build_fail
     continue
   fi
 
-  # ── 질문(hold-note) 유무 — needs-human 버킷의 hold:policy|conflict 에만 (#157) ──
-  # `hold:ladder` 는 `--note` 가 선택이라 질문이 없는 게 정상이고, 사유 없는 홀드는 이미
-  # 별도 warn 이 잡는다. 그 둘까지 물으면 N+1 만 늘고 화면엔 거짓 지적이 는다.
-  # 결과는 3상태다 — 질문 있음 / 없음(`$noteless`) / **모름**(`$noteunknown`). 모름을
-  # "없음" 으로 접으면 없는 결함을 사람에게 들이밀고, "있음" 으로 접으면 진짜 결함을
-  # 감춘다. 둘 다 거짓이라 모름은 모름으로 실어 warn `질문 유무 미확인` 으로 낸다.
+  # ── 코멘트 조회 한 자리 — 질문(hold-note) 유무 + 보류 conflict 의 재개 횟수 ──
+  # ⑴ 질문 유무(#157): needs-human 버킷의 hold:policy|conflict 에만.
+  #    `hold:ladder` 는 `--note` 가 선택이라 질문이 없는 게 정상이고, 사유 없는 홀드는 이미
+  #    별도 warn 이 잡는다. 그 둘까지 물으면 N+1 만 늘고 화면엔 거짓 지적이 는다.
+  #    결과는 3상태다 — 질문 있음 / 없음(`$noteless`) / **모름**(`$noteunknown`). 모름을
+  #    "없음" 으로 접으면 없는 결함을 사람에게 들이밀고, "있음" 으로 접으면 진짜 결함을
+  #    감춘다. 둘 다 거짓이라 모름은 모름으로 실어 warn `질문 유무 미확인` 으로 낸다.
+  # ⑵ 재개 횟수(#346): **보류 버킷**의 `hold:conflict` 에만 — `<!-- conflict-resume: N -->`
+  #    마커를 품은 코멘트 수(재개 스윕이 세는 것과 같은 규약 — `resume-sweep.sh` 의
+  #    `count_markers`, 인용 제거 `unquoted` 는 `lib/loop.jq` 한 자리)를 `n/CONFLICT_RESUME_LIMIT`
+  #    로 병기한다. 보류 conflict 는 루프가 재개할 건이라 질문이 아니라 "몇 번 남았나" 가
+  #    사람에게 필요한 정보다(#344 — 노트는 질문이 아니라 재개 범위). **새 조회가 아니다** —
+  #    ⑴ 과 같은 `gh issue view --json comments` 한 왕복을 후보 집합만 넓혀 같이 탄다
+  #    (같은 상한 `HOLD_NOTE_MAX`, 같은 3상태). 못 센 건(조회 실패·100건 상한·상한 초과)은
+  #    `0/n` 으로 접지 않고 횟수를 생략한 채 warn `재개 횟수 미확인` 으로 낸다(`$countunknown`).
+  #    ladder 는 여기서 안 센다 — 이 이슈(#346)의 요청 범위가 conflict 이고, ladder 까지
+  #    물으면 보류 칸 전체가 N+1 이 된다.
   noteless="[]"
   noteunknown="[]"
+  conflictcount="[]"
+  countunknown="[]"
   nl_sep=""; nl_body=""
   nu_sep=""; nu_body=""
-  # unknown <번호> <사유> — 표시는 생략하고 stdout warn 으로 사실을 남긴다.
+  rc_sep=""; rc_body=""
+  ru_sep=""; ru_body=""
+  # unknown <번호> <사유> — 표시는 생략하고 stdout warn 으로 사실을 남긴다. 어느 목록에
+  # 넣을지는 후보의 종류(`$ckind` — note|count)가 정한다.
   mark_unknown() {
-    nu_body="${nu_body}${nu_sep}{\"n\":$1,\"why\":\"$2\"}"; nu_sep=","
+    if [ "${ckind:-note}" = "count" ]; then
+      ru_body="${ru_body}${ru_sep}{\"n\":$1,\"why\":\"$2\"}"; ru_sep=","
+    else
+      nu_body="${nu_body}${nu_sep}{\"n\":$1,\"why\":\"$2\"}"; nu_sep=","
+    fi
   }
-  # 후보 줄은 `<번호> <사유[|사유]>` — 사유를 함께 실어야 마커를 사유별로 가릴 수 있다
+  # 후보 줄은 `<번호> <사유[|사유]> <종류>` — 사유를 함께 실어야 마커를 사유별로 가릴 수 있다
   # (#160). 사유 값은 jq **자기 리터럴 배열**에서만 나온다 — 라벨 문자열을 그대로 흘리면
   # 아래에서 정규식에 끼우는 순간 라벨이 패턴이 된다. `hold:policy`·`hold:conflict` 둘 다
-  # 붙은 홀드는 어느 쪽 질문이든 질문이므로 `policy|conflict` 로 잇는다.
-  cand_err=$(jq -r '.buckets.human_wait[]
+  # 붙은 홀드는 어느 쪽 질문이든 질문이므로 `policy|conflict` 로 잇는다. 종류는 `note`
+  # (질문 유무) | `count`(재개 횟수) — 한 이슈는 한 버킷이라 둘에 다 오는 번호는 없다.
+  cand_err=$(jq -r '(.buckets.human_wait[]
                     | . as $i
                     | (["policy", "conflict"]
                        | map(. as $r | select($i.holds | index($r) != null))) as $rs
                     | select(($rs | length) > 0)
-                    | "\($i.number) \($rs | join("|"))"' "$tmpdir/repo.pre.json" 2>&1 > "$tmpdir/cands")
+                    | "\($i.number) \($rs | join("|")) note"),
+                    (.buckets.held[]
+                    | select(.holds | index("conflict") != null)
+                    | "\(.number) conflict count")' "$tmpdir/repo.pre.json" 2>&1 > "$tmpdir/cands")
   # shellcheck disable=SC2181  # 위 대입의 종료코드를 봐야 한다(cand_err 은 stderr 만 담는다)
   if [ $? -ne 0 ]; then
     echo "$SELF: $short needs-human 질문 대상 추출 실패(jq) — 질문 없음 표시를 건너뛴다: $(printf '%s' "$cand_err" | tr '\n' ' ' | cut -c1-200)" >&2
@@ -1667,11 +1718,16 @@ for repo in "${repos[@]}"; do
   if [ -s "$tmpdir/cands" ]; then
     seen=0
     # fd 3 으로 읽는다 — 루프 안에서 gh 를 부르므로 stdin 을 목록에 묶으면 안 된다.
-    while IFS=' ' read -r cand creasons <&3; do
+    while IFS=' ' read -r cand creasons ckind <&3; do
       [ -n "$cand" ] || continue
       # 정규식에 값을 끼우기 전 화이트리스트로 못 박는다 — 사유는 이 셋뿐이고(위 jq 가
       # 리터럴로만 만든다) 자유 문자열이 패턴으로 새는 경로를 코드로 막는다. 어긋나면
       # 조회를 걸지 않고 "모른다" 로 남긴다(거짓 `질문 없음` 을 만들지 않는다).
+      case "$ckind" in
+        note|count) ;;
+        *) echo "$SELF: $short #$cand 코멘트 조회 종류 파싱 실패: [$ckind]" >&2
+           ckind=note; mark_unknown "$cand" "종류 파싱 실패"; continue ;;
+      esac
       case "$creasons" in
         policy|conflict|"policy|conflict") ;;
         *) echo "$SELF: $short #$cand 질문 사유 파싱 실패: [$creasons]" >&2
@@ -1685,8 +1741,31 @@ for repo in "${repos[@]}"; do
         continue
       fi
       if ! run_gh gh issue view "$cand" --repo "$repo" --json comments; then
-        echo "$SELF: $short #$cand 질문(hold-note) 코멘트 조회 실패: $GH_ERR" >&2
+        if [ "$ckind" = "count" ]; then
+          echo "$SELF: $short #$cand 재개 횟수(conflict-resume) 코멘트 조회 실패: $GH_ERR" >&2
+        else
+          echo "$SELF: $short #$cand 질문(hold-note) 코멘트 조회 실패: $GH_ERR" >&2
+        fi
         mark_unknown "$cand" "조회 실패"
+        continue
+      fi
+      # ⑵ 재개 횟수 — 같은 응답에서 마커 코멘트를 센다. 100건 상한에 닿았으면 뒤가 잘렸을 수
+      # 있어 "적게 센 값" 이 아니라 모름이다(적게 세면 상한이 안 걸린 것처럼 보인다).
+      # 인용 제거(`unquoted`)는 재개 스윕과 같은 정의 — 코드 인용 속 마커를 세면 회차가 부푼다.
+      if [ "$ckind" = "count" ]; then
+        cstate=$(printf '%s' "$GH_OUT" | jq -r -L "$SCRIPT_DIR/lib" '
+          include "loop";
+          [.comments[]? | .body // ""] as $b
+          | if ($b | length) >= 100 then "capped"
+            else ([$b[] | select(unquoted | test("<!--\\s*conflict-resume:\\s*[0-9]+\\s*-->"))] | length | tostring)
+            end' 2>/dev/null) || cstate=""
+        case "$cstate" in
+          capped) echo "$SELF: $short #$cand 코멘트가 조회 상한(100)에 닿아 재개 횟수를 못 셌다" >&2
+                  mark_unknown "$cand" "코멘트 100건 상한" ;;
+          ""|*[!0-9]*) echo "$SELF: $short #$cand 코멘트 응답 파싱 실패(재개 횟수)" >&2
+                  mark_unknown "$cand" "응답 파싱 실패" ;;
+          *)      rc_body="${rc_body}${rc_sep}{\"n\":$cand,\"c\":$cstate}"; rc_sep="," ;;
+        esac
         continue
       fi
       # 세 갈래를 한 번에 가른다. `capped` 가 필요한 이유: `--json comments` 는 페이지네이션
@@ -1715,6 +1794,8 @@ for repo in "${repos[@]}"; do
     done 3< "$tmpdir/cands"
     [ -z "$nl_body" ] || noteless="[$nl_body]"
     [ -z "$nu_body" ] || noteunknown="[$nu_body]"
+    [ -z "$rc_body" ] || conflictcount="[$rc_body]"
+    [ -z "$ru_body" ] || countunknown="[$ru_body]"
   fi
 
   # ── 사망 의심 경과시간의 기준 시각 — 가장 최근 `agent:claimed` 부착 (#177) ──
@@ -1842,16 +1923,19 @@ for repo in "${repos[@]}"; do
   fi
 
   if [ "$noteless" = "[]" ] && [ "$noteunknown" = "[]" ] && [ "$claimtimes" = "[]" ] && [ "$claimcapped" = "[]" ] \
-     && [ "$epicmarked" = "[]" ] && [ "$epicmarkunknown" = "[]" ]; then
-    # 질문 없는 홀드도 미확인도 claim 시각도 상한 초과도 스윕 마커(있음·모름)도 없으면 예비
-    # 패스의 결과가 곧 최종 결과다(재집계 불필요 — 여섯 다 빈 값으로 돈 패스라 결과가 같다).
+     && [ "$epicmarked" = "[]" ] && [ "$epicmarkunknown" = "[]" ] \
+     && [ "$conflictcount" = "[]" ] && [ "$countunknown" = "[]" ]; then
+    # 질문 없는 홀드도 미확인도 claim 시각도 상한 초과도 스윕 마커(있음·모름)도 conflict 재개
+    # 횟수(셈·모름)도 없으면 예비 패스의 결과가 곧 최종 결과다(재집계 불필요 — 여덟 다 빈
+    # 값으로 돈 패스라 결과가 같다).
     # mv 실패를 흘리면 바로 아래 jq 가 **직전 레포의** 스냅샷을 읽어 붙인다 — 부분 실패가
     # "성공(남의 데이터)" 으로 접히는 경로라 여기서 끊는다.
     if ! mv "$tmpdir/repo.pre.json" "$tmpdir/repo.json"; then
       build_fail
       continue
     fi
-  elif ! build_snapshot "$noteless" "$noteunknown" "$claimtimes" "$claimcapped" "$epicmarked" "$epicmarkunknown" "$tmpdir/repo.json"; then
+  elif ! build_snapshot "$noteless" "$noteunknown" "$claimtimes" "$claimcapped" "$epicmarked" "$epicmarkunknown" \
+                        "$conflictcount" "$countunknown" "$tmpdir/repo.json"; then
     build_fail
     continue
   fi
