@@ -819,7 +819,7 @@ attempt 1 이 정확히 그렇게 샜다.
 (#379). ⓓ 가 코멘트가 아니라 `transition.sh closeout-blocked --reason policy` 인 이유: `loop-status.sh` 는
 라벨로만 세므로 코멘트만 남은 질문은 아무 틱에도 안 보인다. 대상이 **열린** 이슈여야 하는 이유도 같다 —
 재개 스윕은 `gh issue list --state open` 으로만 `hold:policy` 를 모으므로(codex 실측, PR #531) 닫힌 배포 대기
-이슈에 건 정지는 재심에도 사람대기에도 닿지 않는다.
+이슈에 건 정지는 재심에도 needs-human 에도 닿지 않는다.
 
 ### 출처 줄 `Spinoff of PR #<pr> (issue #<부모>)` 이 전용 줄인 이유 (#411)
 
