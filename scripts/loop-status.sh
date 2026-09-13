@@ -373,6 +373,9 @@
 #   상한에 닿으면 warn `목록 상한 <N> 도달 — 창 절단 가능(에픽 닫힌 leaf)`. 다른 상한과 달리
 #   `0` 을 금지하는 이유: `0` 은 "안 본다" 가 아니라 조회가 0행을 돌려주는 값이라, 이 이슈가
 #   고치려던 `닫힌 leaf 0건` 을 환경변수로 되살린다. 형식 오류는 같은 환경 실패.
+#   `EPIC_MARK_MAX` — 레포당 스윕 마커 코멘트 조회 상한(기본 20, 0 이상 정수, #441). 대상은
+#   `에픽 leaf 전부 종료` warn 후보뿐이고, 넘는 후보는 조회하지 않고 `스윕 대상 여부 미확인(조회
+#   상한)` 으로 남는다. 형식 오류는 같은 환경 실패.
 #
 # ★환경 실패 처리★ 레포와 무관한 실패(창 시각 계산 불가·jq 부재·집계/렌더/직렬화 jq 실패)는
 #   **stdout 에도** `파이프라인 — 스냅샷 실패: <사유>` 한 줄을 남기고 exit 1 한다. 세 루프는
@@ -1584,7 +1587,7 @@ for repo in "${repos[@]}"; do
 
   # build_snapshot <noteless 배열> <noteunknown 배열> <claimtimes 배열> <claimcapped 배열>
   #                <epicmarked 배열> <epicmarkunknown 배열> <출력 파일>
-  #                 <출력 파일> — BUILD_JQ 한 패스(순수 · 부작용 없음).
+  #                — BUILD_JQ 한 패스(순수 · 부작용 없음).
   build_snapshot() {
     jq -n \
       --slurpfile issues_in "$tmpdir/issues.json" \

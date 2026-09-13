@@ -1661,8 +1661,10 @@ has_sub "③ warn 에픽 내 P 혼재(닫힌 leaf 의 P0 는 안 낀다)" "$tmp/
   "    - 에픽 내 P 혼재 #300(epics) — P0 1 · P1 2"
 no_sub "④ leaf 없는 에픽은 warn 없음" "$tmp/out" "전부 종료 #400"
 no_sub "① 정상 진행 에픽은 warn 없음" "$tmp/out" "전부 종료 #100"
-ck "epics: 추가 gh 호출 0(닫힌 이슈 목록에서 이미 받은 본문으로만 판정)" \
+ck "epics: leaf 판정에 개별 이슈 조회 0(닫힌 이슈 목록에서 이미 받은 본문으로만 판정)" \
   "$(grep -c '^comments \|^timeline ' "$STUB_CALL_LOG")" 0
+# 예외 ④(#441) — 전부 종료 warn 후보(#200)에만 스윕 마커 조회 1건이 나간다(leaf 판정과 무관).
+ck "epics: 스윕 마커 조회는 전부 종료 후보 #200 의 1건뿐" "$(grep -c '^epic-marker ' "$STUB_CALL_LOG")" 1
 
 run --repo ggqgga/Epics --since 24h --json
 ck "⑦ --json: epics[] 형태 — #100(진행 중)" \
