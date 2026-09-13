@@ -1011,6 +1011,11 @@ for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   grep -E '^\| `done_verdict` ' "$f" | grep -qF '①-c' \
     || { echo "  ✗ $f: ①-b done_verdict 행이 ①-c 를 가리키지 않는다"; exit 1; }
 done
+# 산문이 찍고 스크립트가 읽는 문자열 — `마감 검증: ✅ 기각 승계`(기각 → ③ 2단계부터). 한/영 SKILL 과
+# hold-resolve.sh 셋이 바이트 동일해야 `resume: step2` 가 붙는다(드리프트하면 ③-1 재실행 → 같은 P1 → 보류↔해제 루프).
+for f in scripts/hold-resolve.sh skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF '마감 검증: ✅ 기각 승계' "$f" || { echo "  ✗ $f: '마감 검증: ✅ 기각 승계' 리터럴 없음 — 세 파일이 같은 문자열을 들어야 한다 (#334)"; exit 1; }
+done
 
 echo "[test] closeout ①-b 스윕 판정 픽스처 8종 — 반송 게이트가 갈래 앞·held 해제 경로 (#218)"
 bash scripts/tests/closeout-sweep-gate.test.sh

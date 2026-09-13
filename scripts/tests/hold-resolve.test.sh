@@ -7,7 +7,9 @@
 #
 # 코멘트 배열 표기: 토큰을 콤마로 이은 문자열(인덱스 0 부터). `-` 는 빈 배열.
 #   H 보류 경계 · R 반송 마커 · F 완결 판정 · G `마감 검증: ✅ 기각 승계` · P 진행 중(🔄, 완결 아님) ·
+#   V verify-runner 반송(`재검증 실패:` — R 과 같은 축, is_bounce) · L 센티널 없는 레거시 머신 접두(= 결정문 아님) ·
 #   D 결정문(policy-review: resumed) · U 마커 없는 사람 코멘트(= D) · K policy-review: kept(= 결정 아님) · X 그 밖
+# 격자 12·14·27·29행(옛 번호)은 아래 형상 불변식 ⑴·⑶ 루프가 같은 입력으로 포괄해 표에서 뺐다.
 # 라벨: 콤마 목록. head: `late` = max(h,r) 코멘트보다 늦음(착수) · `early` = 이름 · `none` = 조회 실패.
 set -uo pipefail
 
@@ -28,6 +30,8 @@ mkjson() {
     case "$t" in
       H) body='마감 검증: ⚠ 보류 — 셋째 갈래가 귀속 미상을 못 잡는다\n<!-- hold-note: policy -->\n<!-- bodat:worker -->' ;;
       R) body='재디스패치: #1 — 사람 재심이 시정 방향(재심: 좁힌다) <!-- bodat:worker -->' ;;
+      V) body='재검증 실패: #1 — codex BLOCKER (attempt 2)\n<!-- bodat:worker -->' ;;
+      L) body='검증자 리뷰: CLEAN' ;;
       F) body='머지 판정: ✅ 머지 가능 — CI pass\n<!-- bodat:worker -->' ;;
       G) body='마감 검증: ✅ 기각 승계 — 사람이 판정을 기각(원안 그대로), ③-1 재실행 안 함\n<!-- bodat:worker -->' ;;
       P) body='머지 판정: 🔄 진행 중\n<!-- bodat:worker -->' ;;
@@ -70,9 +74,7 @@ new_commit_bounce_noone|H,R|H|1|-|-|late|active|8
 new_commit_lane|H|H|1|-|flow:verify|late|active|9
 new_commit_noone|H|H|1|-|agent-ready|late|ambiguous|10
 head_lookup_fail|H|H|1|-|flow:verify|none|blocked|11
-idem_new_worker|H,R|H|1|-|agent:claimed|early|active|12
 idem_transition_failed|H,R|H|1|-|hold:policy|early|recall|13
-idem_verify_lane|H,R|H|1|-|flow:verify|early|active|14
 marker_before_hold|R,H|H,D|1|-|agent-ready|early|direction|15
 both_decided|H|H,D|1|-|agent-ready|early|direction|17
 decided_labels_stay|H|H,D|1|-|agent-ready,hold:policy|early|keep|18
@@ -80,26 +82,21 @@ released_no_decision|H|H|1|-|agent-ready|early|ambiguous|19
 decision_on_pr_only|H,U|H|1|-|agent-ready|early|direction|20
 worker_hold_released|H|-|1|-|agent-ready|early|ambiguous|23
 idem_target_state|H,R|H|1|-|agent-ready|early|active|26
-idem_agent_ready_removed|H,R|H|1|-|-|early|recall|27
 issue_only|X,X,X,X,X,F|X,X,H,D|1|-|agent-ready|early|restore|28
-issue_only_H|F|H,D|1|-|agent-ready,hold:policy|early|keep|29
 issue_only_r_f|R,F|H,H|1|-|agent-ready|early|restore|30
 restored_then_d|H|H,H,D|1|-|agent-ready|early|direction|32
 restored_d_before|H|D,H|1|-|agent-ready|early|ambiguous|33
 kept_is_not_decision|H|H,K|1|-|agent-ready|early|ambiguous|-
 inherit_marker_step2|H,G|H|1|-|agent-ready|early|pick|-
 no_issue_idem|H,R|-|-|-|-|early|ambiguous|24
+verify_bounce_then_commit|H,V|H|1|-|agent:claimed|late|active|7v
+legacy_no_sentinel_is_machine|H,L|H|1|-|agent-ready|early|ambiguous|-
 '
-printf '%s\n' "$GRID" | while IFS='|' read -r id pr is num prl isl head want row; do
+while IFS='|' read -r id pr is num prl isl head want row; do
   [ -z "$id" ] && continue
   run "$pr" "$is" "$num" "$prl" "$isl" "$head"
-  if [ "$(first)" = "$want" ]; then echo "  ok   $id (행 $row) → $want"; else echo "  FAIL $id (행 $row) — 기대=$want 실제=[$(first)]"; fi
-done > "${TMPDIR:-/tmp}/hold-resolve-grid.$$"
-n=$(grep -c '^  ok ' "${TMPDIR:-/tmp}/hold-resolve-grid.$$" || true); pass=$((pass + n))
-grep '^  FAIL' "${TMPDIR:-/tmp}/hold-resolve-grid.$$" | sed 's/^  FAIL/  ✗/' || true
-nf=$(grep -c '^  FAIL' "${TMPDIR:-/tmp}/hold-resolve-grid.$$" || true); fail=$((fail + nf))
-[ "$n" -ge 30 ] || { fail=$((fail + 1)); echo "  ✗ 격자가 통째로 안 돌았다(ok ${n}행 < 30)"; }
-rm -f "${TMPDIR:-/tmp}/hold-resolve-grid.$$"
+  ck "$id (행 $row)" "$want"
+done <<<"$GRID"
 
 echo "── 출력 계약 ────────────────────────────────────────────────────────────"
 run 'H' 'H,D' 1 '-' 'agent-ready' early
@@ -110,6 +107,9 @@ run 'H,G' 'H' 1 '-' 'agent-ready' early
 has "기각 승계 ✅ 는 resume: step2 를 덧붙인다" 'resume: step2'
 run 'H' 'H' 1 '-' 'agent-ready' early
 has "ambiguous 사유" 'reason: no_decision'
+has "ambiguous 는 closeout-blocked 용 note 줄을 낸다" 'note: 보류를 풀었는데 결정문이 없다'
+run 'F' 'H,D' 1 '-' 'agent-ready' early
+has "restore 도 note 줄을 낸다" 'note: 이슈측 단독 경계(PR 쪽 hold-note 없음)'
 run 'H' 'H' 1 '-' 'flow:verify' none
 has "blocked 사유" 'reason: head_lookup'
 GOT=$(HR_PR_COMMENTS_JSON=none HR_ISSUE_COMMENTS_JSON='[]' HR_PR_LABELS='-' HR_ISSUE_LABELS='-' HR_HEAD_AT='' bash "$SUT" owner/repo 42 1 2>&1)
