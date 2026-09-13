@@ -45,6 +45,12 @@
 # (무한 재시도 금지).
 : "${LADDER_RESUME_LIMIT:=2}"
 
+# `hold:conflict` 자동 재개 상한(#345). 기본 **1** — 실측에서 사람이 매번 치던 답이 "한 회차
+# 더" 였고 두 번째 충돌은 사람 인수(ⓑ, `full-cycle`)였다(BoDAT #5103). 창은 RESUME_AFTER_MIN
+# 공용 — 별도 env 를 두지 않는 이유는 그 창이 곧 사람이 `full-cycle` 로 인수할 시간이기
+# 때문이다. 초과하면 `ladder` 와 같게 `hold:policy` 승격.
+: "${CONFLICT_RESUME_LIMIT:=1}"
+
 # ④ 정지 미러 정리가 **양성 증거를 못 얻은 채** 같은 건을 다시 시도하는 상한(#397).
 # 회차는 상태 파일이 아니라 짝 이슈 코멘트의 `<!-- mirror-retry: <사유> pr=<n> -->`
 # 마커 개수가 SSOT 다(`ladder-resume` 과 같은 규약). 닿으면 `mirror_retry_exhausted`.
