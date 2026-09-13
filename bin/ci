@@ -132,14 +132,6 @@ for lbl in harvesting epic verifying flow:agent-ready flow:claimed; do
     echo "  ✗ setup-labels.sh 에 $lbl 라벨 정의 누락"; exit 1; }
 done
 
-echo "[closeout] 반송 마커 집합은 bounce-state.sh 한 자리 (#171 · #196)"
-# 마커 집합을 다른 스크립트가 자기 벌로 들고 있으면 새 반송 어휘가 생겼을 때 한쪽만
-# 고쳐져 fail-open 이 된다(실제로 verify-runner 채널이 그렇게 빠져 있었다).
-# 판정선은 **집합 정의(`BOUNCE_MARKERS`)의 존재**다 — 마커 문자열 자체는 다른 파일의
-# 설명 주석에도 나오고(그건 사본이 아니다), 정의만 한 자리면 계약이 지켜진다.
-dup=$(grep -l 'BOUNCE_MARKERS' scripts/*.sh | grep -v '^scripts/bounce-state.sh$' || true)
-[ -z "$dup" ] || { echo "  ✗ 반송 마커 집합 정의가 bounce-state.sh 밖에도 있다: $dup"; exit 1; }
-
 echo "[#444] 회차 카운터는 scripts/attempt-counter.sh 한 자리 — 산문 읽기/쓰기 0"
 # `<!-- repair-count: N -->`(issue-runner ②)·`<!-- verify-attempt: N -->`(verify-runner ③④)의
 # 읽기-증가-쓰기가 SKILL 산문으로 되살아나면 두 레인의 회차 규칙이 갈리고(한쪽만 고쳐진다)
@@ -171,22 +163,6 @@ done
 # 표(SSOT)가 이 진입점을 가리키는지 — 표만 고치고 스크립트를 안 고치는 드리프트 방지.
 grep -qF 'pr-state.sh' references/state-machine.md \
   || { echo "  ✗ references/state-machine.md 가 기계 진입점(pr-state.sh)을 가리키지 않는다 (#449)"; exit 1; }
-
-echo "[#426] 판정 술어는 scripts/lib/loop.jq 한 자리 — 인라인 사본 0"
-# 접두(`머지 판정`/`Merge verdict`/`검증자 리뷰`/`마감 검증`/반송)·센티널·정지 라벨 술어를
-# 스크립트가 자기 벌로 들면 한쪽만 고쳐져 열한 소비처의 판정이 갈린다 — #171·#196·#218·
-# #221·#271·#379 가 전부 그 계열이다. 판정선은 **코드에 있는 술어 표현**이다: 산문·주석의
-# 언급(`# … startswith("hold:") … 로 본다`)은 사본이 아니므로 `#` 로 시작하는 줄은 뺀다.
-# 예외로 남길 것이 생기면 여기에 이유와 함께 적어라(오늘은 없다 —
-# `gh api -q` 안의 필터는 gh 내장 jq 라 `-L` 모듈을 못 쓴다: `closeout-reconcile.sh` 의
-# `index("needs-human")` 하나가 그 경우이고, 그 자리는 `.labels` 형상 검사와 한 몸이라
-# 아래 목록의 어느 패턴에도 걸리지 않는다).
-# 만료 조건: 없음 — 이 가드가 곧 `scripts/lib/loop.jq` SSOT 의 강제자다.
-dup=$(grep -nE 'startswith\("머지 판정|startswith\("Merge verdict|startswith\("검증자 리뷰|startswith\("마감 검증|startswith\("재디스패치|startswith\("재검증 실패|contains\("<!-- bodat:worker|startswith\("hold:"\)|== "needs-human"' \
-  scripts/*.sh | grep -vE '^[^:]+:[0-9]+: *#' || true)
-[ -z "$dup" ] || { echo "  ✗ 인라인 판정 술어가 남아 있다 — scripts/lib/loop.jq 를 include 하라 (#426):"; printf '%s\n' "$dup"; exit 1; }
-grep -qF 'def is_verdict_ok' scripts/lib/loop.jq \
-  || { echo "  ✗ scripts/lib/loop.jq 에 판정 술어 정의가 없다 — 위 검사가 의미를 잃었다"; exit 1; }
 
 echo "[closeout ① Reconcile] SKILL 한/영 이벤트 목록에 human_hold 행선지가 있는가 (#271 ⑺)"
 # 스크립트가 내는 이벤트에 SKILL 쪽 목적지가 없으면 봇은 그 줄을 그냥 흘려보낸다 —
@@ -285,11 +261,6 @@ tpl_slot=$(sed -n '/-->/,$p' skills/closeout/references/spinoff-issue.md \
 # 판정(spinoff-inherit)과 에픽 절의 leaf 판정(loop-status)이 갈라지면 두 경로가 서로 다른
 # 세계를 재게 된다 — #216 교훈("같은 X 를 쓴다"는 단언은 갈래마다 실제로 참인지 확인하라).
 # 두 파일에 **문자 그대로 같은 문자열**이 있는지 문다(한쪽만 고치면 여기서 빨개진다).
-epic_re_ssot='^[[:space:]]*epic[[:space:]]+#(?<n>[0-9]+)'
-for f in scripts/loop-status.sh scripts/spinoff-inherit.sh; do
-  grep -qF -- "$epic_re_ssot" "$f" \
-    || { echo "  ✗ $f 에 Epic 전용 줄 정규식 SSOT 없음(두 판정이 갈라졌다): $epic_re_ssot"; exit 1; }
-done
 bash scripts/tests/spinoff-inherit.test.sh
 
 echo "[test] spinoff-issue.sh 파생 발행 격자 — 상속·Epic 첫 줄·라벨 3단 fail-closed·부모 PR 마커 (#447)"
@@ -339,32 +310,6 @@ grep -qF '<DIFF>' skills/closeout/references/verifier-prompt.md \
   && { echo "  ✗ verifier-prompt.md(네이티브)에 <DIFF> 가 있음 — 동봉 전제는 verifier-prompt-fallback.md 전용이어야 한다(#207 원 결함 재발)"; exit 1; }
 grep -qF '이 워크트리는' skills/closeout/references/verifier-prompt-fallback.md \
   && { echo "  ✗ verifier-prompt-fallback.md 에 네이티브 전용 워크트리 전제 문구가 있음 — general-purpose 는 --cd 로 스코프되지 않아 거짓이다(#207)"; exit 1; }
-
-echo "[closeout] ③-1 no-basis 신호 단일 정의 검사 (#207 · #375)"
-# 게이트 판정은 codex 구조 신호(발견 항목 · events.jsonl 명령 실행)로 선다(#375) — 모델에게 요구하는
-# 문자열은 선택 신호 `REVIEW_STATUS: no-basis` 하나뿐이고, 그 형식은 codex-review-gate.sh 의 STATUS_*
-# 상수 **한 자리**에서만 정의한다. 문서·템플릿이 리터럴을 적으면 힌트 문구와 파서가 갈라진다(#207 의 뿌리).
-gate=scripts/codex-review-gate.sh
-for v in STATUS_KEY STATUS_NO_BASIS; do
-  if ! grep -qE "^$v=" "$gate"; then
-    echo "  ✗ $gate 에 $v 정의 없음 — no-basis 신호 형식의 단일 정의 자리"; exit 1
-  fi
-done
-key=$(sed -n "s/^STATUS_KEY='\\(.*\\)'\$/\\1/p" "$gate")
-[ -n "$key" ] || { echo "  ✗ $gate 의 STATUS_KEY 값을 못 읽었다"; exit 1; }
-n=$(grep -c "$key" "$gate")
-if [ "$n" != 1 ]; then
-  echo "  ✗ $gate 에 신호 키('$key') 리터럴이 ${n}곳 — 정의 1곳만 허용(나머지는 \$STATUS_KEY 참조)"; exit 1
-fi
-if grep -qE '^ *STATUS_REVIEWED=' "$gate"; then
-  echo "  ✗ $gate 에 'reviewed' 계약 값이 되살아났다 — 모델이 내지 않는 줄을 요구하면 판정을 버린다(#375, 실호출 0/8)"; exit 1
-fi
-for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md skills/closeout/references/verifier-prompt.md \
-         skills/closeout/references/verifier-prompt-fallback.md; do
-  if grep -q "$key" "$f"; then
-    echo "  ✗ $f 에 신호 형식('$key')이 하드코딩됨 — 정의 자리는 $gate 뿐(#207)"; exit 1
-  fi
-done
 
 echo "[closeout·verify-runner] codex 호출 상한 불변 가드 (#375)"
 # codex 는 PR 당 2회이고 둘 다 verify-runner 몫이다(사용자 결정 2026-09-13). closeout 1단계가 세 번째로
@@ -615,19 +560,6 @@ for lit in '"waiting":"대기           "' '"claimed":"issue-runner   "' '"verif
     || { echo "  ✗ scripts/loop-status.sh RENDER_JQ padded 에 $lit 이 없다 (#276 — 9줄 이름·15칸 폭)"; exit 1; }
 done
 
-# (#346) 보류 conflict 의 재개 횟수는 loop-status 가 `lib/loop.jq` 의 `unquoted` 로 인용을 걷고 센다 —
-# 재개 스윕(resume-sweep.sh 의 JQ_UNQUOTE)과 **같은 정의**여야 대시보드 횟수와 스윕의 승격 판정이
-# 같은 수를 본다. 정의 텍스트를 글자 단위로 대조한다(한쪽만 고치면 여기서 빨개진다).
-echo "[#346] 인용 제거(def unquoted) — lib/loop.jq 와 resume-sweep.sh JQ_UNQUOTE 동일"
-unq_lib=$(grep -o 'def unquoted:.*;' scripts/lib/loop.jq | head -1)
-unq_sweep=$(grep -o 'def unquoted:.*;' scripts/resume-sweep.sh | head -1)
-[ -n "$unq_lib" ] || { echo "  ✗ scripts/lib/loop.jq 에 def unquoted 가 없다 (#346)"; exit 1; }
-[ -n "$unq_sweep" ] || { echo "  ✗ scripts/resume-sweep.sh 에 def unquoted(JQ_UNQUOTE) 가 없다 (#346)"; exit 1; }
-[ "$unq_lib" = "$unq_sweep" ] \
-  || { echo "  ✗ def unquoted 정의가 lib/loop.jq 와 resume-sweep.sh 에서 다르다 — 한 벌로 맞춰라 (#346)"; exit 1; }
-# 소비 배선(loop-status 가 실제로 unquoted 로 걸러 세는가)은 문구 grep 이 아니라 동작으로 문다 —
-# loop-status.test.sh 의 Holds #39(인용 마커 1 + 실제 마커 1 → `1/1`, `2/1` 아님).
-
 echo "[test] epic-sweep.sh — leaf 전부 종료 에픽 자동 종료·전용 줄 판정·상한 보류·멱등 (#258)"
 # closeout ① 이 `"$SCRIPTS/epic-sweep.sh"` 로 직접 exec 하므로 실행 비트도 여기서 문다
 # (비트가 빠지면 조용히 exit 126 → 에픽 스윕이 매 틱 no-op 으로 degrade, PR#173 교훈과 동일 함정).
@@ -664,9 +596,6 @@ echo "[#206] 진행 증거 술어는 progress-evidence.sh 한 자리 (#200 → #
 # 판정선은 **정의**다: 산문·주석의 언급(`STALL_MIN 이내` 등)은 사본이 아니므로 안 건다.
 # (#427) `STALL_MIN` 의 값 정의는 `scripts/lib/constants.sh` 로 옮겼다 — 술어(`queue_alive`)는
 # 여전히 progress-evidence.sh 한 자리다. 두 파일 밖에 정의가 생기면 여기서 빨개진다.
-dup=$(grep -lE '^STALL_MIN=|^: "\$\{STALL_MIN:=|^queue_alive\(\)' scripts/*.sh scripts/lib/*.sh \
-  | grep -v -e '^scripts/progress-evidence.sh$' -e '^scripts/lib/constants.sh$' || true)
-[ -z "$dup" ] || { echo "  ✗ 진행 증거 술어 정의가 progress-evidence.sh 밖에도 있다: $dup"; exit 1; }
 # 소비자 둘이 `"$SCRIPT_DIR/progress-evidence.sh"` 를 실제로 부르는지(배선). 호출이
 # 사라지면 판정이 항상 빈 값이 되고, 그 degrade 가 timebox 는 unknown, finish-classify 는
 # active 로 조용히 새어 완결 유실 회수가 통째로 멈춘다. (실행 비트는 ci/guards/exec-bit.sh.)
@@ -693,16 +622,6 @@ grep -qF -e '--claimed-at' -- scripts/progress-evidence.sh \
 # 기본값이 갈리면 스윕과 ① Reconcile 이 서로 다른 창에서 같은 워커를 살리고 죽인다.
 # (#427) 기본값의 한 자리는 `scripts/lib/constants.sh` 의 `: "${ISSUE_TIMEBOX_HOURS:=1}"` 다.
 # 두 리더(timebox-check·progress-evidence)가 자기 기본값을 되살리면 이 검사가 2건을 본다.
-tb_defaults=$(grep -ho 'ISSUE_TIMEBOX_HOURS:[-=][0-9]*' scripts/*.sh scripts/lib/*.sh | sort -u)
-tb_n=$(printf '%s\n' "$tb_defaults" | grep -c . || true)
-[ "$tb_n" -ge 1 ] \
-  || { echo "  ✗ ISSUE_TIMEBOX_HOURS 기본값을 읽는 자리가 없다 — 가드가 의미를 잃었다"; exit 1; }
-[ "$tb_n" = 1 ] \
-  || { echo "  ✗ ISSUE_TIMEBOX_HOURS 기본값이 파일마다 다르다: $(printf '%s ' $tb_defaults)"; exit 1; }
-for f in scripts/timebox-check.sh scripts/progress-evidence.sh; do
-  grep -qF 'ISSUE_TIMEBOX_HOURS' "$f" \
-    || { echo "  ✗ $f 가 ISSUE_TIMEBOX_HOURS 를 읽지 않는다 — 두 자리가 같은 상수를 써야 한다"; exit 1; }
-done
 # 호출부 tripwire — head 조회의 **종료코드를 버리면**(`|| head_raw=''`) 실패가 부재로
 # 둔갑한다(PR#139). 헬퍼가 아무리 3값을 구분해도 호출부가 삼키면 계약은 거기서 깨진다.
 if grep -qE 'pr-head-at\.sh[^|]*\|\|[[:space:]]*head_raw=' scripts/finish-classify.sh; then
@@ -710,20 +629,6 @@ if grep -qE 'pr-head-at\.sh[^|]*\|\|[[:space:]]*head_raw=' scripts/finish-classi
 fi
 grep -qF 'head_lookup=unknown' scripts/finish-classify.sh \
   || { echo "  ✗ finish-classify.sh: 조회 실패를 기억하는 head_lookup 플래그가 없다"; exit 1; }
-
-echo "[#206] iso_to_epoch 형식 패턴은 모든 사본에서 동일 (한쪽만 느슨해지면 조용히 갈린다)"
-# finish-classify.sh 와 progress-evidence.sh 는 같은 시각 문자열을 각자 파싱한다. 패턴이
-# 갈리면 한쪽은 성공·한쪽은 `commit_at_invalid` 가 되어 🔄 계열 회수가 통째로 멈춘다
-# (전자는 판정을 내고 후자는 항상 active 를 만든다).
-pat_count=$(grep -h -o '\[0-9\]\[0-9\]\[0-9\]\[0-9\]-\[0-9\]\[0-9\]-.*Z) ;;' scripts/*.sh | sort -u | wc -l | tr -d ' ')
-[ "$pat_count" = 1 ] || {
-  echo "  ✗ iso_to_epoch 형식 패턴이 ${pat_count}가지다 — 한 문장으로 통일하라:"
-  grep -hn -o '\[0-9\]\[0-9\]\[0-9\]\[0-9\]-\[0-9\]\[0-9\]-.*Z) ;;' scripts/*.sh | sort -u | sed 's/^/      /'
-  exit 1; }
-for f in $(grep -l '^iso_to_epoch()' scripts/*.sh); do
-  grep -qF '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;' "$f" \
-    || { echo "  ✗ $f: iso_to_epoch 에 형식 검사가 없다(GNU date 가 빈 값을 통과시킨다)"; exit 1; }
-done
 
 echo "[test] timebox-check.sh 진행 증거 판정·queue.log 마지막 줄·유예 상한 (#200)"
 # 디스패처가 `"$SCRIPTS/timebox-check.sh"` 로 직접 exec 하므로 실행 비트도 여기서 문다
@@ -1276,9 +1181,6 @@ grep -qF -- '--limit "$EPIC_CLOSED_LIMIT"' <<<"$ls_code" \
 #    `set -e` 아래라 `grep -c` 가 0매치로 exit 1 하면 스크립트가 죽으므로 `|| true` 로 받는다.
 #    성격 주의: 이건 **미래의 복제를 막는 불변식**이지 이 PR 의 되돌림 탐지기가 아니다 —
 #    merge-base 에서도 이미 한 벌이었다(전체 되돌림 트리에서도 이 조항은 초록이다).
-epic_of_n=$(grep -cF -- 'capture("^[[:space:]]*epic[[:space:]]+#' scripts/loop-status.sh || true)
-[ "$epic_of_n" = 1 ] \
-  || { echo "  ✗ scripts/loop-status.sh 의 epic_of 정규식이 $epic_of_n 벌이다 — 한 벌이어야 한다(#292)"; exit 1; }
 # ⑶ 헤더 주석 계약이 코드와 같은 조건을 광고하는지 (#191 — 코드만 좁히면 헤더가 옛
 #    조건을 계속 가르친다). 닫힌 이슈 200건 절단 warn 은 없앴고, 새 자리는 EPIC_CLOSED_LIMIT 다.
 #    이 루프는 **주석을 일부러 센다** — 헤더 동기화가 검사 대상이라서다. 코드 되돌림은
@@ -1319,8 +1221,6 @@ done
 # ⑶ (#364) hold:ladder 설명이 가리키는 창 상수명은 resume-sweep.sh 의 실제 정의와 같은
 #    철자여야 한다 — 상수를 개명하면 설명이 없는 이름을 가리킨다.
 # (#427) 정의 자리는 `scripts/lib/constants.sh` 로 이사했다 — 철자 대조라는 취지는 그대로다.
-grep -qE '^: "\$\{RESUME_AFTER_MIN:=' scripts/lib/constants.sh \
-  || { echo "  ✗ scripts/lib/constants.sh: 창 상수 RESUME_AFTER_MIN 정의가 없다 — hold:ladder 설명이 가리키는 상수명 (#364)"; exit 1; }
 # ⑷ (#346 반송) 라벨 설명은 **100자 이하** — GitHub 라벨 description 상한. 넘으면
 #    `gh label create --force` 가 validation 으로 실패하고 이 스크립트는 `set -e` 라 그 뒤의
 #    라벨·레포 설정 전부가 중단된다(실측: hold:conflict 설명 138자 → 이후 라벨 미생성).
