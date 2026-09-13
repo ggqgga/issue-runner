@@ -83,12 +83,14 @@ stub_rollup='{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}
 # 값(상한 100 에 갇힌 목록)을 그대로 흉내내야, head 시각을 meta.commits 에서 줍던 옛
 # 경로로 되돌리는 뮤테이션이 여기서 빨개진다(아래 13 참조).
 # 라벨은 기본 빈 배열 — 소유 라벨 제외 케이스(11-b)만 STUB_LABELS 로 심는다.
+# refs 는 기본 `[166]` — 연결 이슈 판정 케이스만 STUB_REFS 로 덮어쓴다(#495).
 build_meta() {
-  jq -n --arg capped_at "$1" --argjson labels "${STUB_LABELS:-[]}" '{
+  jq -n --arg capped_at "$1" --argjson labels "${STUB_LABELS:-[]}" \
+    --argjson refs "${STUB_REFS:-[166]}" '{
     headRefName: "agent/issue-166",
     mergeable: "MERGEABLE",
     labels: $labels,
-    closingIssuesReferences: [{number: 166}],
+    closingIssuesReferences: [$refs[] | {number: .}],
     commits: (if $capped_at == "" then [] else [{committedDate: $capped_at}] end)
   }'
 }
@@ -111,6 +113,7 @@ run_case() {
     STUB_CAPTURE="${STUB_CAPTURE:-}" \
     STUB_ROLLUP="$stub_rollup" \
     bash "$SUT" 2>"$tmp/last.err")
+  last_out=$out   # 직전 케이스의 stdout — 후보 행의 필드(issue 등)를 바로 단언할 수 있게
   n=$(printf '%s' "$out" | grep -c . || true)
 
   if [ "$expect" = yes ]; then
@@ -135,6 +138,16 @@ run_case "정상·반송없음→후보" yes '[
   {"body":"검증자 리뷰: CLEAN\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:10:00Z"},
   {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"}
 ]' "2026-07-05T03:55:00Z"
+
+# 1-b) 연결 이슈 = `lib/loop.jq` 의 `linked_issue`(#495) — head `agent/issue-166` 이 refs 에
+#      있으면 그것이다. `closingIssuesReferences[0]` 이면 남의 이슈 #165 가 마감에 붙는다.
+STUB_REFS='[165,166]'
+run_case "연결 이슈 — refs[165,166]+head 166 → issue=166(head 의 N)" yes '[
+  {"body":"머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->","createdAt":"2026-07-05T04:20:00Z"}
+]' "2026-07-05T03:55:00Z"
+if printf '%s' "$last_out" | jq -e '.issue == "166"' >/dev/null 2>&1; then pass=$((pass + 1)); else
+  fail=$((fail + 1)); echo "  ✗ 연결 이슈 — 기대 issue=166 실제=[$last_out]"; fi
+STUB_REFS=''
 
 # 2) ✅ 가 head 커밋보다 이름(마커 없이) — finish-classify 재사용(1·2항) 단독으로
 #    걸러지는지 확인. 재디스패치 마커가 전혀 없는데도 제외돼야 한다.
