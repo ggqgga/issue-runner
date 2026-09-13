@@ -64,9 +64,9 @@ body_file=
 extra=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --title)     title=${2:-}; shift 2 ;;
-    --body-file) body_file=${2:-}; shift 2 ;;
-    --label)     [ -n "${2:-}" ] || { usage; exit 64; }; extra[${#extra[@]}]=$2; shift 2 ;;
+    --title)     [ $# -ge 2 ] || { usage; exit 64; }; title=$2; shift 2 ;;
+    --body-file) [ $# -ge 2 ] || { usage; exit 64; }; body_file=$2; shift 2 ;;
+    --label)     [ $# -ge 2 ] && [ -n "$2" ] || { usage; exit 64; }; extra[${#extra[@]}]=$2; shift 2 ;;
     *) usage; exit 64 ;;
   esac
 done
@@ -157,13 +157,24 @@ if [ "$labels_ok" = 1 ]; then
     if [ -n "$missing" ]; then
       add=()
       for l in $missing; do add[${#add[@]}]=--add-label; add[${#add[@]}]=$l; done
-      gh issue edit "$num" --repo "$repo" "${add[@]}" >/dev/null 2>&1 || true
-      view=$(gh issue view "$num" --repo "$repo" --json labels,body 2>/dev/null) || view=
-      still=$(printf '%s' "$view" | jq -r --arg p "$priority" \
-        '[ "agent-ready", "spinoff", $p ] - [ .labels[]?.name // empty ] | join(" ")' 2>/dev/null)
-      if [ -n "$still" ]; then
-        echo "spinoff-issue: 라벨 보강 실패 — #$num ($still)" >&2
+      # **삼키지 않는다** (#467 P1-3): edit 가 실패했거나 2차 readback 이 비면 `still` 이 빈
+      # 값이 되어 "붙었다" 로 읽힌다 — 확인 못 한 것을 확인된 것으로 쓰면 `agent-ready` 없는
+      # 파생이 영영 안 집힌다(그게 이 readback 이 있는 이유다).
+      if ! gh issue edit "$num" --repo "$repo" "${add[@]}" >/dev/null 2>&1; then
+        echo "spinoff-issue: 라벨 보강 edit 실패 — #$num ($missing)" >&2
         rc=2
+      fi
+      view=$(gh issue view "$num" --repo "$repo" --json labels,body 2>/dev/null) || view=
+      if [ -z "$view" ]; then
+        echo "spinoff-issue: 라벨 보강 뒤 readback 실패 — #$num (부착 확인 불가)" >&2
+        rc=2
+      else
+        still=$(printf '%s' "$view" | jq -r --arg p "$priority" \
+          '[ "agent-ready", "spinoff", $p ] - [ .labels[]?.name // empty ] | join(" ")' 2>/dev/null)
+        if [ -n "$still" ]; then
+          echo "spinoff-issue: 라벨 보강 실패 — #$num ($still)" >&2
+          rc=2
+        fi
       fi
     fi
     if [ -n "$epic_line" ] && [ -n "$view" ]; then

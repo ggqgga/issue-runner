@@ -37,6 +37,7 @@ case "$*" in
   *"issue view"*"--json body,labels"*)            # 부모 조회(spinoff-inherit)
     cat "$SO_PARENT"; exit 0 ;;
   *"issue view"*"--json labels,body"*)            # 발행 직후 readback
+    if [ "${SO_VIEW2_FAIL:-0}" = 1 ] && [ "$(grep -c -- "--json labels,body" "$SO_CALLS")" -gt 1 ]; then exit 1; fi
     healthy='{"labels":[{"name":"agent-ready"},{"name":"spinoff"},{"name":"P1"},{"name":"P0"}],"body":"Epic #4962\n\n## 배경"}'
     # 보강(`issue edit`)이 이미 한 번 있었으면 그 뒤 재조회는 정상값을 돌려준다(실 gh 처럼).
     if grep -q "issue edit" "$SO_CALLS" && [ "$(grep -c "issue view" "$SO_CALLS")" -gt 1 ]; then
@@ -53,7 +54,7 @@ case "$*" in
       allfail)    echo "HTTP 502" >&2; exit 1 ;;
     esac
     echo "https://github.com/ggqgga/BodaT/issues/${SO_NEW:-501}"; exit 0 ;;
-  *"issue edit"*)  exit 0 ;;
+  *"issue edit"*)  exit "${SO_EDIT_RC:-0}" ;;
   *"pr comment"*)  exit 0 ;;
   *"label create"*|*"repo edit"*) exit 0 ;;        # setup-labels.sh 경유
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
@@ -150,6 +151,35 @@ CALLS=$(cat "$tmp/calls.log")
 printf '%s\n' "$CALLS" | grep -q 'issue edit 501 .*--add-label spinoff' \
   && ok || bad "⑦ 빠진 라벨 보강(--add-label spinoff)이 없다: $(printf '%s\n' "$CALLS" | grep 'issue edit')"
 [ "$RC" = 0 ] && ok || bad "⑦ 보강 성공인데 rc=$RC (기대 0)"
+
+# ⑧ 라벨 보강 `issue edit` 가 실패하면 삼키지 않는다 (#467 P1-3) — 2차 readback 이 비어
+#    `still` 이 빈 값이 되는 바람에 "붙었다" 로 읽히면 agent-ready 없는 파생이 영영 안 집힌다.
+: > "$tmp/calls.log"
+OUT=$(SO_CALLS="$tmp/calls.log" SO_PARENT="$tmp/parent.json" SO_EDIT_RC=1 \
+      SO_READBACK='{"labels":[{"name":"agent-ready"}],"body":"Epic #4962\n"}' \
+      PATH="$tmp/stub:$PATH" bash "$SUT" ggqgga/BodaT 4979 77 \
+      --title "파생 제목" --body-file "$tmp/body.md" 2>"$tmp/err.log")
+RC=$?
+{ [ "$RC" = 2 ] && [ "$OUT" = "501" ]; } && ok \
+  || bad "⑧ edit 실패인데 rc=$RC out=[$OUT] (기대 2·번호는 출력)"
+grep -q '보강' "$tmp/err.log" && ok || bad "⑧ 보강 실패 사유가 stderr 에 없다: [$(cat "$tmp/err.log")]"
+
+# ⑨ 2차 readback 이 실패해도 rc=2 — 확인 못 한 것을 확인된 것으로 쓰지 않는다.
+: > "$tmp/calls.log"
+OUT=$(SO_CALLS="$tmp/calls.log" SO_PARENT="$tmp/parent.json" SO_VIEW2_FAIL=1 \
+      SO_READBACK='{"labels":[{"name":"agent-ready"}],"body":"Epic #4962\n"}' \
+      PATH="$tmp/stub:$PATH" bash "$SUT" ggqgga/BodaT 4979 77 \
+      --title "파생 제목" --body-file "$tmp/body.md" 2>"$tmp/err.log")
+RC=$?
+{ [ "$RC" = 2 ] && [ "$OUT" = "501" ]; } && ok || bad "⑨ 2차 readback 실패인데 rc=$RC (기대 2)"
+grep -q '부착 확인 불가' "$tmp/err.log" && ok || bad "⑨ 확인 불가 사유가 stderr 에 없다"
+
+# ⑩ 값 옵션이 마지막에 오면 무한루프가 아니라 즉시 usage 64 (#467 P2-3)
+for flag in --title --body-file --label; do
+  PATH="$tmp/stub:$PATH" bash "$SUT" ggqgga/BodaT 4979 77 "$flag" >/dev/null 2>&1
+  rc=$?
+  [ "$rc" = 64 ] && ok || bad "⑩ $flag 값 누락 exit $rc (기대 64)"
+done
 
 echo "── 계약(usage·실행비트) ──────────────────────────────────────────"
 

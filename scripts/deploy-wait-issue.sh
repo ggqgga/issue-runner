@@ -21,8 +21,10 @@
 #    `<PR> <SHA> <SUMMARY> <DEPLOY_CMD> <LIVE_CHECKS> <VERIFY_URL>`) — `--template` 로 갈아끼울 수 있다.
 #
 # ── 하는 일 ───────────────────────────────────────────────────────────────────
-# ⑴ 항목 형태 강제(발행 **전**): `--items-file` 은 `없음` 한 단어이거나 `- [ ]` 체크박스
-#    목록이어야 한다. 열린 체크박스가 0인데 `없음` 도 아니면 **아무것도 만들지 않고 exit 65** —
+# ⑴ 항목 형태 강제(발행 **전**): `--items-file` 은 `없음` 한 줄이거나 **모든 줄이** `- [ ] `
+#    (또는 이미 밟힌 `- [x] `) 체크박스여야 한다. 한 줄이라도 어긋나면 **아무것도 만들지 않고
+#    exit 65** (#467 P2-1 — 총수만 세면 "유효 항목 1 + 산문 1" 이 통과해 그 산문 줄이 이슈에
+#    실리고 5단계 집계는 그것을 무시한다: 밟아야 할 것이 원장에서 조용히 사라진다) —
 #    자유 산문이면 아래 분기(5단계 스모크 여부·⑦ 이관)가 매 틱 해석에 맡겨져 흔들린다
 #    (실측 2026-08-12~13: 배포검증 이슈 186건 중 체크박스를 쓴 건 0건, 전부 산문이었다).
 #    세는 일은 `smoke-tally.sh --checks` 한 자리다(#448) — 여기서 다시 세지 않는다.
@@ -70,17 +72,17 @@ sha=; summary_file=; items_arg=; title_sum=; lane=closeout; hardware=0
 verify_url=; deploy_cmd=; priority=; parent=; template=
 while [ $# -gt 0 ]; do
   case "$1" in
-    --sha)          sha=${2:-}; shift 2 ;;
-    --summary-file) summary_file=${2:-}; shift 2 ;;
-    --items-file)   items_arg=${2:-}; shift 2 ;;
-    --title)        title_sum=${2:-}; shift 2 ;;
-    --lane)         lane=${2:-}; shift 2 ;;
+    --sha)          [ $# -ge 2 ] || { usage; exit 64; }; sha=$2; shift 2 ;;
+    --summary-file) [ $# -ge 2 ] || { usage; exit 64; }; summary_file=$2; shift 2 ;;
+    --items-file)   [ $# -ge 2 ] || { usage; exit 64; }; items_arg=$2; shift 2 ;;
+    --title)        [ $# -ge 2 ] || { usage; exit 64; }; title_sum=$2; shift 2 ;;
+    --lane)         [ $# -ge 2 ] || { usage; exit 64; }; lane=$2; shift 2 ;;
     --hardware)     hardware=1; shift ;;
-    --verify-url)   verify_url=${2:-}; shift 2 ;;
-    --deploy-cmd)   deploy_cmd=${2:-}; shift 2 ;;
-    --priority)     priority=${2:-}; shift 2 ;;
-    --parent-issue) parent=${2:-}; shift 2 ;;
-    --template)     template=${2:-}; shift 2 ;;
+    --verify-url)   [ $# -ge 2 ] || { usage; exit 64; }; verify_url=$2; shift 2 ;;
+    --deploy-cmd)   [ $# -ge 2 ] || { usage; exit 64; }; deploy_cmd=$2; shift 2 ;;
+    --priority)     [ $# -ge 2 ] || { usage; exit 64; }; priority=$2; shift 2 ;;
+    --parent-issue) [ $# -ge 2 ] || { usage; exit 64; }; parent=$2; shift 2 ;;
+    --template)     [ $# -ge 2 ] || { usage; exit 64; }; template=$2; shift 2 ;;
     *) usage; exit 64 ;;
   esac
 done
@@ -104,16 +106,33 @@ else
   [ -r "$items_arg" ] || { echo "deploy-wait-issue: 항목 파일을 읽을 수 없다: $items_arg" >&2; exit 64; }
   cat "$items_arg" > "$items"
 fi
+# **모든 줄이 형태를 지켰는지 본다** (#467 P2-1). 총수만 세면 "유효 항목 1 + 산문 1" 이
+# 통과해 그 산문 줄이 이슈에 실리고, 5단계 집계는 체크박스가 아니라 무시한다 — 밟아야 할
+# 것이 원장에서 조용히 사라지는 형상이다. 빈 줄이 아닌 모든 줄은 `- [ ] `(또는 이미 밟힌
+# `- [x] `) 이거나, 절 전체가 정확히 `없음` 한 줄이어야 한다.
+only_none=0
+if [ "$(tr -d ' \t\r' < "$items" | grep -vc '^$')" = 1 ] \
+   && [ "$(tr -d ' \t\r' < "$items" | grep -v '^$')" = "없음" ]; then
+  only_none=1
+fi
+if [ "$only_none" = 0 ]; then
+  badline=$(grep -vE '^[[:space:]]*$' "$items" | grep -vE '^[[:space:]]*- \[( |x|X)\] ' | head -1)
+  if [ -n "$badline" ]; then
+    echo "deploy-wait-issue: 항목 형태 위반 — \`없음\` 한 줄이거나 \`- [ ] \` 목록이어야 한다(산문 금지)." >&2
+    echo "  첫 위반 줄: $badline" >&2
+    echo "  배경·근거·주의는 --summary-file 로 보내고, 항목 자리엔 밟을 것만 남겨 **다시 부르라**." >&2
+    exit 65
+  fi
+fi
+
 open=$("$here/smoke-tally.sh" --checks "$items" | sed -n 's/.*"open":\([0-9][0-9]*\).*/\1/p')
 case "$open" in ''|*[!0-9]*) echo "deploy-wait-issue: 항목 집계 실패(smoke-tally.sh)" >&2; exit 1 ;; esac
 
 promo_only=0
 if [ "$open" = 0 ]; then
-  # 체크박스가 0이다 — `없음` 한 단어여야 한다. 산문이면 발행하지 않는다(형태 강제).
-  body_trim=$(tr -d ' \t\r' < "$items" | grep -v '^$')
-  if [ "$body_trim" != "없음" ]; then
-    echo "deploy-wait-issue: 항목 형태 위반 — \`없음\` 한 단어이거나 \`- [ ]\` 목록이어야 한다(산문 금지)." >&2
-    echo "  배경·근거·주의는 --summary-file 로 보내고, 항목 자리엔 밟을 것만 남겨 **다시 부르라**." >&2
+  # 열린 체크박스가 0 = `없음` 절이거나 전부 `- [x]` — 앞의 형태 검사를 이미 통과했다.
+  if [ "$only_none" = 0 ]; then
+    echo "deploy-wait-issue: 항목 형태 위반 — 밟을 열린 항목이 0인데 \`없음\` 절이 아니다." >&2
     exit 65
   fi
   promo_only=1

@@ -1021,7 +1021,8 @@ and that fact must be visible to a human.
   `## 라이브/하드웨어 검증 항목`), `없음` and `(승격만)` are a parsing contract read by
   deploy-cycle and deploy-bodat**, and its SSOT is now that script's header comment, not
   this prose (to change a literal, fix those consumers first). What it does: enforces the
-  item shape (zero checkboxes and not `없음` either → exit 65 **before** issuing) → appends
+  item shape (`없음` on its own, or **every line** a `- [ ] ` checkbox — one prose line → exit
+  65 **before** issuing) → appends
   ` (승격만)` to the title when there are zero checkboxes → creates the issue with
   `--label deploy-wait` (plus the P inherited via `--parent-issue`, plus `needs:hardware`
   only when `--hardware` is given **and the label actually exists in the repo**) → on a

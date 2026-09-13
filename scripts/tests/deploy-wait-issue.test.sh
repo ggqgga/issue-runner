@@ -160,6 +160,27 @@ printf '%s\n' "$CALLS" | grep -q 'issue edit 5200 .*--add-label deploy-wait' && 
 DW_CREATE=allfail run "$tmp/items.md"
 { [ "$RC" = 1 ] && [ -z "$OUT" ]; } && ok || bad "⑪ rc=$RC out=[$OUT] (기대 1·무출력)"
 
+# ⑫ 유효 항목 + 산문 한 줄이 섞이면 발행하지 않는다 (#467 P2-1). 총수만 세던 검사는
+#    이걸 통과시켜 그 산문 줄이 이슈에 실렸고, 5단계 집계는 체크박스가 아니라 무시했다 —
+#    밟아야 할 것이 원장에서 조용히 사라지는 형상.
+printf -- '- [ ] /pcs 렌더 확인\n주석 13줄이 전부라 관찰 가능한 변화가 없다.\n' > "$tmp/mixed.md"
+run "$tmp/mixed.md"
+{ [ "$RC" = 65 ] && [ -z "$CALLS" ]; } && ok \
+  || bad "⑫ 혼합(항목+산문) rc=$RC calls=[$CALLS] (기대 65·gh 0회)"
+printf '%s\n' "$ERR" | grep -q '첫 위반 줄' && ok || bad "⑫ 위반 줄이 stderr 에 없다"
+
+# ⑬ 전부 유효한 체크박스면 통과한다(위 검사가 정상 항목을 막지 않는다).
+printf -- '- [ ] a\n- [x] 이미 밟음\n- [ ] [칸 ③] 실장비\n' > "$tmp/allbox.md"
+run "$tmp/allbox.md"
+[ "$RC" = 0 ] && ok || bad "⑬ 정상 체크박스 목록 rc=$RC err=[$ERR]"
+
+# ⑭ 값 옵션이 마지막에 오면 무한루프가 아니라 즉시 usage 64 (#467 P2-3)
+for flag in --sha --summary-file --items-file --title --lane --verify-url --priority --template; do
+  PATH="$tmp/stub:$PATH" bash "$SUT" ggqgga/BodaT 5300 "$flag" >/dev/null 2>&1
+  rc=$?
+  [ "$rc" = 64 ] && ok || bad "⑭ $flag 값 누락 exit $rc (기대 64)"
+done
+
 echo "── 계약(usage·실행비트) ──────────────────────────────────────────"
 
 # ⑫ 필수 인자 누락 → usage exit 64
