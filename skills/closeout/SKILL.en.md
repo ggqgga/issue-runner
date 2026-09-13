@@ -190,14 +190,24 @@ cwd's `.loop/repos`). It is a deterministic sweep that finds leaves by their ded
 event:
 
 - `closed` — the epic was closed (rationale comment + `--reason completed`). Report it in
-  ④ Report as `에픽 종료: #N(<repo short name>, leaf K)` (K = the length of `leaves`).
+  ④ Report as `에픽 종료: #N(<repo short name>, leaf K)` (K = the length of `leaves`). When a
+  deploy-wait candidate had neither a `PR #<pr>` nor a leaf mention and so could not count as
+  evidence, `unlinked_deploy_wait` lists its numbers (the verdict is unchanged — it makes what
+  dry-run skipped visible).
 - `note` — a line that **touched nothing** and is a normal state (an old epic with no
   `Epic #N` lines · an epic carrying `deploy-wait` · an epic the sweep closed and a **human
-  reopened** — marker present but open means never close it again, #377). **Do not report
-  it** — the same line every tick buries the real signals.
-- `warn` — the judgment was **deferred** (the leaf search hit its cap) or a read/write
-  failed. Copy `why` verbatim into ④ Report's warn lines. A deferral is not a failure, so
-  exit 0 is possible alongside it.
+  reopened** — marker present but open means never close it again, #377 · leaves all closed
+  but the **epic body still has unchecked `- [ ]`** (`완료 기준 미체크 N개`) · a leaf's
+  **deploy-wait issue is still open** (`leaf #N 의 배포 대기 이슈 #M 열림`, #343 — an epic
+  not yet in production is not done. Deploy-wait issues are picked by the `deploy-wait`
+  label **or** a title starting with `배포 대기`/`배포 검증` (stage 4's unlabeled fallback), and the link to a leaf is
+  derived from the title's `PR #<pr>` → the issues that PR closed · its head branch — the
+  issue template has no leaf placeholder). **Do not report it** — the same line every tick
+  buries the real signals.
+- `warn` — the judgment was **deferred** (the leaf search or the open-issue listing hit its
+  cap) or a read/write failed (including a failed PR lookup for a deploy-wait issue). Copy
+  `why` verbatim into ④ Report's warn lines. A deferral is not a failure, so exit 0 is
+  possible alongside it.
 
 exit 1 means this tick had a read/write **failure** — leave it alone, the next tick retries
 (the `<!-- epic-sweep -->` marker in the rationale comment keeps it idempotent, so comments
