@@ -1117,12 +1117,22 @@ structure/empty-state confirmation from real-data render confirmation in the res
   by hand here.
   - **Before the smoke — is there anything to step?** Write the deploy issue's
     `## 라이브/하드웨어 검증 항목` section to a file and call
-    `$SCRIPTS/smoke-tally.sh --checks <section file>`. If `steppable` is 0, **do not open
-    Chrome**: leave the comment `스모크 생략: 밟을 항목 0` and mark it complete (a `없음`
-    section and a section left with marked lines only both come out 0 here — a smoke with
-    zero items to compare has not passed anything, it **looked at nothing**, yet it prints
-    as `✅ 스모크 0/0 통과` and reads as verified: a false green). That issue is a container
-    the deploy-cycle lane closes once the promotion is done, not a verification subject.
+    `$SCRIPTS/smoke-tally.sh --checks <section file>` (check-mode JSON: `open` ·
+    `steppable` · `held_marked` · `skipped`). If `steppable` is 0, **do not open Chrome** —
+    a smoke with zero items to compare has not passed anything, it **looked at nothing**,
+    yet it prints as `✅ 스모크 0/0 통과` and reads as verified (a false green). But **how
+    it ends splits in two**: treating a section left with marked lines only as "no items"
+    finalizes a ticket carrying real-hardware items without ever taking the held path
+    below — exactly what this section forbids.
+    - **`open` is 0 (a `없음` section)** → leave the comment `스모크 생략: 밟을 항목 0` and
+      mark it **complete**. That issue is a container the deploy-cycle lane closes once the
+      promotion is done, not a verification subject.
+    - **`steppable` is 0 but `held_marked` is not (marked lines only)** → do not open
+      Chrome, and it is **not complete**. Finish exactly like the real-hardware branch
+      below: leave
+      `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` (`<n>` = `held_marked`)
+      plus `보류 내역: 표식 <a>건 · 표식 없는 미밟음 0건` (`<a>` = `held_marked`), and
+      **do not close the issue** — rung ③ is `e2e-test`'s (deploy-cycle ⑦'s) job after the deploy.
   - **After the smoke — what did it see?** Collect **only the verdict lines** the prompt
     produced (`<verdict> <original item line>` — the vocabulary is `pass`·`fail`·`보류`,
     the grammar is in the script header) into a file, call
