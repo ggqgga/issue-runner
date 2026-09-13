@@ -340,6 +340,46 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
 3. **LLM judgment (only toward picking less)**: if two or more candidates look like they will touch the same repo
    and the same module, pick only one this tick. If you cannot tell, pick it (a conflict gets resolved by the next
    tick's rebase).
+   This deferral touches no labels — the deferred issue comes back to the next
+   tick's ③-2 as-is, and ④ Report records it as `미룸: #N(<repo>, 같은 모듈 #M)` ("deferred").
+   **Never park a candidate because of a label (#493).** A candidate on the stdout of
+   `eligible-issues.sh` has already passed the gate the script decides (`open + agent-ready +
+   ¬agent:claimed + ¬needs-human + ¬hold:* + every blocker CLOSED`) — no other label is a
+   gate, and the session must not read a label and bolt on its own "hold/skip". In
+   particular **`needs:hardware` is not a parking reason** — it classifies the issue as
+   "hardware is involved", it is not an eligibility gate, and it means "walk the hardware
+   path the issue body describes". That procedure is the worker's job and is already in the
+   worker prompt: worker template step 11-a sends the worker up the issue body's path section
+   (`ssh <worker>` direct · measurement commands · escape hatch) and the rungs of
+   `references/live-verification-ladder.md`, and when there is no path or it does not work
+   the worker quotes the rungs it tried plus the failure output in the PR `## Test plan`, leaves
+   that item `[ ]`, and hands off to verify-runner via 11-b (it does not stop — the worker emits no
+   BLOCKED). From there verify-runner ③-2 retries rungs ②③ and only when all fail does it hold with
+   `verify-held --reason ladder` → `hold:ladder` (one of `transition.sh`'s three reasons — the reason
+   for a failure that climbed the whole ladder; `hold:policy` is for human-decision cases such as a
+   worker's `BLOCKED:` exit or a missing linked issue). Measured: on 2026-09-13 ticks
+   #188–#190 left slots empty and reported `needs:hardware 관측 의존(스킵)` for 3 ticks in a
+   row with 0 new — yet those two issues (BoDAT #5100·#5198) either already had the path
+   inlined in the body or had no hardware in their implementation scope (2026-08-26 BoDAT
+   #3852 idled 11 hours the same way). Label parking turns `needs:hardware + agent-ready`
+   into an indefinite wait, and the dashboard shows it only as `대기`, so "eligible · slot
+   free · not picked" is recorded nowhere.
+   **Deciding not to pick is a transition, not a skip (#493).** If you decide not to pick a
+   candidate for any reason other than the same-module deferral above (spec not settled ·
+   duplicate · policy decision needed), do not leave that judgment label-less — right there run
+   `$SCRIPTS/transition.sh runner-held <repo> <num> - --reason policy --note "<why not picked + the one-line question a human must answer>"`
+   to attach `hold:policy` (this holds as-is for an unclaimed issue with no PR — `-` is the
+   official form and removing an absent `agent:claimed` is harmless. The transition leaves the
+   reason comment. Never attach
+   `needs-human` by hand — #244; `policy-kept` attaches it when the review ends as "stays
+   with a human". There is deliberately no `hold:hardware`). From the next tick the gate
+   (`¬hold:*`) drops it from the candidates and the review (① `policy_review_due`) answers once —
+   the same judgment is not repeated every tick. **Duplicates are the same**: if it duplicates
+   another issue or a fix already on main, run the same transition with
+   `--note "중복: #<원본> — 닫을지 사람이 판단"` (closing is the human's job — `closeout-dup`
+   needs a PR to exist, and there is deliberately no `hold:dup` label). Do not repeat
+   "duplicate (skip)" tick after tick (that is how BoDAT #5144 stayed in the waiting line).
+   Raise one warn line in ④ Report: `#N(<repo>) 안 집음 → hold:policy — <reason>`.
 4. For up to `slots` candidates in priority order:
    a. `$SCRIPTS/claim-issue.sh <repo> <num>` — on failure (already claimed, lost the lock race, etc.) move on to
       the next candidate. Before touching labels the helper takes a create-only lock ref
@@ -407,6 +447,16 @@ Below it, **name the numbers item by item**:
 Copy the search-window `warn:` lines (`검색 창 절단` / `검색 창 임박`) into the warn list as they are.
 Repo short names are per `references/loop-conventions.md` §6.
 If there are warns, list the paths and reasons below it.
+**The word `스킵` / "skip" (#493).** In the Report, `스킵` is used **only for gate rejections** —
+the script gate (issues that never reached the ③-2 stdout because of `막힘` (an OPEN blocker),
+`needs-human` or `hold:*`) and ③-1's numeric caps (`slots ≤ 0` · the per-repo `MAX_OPEN_PRS` =
+the `머지 대기 적체` warn). Both are deterministic, not judgment. A candidate that was on
+stdout and not picked by the session's judgment is not a skip — it is recorded through ③-3's
+transition (`hold:policy`) as the warn item `#N(<repo>) 안 집음 → hold:policy — <reason>`, and a
+same-module deferral as `미룸: #N(<repo>, 같은 모듈 #M)` (both are items, not counts). A tick
+with candidates and 0 new is valid only if one of those two items (or a record of a ③-1 cap skip ·
+③-4a claim failure) is present — `신규 없음: … (스킵)` with none of them is exactly label parking
+(the shape #493 measured).
 **Token observation (soft budget)**: if any worker delivered a completion report, add
 one line per issue — `tokens: <repo>#<num> <this report's count> (cumulative <sum>)`.
 Also copy that worker report's `pre-review: <value>` as one line `pre-review: <repo>#<num> <value>` (no line → `none`). This count is subagent_tokens from the completion notification (absent → `?`, counted as 0);

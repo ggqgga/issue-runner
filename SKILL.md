@@ -290,6 +290,37 @@ harvesting 과 동형). issue-runner 는 `flow:verify` PR 의 CI 도 손대지 �
    `references/loop-conventions.md` §3 대로.
 3. **LLM 판단 (덜 집는 쪽으로만)**: 후보 중 같은 레포·같은 모듈을 건드릴 것으로 보이는 이슈가 둘 이상이면
    이번 틱에는 하나만 집는다. 판단이 서지 않으면 집는다 (충돌은 다음 틱 rebase 가 풀어준다).
+   이 미룸은 라벨을 만지지 않는다 — 미룬 이슈는
+   다음 틱 ③-2 에 그대로 돌아오고, ④ Report 에는 `미룸: #N(<repo>, 같은 모듈 #M)` 으로 적는다.
+   **후보를 라벨로 파킹하지 않는다 (#493).** `eligible-issues.sh` stdout 에 오른 후보의 자격은
+   스크립트가 이미 판정했다(`open + agent-ready + ¬agent:claimed + ¬needs-human + ¬hold:* +
+   블로커 전부 CLOSED`) — 그 밖의 라벨은 게이트가 아니고, 세션이 라벨을 읽어 "보류·스킵" 을
+   덧대지 않는다. 특히 **`needs:hardware` 는 파킹 사유가 아니다** — "실장비가 관련된다" 는
+   분류이지 자격 게이트가 아니며, 뜻은 "본문의 통로대로 실장비를 밟아라" 다. 그 절차는 워커
+   몫이고 이미 워커 프롬프트에 있다: 워커 템플릿 11-a 가 이슈 본문의 통로 절(`ssh <워커>`
+   직결 · 측정 명령 · 탈출구)과 `references/live-verification-ladder.md` 의 칸을 오르게 하고,
+   통로가 없거나 안 먹으면 시도한 칸·실패 출력을 PR `## Test plan` 에 인용하고 그 항목을 `[ ]`
+   로 남긴 채 11-b 로 verify-runner 에 넘긴다(멈추지 않는다 — 워커는 BLOCKED 를 내지 않는다).
+   그 뒤는 verify-runner ③-2 가 칸 ②③ 을 다시 시도하고, 전부 실패했을 때만 `verify-held
+   --reason ladder` 로 `hold:ladder` 다(`transition.sh` 의 세 사유 중 하나 — 사다리 끝까지 오른
+   실패의 사유. `hold:policy` 는 워커의 `BLOCKED:` 종료·연결 이슈 부재 같은 사람 결정 몫이다). 실측: 2026-09-13 틱 #188~#190 이 슬롯을 비워둔 채
+   `needs:hardware 관측 의존(스킵)` 으로 3틱 연속 신규 0 이었는데, 그 두 이슈(BoDAT #5100·#5198)는
+   본문에 통로가 이미 인라인돼 있었거나 구현 범위에 실장비가 없었다(2026-08-26 BoDAT #3852 도
+   같은 모양으로 11시간 놀았다). 라벨 파킹은 `needs:hardware + agent-ready` 를 무기한 대기로
+   만들고, 대시보드엔 `대기` 로만 보여 "자격 있음·자리 있음·안 집힘" 이 어디에도 안 남는다.
+   **집지 않기로 판단했으면 스킵이 아니라 전이다 (#493).** 위 같은-모듈 미룸 밖의 이유(스펙이
+   서지 않음·중복·정책 결정 필요)로 후보를 집지 않기로 했으면 그 판단을 라벨 없이 두지
+   않는다 — 그 자리에서
+   `$SCRIPTS/transition.sh runner-held <repo> <num> - --reason policy --note "<안 집는 사유 + 사람이 답할 질문 한 줄>"`
+   로 `hold:policy` 를 붙인다(미claim·PR 없음 이슈에 그대로 성립한다 — `-` 는 정식 형태이고 없는
+   `agent:claimed` 제거는 무해하다. 사유 코멘트는 전이가 남긴다. `needs-human` 을 손으로 붙이지 마라 —
+   #244, 재심이 "사람 몫 유지" 로 끝날 때 `policy-kept` 가 붙인다. `hold:hardware` 는 일부러 없다).
+   다음 틱부터 게이트(`¬hold:*`)가 후보에서 빼고 재심(① `policy_review_due`)이 1회 답한다 —
+   틱마다 같은 판단을 되풀이하지 않는다. **중복도 같다**: 다른 이슈·이미 main 에 있는 수정과
+   중복이면 `--note "중복: #<원본> — 닫을지 사람이 판단"` 으로 같은 전이를 건다(닫기는 사람
+   몫이다 — `closeout-dup` 은 PR 이 있어야 성립하고 `hold:dup` 라벨은 일부러 없다). 틱마다
+   "중복(스킵)" 을 반복하지 않는다(BoDAT #5144 가 그렇게 대기 줄에 남았다). ④ Report 에는
+   warn 으로 `#N(<repo>) 안 집음 → hold:policy — <사유>` 한 줄을 올린다.
 4. 위에서부터 slots 개에 대해:
    a. `$SCRIPTS/claim-issue.sh <repo> <num>` — 실패(이미 claim·잠금 경합 패배 등)하면 다음 후보로. 이 헬퍼가
       라벨을 붙이기 전에 create-only 잠금 ref(`refs/issue-runner/claim/<num>/<앵커>`)를 먼저 잡는다(#108).
@@ -345,6 +376,14 @@ harvesting 과 동형). issue-runner 는 `flow:verify` PR 의 CI 도 손대지 �
 `정리: #4801(bodat, PR #4810 머지) · 보수: PR #4812(bodat, rebase) · 신규: #4818(bodat) · 재개: #4772(bodat, ladder 2/2) #5103(bodat, conflict 1/1) · 승격: #4803(bodat, ladder, hold:policy) · 막힘: #4986(bodat ← #4985 needs-human) · warn: #4799(bodat) dirty worktree`.
 검색 창 `warn:`(`검색 창 절단`·`검색 창 임박`)은 warn 줄에 그대로 옮긴다. 레포 짧은 이름은
 `references/loop-conventions.md` §6 대로. warn 이 있으면 경로와 사유를 그 아래 나열.
+**`스킵` 어휘 (#493).** Report 에서 `스킵` 은 **게이트 탈락**에만 쓴다 — 스크립트 게이트
+(`막힘`(OPEN 블로커)·`needs-human`·`hold:*` 로 ③-2 stdout 에 오르지 못한 건)와 ③-1 의 수치 캡
+(`slots ≤ 0` · 레포별 `MAX_OPEN_PRS` = `머지 대기 적체` warn). 둘 다 결정론이라 판단이 아니다.
+stdout 에 오른 후보를 세션 판단으로 안 집은 것은 스킵이 아니다 — ③-3 의 전이
+(`hold:policy`)로 기록되므로 warn 항목 `#N(<repo>) 안 집음 → hold:policy — <사유>` 로 적고,
+같은-모듈 미룸은 `미룸: #N(<repo>, 같은 모듈 #M)` 으로 적는다(둘 다 카운트가 아니라 항목이다).
+후보가 있는데 신규 0 인 틱은 이 두 항목 중 하나(또는 ③-1 캡 스킵 · ③-4a claim 실패의 기록)가
+있어야 성립한다 — 아무것도 없이 `신규 없음: … (스킵)` 이면 그것이 곧 라벨 파킹이다(#493 의 실측 모양).
 **토큰 관측 (소프트 예산)**: 완료 보고를 낸 워커가 있으면 이슈별 한 줄
 `토큰: <repo>#<num> <이번 보고치> (누적 <합>)` 을 추가하라. 같은 워커 보고의 `사전 리뷰: <값>` 도
 `사전 리뷰: <repo>#<num> <값>` 한 줄로 옮겨 적어라(줄이 없으면 `없음`). 이번 보고치는 완료 알림의
