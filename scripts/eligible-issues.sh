@@ -22,7 +22,7 @@
 #   · **stdout = 후보 JSON 배열 하나뿐.** 디스패처 파이프라인이 이걸 SSOT 로 읽으므로
 #     어떤 진단도 stdout 으로 새면 안 된다(한 바이트도 더하지 않는다).
 #   · stderr = 진단. 게이트에 탈락한 이슈마다 `blocked: <owner/repo>#<num> ← #<b>(<상태>)`,
-#     스캔 끝에 `blocked-summary: 막힘 N건 (needs-human 블로커 M건)`, 검색 창 경고는 `warn: `.
+#     스캔 끝에 `blocked-summary: 막힘 N건 (사람 게이트 블로커 M건)`, 검색 창 경고는 `warn: `.
 #     ④ Report 가 이 셋을 그대로 옮긴다(SKILL.md ③-2 · ④) — 게이트 탈락이 조용히
 #     `continue` 로 빠지면 "15개 놀고 있는데 루프가 멍때린다" 로만 보인다.
 set -euo pipefail
