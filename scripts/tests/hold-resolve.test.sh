@@ -146,6 +146,9 @@ ck "빈 본문은 결정문이 아니다 → ambiguous" ambiguous
 long=$(printf '판정이 틀렸다고 처음엔 생각했는데 %0300d — 그래도 귀속 미상 분기는 이렇게 고쳐라' 0)
 GOT=$(HR_PR_COMMENTS_JSON="[{\"body\":\"마감 검증: ⚠ 보류\\n<!-- bodat:worker -->\",\"createdAt\":\"2026-07-05T11:00:00Z\"},{\"body\":\"$long\",\"createdAt\":\"2026-07-05T11:01:00Z\"}]" HR_ISSUE_COMMENTS_JSON='[]' HR_PR_LABELS='[]' HR_ISSUE_LABELS='["agent-ready"]' HR_HEAD_AT='2026-07-05T10:00:00Z' bash "$SUT" owner/repo 42 1 2>&1)
 has "긴 결정문을 자르지 않는다(뒤쪽 시정 신호 보존)" '이렇게 고쳐라' 
+# 결정문이 옛 hold-note 마커를 인용(백틱)해도 그 결정문이 경계로 잡히지 않는다(codex 3회차 P2 — unquoted)
+GOT=$(HR_PR_COMMENTS_JSON='[{"body":"마감 검증: ⚠ 보류\n<!-- hold-note: policy -->\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:00:00Z"},{"body":"`<!-- hold-note: policy -->` 는 기각 — 원안 그대로 머지, 코드 변경 없음","createdAt":"2026-07-05T11:01:00Z"}]' HR_ISSUE_COMMENTS_JSON='[]' HR_PR_LABELS='[]' HR_ISSUE_LABELS='["agent-ready"]' HR_HEAD_AT='2026-07-05T10:00:00Z' bash "$SUT" owner/repo 42 1 2>&1)
+ck "마커를 인용한 결정문은 경계가 아니라 결정문이다 → direction" direction
 bash "$SUT" owner/repo >/dev/null 2>&1; rc=$?; [ "$rc" = 64 ] && ok || bad "인자 부족 exit $rc (기대 64)"
 [ -x "$SUT" ] && ok || bad "hold-resolve.sh 실행 비트 없음"
 

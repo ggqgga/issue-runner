@@ -68,16 +68,6 @@ def is_machine:
 # 뮤테이션 테스트(MUT-1·2·A·V)가 그 줄 형태를 앵커로 물고 있다. 접두 집합만 공유한다.
 def is_bounce: startswith("재검증 실패") or startswith("재디스패치");
 
-# ── 보류 경계 · 사람 결정문 (closeout ①-c, #334) ──────────────────────────
-# 보류 경계 = 워커 ⚠ ∨ closeout ⚠ ∨ `closeout-blocked` 가 남기는 hold-note(위치 무관 — 코멘트 어디든).
-# 셋을 한 술어로 두는 이유: ①-b 재진입 조건과 ①-c 경계가 다른 리터럴을 들면 hold-note 만 남는 보류
-# (③-2 rebase 실패 `--reason conflict`)에서 "다음 틱 재시도" 가 실제로는 재진입하지 않는다(#334 WARN②).
-def is_hold_boundary:    is_verdict_hold or is_closeout_hold or contains("<!-- hold-note: ");
-# 사람 결정문 = 머신 코멘트가 아닌 것 ∪ 재개 스윕 재심이 라벨을 스스로 뗀 `resumed` 코멘트.
-# `<!-- policy-review: kept -->` 는 "사람 몫 유지 — 라벨을 안 건드린다" 라 결정문이 아니다(#174 흡수).
-# 빈 본문(`body` 결손을 pr-comments.sh 가 "" 로 매핑)은 머신도 아니지만 결정문도 아니다 — `\S` 하나는 있어야 한다.
-def is_human_decision:   ((is_machine | not) and test("\\S")) or contains("<!-- policy-review: resumed -->");
-
 # ── 마지막 매칭 인덱스 ──────────────────────────────────────────────────────
 # last_index(f) — 배열에서 `f` 가 참인 **마지막** 원소의 인덱스. 없으면 `null`.
 # `null` 을 그대로 낸다(빈 문자열이 아니다) — 셸로 꺼내는 소비처는 `// empty` 를 붙여
@@ -126,6 +116,18 @@ def short_repo:
 # `resume-sweep.sh` 의 `JQ_UNQUOTE` 와 **글자 단위로 같아야** 한다 — `bin/ci` 가 두 벌을 대조한다
 # (한쪽만 고치면 loop-status 의 횟수와 스윕의 횟수가 갈린다).
 def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " ");
+
+# ── 보류 경계 · 사람 결정문 (closeout ①-c, #334) ──────────────────────────
+# 보류 경계 = 워커 ⚠ ∨ closeout ⚠ ∨ `closeout-blocked` 가 남기는 hold-note(위치 무관 — 코멘트 어디든).
+# 셋을 한 술어로 두는 이유: ①-b 재진입 조건과 ①-c 경계가 다른 리터럴을 들면 hold-note 만 남는 보류
+# (③-2 rebase 실패 `--reason conflict`)에서 "다음 틱 재시도" 가 실제로는 재진입하지 않는다(#334 WARN②).
+# hold-note 는 **인용을 걷어낸 뒤** 본다(unquoted) — 사람 결정문이 옛 마커를 백틱·블록 인용으로 인용하면 그 결정문
+# 자체가 최신 경계가 되어 d_after 가 그 결정문을 경계 뒤로 못 세고 no_decision 으로 재정지한다(codex 3회차 P2).
+def is_hold_boundary:    is_verdict_hold or is_closeout_hold or (unquoted | contains("<!-- hold-note: "));
+# 사람 결정문 = 머신 코멘트가 아닌 것 ∪ 재개 스윕 재심이 라벨을 스스로 뗀 `resumed` 코멘트.
+# `<!-- policy-review: kept -->` 는 "사람 몫 유지 — 라벨을 안 건드린다" 라 결정문이 아니다(#174 흡수).
+# 빈 본문(`body` 결손을 pr-comments.sh 가 "" 로 매핑)은 머신도 아니지만 결정문도 아니다 — `\S` 하나는 있어야 한다.
+def is_human_decision:   ((is_machine | not) and test("\\S")) or (unquoted | contains("<!-- policy-review: resumed -->"));
 
 # ── PR 연결 이슈 (#495) ─────────────────────────────────────────────────────
 # linked_issue(head; refs) — "이 PR 이 어느 이슈 한 쌍으로 붙었는가" 를 네 소비자
