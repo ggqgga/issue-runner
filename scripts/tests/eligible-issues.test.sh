@@ -6,8 +6,9 @@
 #      (디스패처 파이프라인의 SSOT. 진단이 한 글자라도 새면 여기서 빨개진다).
 #   ② OPEN 블로커로 탈락한 이슈마다 stderr `blocked: <repo>#<num> ← #<b>(<상태>)`.
 #      `<상태>` 는 블로커의 라벨로 정한다(needs-human→needs-human · hold:conflict→needs-human
-#      (#244 — `loop-status.sh` 의 needs-human 버킷 정의와 같은 집합) · 그 밖 hold:*→보류(#244) ·
-#      agent:claimed→issue-runner ·
+#      (#244 — `loop-status.sh` 의 needs-human 버킷 정의와 같은 집합) · 테스트→테스트 ·
+#      deploy-wait→배포대기(#431 — 둘 다 loop-status 의 사람 게이트, hold:* 보다 앞) ·
+#      그 밖 hold:*→보류(#244) · agent:claimed→issue-runner ·
 #      flow:verify→검증대기 · verifying→verify-runner(#275) · flow:ready→마감대기 · harvesting→closeout ·
 #      그 밖→대기).
 #   ③ 블로커가 CLOSED·MERGED(PR)·미존재면 통과하고 `blocked:` 줄이 없다.
@@ -21,7 +22,8 @@
 #      실측 형상(후보 53 > 창 50)에서 **가장 새 3건**이 stdout 에 남고, `blocked-summary:` 도
 #      합친 전체 후보를 센다. 창 안(34)이면 호출은 **1회 그대로**다(비용 회귀).
 #      상한 소진·임박 경계·빈 페이지 정지·페이지 조회 실패는 상수를 env 로 줄여(창 5×3=15) 문다.
-#   ⑦ 스캔 끝 요약 `blocked-summary: 막힘 N건 (needs-human 블로커 M건)` 의 N·M 이 정확하다.
+#   ⑦ 스캔 끝 요약 `blocked-summary: 막힘 N건 (사람 게이트 블로커 M건)` 의 N·M 이 정확하다 —
+#      M 은 needs-human ∪ 테스트 ∪ 배포대기(loop-status `blocker_human_wait` warn 과 같은 집합, #431).
 #
 # 정렬 (#401) — Ⓕ 로 시작하는 절. 키는 `(priority, createdAt)` 둘뿐이다:
 #   Ⓕ① `P0` 는 더 늦게 만들어져도 큐 맨 앞이다.
@@ -320,7 +322,7 @@ has_line "③ 미존재는 이유를 warn 으로 남긴다" "$ERR" \
 ck "②③ stdout 통과분(오래된 순)" \
   "$(jq -c '[.[].number]' "$OUT")" '[17,18,20]'
 no_line "② 진단이 stdout 으로 새지 않는다" "$OUT" "blocked"
-has_line "⑦ 요약 — 막힘 9건 · needs-human 1건" "$ERR" "blocked-summary: 막힘 9건 (needs-human 블로커 1건)"
+has_line "⑦ 요약 — 막힘 9건 · needs-human 1건" "$ERR" "blocked-summary: 막힘 9건 (사람 게이트 블로커 1건)"
 ck "⑦ 요약은 한 줄뿐" "$(count_of "$ERR" 'blocked-summary:')" "1"
 ck "⑤ 블로커 조회는 후보당 한 번(12건)" "$(count_of "$LOG" 'blocker ')" "12"
 
@@ -341,7 +343,7 @@ has_line "②-b hold:ladder 단독 → 보류" "$ERR" "blocked: owner/repo#31 �
 has_line "②-b hold:policy + 단계 라벨 → 보류(단계보다 앞)" "$ERR" "blocked: owner/repo#32 ← #911(보류)"
 has_line "②-b needs-human 이 있으면 종전대로 needs-human" "$ERR" "blocked: owner/repo#33 ← #912(needs-human)"
 has_line "②-b 요약 — 보류는 needs-human 카운트에 안 든다" "$ERR" \
-  "blocked-summary: 막힘 3건 (needs-human 블로커 1건)"
+  "blocked-summary: 막힘 3건 (사람 게이트 블로커 1건)"
 
 # ── ②-c (#244 반송②) `hold:conflict` 는 `보류` 가 아니라 `needs-human` ───────────
 # `loop-status.sh` 는 needs-human 버킷을 `needs-human` ∪ `hold:conflict` 로 정의한다
@@ -360,7 +362,33 @@ has_line "②-c hold:conflict 단독 → needs-human(loop-status 와 일치)" "$
   "blocked: owner/repo#41 ← #920(needs-human)"
 has_line "②-c hold:ladder 는 종전대로 보류" "$ERR" "blocked: owner/repo#42 ← #921(보류)"
 has_line "②-c 요약 — conflict 는 needs-human 카운트에 든다" "$ERR" \
-  "blocked-summary: 막힘 2건 (needs-human 블로커 1건)"
+  "blocked-summary: 막힘 2건 (사람 게이트 블로커 1건)"
+
+# ── ②-d (#431) 사람 게이트 블로커 — `deploy-wait`→배포대기 · `테스트`→테스트 ──────────
+# `loop-status.sh` 가 같은 블로커를 `배포대기`/`테스트` 로 찍고 `블로커 배포대기 …` warn 까지
+# 내는데(사람 게이트 = `human_wait ∪ test_wait ∪ deploy_wait`), 여기 갈래가 없으면 `대기`
+# (= 곧 집힐 것)로 읽혀 사람이 오독한다(#276 "루프 이름 = 버킷 이름" 계약의 마지막 구멍).
+# 순서는 loop-status 버킷 우선순위 그대로 — needs-human > 테스트 > 배포대기 > 보류(hold:*) >
+# 단계 라벨. `hold:ladder` 가 겹친 배포대기가 `보류` 로 나오면 갈래가 일반 `hold:*` 뒤로 밀린 것.
+# 요약 카운트도 같은 집합이다 — 배포대기·테스트 블로커는 사람 게이트 카운트에 **든다**.
+fx=$(mkfx bd 34)
+add_issue "$fx" 51 '["agent-ready"]' 'deploy-wait 블로커' 'Blocked by #930'
+add_issue "$fx" 52 '["agent-ready"]' 'deploy-wait+hold 블로커' 'Blocked by #931'
+add_issue "$fx" 53 '["agent-ready"]' '테스트 블로커' 'Blocked by #932'
+add_issue "$fx" 54 '["agent-ready"]' 'issue-runner 블로커' 'Blocked by #933'
+add_blocker "$fx" 930 OPEN '["deploy-wait"]'
+add_blocker "$fx" 931 OPEN '["deploy-wait","hold:ladder","agent:claimed"]'
+add_blocker "$fx" 932 OPEN '["테스트"]'
+add_blocker "$fx" 933 OPEN '["agent-ready","agent:claimed"]'
+run_sut "$fx"
+ck "②-d exit 0" "$RC" "0"
+has_line "②-d deploy-wait → 배포대기(loop-status 와 같은 이름)" "$ERR" \
+  "blocked: owner/repo#51 ← #930(배포대기)"
+has_line "②-d deploy-wait + hold:* + 단계 라벨 → 배포대기(보류·단계보다 앞)" "$ERR" \
+  "blocked: owner/repo#52 ← #931(배포대기)"
+has_line "②-d 테스트 → 테스트" "$ERR" "blocked: owner/repo#53 ← #932(테스트)"
+has_line "②-d 요약 — 배포대기·테스트는 사람 게이트 카운트에 든다(issue-runner 는 안 든다)" "$ERR" \
+  "blocked-summary: 막힘 4건 (사람 게이트 블로커 3건)"
 
 # ── ⑤ 본문 ∪ 라벨 dedupe — 같은 번호는 한 번만 조회한다 ────────────────────
 fx=$(mkfx c 34)
@@ -374,7 +402,7 @@ ck "⑤ 같은 블로커는 한 번만 조회" "$(count_of "$LOG" 'blocker 900')
 ck "⑤ blocked 줄도 한 줄" "$(count_of "$ERR" 'blocked: ')" "1"
 has_line "⑤ blocked 줄" "$ERR" "blocked: owner/repo#21 ← #900(needs-human)"
 ck "⑤ stdout 은 빈 배열" "$(cat "$OUT")" "[]"
-has_line "⑦ 요약 — 막힘 1건 · needs-human 1건" "$ERR" "blocked-summary: 막힘 1건 (needs-human 블로커 1건)"
+has_line "⑦ 요약 — 막힘 1건 · needs-human 1건" "$ERR" "blocked-summary: 막힘 1건 (사람 게이트 블로커 1건)"
 
 # ── ⑤ 첫 OPEN 블로커에서 멈춘다(break 유지 — 둘째는 조회하지 않는다) ───────
 fx=$(mkfx d 34)
@@ -388,7 +416,7 @@ ck "⑤ exit 0" "$RC" "0"
 ck "⑤ 첫 블로커만 조회" "$(count_of "$LOG" 'blocker 910')" "1"
 ck "⑤ 둘째 블로커는 조회 안 함" "$(count_of "$LOG" 'blocker 911')" "0"
 has_line "⑤ 첫 블로커로 보고" "$ERR" "blocked: owner/repo#22 ← #910(issue-runner)"
-has_line "⑦ 요약 — needs-human 0건(첫 블로커가 issue-runner)" "$ERR" "blocked-summary: 막힘 1건 (needs-human 블로커 0건)"
+has_line "⑦ 요약 — needs-human 0건(첫 블로커가 issue-runner)" "$ERR" "blocked-summary: 막힘 1건 (사람 게이트 블로커 0건)"
 
 # ── ⑥ 검색 창 경고 (#277) — 기준은 한 페이지가 아니라 실질 상한 ─────────────
 # 페이지네이션 이후 "창 50" 은 더 이상 손실선이 아니다 — 51~250 은 이어 받아 전부 본다.
@@ -438,7 +466,7 @@ ck "⑨ stdout 52건 (후보 53 − 막힘 1)" "$(jq 'length' "$OUT")" "52"
 ck "⑨ 2페이지 후보가 stdout 에 있다(수정 전엔 증발)" \
   "$(jq -c '[.[].number] | map(select(. >= 60)) | sort' "$OUT")" '[60,61]'
 has_line "⑨ 2페이지의 막힌 이슈도 blocked 줄로 말한다" "$ERR" "blocked: owner/repo#62 ← #900(needs-human)"
-has_line "⑨ 요약은 합친 전체 후보 기준" "$ERR" "blocked-summary: 막힘 1건 (needs-human 블로커 1건)"
+has_line "⑨ 요약은 합친 전체 후보 기준" "$ERR" "blocked-summary: 막힘 1건 (사람 게이트 블로커 1건)"
 
 # ⑨-f 운영 **기본 상수**(창 50 × 5페이지 = 250)를 직접 문다 — 아래 경계 격자는 env 로 줄인
 # 값에서만 돌기 때문에, 기본값이 조용히 바뀌면(예 5→2) 그 격자는 전부 초록인 채로 남는다.
