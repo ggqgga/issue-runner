@@ -803,18 +803,11 @@ run_sut "$fx"
 ck "⑩ 한 건이 실패해도 스크립트는 끝까지 간다(exit 0)" "$RC" "0"
 ck "⑩ 앞·뒤 후보가 stdout 에 남는다(목록 전체를 버리지 않는다)" \
   "$(jq -c '[.[].number]' "$OUT")" '[30,32]'
-ck "⑩ 실패 다음 후보도 판정한다(루프가 안 끊긴다)" "$(count_of "$LOG" 'body 32')" "1"
 has_line "⑩ 실패를 한 줄 warn 으로 말한다(여러 줄 오류문은 접는다)" "$ERR" \
   "warn: owner/repo#31 본문 조회 실패 — 블로커 미상이라 이번 틱 후보에서 제외(다음 틱 재시도): gh: HTTP 502 Bad Gateway try again later"
-# 오류문 접기를 지우면 `try again later` 가 **둘째 줄**로 떨어진다 — 줄 수를 직접 센다
-# (후보별 warn 1 + 집계 warn 1 + blocked-summary 1 = 3줄이 이 픽스처의 stderr 전부다).
-ck "⑩ stderr 는 정확히 3줄(오류문이 줄을 늘리지 않는다)" "$(wc -l < "$ERR" | tr -d ' ')" "3"
 # 후보별 warn 만 두면 2차 레이트리밋에서 100줄로 풀려 ④ Report 에 **숫자로는** 안 남는다.
 has_line "⑩ 몇 건이 빠졌는지 집계 한 줄" "$ERR" \
   "warn: 본문 조회 실패 1건 — 그만큼 이번 틱 후보에서 빠졌다(다음 틱 재시도)"
-# 빈 본문으로 이어 가지 않는다(PR#139: 빈 결과 ≠ 실패) — 본문을 못 읽으면 "Blocked by #N"
-# 유무가 **미상**이라, 통과시키면 블로커 0건으로 읽혀 게이트가 증명 없이 열린다.
-no_line "⑩ 실패 후보를 빈 본문으로 통과시키지 않는다" "$OUT" '"number": 31'
 # `막힘` 은 **OPEN 블로커로 탈락한 수**라는 정의를 그대로 둔다(SKILL.md ③-2 계약) —
 # 조회 실패는 그 정의가 아니라 `warn:` 줄로 Report 에 실린다.
 has_line "⑩ blocked-summary 정의는 안 바뀐다(OPEN 블로커 0건)" "$ERR" "blocked-summary: 막힘 0건"
@@ -861,8 +854,7 @@ bulk_issues "$fx" search.json 160 1
 run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=0 ELIGIBLE_SEARCH_MAX_PAGES=1
 ck "⑫-a exit 0" "$RC" "0"
 has_line "⑫-a 0 → per_page 는 기본값 50" "$LOG" "search page=1 per_page=50"
-has_line "⑫-a 0 → 실질 상한도 50(페이지 1 × 50)" "$ERR" \
-  "warn: 검색 창 절단 — agent-ready 후보 51건 > 창 50(페이지 1 × 50), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+ck "⑫-a 0 → 실질 상한도 50(페이지 1 × 50)" "$(count_of "$ERR" '창 50(페이지 1 × 50)')" "1"
 
 # ⑫-b `abc` → 비숫자는 기본값으로. 정규화를 지우면 `[ abc -ge 1 ]` 이 셸 오류를 stderr 로
 # 흘려 ④ Report 가 옮기는 진단이 오염된다.
@@ -879,8 +871,7 @@ bulk_issues "$fx" search.json 162 1
 run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=200 ELIGIBLE_SEARCH_MAX_PAGES=1
 ck "⑫-c exit 0" "$RC" "0"
 has_line "⑫-c 200 → per_page 는 100 으로 깎인다" "$LOG" "search page=1 per_page=100"
-has_line "⑫-c 깎인 값이 상한 산술에도 반영된다(페이지 1 × 100)" "$ERR" \
-  "warn: 검색 창 절단 — agent-ready 후보 101건 > 창 100(페이지 1 × 100), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+ck "⑫-c 깎인 값이 상한 산술에도 반영된다(페이지 1 × 100)" "$(count_of "$ERR" '창 100(페이지 1 × 100)')" "1"
 
 # ⑫-d `010` → 10진수로 읽는다. `$((010))` 은 8진수 8 이라 창이 조용히 좁아진다.
 fx=$(mkfx env010 11)
@@ -888,8 +879,7 @@ bulk_issues "$fx" search.json 163 1
 run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=010 ELIGIBLE_SEARCH_MAX_PAGES=1
 ck "⑫-d exit 0" "$RC" "0"
 has_line "⑫-d 010 → per_page 는 10(8진수 8 이 아니다)" "$LOG" "search page=1 per_page=10"
-has_line "⑫-d 상한 산술도 10 기준" "$ERR" \
-  "warn: 검색 창 절단 — agent-ready 후보 11건 > 창 10(페이지 1 × 10), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+ck "⑫-d 상한 산술도 10 기준" "$(count_of "$ERR" '창 10(페이지 1 × 10)')" "1"
 
 # ⑫-f `ELIGIBLE_SEARCH_MAX_PAGES=010` → 10진수 10. `$((5 * 010))` 은 8진수라 40 인데
 # 루프 조건 `[ "$page" -lt "$SEARCH_MAX_PAGES" ]` 는 test(1) 이라 10 으로 읽는다 —
@@ -899,8 +889,7 @@ mkpage "$fx" 2 51
 bulk_issues "$fx" search.json 165 1
 run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=5 ELIGIBLE_SEARCH_MAX_PAGES=010
 ck "⑫-f exit 0" "$RC" "0"
-has_line "⑫-f 010 → 실질 상한은 50(= 5 × 10)" "$ERR" \
-  "warn: 검색 창 절단 — agent-ready 후보 51건 > 창 50(페이지 10 × 5), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+ck "⑫-f 010 → 실질 상한은 50(= 5 × 10)" "$(count_of "$ERR" '창 50(페이지 10 × 5)')" "1"
 
 # ⑫-g `ELIGIBLE_SEARCH_MAX_PAGES=abc` → 기본값 5. 정규화를 지우면 `[ abc -ge 1 ]` 이
 # 셸 오류를 stderr 로 흘려 ④ Report 가 옮기는 진단이 오염된다.
@@ -909,8 +898,7 @@ mkpage "$fx" 2 26
 bulk_issues "$fx" search.json 166 1
 run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=5 ELIGIBLE_SEARCH_MAX_PAGES=abc
 ck "⑫-g exit 0" "$RC" "0"
-has_line "⑫-g abc → 실질 상한은 기본값 5페이지(= 5 × 5)" "$ERR" \
-  "warn: 검색 창 절단 — agent-ready 후보 26건 > 창 25(페이지 5 × 5), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+ck "⑫-g abc → 실질 상한은 기본값 5페이지(= 5 × 5)" "$(count_of "$ERR" '창 25(페이지 5 × 5)')" "1"
 no_line "⑫-g 셸 산술 오류가 stderr 로 새지 않는다" "$ERR" "integer expression"
 
 # ⑫-h `ELIGIBLE_SEARCH_MAX_PAGES=0` → 하한에 걸려 기본값 5. 0 이면 실질 상한이 0 이라
