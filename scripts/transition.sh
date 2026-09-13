@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# 루프 전이 = 라벨 이동. 세 루프(issue-runner·verify-runner·closeout)가 산문으로 흩어서
-# 하던 `gh issue edit`(PR + 연결 이슈 미러)를 **전이 하나 = 호출 하나**로 묶는다. 흩어져
-# 있으면 한쪽만 고쳐져 PR 과 이슈의 라벨이 갈리고, 다음 틱이 어긋난 쪽을 진실로 읽는다.
+# transition.sh <전이> <owner/repo> <issue#|-> [pr#|-] [--reason R] [--note "…"]
 #
-# 사용: transition.sh <전이> <owner/repo> <issue#|-> [pr#|-] [--reason R] [--note "…"]
+# 루프 전이 = 라벨 이동. 세 루프(issue-runner·verify-runner·closeout)가 산문으로 흩어서
+# 하던 `gh issue edit`(PR + 연결 이슈 미러)를 **전이 하나 = 호출 하나**로 묶는다.
 #   `-` = 그쪽 없음(연결 이슈 없는 PR / PR 없는 이슈). 둘 다 `-` 면 usage 오류(exit 64).
 #   옵션(`--reason`·`--note`)은 인자 어디에 와도 된다(맨 앞/뒤 모두 허용).
 #
-# ★전이 표 — 이 표가 SSOT★ (스킬 문서가 산문 대신 이 표를 가리킨다. 이슈는 OPEN 기준)
 #   상태 단위(누가 어느 상태를 소유하고 반쯤 실패한 전이를 누가 회수하나)는 `references/state-machine.md`(#393) — 이 표와 1:1.
 #
 #   전이                  | PR add      | PR remove                          | 이슈 add    | 이슈 remove
@@ -30,82 +28,37 @@
 #         `⊘wk` = `flow:claimed flow:agent-ready`(PR 의 워커 칸 미러 둘 — 사다리를 오르는 전이가 뗀다, #281)
 #         † `--reason <conflict|policy|ladder>` 필수 · ‡ `--note "<근거>"` 필수
 #
-#   · PR 은 이슈 사다리를 **전 칸** 미러한다(#281) — 이슈 `agent-ready`(대기) ↔ PR `flow:agent-ready`,
-#     이슈 `agent:claimed`(issue-runner) ↔ PR `flow:claimed`, 그 뒤 칸은 같은 이름. 이름을 달리 한 이유:
-#     이슈의 `agent-ready` 는 사다리 내내 남는 **자격** 라벨이라 같은 이름을 PR 의 **단계** 로 쓰면
-#     뜻이 갈린다. 반송 두 전이가 PR 에 `flow:agent-ready` 를 붙이고(대기 칸), claim(claim-issue.sh)이
-#     그것을 `flow:claimed` 로 바꾸며(issue-runner), 워커가 처음 여는 PR 도 `--label flow:claimed` 로 태어난다.
-#     그래서 열린 agent PR 은 항상 어느 칸의 라벨을 하나 달고 있다(라벨 없는 열린 agent PR = 사고).
-#     보장 범위(#420): 이 표의 전이(반송·인계·정지는 `hold:<사유>` 가 칸이다) + claim + 워커의 첫 PR +
-#     재개 스윕의 **자동 재개 경로**(H:ladder→S0 — `resume-sweep.sh` 가 이슈의 `hold:ladder` 를 풀며 PR 의
-#     `hold:ladder` 를 뗄 때 이슈 칸에 맞는 미러를 되붙인다; 칸 라벨이 이미 있으면 겹치지 않는다) +
-#     디스패처 Maintain 규칙0(두 미러가 붙은 PR 은 건너뛴다). 보장 밖: 사람이 이슈의 `hold:policy`·
-#     `hold:conflict` 를 직접 푼 뒤 정지 미러 정리(#265)가 PR 의 사본만 떼는 경로(미러를 되붙이지 않는다),
-#     그리고 라벨 손편집.
-#     `⊘wk` 를 handoff-verify 에도 두는 건 사람이 claim 을 안 거치고 직접 인계하는 경우의 방어이고,
-#     verify-pick·closeout-pick·closeout-dup 의 것은 방어적 제거다(정상 흐름에선 이미 없다).
-#     `flow:ci`(로컬 CI 재실행 중)는 `flow:claimed` 안의 워커 내부 하위 상태라 둘이 같이 붙는다(정상).
+#   불변식(왜 그런지는 근거 문서 — 여기는 지켜야 할 것만):
+#   · PR 은 이슈 사다리를 **전 칸** 미러한다(#281) — 열린 agent PR 은 항상 어느 칸의 라벨을
+#     하나 달고 있다(라벨 없는 열린 agent PR = 사고). 이름이 갈리는 이유·보장 범위는 근거 §2.
+#   · `verifying`(#275) 은 verify-runner 의 **점유** 라벨 — `verify-pick` 이 붙이고 집은 뒤의
+#     **모든 출구**가 뗀다(`verify-unpick` 은 pick 의 정확한 역). 이슈 사다리:
+#     `agent:claimed` → `flow:verify` → `verifying` → `flow:ready` → `harvesting`.
+#   · 이슈의 `agent-ready` 는 사다리 내내 유지되는 **자격** 라벨 — 위에서 명시적으로 add 하는
+#     칸 외엔 건드리지 않는다(어느 이슈 remove 칸에도 없다). 예외는 이슈를 닫는 closeout-dup 뿐.
+#   · 루프가 `needs-human` 을 붙이는 곳은 `policy-kept` 하나뿐(#244) — 기계 정지 세 전이는
+#     `hold:<사유>` 만, **PR 에도** 붙인다. 사람이 손으로 세운 `needs-human` 은 안 건드린다.
+#   · `--reason` 은 정지 세 전이에 **필수**고 `dup`·`hardware` 는 사유가 될 수 없다(#147).
+#   · 반송 두 전이는 `needs-human`·`hold:*` 를 뗀다 — 반송 = 사람 대기 해제(#147 §4 재개 스윕).
 #
-#   · `verifying`(#275) 은 verify-runner 의 **점유** 라벨 — closeout 의 `harvesting` 과 같은
-#     자리다(PR + 연결 이슈 양쪽). `verify-pick` 이 집는 순간 `flow:verify`(검증대기) 를 이것으로
-#     바꾸고, 집은 뒤의 **모든 출구**(verify-pass·verify-redispatch·verify-held·closeout-pick·
-#     closeout-blocked·closeout-redispatch·closeout-dup)가 뗀다 — 하나라도 빠지면 단계 라벨이
-#     겹쳐 남아 다음 틱이 고아로 재집는다. `verify-unpick` 은 pick 의 정확한 역: flake_retry
-#     (E2E 인프라 흔들림 — 판정 아님)로 끝나면 점유를 풀고 검증대기로 되돌린다. 그래서
-#     "`verifying` = 지금 이 순간 검증이 돌고 있다" 가 항상 참이고, 틱 시작에 남아 있는
-#     `verifying` 은 이전 틱이 죽은 것이다(verify-eligible.sh 가 그걸 먼저 낸다, `orphan:true`).
-#     이슈 사다리: `agent:claimed` → `flow:verify` → `verifying` → `flow:ready` → `harvesting`.
-#
-#   · **이슈 칸** 얘기다: `agent-ready` 는 사다리 전체에서 유지되는 **자격** 라벨 — 위에서 명시적으로
-#     add 하는 칸 외엔 건드리지 않는다(어느 이슈 remove 칸에도 없다). 근거는 release-labels.sh 의 #117:
-#     OPEN 이슈의 agent-ready 를 떼면 디스패치 자격만 사라져 조용히 좌초한다.
-#     (예외는 closeout-dup 뿐 — 이슈를 **닫으므로** release-labels.sh 가 회수한다.)
-#     PR 의 `flow:agent-ready` 는 이것과 다르다 — 자격이 아니라 **단계**(대기 칸) 라벨이라 claim 이
-#     떼고 `flow:claimed` 로 바꾼다(#281). 이름에 `agent-ready` 가 들어 있어도 이 불변식의 대상이 아니다.
-#   · `needs-human` 은 **사람이 직접 세운 정지** 하나만 뜻한다(#244, 플랜 3단계). 기계 정지
-#     세 전이(verify-held·closeout-blocked·runner-held)는 `hold:<사유>` 만 붙인다 — 겹쳐
-#     붙이던 옛 표에서는 `needs-human` 이 "사람 호출" 이 아니라 "루프 손대지 마" 로 읽혀,
-#     사람 대시보드의 needs-human 칸이 **손댈 게 없는 것**(창이 지나면 루프가 스스로 재개하는
-#     `hold:ladder`)으로 찼다. 루프가 `needs-human` 을 붙이는 곳은 이제 `policy-kept`
-#     하나뿐이다 — `hold:policy` 재심(#155)이 "사람 몫 유지" 로 끝났을 때.
-#     이미 붙어 있는 `needs-human`(사람이 손으로 세운 것)은 위에 적힌 전이 외엔 건드리지
-#     않는다. 기계 정지 세 전이는 **PR 에도** 사유 라벨을 붙인다: 연결 이슈 없는
-#     PR(`issue=-`)은 정식 호출 형태인데, 이슈에만 붙이면 정지 신호가 아무 데도 안 남고
-#     exit 0 `ok` 로 끝나 조용히 사라진다.
-#   · 정지 사유는 라벨이다(#147) — 사유가 없으면 왜 멈췄는지 목록에서 안 보여 쓰레기통이
-#     된다. 그래서 `--reason` 이 **필수**고, `dup`·`hardware` 는 사유가
-#     될 수 없다: 중복은 `closeout-dup` 이 닫고, 실장비는 검증 사다리를 오른다.
-#   · 반송 두 전이(verify-redispatch·closeout-redispatch)는 `needs-human`·`hold:*` 를 뗀다 —
-#     반송 = 사람 대기 해제. 재개 스윕(#147 §4)이 이 전이로 멈춘 건을 다시 태운다.
-#
-# ★closeout-dup 순서★ — 이슈가 요구한 수정이 **이미 main 에 있을 때** 루프가 직접 닫는다
-#   (`needs-human` 금지 — 루프가 결정할 수 있는 건 루프가 끝낸다).
-#     ① PR 라벨 `dup` 부착 + `harvesting`·`verifying`·`flow:*`(워커 칸 미러 포함) 제거   ② PR 코멘트(근거)
-#     ③ 이슈 코멘트 + `gh issue close`                    ④ `release-labels.sh`(닫힌 이슈
-#        라 agent-ready 까지 회수)                        ⑤ **마지막에** `gh pr close`
-#     이슈가 `-` 면 ①②⑤ 만.
-#   ★PR close 가 왜 마지막인가★ — 먼저 닫으면 뒤(③④)가 실패했을 때 PR 이 CLOSED 라
-#   closeout 의 다음 틱이 **다시 집지 못한다**(복구 불능). 마지막에 두면 중간 실패 시
-#   PR 은 `dup` 라벨을 단 채 열려 남고, 다음 틱이 같은 전이를 다시 걸어 완주한다.
-#   그래서 ①~④ 는 전부 멱등이어야 한다 — 라벨 편집은 원래 멱등이고, 코멘트는 중복을
-#   감수한다(근거가 두 번 남는 쪽이 안 남는 쪽보다 낫다).
+# ★closeout-dup 순서★ — 이슈가 요구한 수정이 **이미 main 에 있을 때** 루프가 직접 닫는다.
+#   ① PR 라벨 `dup` 부착 + `harvesting`·`verifying`·`flow:*`(워커 칸 미러 포함) 제거
+#   ② PR 코멘트(근거)  ③ 이슈 코멘트 + `gh issue close`  ④ `release-labels.sh`
+#   ⑤ **마지막에** `gh pr close`. 이슈가 `-` 면 ①②⑤ 만. ①~④ 는 전부 멱등이어야 한다.
 #   멱등: 이미 CLOSED 인 쪽의 close 만 건너뛴다. readback 은 순서가 아니라 **최종 상태**
 #   (PR 라벨 dup 부착·harvesting 부재 · PR/이슈 CLOSED)를 본다.
 #
 # ★사람 대기 세 전이의 순서★ (#157) — `--note` 가 붙는 verify-held·closeout-blocked·
-#   runner-held 는 **질문 코멘트 → 라벨 편집 → readback** 순이다. 코멘트가 뒤였을 땐 코멘트
-#   API 의 일시 실패가 "라벨은 붙었는데 질문이 없는 홀드" 를 남겼고(재시도 주체 없음),
-#   앞으로 옮기면 그 실패가 라벨 편집 전에 exit 2 로 끝나 상태가 전이 이전 그대로 남는다 —
-#   호출부가 다음 틱에 같은 전이를 다시 걸면 그게 곧 재시도다. `--note` 가 없는 전이는
+#   runner-held 는 **질문 코멘트 → 라벨 편집 → readback** 순이다. `--note` 가 없는 전이는
 #   이 단계를 아예 거치지 않으므로 종전 경로 그대로다.
 #
 # 멱등: 같은 전이를 두 번 걸어도 무해하다(`--remove-label` 은 없는 라벨에 무해).
 # 검증: edit 뒤 라벨을 **다시 읽어** add ⊆ 현재 · remove ∩ 현재 = ∅ 인지 확인한다.
 #   불일치 → stderr 한 줄 + exit 1 / gh 호출 자체 실패(네트워크·권한) → stderr + exit 2.
 #   라벨 부재(`not found`)면 setup-labels.sh 를 **프로세스당 1회** 돌리고 같은 edit 를
-#   (실측 2026-09-09: 레포에 **없는** 라벨은 `--remove-label` 도 편집 전체를 실패시킨다 —
-#   gh 메시지는 `'hold:conflict' not found` 형식이라 "label" 단어가 없다. 따옴표 형식도 잡는다.)
 #   **1회만** 재시도한다(무한루프 금지).
+#
+# 근거: references/scripts-rationale.md transition.sh §1–§8
 set -uo pipefail
 
 usage() {
