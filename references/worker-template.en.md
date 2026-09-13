@@ -309,7 +309,8 @@ Procedure:
    command **once** → if that fails too, open the PR without `--label`).
    That repair call is a narrow exception to "Forbidden" below.)
    The body must include a dedicated line `Closes #<NUM>` (`Refs #N` for partial epic
-   progress — the contract is `references/loop-conventions.md` §5), a
+   progress — the contract is
+   `~/.claude/skills/issue-runner/references/loop-conventions.md` §5), a
    `## Test plan` section (checkboxes based on the acceptance criteria), and a
    `## Pre-review` section (the step 9-b outcome). Immediately
    after creating the PR, leave the comment
@@ -367,7 +368,8 @@ Procedure:
       command plus its last 20 lines) in the PR `## Test plan`** — "real hardware is
       needed" as prose is not enough to leave it `[ ]` (rungs ① and ② can be attempted
       from the worktree as-is; your own ceiling is rung ③ — see the per-actor table in
-      `references/loop-conventions.md` §9; the "Forbidden" list below still stands).
+      `~/.claude/skills/issue-runner/references/loop-conventions.md` §9; the "Forbidden"
+      list below still stands).
       **Do not regenerate the whole
       body** — conservatively replace only the mark in checkbox lines, leave every
       other character unchanged (the global hook does not reach subagents, so do it yourself).
