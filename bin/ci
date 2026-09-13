@@ -141,7 +141,6 @@ echo "[closeout] pr-head-at 헬퍼 fail-closed·실행비트 스모크 (#171)"
 # 둔갑시키면 머지 게이트(finish-classify 의 ✅ 갈래)가 증명 없이 열린다.
 # 소비자가 `"$SCRIPT_DIR/pr-head-at.sh"` 로 직접 exec 하므로 실행 비트도 여기서 함께 문다
 # (비트가 빠지면 조용히 exit 126 → head 시각이 항상 빈 값으로 degrade 된다).
-[ -x scripts/pr-head-at.sh ] || { echo "  ✗ pr-head-at.sh 실행 비트 없음"; exit 1; }
 tmp=$(mktemp -d); mkdir "$tmp/stub"
 printf '#!/bin/sh\nexit 1\n' > "$tmp/stub/gh"; chmod +x "$tmp/stub/gh"
 rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/pr-head-at.sh owner/r 123 2>/dev/null) || rc=$?
@@ -161,13 +160,6 @@ rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/pr-head-at.sh owner/r 123 2>/dev/null
   || { echo "  ✗ pr-head-at: 커밋 조회 빈값 rc=$rc out='$out' (기대 rc=1·무출력)"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
-echo "[closeout] bounce-state 헬퍼 실행비트 스모크 (#196)"
-# 소비자(closeout-eligible.sh · closeout SKILL ①-b 프로즈)가 직접 exec 하므로 실행 비트를
-# 여기서 문다(비트가 빠지면 조용히 exit 126 → 판정이 항상 빈 값으로 degrade 된다).
-# tests/bounce-state.test.sh 는 `bash "$SUT"` 로 불러 이 축을 우회하므로 여기만 지킨다.
-# fail-closed(gh 실패·인자 누락) 2건은 tests/bounce-state.test.sh 가 이미 같은 단언을 한다.
-[ -x scripts/bounce-state.sh ] || { echo "  ✗ bounce-state.sh 실행 비트 없음"; exit 1; }
-
 echo "[closeout] 반송 마커 집합은 bounce-state.sh 한 자리 (#171 · #196)"
 # 마커 집합을 다른 스크립트가 자기 벌로 들고 있으면 새 반송 어휘가 생겼을 때 한쪽만
 # 고쳐져 fail-open 이 된다(실제로 verify-runner 채널이 그렇게 빠져 있었다).
@@ -181,7 +173,6 @@ echo "[#444] 회차 카운터는 scripts/attempt-counter.sh 한 자리 — 산�
 # 읽기-증가-쓰기가 SKILL 산문으로 되살아나면 두 레인의 회차 규칙이 갈리고(한쪽만 고쳐진다)
 # 그 차이는 출력에 안 보인다 — 상한 비교만 SKILL 노브로 남는다.
 # 만료 조건: 두 SKILL 이 회차를 스크립트로만 읽는 형태를 유지하는 한 이 가드가 그 형태의 강제자다.
-[ -x scripts/attempt-counter.sh ] || { echo "  ✗ scripts/attempt-counter.sh 실행 비트 없음 — SKILL 이 직접 exec 한다"; exit 1; }
 for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md; do
   grep -qF 'attempt-counter.sh' "$f" \
     || { echo "  ✗ $f: attempt-counter.sh 배선 없음 (#444)"; exit 1; }
@@ -196,7 +187,6 @@ echo "[#449] 규칙0 은 pr-state.sh 한 자리 — 판정→목표 라벨 매�
 # 어긋난 뒤에야 보인다(#281 미러가 갈리는 자리).
 # 만료 조건: 한/영 ② Maintain 규칙0 이 매핑을 스크립트에 위임하는 형태를 유지하는 한
 # 이 가드가 그 형태의 강제자다.
-[ -x scripts/pr-state.sh ] || { echo "  ✗ scripts/pr-state.sh 실행 비트 없음 — SKILL 이 직접 exec 한다"; exit 1; }
 for f in SKILL.md SKILL.en.md; do
   grep -qF 'pr-state.sh' "$f" \
     || { echo "  ✗ $f: 규칙0 에 pr-state.sh 배선 없음 (#449)"; exit 1; }
@@ -229,7 +219,6 @@ grep -qF 'def is_verdict_ok' scripts/lib/loop.jq \
 echo "[closeout·verify-runner] bounce-comment 헬퍼 실행비트·생성 본문 판정 스모크 (#212 · #221)"
 # 문구 생성 헬퍼가 실행 비트 없이 배포되면 조용히 exit 126 → 두 SKILL 이 부르는 반송
 # 코멘트가 전부 게시 실패로 degrade 한다(PR#173 교훈, bounce-state.sh 와 같은 함정).
-[ -x scripts/bounce-comment.sh ] || { echo "  ✗ bounce-comment.sh 실행 비트 없음"; exit 1; }
 tmp=$(mktemp -d); mkdir "$tmp/stub"
 # gh 스텁은 **마지막 인자**(호출 계약상 항상 --body 값)만 파일에 그대로 쓴다 — 이
 # 레포는 bash 3.2 를 지원해야 해 mapfile/연관배열을 못 쓴다(transition.sh:177 선례).
@@ -660,7 +649,6 @@ echo "[#261] spinoff-inherit 헬퍼 — 실행비트·Epic 정규식 SSOT 동기
 # 비트가 빠지면 조용히 exit 126 → `eval` 이 빈 문자열을 먹어 `$priority` 가 **빈 값**이 되고,
 # `gh issue create --label ""` 로 발행이 통째로 실패하거나 무라벨 이슈가 남는다(PR#173 말미의
 # "새 헬퍼는 실행 비트가 빠지면 값이 항상 빈 값이 되어 조용히 degrade" 와 같은 함정).
-[ -x scripts/spinoff-inherit.sh ] || { echo "  ✗ spinoff-inherit.sh 실행 비트 없음"; exit 1; }
 # `<EPIC_LINE>` 은 머리 주석의 *설명*이 아니라 본문 **첫 줄 자리**여야 한다 — HTML 주석이
 # 끝난 뒤 첫 비지 않은 줄이 정확히 `<EPIC_LINE>` 이어야, 채워진 본문의 첫 줄이 `Epic #N` 이
 # 되고 6단계 '발행 직후 확인' 의 "첫 줄이 Epic #N 인가" 가 참이 될 수 있다. 위 placeholder
@@ -1062,7 +1050,6 @@ unq_sweep=$(grep -o 'def unquoted:.*;' scripts/resume-sweep.sh | head -1)
 echo "[test] epic-sweep.sh — leaf 전부 종료 에픽 자동 종료·전용 줄 판정·상한 보류·멱등 (#258)"
 # closeout ① 이 `"$SCRIPTS/epic-sweep.sh"` 로 직접 exec 하므로 실행 비트도 여기서 문다
 # (비트가 빠지면 조용히 exit 126 → 에픽 스윕이 매 틱 no-op 으로 degrade, PR#173 교훈과 동일 함정).
-[ -x scripts/epic-sweep.sh ] || { echo "  ✗ epic-sweep.sh 실행 비트 없음"; exit 1; }
 bash scripts/tests/epic-sweep.test.sh
 
 echo "[test] progress-evidence.sh 진행 증거 3축 격자 — 커밋/큐/claim·3값 어휘·경계 (#428)"
@@ -1102,7 +1089,6 @@ dup=$(grep -lE '^STALL_MIN=|^: "\$\{STALL_MIN:=|^queue_alive\(\)' scripts/*.sh s
 # 소비자 둘이 `"$SCRIPT_DIR/progress-evidence.sh"` 로 직접 exec 하므로 실행 비트를 문다
 # (비트가 빠지면 조용히 exit 126 → 판정이 항상 빈 값이 되고, 그 degrade 가 timebox 는
 #  unknown, finish-classify 는 active 로 조용히 새어 완결 유실 회수가 통째로 멈춘다).
-[ -x scripts/progress-evidence.sh ] || { echo "  ✗ progress-evidence.sh 실행 비트 없음"; exit 1; }
 for f in scripts/timebox-check.sh scripts/finish-classify.sh; do
   grep -qF 'progress-evidence.sh' "$f" || { echo "  ✗ $f 에 progress-evidence.sh 배선 없음"; exit 1; }
 done
@@ -1135,7 +1121,6 @@ echo "[#206] 현재 회차 시작 증거 — claim-at.sh 한 자리·ISSUE_TIMEB
 # `agent:claimed` 의 **부착 시각**은 첫 푸시 전 창을 덮는 유일한 신호다(#206 attempt 3
 # codex BLOCKER). 조회가 한 자리(claim-at.sh)에 있어야 "존재로 판정하지 않는다"(#196 3항)와
 # "부착 시각으로 판정한다"(#206)가 한 문서에서 갈리지 않는다.
-[ -x scripts/claim-at.sh ] || { echo "  ✗ claim-at.sh 실행 비트 없음"; exit 1; }
 # finish-classify 가 실제로 그 자리를 부르는지(배선). `claimed_arg` 가 사라지면 진행 증거
 # ③ 이 조용히 꺼지고 격자 I 절만 빨개지는 게 아니라 **실호출 경로가 통째로 없어진다**.
 # 패턴은 `-e` 로 넘긴다 — 맨몸으로 넘기면 `--claimed-at` 이 grep 옵션으로 먹혀 가드가
@@ -1237,14 +1222,12 @@ done
 echo "[test] timebox-check.sh 진행 증거 판정·queue.log 마지막 줄·유예 상한 (#200)"
 # 디스패처가 `"$SCRIPTS/timebox-check.sh"` 로 직접 exec 하므로 실행 비트도 여기서 문다
 # (비트가 빠지면 조용히 exit 126 → 판정 줄이 빈 값이 되고 그 이슈의 timebox 가 무판정으로 샌다).
-[ -x scripts/timebox-check.sh ] || { echo "  ✗ timebox-check.sh 실행 비트 없음"; exit 1; }
 bash scripts/tests/timebox-check.test.sh
 
 echo "[test] lessons-trim.sh lessons-verifier.md 캡 수렴 정리 — 항목 정의·오래된 순 삭제·멱등·append 잠금 (#208)"
 # closeout 1·6단계가 append 직후 `$SCRIPTS/lessons-trim.sh append <파일> 20 "<줄>"`
 # 한 자리로 부르는 계약이므로 실행 비트도 여기서 문다(비트가 빠지면 exit 126 → 캡
 # 정리가 조용히 no-op 으로 degrade, PR#173 교훈과 동일 함정).
-[ -x scripts/lessons-trim.sh ] || { echo "  ✗ lessons-trim.sh 실행 비트 없음"; exit 1; }
 bash scripts/tests/lessons-trim.test.sh
 
 echo "[#200] timebox 진행 증거 판정 배선 검사 — 한/영 SKILL 동기"
@@ -1860,7 +1843,6 @@ grep -qF 'bounce-state.sh' scripts/finish-classify.sh \
 # 소비자가 `"$SCRIPT_DIR/bounce-state.sh"` 로 직접 exec 하므로 실행 비트를 문다
 # (비트가 빠지면 exit 126 → 판정 불가 → 모든 🔄 갈래가 조용히 active 로 접혀 완결 유실
 #  회수가 통째로 멈춘다 — progress-evidence.sh 의 같은 자리와 같은 함정).
-[ -x scripts/bounce-state.sh ] || { echo "  ✗ bounce-state.sh 실행 비트 없음"; exit 1; }
 # 행동 스모크 — 같은 형상에서 반송 마커 시각 하나만 움직였을 때 판정이 갈리는가.
 # (격자·뮤테이션 방증은 scripts/tests/finish-classify.test.sh 의 J 절이 문다.)
 ci308_now=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "2026-07-05T12:00:00Z" +%s 2>/dev/null \
