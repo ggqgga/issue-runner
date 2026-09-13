@@ -42,7 +42,7 @@
 #      F 가 `마감 검증: ✅ 기각 승계` 면 `resume: step2` 를 덧붙인다(③-1 재실행 금지 — 같은 P1 재생산)
 #   3) 착수: head 시각 > max(h,r) 코멘트 시각(c)
 #        조회 실패                     → blocked head_lookup         (값 없이 되돌리기 판단을 하지 않는다)
-#        c ∧ r 있음                    → active                      (반송 뒤 워커가 착수)
+#        c ∧ r > h                     → active                      (이 보류의 반송 뒤 워커가 착수 — 옛 마커는 아님)
 #        c ∧ r 없음 ∧ A               → active                      (그 레인이 들고 있다)
 #        c ∧ r 없음 ∧ ¬A              → ambiguous new_commit        (반송 없는 새 커밋 — 사람에게)
 #   4) 멱등: r > h (이 보류의 반송이 이미 나갔다)
@@ -111,7 +111,8 @@ fi
 indices() {  # indices <json> → "h r f d" (없음 = -1)
   printf '%s' "$1" | jq -L "$here/lib" -r '
     include "loop";
-    [ .[].body // "" ] as $b
+    if type != "array" then error("comments must be an array") else . end
+    | [ .[].body // "" ] as $b
     | [ ($b | last_index(is_hold_boundary)), ($b | last_index(is_bounce)),
         ($b | last_index(is_verdict_ok or is_closeout_ok)), ($b | last_index(is_human_decision)) ]
     | map(if . == null then -1 else . end) | join(" ")' 2>/dev/null
@@ -190,7 +191,9 @@ if [ "${HR_HEAD_AT+set}" = set ]; then head_at="$HR_HEAD_AT"; else head_at=$("$h
 head_ep=$(to_epoch "$head_at"); base_ep=$(to_epoch "$(created_at "$pr_json" "$base")")
 { [ -n "$head_ep" ] && [ -n "$base_ep" ]; } || blocked head_lookup
 if [ "$head_ep" -gt "$base_ep" ]; then
-  if [ "$r_pr" -ge 0 ]; then echo active; exit 0; fi
+  # "반송 뒤 착수" 는 **이 보류 뒤의** 마커(r > h)만이다 — 옛 회차의 마커가 남은 PR 에서 사람이 직접 push 한
+  # 형상을 active 로 두면 아무 레인도 없이 영구 정체한다(보조 리뷰 실측). 4) 멱등 분기와 같은 기준.
+  if [ "$r_pr" -gt "$h_pr" ]; then echo active; exit 0; fi
   if [ "$issue" != - ] && [ "$A" = 1 ]; then echo active; exit 0; fi
   ambiguous new_commit
 fi

@@ -95,6 +95,7 @@ no_issue_idem|H,R|-|-|-|-|early|ambiguous|24
 verify_bounce_then_commit|H,V|H|1|-|agent:claimed|late|active|7v
 resolved_but_verifier_live|H,F|H|1|-|verifying|early|active|3v
 resolved_ready_lane|H,F|H|1|-|flow:ready|early|pick|3r
+old_marker_then_human_push|R,H|H|1|-|agent-ready|late|ambiguous|10o
 legacy_no_sentinel_is_machine|H,L|H|1|-|agent-ready|early|ambiguous|-
 '
 while IFS='|' read -r id pr is num prl isl head want row; do
@@ -124,6 +125,12 @@ ck "라벨 조회 실패 → blocked" blocked
 # 라벨 경계는 배열이다 — 쉼표를 품은 한 라벨 `triage,needs-human` 은 needs-human 이 아니다(codex P2 · #266)
 GOT=$(HR_PR_COMMENTS_JSON="$(mkjson 'X,F')" HR_ISSUE_COMMENTS_JSON='[]' HR_PR_LABELS='[]' HR_ISSUE_LABELS='["triage,needs-human","agent-ready"]' HR_HEAD_AT='' bash "$SUT" owner/repo 42 1 2>&1)
 ck "쉼표를 품은 라벨명은 정지 라벨로 오독하지 않는다" pick
+GOT=$(HR_PR_COMMENTS_JSON='{}' HR_ISSUE_COMMENTS_JSON='[]' HR_PR_LABELS='[]' HR_ISSUE_LABELS='[]' HR_HEAD_AT='' bash "$SUT" owner/repo 42 1 2>&1)
+ck "배열 아닌 코멘트 입력 → blocked(comments_parse)" blocked
+GOT=$(HR_PR_COMMENTS_JSON="$(mkjson 'H')" HR_ISSUE_COMMENTS_JSON=none HR_PR_LABELS='[]' HR_ISSUE_LABELS='[]' HR_HEAD_AT='' bash "$SUT" owner/repo 42 1 2>&1)
+ck "이슈 코멘트 조회 실패 → blocked" blocked
+GOT=$(HR_PR_COMMENTS_JSON='[{"body":"마감 검증: ⚠ 보류\n<!-- bodat:worker -->","createdAt":"2026-07-05T11:00:00Z"},{"body":"","createdAt":"2026-07-05T11:01:00Z"}]' HR_ISSUE_COMMENTS_JSON='[]' HR_PR_LABELS='[]' HR_ISSUE_LABELS='["agent-ready"]' HR_HEAD_AT='2026-07-05T10:00:00Z' bash "$SUT" owner/repo 42 1 2>&1)
+ck "빈 본문은 결정문이 아니다 → ambiguous" ambiguous
 bash "$SUT" owner/repo >/dev/null 2>&1; rc=$?; [ "$rc" = 64 ] && ok || bad "인자 부족 exit $rc (기대 64)"
 [ -x "$SUT" ] && ok || bad "hold-resolve.sh 실행 비트 없음"
 

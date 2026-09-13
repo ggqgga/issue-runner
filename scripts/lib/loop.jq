@@ -75,7 +75,8 @@ def is_bounce: startswith("재검증 실패") or startswith("재디스패치");
 def is_hold_boundary:    is_verdict_hold or is_closeout_hold or contains("<!-- hold-note: ");
 # 사람 결정문 = 머신 코멘트가 아닌 것 ∪ 재개 스윕 재심이 라벨을 스스로 뗀 `resumed` 코멘트.
 # `<!-- policy-review: kept -->` 는 "사람 몫 유지 — 라벨을 안 건드린다" 라 결정문이 아니다(#174 흡수).
-def is_human_decision:   (is_machine | not) or contains("<!-- policy-review: resumed -->");
+# 빈 본문(`body` 결손을 pr-comments.sh 가 "" 로 매핑)은 머신도 아니지만 결정문도 아니다 — `\S` 하나는 있어야 한다.
+def is_human_decision:   ((is_machine | not) and test("\\S")) or contains("<!-- policy-review: resumed -->");
 
 # ── 마지막 매칭 인덱스 ──────────────────────────────────────────────────────
 # last_index(f) — 배열에서 `f` 가 참인 **마지막** 원소의 인덱스. 없으면 `null`.
