@@ -1,5 +1,5 @@
 ## 배경
-PR #<PR> 머지됨 (HEAD <SHA>). 배포·검증이 필요하다 (closeout 4단계 → deploy-cycle 레인). 검증·배포 순서는 이 레포의 배포 절차를 따른다.
+PR #<PR> 머지됨 (HEAD <SHA>). 배포·검증이 필요하다 (<LANE_NOTE>). 검증·배포 순서는 이 레포의 배포 절차를 따른다.
 
 ## 변경 요약
 <SUMMARY>
@@ -8,8 +8,7 @@ PR #<PR> 머지됨 (HEAD <SHA>). 배포·검증이 필요하다 (closeout 4단�
 `<DEPLOY_CMD>` (이 레포의 배포 엔트리포인트)
 
 ## 검증 URL
-<VERIFY_URL> (production 베이스 URL. closeout 5단계가 이 URL 로 Chrome 스모크를 몰아 아래 검증 항목을 대조한다. **자동화 크롬이 실제로 여는 주소를 적어라** — BoDAT 은 `http://100.65.53.51:3000`(Tailscale)이고 `bodat.local`·LAN IP 는 크롬에서만 안 열린다: BoDAT `deploy-bodat` 5절.)
-레포가 dev 스테이지를 두는 경우 상세 검증은 그쪽에서 먼저 수행될 수 있고, 이 URL 스모크는 배포 후 마지막 안전망이다.
+<VERIFY_URL><VERIFY_URL_NOTE>
 
 ## 라이브/하드웨어 검증 항목
 <!-- 형태 고정: `- [ ]` 체크박스 목록만. 한 줄 = deploy-cycle ⑦ 이 한 번 밟는 동작.
