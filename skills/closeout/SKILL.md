@@ -203,12 +203,12 @@ claim 조회는 `$SCRIPTS/claim-at.sh <repo> <이슈>` **한 자리**(타임라�
 
 | finish-classify 출력 | 뜻 | 조치 |
 |---|---|---|
-| `done_verdict` | 최신 `머지 판정: ✅` **이고 그 판정이 현재 head 커밋 이후임이 증명됨**(#171) | eligible.sh 정상 경로가 처리 — 스윕은 skip |
+| `done_verdict` | 최신 `머지 판정: ✅` **이고 그 판정이 현재 head 커밋 이후임이 증명됨**(#171) | eligible.sh 정상 경로가 처리 — 스윕은 skip. **단 그 ✅ 뒤에 미해소 보류 경계**(`마감 검증: ⚠ 보류`·`<!-- hold-note: ` — `hold-resolve.sh` 의 H 토큰)**가 있으면 skip 이 아니라 ①-c 로 보낸다**(#334 — eligible 의 미해결 코멘트 게이트가 사람 결정문을 막는 형상을 스윕이 줍는다) |
 | `stale_inline` | 🔄 + 검증자 CLEAN + 버퍼 초과 (검증까지 도달·최종판정만 유실) | **입양(머지)** — ② Pick 후보로. ③ 1단계가 **독립 재검증** 후 마감. **새 이슈 안 만듦**. 단 위 1) 의 `bounced` 갈래에서 나온 `stale_inline` 은 **입양하지 않고 재디스패치**한다 |
 | `stale_reverify` | 🔄 + 검증자 부재/미해결 BLOCKER + 버퍼 초과 + **진행 증거 없음**(#206) (검증 전 사망·구현 미완 가능) | **재디스패치** — `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` (연결 이슈를 `agent-ready` 로 되돌리고 `agent:claimed`·단계 라벨을 뗀다) → 새 워커가 같은 브랜치서 검증자 재실행→체크박스→최종판정으로 완결. 멱등 마커(아래) |
 | `no_verdict` | `머지 판정:` 코멘트가 **0건** + **CI 초록**(실패 0 이고 미완료 0 — 도는 체크가 하나라도 있으면 이 계급이 아니다, #421) + 버퍼 초과 + **진행 증거 없음**(#396). 코멘트 **조회 실패**는 이 계급이 아니다(`active`) | **재디스패치** — 바로 위 행과 **같은 조치**다(사인도 같다). **연결 이슈가 없으면 무접촉** — 전이를 부르지 말고 ④ Report 에 한 줄로 올려 사람이 보게 하라 |
 | `held` | 최신 `머지 판정: ⚠ 보류` (워커 명시 보류) | **정지(`hold:policy`)** — `$SCRIPTS/transition.sh closeout-blocked <repo> <issue\|-> <pr> --reason policy --note "<질문 한 줄>"` (PR 과 연결 이슈 **양쪽**에 `hold:policy` 부착 + 단계 라벨 정리. **`needs-human` 은 안 붙는다**(#244) — 사람 호출은 재개 스윕 ③ 의 재심이 "사람 몫 유지" 로 끝났을 때만 `transition.sh policy-kept` 가 붙인다), closeout 무접촉 |
-| `active` | 진행 중·버퍼 미도달·우리 형상 아님, 또는 **✅ 의 신선도를 증명 못 함**(#171), 또는 **진행 증거가 있음**(또는 그 판정 자체가 불가) | **무접촉**(다음 틱) |
+| `active` | 진행 중·버퍼 미도달·우리 형상 아님, 또는 **✅ 의 신선도를 증명 못 함**(#171), 또는 **진행 증거가 있음**(또는 그 판정 자체가 불가) | **무접촉**(다음 틱). 단 미해소 보류 경계가 있으면 ①-c 로 보낸다(#334 — 반송 없이 새 커밋이 생긴 형상은 ①-c 가 `active`/`ambiguous` 를 가른다) |
 
 **flow:\* 보조 신호**: `flow:ready` 없이 `flow:codex`/`flow:ci` 만 있고 오래된 PR 은 그 자체로 "검증 중
 워커 사망"의 방증이다(라벨은 이 스킬 밖 워커 런타임이 세팅 — 있으면 보조로 참고, 없으면 finish-classify
@@ -231,10 +231,60 @@ claim 조회는 `$SCRIPTS/claim-at.sh <repo> <이슈>` **한 자리**(타임라�
 
 (근거: closeout-rationale §4 · §5 · §6 · §7 · §8)
 
+## ①-c 보류 해제 방향 판정 — 시정을 머지로 착각하지 않는다 (② Pick 직전, 후보마다)
+
+사람이 `needs-human`·`hold:*` 를 뗐다는 것은 "머지해도 좋다" 가 아니다 — 해제의 결론은 **기각**(원안 그대로
+머지)과 **시정**(코드를 고쳐라) 둘인데 라벨 제거는 둘 다 같은 모양이고, 그 PR 의 `머지 판정: ✅` 는 보류
+**이전** 코드의 판정이라 #171 신선도·반송 마커·eligible 세 겹이 전부 정상 통과한다(bodat PR #4989 실측 —
+사람이 방금 "고쳐라" 라고 한 코드를 다음 틱이 머지할 뻔). 그래서 ② Pick 은 후보(`closeout-eligible.sh`
+정상 후보 + ①-b 입양 후보)를 집기 **전에** 후보마다 이 절을 통과시킨다 (근거: closeout-rationale §17).
+
+**판정은 스크립트 한 호출이다** — 코멘트 배열 인덱스(보류 경계 `h`·반송 마커 `r`·완결 판정 `f`·결정문 `D`)·
+현재 라벨(`H` 사람 정지 · `A` 하류 활성 레인 · `R` 재디스패치 목표 상태)·head 시각(`c`)을 읽어 갈래를 정한다.
+술어 정의·판정 순서(해소 → 착수 → 멱등 → 결정문)·이슈측 단독 경계 규칙의 SSOT 는 그 스크립트의 머리 주석이다.
+여기서 인덱스를 손으로 비교하지 마라.
+
+```
+$SCRIPTS/hold-resolve.sh <repo> <pr> <issue|->     # <issue> = PR 본문 Closes/Refs 의 연결 이슈, 없으면 -
+```
+
+| 1줄째 | 뜻 | 조치 |
+|---|---|---|
+| `pick` | 보류가 없었거나, 보류·마지막 반송 **뒤에** 새 완결 판정이 섰다(라벨도 없다) | 그대로 ② Pick. `resume: step2` 가 붙었으면(`마감 검증: ✅ 기각 승계`) ③ 을 **2단계(머지)부터** — ③-1 을 다시 돌리면 같은 P1 이 재생산돼 보류↔해제를 영원히 돈다 |
+| `keep` | 이슈·PR 에 `needs-human`·`hold:*` 가 아직 있다 | **무접촉** — 전이를 부르지 마라. `closeout-blocked` 재호출은 새 hold-note 로 경계를 결정문 **뒤로** 밀어 사람 결정을 폐기한다. 해제는 사람이 라벨을 뗄 때 |
+| `restore` | 이슈측 단독 경계(PR 쪽 hold-note 없음)인데 라벨은 없다 — 비교 대상이 아니라 복구 대상 | `$SCRIPTS/transition.sh closeout-blocked <repo> <issue> <pr> --reason policy --note "<스크립트의 note: 줄 그대로>"` 로 **양측 경계 복구**(문구를 손으로 옮겨 적지 마라 — 가변부가 없어 스크립트가 낸다). 복구 **앞**의 결정문은 세지 않는다 — 사람이 그 뒤에 다시 답한다 |
+| `active` | 반송 뒤 워커가 착수했거나(새 커밋), 하류 레인(`agent:claimed`·`flow:verify`·`verifying`·`flow:ready`·`harvesting`)이 들고 있거나, 이슈가 이미 재디스패치 목표 상태다 | **무접촉** — 마커도 전이도 다시 쓰지 마라(살아있는 레인의 라벨을 걷어내는 것이 PR #239 가 막은 사고다). 해제는 그 레인의 완결 판정(→ `pick`); 레인이 죽으면 `timebox-check.sh`·#265 정지 미러 warn |
+| `recall` | 이 보류의 반송 마커는 있는데 아무도 안 들고 있고 디스패처도 못 집는다(전이의 이슈측 편집만 실패 · 사람이 `agent-ready` 를 뗌) | 마커 재발행 없이 **전이만 재호출**: `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>`. 또 실패면 `BLOCKED: 전이 실패 재디스패치 PR #<pr>(<repo_short>) — <stderr 한 줄>` |
+| `direction` | 경계 뒤 사람 결정문이 있고 라벨도 없다 — `pr_decision:`·`issue_decision:` 줄에 본문(한 줄) | 아래 **방향 표**로 기각/시정/모호를 읽는다 — 이 절에서 유일한 LLM 판단이다 |
+| `ambiguous` | `reason:` — `no_decision`(라벨만 뗌) · `new_commit`(반송 없이 새 커밋, 레인 없음 — 사람이 직접 리베이스·push 한 형상) · `no_issue`(연결 이슈 없이 반송 마커) | `$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<스크립트의 note: 줄 그대로 — 사유별 고정 문구>"`. 새 hold-note 가 경계를 전진시켜 폭주하지 않는다. 같은 PR 에서 **두 번째** 모호면 ④ Report 에 `방향 미판정 반복: PR #<pr>(<repo_short>)` |
+| `blocked` | `reason:` — `comments_lookup`·`labels_lookup`·`head_lookup`·`comments_parse` | **상태 불변·무접촉** — ④ Report 에 `BLOCKED: 보류 판정 조회 실패 PR #<pr>(<repo_short>) — <reason>`. `closeout-blocked` 로 보내지 마라: gh 일시 실패 한 번이 정상 후보에 사람 게이트를 박고, 그 게이트는 사람이 지어낼 수 없는 답을 써야 풀린다. 다음 틱에 조회가 되면 그대로 이어진다 |
+
+**방향 표(`direction` 일 때).** PR·이슈 결정문이 둘 다 있으면 방향이 같아야 하고, 다르면 **모호**다(시각으로
+tie-break 하지 마라 — 초 단위라 못 가린다). 한쪽만 있으면 있는 쪽을 본다.
+
+| 방향 | 읽는 신호 | 조치 |
+|---|---|---|
+| **시정** | "판정이 맞다"·"좁힌다/고친다/바꾼다"·구현 지침·추가 테스트 요구 등 **코드를 바꾸라는 문장이 하나라도** 있다. 동의와 지시가 섞여 있으면 시정이다 — 오독 비용이 비대칭이다(시정을 기각으로 읽으면 되돌릴 수 없고, 반대는 워커가 한 틱 더 돈다) | **마커가 전이보다 먼저다.** `$SCRIPTS/bounce-comment.sh human-review <repo> <pr> <issue> "<결정문 인용 한 줄>"` 이 **성공한 뒤에만** `$SCRIPTS/transition.sh closeout-redispatch <repo> <issue> <pr>` — 마커가 `BOUNCE_MARKERS` 에 있어 다음 틱부터 eligible 이 배제하므로 "전이는 됐는데 마커가 없는" 창이 안 생긴다. 마커 posting 실패면 전이를 부르지 말고 `BLOCKED: 전이 실패 재디스패치-마커 PR #<pr>(<repo_short>) — <gh 한 줄>`. 연결 이슈가 없으면 반송할 레인이 없다 → `ambiguous` 행의 조치(`--note "시정 방향인데 연결 이슈가 없어 반송 불가"`) |
+| **기각** | "판정이 틀렸다/오탐"·"원안 그대로 머지"·"코드 변경 불필요" 가 **명시**돼 있고 시정 신호가 **하나도** 없다 | PR 에 `마감 검증: ✅ 기각 승계 — 사람이 판정을 기각(<인용 한 줄>), ③-1 재실행 안 함`⏎`<!-- bodat:worker -->` 를 남긴다(1단계 완료 마커 — 다음 틱의 `pick` + `resume: step2` 가 이 마커를 읽는다) → ② Pick → ③ 은 **2단계부터** |
+| **모호** | 결론 없이 질문만·조건부·양쪽이 섞임 | `ambiguous` 행의 조치. 인용 자리엔 결정문을 그대로 한 줄 |
+
+세 조치 모두 코멘트에 **결정문의 문장을 그대로 한 줄 인용**한다 — 이력만으로 "왜 머지됐지/반송됐지" 를 짚기
+위해서다(결정문이 없는 갈래는 `결정문 없음`). 전이가 exit 1·2 면 상태를 바꾸지 말고 `BLOCKED: 전이 실패 <전이> PR
+#<pr>(<repo_short>) — <stderr 한 줄>`(`references/state-machine.md` 「전이 실패의 공통 규칙」). 집계는 ④ Report
+**기존 카운터에 합산**한다 — 시정은 `재디스패치 N`, 모호·`restore` 는 `검증보류 N`; 항목 줄은
+`방향 판정: PR #<pr>(<repo_short>, 시정|기각|모호|복구)`.
+
+**①-b 와의 배선.** 사람이 결정문을 **PR 에** 마커 없이 쓰면 `closeout-eligible.sh` 의 미해결 코멘트 게이트(#379)가
+그 PR 을 후보에서 빼 이 절이 돌 기회가 없다 — 그래서 ①-b 의 `done_verdict`·`active` 행은 미해소 보류 경계가 있으면
+skip 하지 않고 이 절로 보낸다(그 행 참조). 결정문 없이 라벨만 뗀 정체를 보이게 하는 것은 `loop-status.sh` 정지
+미러 warn(#265)의 몫이다.
+
 ## ② Pick — 한 번에 1 PR (MAX_CLOSEOUT=1, 동시성 1)
 
 `$SCRIPTS/closeout-eligible.sh` 출력(✅ 마킹된 정상 후보)과 **①-b 스윕의 입양 후보**
-(`stale_inline`·CONFLICTING)를 합쳐 FIFO **첫 후보 1개만** 집는다. 한 번에 1개라 모듈 겹침 판단은
+(`stale_inline`·CONFLICTING)를 합쳐 FIFO **첫 후보 1개만** 집는다. **집기 전에 후보마다 ①-c
+(`hold-resolve.sh`)를 통과시킨다** — `pick` 일 때만 아래로 진행하고, 다른 결과는 ①-c 의 조치로 끝낸 뒤 다음
+후보를 본다(#334). 한 번에 1개라 모듈 겹침 판단은
 불필요하다 (직렬 마감 — 이 PR 을 끝까지 마감한 뒤에야 ⑤ Drain 이 다음 후보를 집는다). 집으면 즉시
 `$SCRIPTS/transition.sh closeout-pick <repo> - <pr>` 로 점유를 선언하라(이슈 번호는 ③-1 에서야
 파싱되므로 여기선 `-`). 전이가 `harvesting` 을 붙이고 워커·verify-runner 단계 라벨
