@@ -471,10 +471,10 @@ claim 은 몇 시간 전이다. 이 신호가 필요한 이유: 진행 증거 �
 **이 마커가 이미 있고 그 이후 새 커밋·검증자 코멘트가 없으면 재발행하지
 않는다**(/loop 스팸 방지, 6단계 파생 마커 동형). 재디스패치 자격은 `open + agent-ready +
 ¬agent:claimed`(eligible-issues.sh)이라 `closeout-redispatch` 전이가 그 둘을 한 번에
-맞춘다(손으로 `gh issue edit` 하지 마라). 위 두 전이 모두 **exit 1(readback 불일치)·
-2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
-`BLOCKED: 전이 실패 <전이> PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다(라벨이
-반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적 — 조용히 넘어가지 않는다).
+맞춘다(손으로 `gh issue edit` 하지 마라). 위 두 전이 모두 **비0이면**
+`references/state-machine.md` 의 「전이 실패의 공통 규칙」 대로 ④ Report 에
+`BLOCKED: 전이 실패 <전이> PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다
+(규칙은 여기서 다시 적지 않는다).
 재디스패치가 성사되면 issue-runner Dispatch 가 make-worktree 로 기존 `agent/issue-N` worktree
 를 재사용해 **같은 PR 브랜치에서 이어 완결**하므로 새 PR 이 생기지 않는다(중복 아닌 보수).
 
@@ -503,10 +503,10 @@ harvesting 을 제외한다), PR 리스트에서 `harvesting` 하나만 남아 "
 **원 이슈 미러(진행 가시화).** ③-1 에서 `<issue>`(PR 본문 `Closes #N`/`Refs #N`)를 파싱한
 직후, 연결 이슈가 있으면 `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` 를
 **다시** 부른다(멱등 — PR 쪽은 이미 맞아 no-op, 이슈 쪽만 `harvesting` 으로 옮겨진다).
-**이 미러 호출이 exit 1(readback 불일치)·2(gh 실패)면 머지로 진행하지 마라** — 이 PR 을
-skip 하고 ④ Report 에
+**이 미러 호출이 비0이면 머지로 진행하지 마라** — `references/state-machine.md` 의
+「전이 실패의 공통 규칙」 대로 이 PR 을 skip 하고 ④ Report 에
 `BLOCKED: 전이 실패 closeout-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다
-(PR 만 `harvesting` 이고 이슈는 아닌 반쯤 이동한 상태를 다음 틱이 잡게 한다).
+(PR 만 `harvesting` 이고 이슈는 아닌 반쯤 이동한 상태가 남는다).
 이슈 리스트만 봐도 단계(검증→마감)가 보이게 하는 것이다(머지 성공 시 `Closes #N` 으로
 이슈가 닫히므로 잠깐만 보인다). 그리고 ③ 이후 **fail-closed 로 손을 떼는 모든 지점**
 (위임 fail·conflict 사람판단·문서 reconcile 미완 등)은 반드시 `closeout-blocked`(사람에게)
@@ -568,7 +568,7 @@ BLOCKER 0 또는 `자체 리뷰(codex 2회 소진)`). 여기서는 **계획 부�
   라벨을 남긴다. **`needs-human` 을 붙이지 마라** — 중복은 루프가 결정할 수 있는 것이고,
   사람에게 던지면 사유 없는 `needs-human` 이 쌓인다(#4803 형: closeout 이 중복이라
   판정해 놓고도 닫지 않고 사람에게 넘겼다). → **dup 종료** (머지하지 않는다).
-  **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
+  **전이가 비0이면** `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
   `BLOCKED: 전이 실패 closeout-dup PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
   판정이 "중복인 것 같다" 수준이면 dup 가 아니다 — 근거 커밋을 못 짚으면 아래 BLOCKER
   경로(`--reason policy`)로 간다.
@@ -591,7 +591,7 @@ BLOCKER 0 또는 `자체 리뷰(codex 2회 소진)`). 여기서는 **계획 부�
   만들지 않는다 — ④ Report 에는 `재디스패치 N` 으로도 함께 집계한다). 재디스패치가
   성사되면 issue-runner Dispatch 가 같은 `agent/issue-N` worktree 를 재사용해 **같은 PR
   브랜치에서 이어 완결**하므로 새 PR 이 생기지 않는다.
-  **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
+  **전이가 비0이면** `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
   `BLOCKED: 전이 실패 closeout-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올리고,
   **곧바로 `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` 를 한 번 더 걸어 PR 과
   이슈 양쪽의 점유를 되살려라**(③-1 의 원 이슈 미러와 같은 호출 — 멱등이고, 손으로 라벨을
@@ -664,9 +664,8 @@ BLOCKER 0 또는 `자체 리뷰(codex 2회 소진)`). 여기서는 **계획 부�
   판단이 필요한 것이므로 사유는 `policy` 다(`conflict` 도 `ladder` 도 아니다).
   검증자 미산출은 **언제나 이 갈래다** — 무엇을 고쳐야 하는지 자체가 없으므로 워커에게
   반송할 사유를 적을 수 없다.
-  **exit 1(readback 불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
-  `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다
-  (라벨이 반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적 — 조용히 넘어가지 않는다).
+  **전이가 비0이면** `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
+  `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
 - CLEAN/WARN → `gh pr comment <pr> --repo <repo> --body "마감 검증: ✅ <CLEAN 또는 WARN n>
   <!-- bodat:worker -->"`
   (이 코멘트가 1단계 완료 마커다).
@@ -710,8 +709,8 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   이어 `$SCRIPTS/run-local-ci.sh <repo> <N>` 로 **현재 HEAD** 캐시를 채운다. `run-local-ci.sh`
   가 비0(새 base 와의 통합이 깨짐)이면 머지하지 말고 fail-closed 로 보류 종료한다
   (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` +
-  `blocked` 종료, 새 종료 상태 안 만듦 — 이 전이가 exit 1·2 면 ④ Report 에
-  `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다).
+  `blocked` 종료, 새 종료 상태 안 만듦 — 이 전이가 비0이면 「전이 실패의 공통 규칙」 대로
+  ④ Report 에 `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>`).
   0이면 캐시가 pass 로
   채워졌으니 아래 exit 0 게이트로 합류한다. 이 경로는 **3단계 doc 커밋 유무와
   무관**하게 발동한다 — 3단계 캐시 보강은 doc push 후에만 돌아 rebase·doc무변경
@@ -783,8 +782,8 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
     로 걸어도 유실되지는 않는다(재개 스윕 PR 축이 창 뒤 `policy` 로 승격해 PR 단독 재심에
     넘긴다) — 처음부터 `policy` 로 걸면 그 창 하나를 아끼고 노트가 질문 형식(사람이 답할 것:
     인수인가, 이슈를 열어 재발행인가)으로 바로 놓인다.
-  어느 갈래든 blocked 종료한다(이 경로만 사유가 `conflict` 다). 두 전이(redispatch·blocked) 모두 **exit 1(readback
-  불일치)·2(gh 실패)면 그 PR 의 종료 상태를 바꾸지 말고** ④ Report 에
+  어느 갈래든 blocked 종료한다(이 경로만 사유가 `conflict` 다). 두 전이(redispatch·blocked) 모두
+  **비0이면** `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
   `BLOCKED: 전이 실패 <전이> PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
 
 **3단계 — 문서 reconcile (머지 전, PR 브랜치 커밋).** 1단계가 구현을 확인한
@@ -821,8 +820,9 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   같은 SHA 는 재실행하지 않지만, 호출 자체를 아끼려 호출측도 가드한다). `run-local-ci.sh` 가 비0(=bin/ci 실패)이면 캐시가 pass 로
   안 채워진 것이므로 머지하지 말고 fail-closed 로 보류 종료한다
   (`$SCRIPTS/transition.sh closeout-blocked <repo> <issue|-> <pr> --reason policy --note "<질문 한 줄>"` +
-  `blocked` 종료, 기존 BLOCKER 경로 준용 — 새 종료 상태를 만들지 않는다. 이 전이가 exit 1·2 면 ④ Report 에
-  `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다).
+  `blocked` 종료, 기존 BLOCKER 경로 준용 — 새 종료 상태를 만들지 않는다. 이 전이가 비0이면
+  「전이 실패의 공통 규칙」 대로 ④ Report 에
+  `BLOCKED: 전이 실패 closeout-blocked PR #<pr>(<repo_short>) — <stderr 한 줄>`).
 - **단일 이슈 degrade**: `Plans/*.md`·`## Plan` 이 없으면 문서 편집을 skip 한다.
   epic 이 없으면 롤업을 skip 한다. 이슈 자체 체크박스만 reconcile 한다. 둘 다
   없으면 이 단계는 no-op — **새 doc 커밋·push 가 없으므로 위 캐시 보강도 건너뛴다**

@@ -164,9 +164,10 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   **Re-run the same transition idempotently**:
   `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr>` (the PR side has already moved, so
   it is a no-op; only the issue returns to `agent-ready` → a ③ candidate this tick). On success add
-  `#<num>(반쯤 이동 회수)` to `보수` in ④ Report. If the transition exits 1·2, report
-  `BLOCKED: transition failed verify-redispatch PR #<pr>(<repo_short>) — <one stderr line>` and move
-  on (the common rule — never silently; the next tick re-emits the same event).
+  `#<num>(반쯤 이동 회수)` to `보수` in ④ Report. If the transition exits non-zero, act per
+  `references/state-machine.md` 「전이 실패의 공통 규칙」 (the common rule for failed transitions)
+  — report `BLOCKED: transition failed verify-redispatch PR #<pr>(<repo_short>) — <one stderr line>`
+  and move on (the rule is not restated here).
   A PR with this event is **not** ② Maintain input (no `pr_open` — same shape as `harvesting`).
   A live worker (progress evidence via `progress-evidence.sh`) and any unprovable lookup are already
   filtered out by the script, so do not re-judge freshness here.
@@ -330,9 +331,10 @@ so it is a brake a human put there by hand. Per event:
   here**:
   `$SCRIPTS/transition.sh runner-held <repo> <number> <pr> --reason policy --note "미러 불일치 증거 부재 <attempts>회 — PR 과 이슈의 정지 라벨이 어긋난다"`
   (attaches `hold:policy` plus the question comment on both the issue and the PR). If the
-  transition exits 1·2, leave one line `BLOCKED: transition failed runner-held #<number>(exit N)`
-  in ④ Report — the next tick re-emits the same event (no new marker is added, so the round count
-  does not inflate). Once it lands, the issue carries a stop label and the PR drops out of mirror
+  transition exits non-zero, act per `references/state-machine.md` 「전이 실패의 공통 규칙」 —
+  leave one line `BLOCKED: transition failed runner-held #<number>(exit N)` in ④ Report; the
+  next tick re-emits the same event (no new marker is added, so the round count does not
+  inflate). Once it lands, the issue carries a stop label and the PR drops out of mirror
   cleanup on the next tick (it terminates itself). Report one warn line `미러 상한 #<pr>` in ④.
 - `resumed` — the hold (`reason` field: `ladder` → `hold:ladder`, `conflict` →
   `hold:conflict`, #345) is off and `agent-ready` is untouched (the
@@ -397,9 +399,10 @@ so it is a brake a human put there by hand. Per event:
   If the transition exits non-zero, **do not post the marker comment**; leave one line
   `BLOCKED: 전이 실패 policy-kept #<issue>(exit N)` in ④ Report instead — with no marker the next
   sweep **emits the same issue again** as `policy_review_due`. `policy-kept` only adds labels and
-  is idempotent, so re-running it *is* the recovery. Transition exit → marker disposition:
-  `0`=attached→post the marker · `1` (readback mismatch) · `2` (gh failure) · `64` (bad call
-  shape)=do not post the marker (the next sweep re-emits the re-review). **Only an issue whose
+  is idempotent, so re-running it *is* the recovery. What each exit code means and what to do
+  about it lives in `references/state-machine.md` 「전이 실패의 공통 규칙」 — not restated here.
+  The one thing specific to this spot is the **marker disposition**: on exit 0 post the marker,
+  on non-zero do not (the next sweep re-emits the re-review). **Only an issue whose
   marker remains** is **never asked twice** (until a human removes the label). Report it in ④ as
   `re-reviewed N (resumed n · kept m)`.
   **A PR-only hold always ends as "kept human"** (#395 → #421). The event's `pr` field splits the

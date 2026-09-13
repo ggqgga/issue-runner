@@ -133,10 +133,10 @@ no-op 로 통과한다). 이 라벨이 루프 현황(`loop-status.sh`)에서 `�
 줄과 `verify-runner`(`verifying` — 지금 들고 있음, 수십 분) 줄을 가르는 근거다(#276).
 단일 루프·동시성 1 이라 레이스는 없다 — 점유 라벨은 경합 방지가 아니라
 **가시성과 사망 증거**(① 의 고아 판정) 용이다.
-- **exit 1(readback 불일치)·2(gh 실패)면 이 PR 을 집지 마라** — ④ Report 에
+- **전이가 비0이면 이 PR 을 집지 마라** — `references/state-machine.md` 의
+  「전이 실패의 공통 규칙」 대로 ④ Report 에
   `BLOCKED: 전이 실패 verify-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올리고
-  다음 후보로 간다(라벨이 반쯤 이동한 상태를 다음 틱이 잡게 — ① 이 `verifying` 이든
-  `flow:verify` 든 다시 낸다).
+  다음 후보로 간다(회수 주체는 ① 이다 — `verifying` 이든 `flow:verify` 든 다시 낸다).
 후보가 0이면 ③ 을 건너뛰고 ④ Report 에 clean no-op.
 
 ## ③ Verify — 집은 PR 을 검증한다
@@ -303,9 +303,9 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    한 호출로 옮긴다(전이 표 SSOT = `transition.sh` 상단 주석). **closeout 계약 무변경**
    (기존 `머지 판정: ✅` 마커 재사용 — `closeout-eligible.sh` 가 그걸로 집는다) + 이슈
    리스트만 봐도 단계(검증→마감)가 보인다. **success 종료.**
-   - **exit 1(readback 불일치)·2(gh 실패)면 이 PR 의 종료 상태를 바꾸지 마라** — ④ Report 에
-     `BLOCKED: 전이 실패 verify-pass PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
-     라벨이 반쯤 이동한 상태를 다음 틱이 잡게 하는 게 목적이다(조용히 넘어가지 않는다).
+   - **전이가 비0이면** `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
+     `BLOCKED: 전이 실패 verify-pass PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다
+     (규칙은 여기서 다시 적지 않는다).
 
 **redispatched** — E2E 진짜 실패 / codex BLOCKER(검증자 데드라인 초과 포함) / 결정적 CI 실패:
 1. `N=$($SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt)`(마커 없으면 `0` · exit 2 면
@@ -329,7 +329,7 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    그 PR 은 다음 틱에 같은 회차로 다시 codex 를 받으므로 ④ Report warn 에 한 줄 남긴다).
 3. 라벨·반송: `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr>` — PR 의
    `flow:verify` 를 떼고 원 이슈를 `agent-ready`(+`flow:verify`·`agent:claimed` 제거)로 되돌린다.
-   **exit 1·2 면 종료 상태를 바꾸지 말고** ④ Report 에
+   **전이가 비0이면** `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
    `BLOCKED: 전이 실패 verify-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>`.
    그 반쯤 이동한 상태(PR 은 `flow:verify`/`verifying` 상실 · 이슈는 `agent:claimed` 유지)를
    **다시 집는 주체는 이 루프가 아니다** — 세 게이트 전부에서 빠지기 때문이다(#394).
@@ -359,14 +359,15 @@ held 사유가 아니다** — N = 2 는 ③-3′ 가 완료로 흡수한다):
   **전부 실패했을 때만** `--reason ladder` 로 held 한다. 이때 위 `검증 보류:` 코멘트에
   **시도한 칸과 실패 출력(명령 한 줄 + 마지막 20줄)을 인용**한다 — 인용이 없으면
   `ladder` 가 아니라 `policy` 다.
-**exit 1·2 면 종료 상태를 바꾸지 말고** ④ Report 에
+**전이가 비0이면** `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
 `BLOCKED: 전이 실패 verify-held PR #<pr>(<repo_short>) — <stderr 한 줄>`.
 
 **flake_retry** — 검증을 아예 못 돌린 일시 장애(worktree fetch 실패·make-worktree 오류·
 E2E 인프라 흔들림 등, 판정 아님): 점유를 풀고 검증대기로 되돌린다 —
 `$SCRIPTS/transition.sh verify-unpick <repo> <issue|-> <pr>` (verify-pick 의 정확한 역:
 PR·이슈 양쪽 `verifying` 제거 + `flow:verify` 재부착, 멱등). 그러고 ④ Report 에 warn 으로
-올린다 → 다음 틱이 `flow:verify` FIFO 로 재집는다(드롭 없음). **exit 1·2 면** ④ Report 에
+올린다 → 다음 틱이 `flow:verify` FIFO 로 재집는다(드롭 없음). **전이가 비0이면**
+`references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
 `BLOCKED: 전이 실패 verify-unpick PR #<pr>(<repo_short>) — <stderr 한 줄>` — `verifying`
 이 남아도 ① 이 고아로 먼저 재집으니 드롭은 아니고, 대신 `고아 재집` 이 "사망" 이 아니라
 "unpick 실패" 였음을 이 줄이 말해 준다. 판정(pass/fail)이 선 경우엔 이 상태로 빠지지 마라.
