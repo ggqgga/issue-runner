@@ -83,7 +83,7 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 | 10 | 161–167 | scripts/bounce-state.sh | `[ -x scripts/bounce-state.sh ]` | #196 | ⓒ | ci/guards/exec-bit.sh (실행비트 목록 한 자리) | 소비자가 직접 exec 를 그만두면 | L5 (이 PR) |
 | 11 | 168–175 | scripts/*.sh | `grep -l 'BOUNCE_MARKERS' 이 bounce-state.sh 밖 0건` | #171 · #196 | ⓒ | ci/guards/single-definition.sh | 없음 — 이 가드가 곧 bounce-state.sh SSOT 의 강제자 |  |
 | 12 | 176–189 | SKILL.md · SKILL.en.md · skills/verify-runner/SKILL.md · scripts/attempt-counter.sh | `attempt-counter.sh 배선 + gh pr (view\|edit) … --(json body\|body ) 금지` | #444 | ⓓ 기계 계약 (+ⓒ 181) | 없음 — 1~3단계 SSOT 어디에도 회차 카운터 규칙이 없다 (grep -rn attempt-counter references/ = 0건) | 회차 규칙이 loop-conventions 의 새 절로 옮겨지면 ⓑ 로 내려간다 |  |
-| 13 | 190–209 | SKILL.md · SKILL.en.md · references/state-machine.md · scripts/pr-state.sh | `pr-state.sh·mismatch 배선 + 「머지 판정: ✅ … → flow:」 매핑 산문 금지` | #449 | ⓑ (202–205) · ⓓ (197–201) | references/state-machine.md 머리 6–8행 「이 표를 기계가 읽는 진입점은 scripts/pr-state.sh」 + 「정상 사다리」 표 | 매핑 산문 금지(202–205)는 지금 폐기 가능. 배선 축은 규칙0 이 스크립트 인자로 바뀔 때 | L3 (이 PR · 13-c) |
+| 13 | 190–209 | SKILL.md · SKILL.en.md · references/state-machine.md · scripts/pr-state.sh | `pr-state.sh·mismatch 배선 + 「머지 판정: ✅ … → flow:」 매핑 산문 금지` | #449 | ⓓ (197–205) | references/state-machine.md 머리 6–8행 「이 표를 기계가 읽는 진입점은 scripts/pr-state.sh」 + 「정상 사다리」 표 | 매핑 산문 금지(202–205)도 SKILL 실행 지시를 무는 자리라 유지(#539 codex 1회차 P2 — SSOT 는 규칙을 설명할 뿐 강제하지 않는다). 배선 축은 규칙0 이 스크립트 인자로 바뀔 때 |  |
 | 14 | 210–225 | scripts/*.sh · scripts/lib/loop.jq | `startswith("머지 판정\|Merge verdict\|검증자 리뷰\|…") · startswith("hold:") · == "needs-human" 인라인 0건` | #426 | ⓒ | ci/guards/single-definition.sh | 없음 — 블록 주석이 이미 「만료 조건: 없음」 이라 적었다 |  |
 | 15 | 226–277 | scripts/bounce-comment.sh × scripts/bounce-state.sh | `생성 본문을 BOUNCE_COMMENTS_FILE 로 먹여 판정이 bounced` | #212 · #221 | ⓐ⑵ (+ⓒ 229) | scripts/tests/bounce-comment.test.sh (블록 50) + bounce-state.test.sh (블록 48) | 두 격자가 「헬퍼 출력 → 판정기」 교차 절을 가지면 | L1 (이 PR) |
 | 16 | 278–322 | scripts/closeout-reconcile.sh · skills/closeout/SKILL{,.en}.md | `human_hold · needs-human, 런타임 4케이스(문자열 true·false·불리언 false·필드 부재)` | #271 ⑺ | ⓐ⑵ (+ⓓ 286–289) | scripts/tests/closeout-reconcile.test.sh (#428, 블록 67) | 그 격자에 human_hold 4케이스가 들어오면. SKILL 이벤트 행선지 축(286–289)은 기계 계약이라 남는다 | L1 (이 PR — ⓐ 런타임 4케이스만; SKILL 이벤트 행선지 축은 남았다) |
@@ -142,7 +142,7 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 | 69 | 1083–1085 | scripts/tests/deploy-wait-issue.test.sh | `bash …` | #446 | ⓓ 테스트 러너 | 자기 자신 | 없음 |  |
 | 70 | 1086–1088 | scripts/tests/make-worktree.test.sh | `bash …` | #445 | ⓓ 테스트 러너 | 자기 자신 | 없음 |  |
 | 71 | 1089–1130 | scripts/*.sh · scripts/lib/*.sh · scripts/progress-evidence.sh · timebox-check.sh · finish-classify.sh | `^STALL_MIN=\|^: "${STALL_MIN:=\|^queue_alive() 가 두 파일 밖 0건 + 3값 어휘 fail-closed 스모크 3건` | #200 → #206 · #427 | ⓐ⑵ (1107–1130) · ⓒ (1096–1099) · ⓓ (1103–1106) | scripts/tests/progress-evidence.test.sh (#428, 블록 63). 정의 축은 ci/guards/single-definition.sh | 스모크는 그 격자에 흡수되면. 정의 축은 없음(이 가드가 SSOT 강제자) |  |
-| 72 | 1131–1192 | scripts/claim-at.sh · finish-classify.sh · progress-evidence.sh · timebox-check.sh · scripts/lib/constants.sh | `claim-at.sh·claimed_arg·--claimed-at 배선 · ISSUE_TIMEBOX_HOURS:[-=][0-9]* 가 1벌 · head_lookup=unknown` | #206 · #427 | ⓐ⑵ (1162–1186) · ⓑ (1148–1161) · ⓒ (1187–1192) · ⓓ (1135–1147) | scripts/lib/constants.sh 머리 주석(값 한 자리 — 「ISSUE_TIMEBOX_HOURS 는 실제로 4벌이었다」) + : "${ISSUE_TIMEBOX_HOURS:=1}". 스모크는 progress-evidence.test.sh | 기본값 1벌 축(1148–1161)은 지금 폐기 가능. tripwire 는 finish-classify.test.sh 가 종료코드 보존을 뮤테이션으로 물면 | L3 (이 PR · 72-c) |
+| 72 | 1131–1192 | scripts/claim-at.sh · finish-classify.sh · progress-evidence.sh · timebox-check.sh · scripts/lib/constants.sh | `claim-at.sh·claimed_arg·--claimed-at 배선 · ISSUE_TIMEBOX_HOURS:[-=][0-9]* 가 1벌 · head_lookup=unknown` | #206 · #427 | ⓐ⑵ (1162–1186) · ⓒ (1148–1161 · 1187–1192) · ⓓ (1135–1147) | scripts/lib/constants.sh 머리 주석(값 한 자리 — 「ISSUE_TIMEBOX_HOURS 는 실제로 4벌이었다」) + : "${ISSUE_TIMEBOX_HOURS:=1}". 스모크는 progress-evidence.test.sh | 기본값 1벌 축(1148–1161)은 L4 의 ci/guards/single-definition.sh 로 이동(#539 codex 1회차 P2 — constants.sh 머리 주석은 값 자리를 설명할 뿐 밖의 새 정의를 거부하지 못한다). tripwire 는 finish-classify.test.sh 가 종료코드 보존을 뮤테이션으로 물면 |  |
 | 73 | 1193–1219 | scripts/finish-classify.sh · skills/closeout/SKILL{,.en}.md | `headRefName · agent/issue- · 「1순위」/first · 옛 계약 문장 2종 금지` | #206 | ⓑ | references/loop-conventions.md §5 「Closes #N 전용 줄」 소비 축 — 네 소비자가 scripts/lib/loop.jq 의 linked_issue(head; refs) 한 자리를 부른다(#495) + scripts/tests/finish-classify.test.sh 격자 | 지금 폐기 가능 — 코드 축 grep 은 이미 주석 줄에만 걸린다(finish-classify.sh:119–121 · 398–404, 실호출은 421 의 linked_issue) | L3 (이 PR · 블록 통째) |
 | 74 | 1220–1233 | scripts/finish-classify.sh · progress-evidence.sh · timebox-check.sh | `[0-9][0-9][0-9][0-9]-[0-9][0-9]-…Z) ;; 형식 패턴이 1가지` | #206 | ⓒ | ci/guards/single-definition.sh | iso_to_epoch 이 scripts/lib/ 한 자리로 합쳐지면 즉시(현재 사본 3개) |  |
 | 75 | 1234–1239 | scripts/timebox-check.sh · scripts/tests/timebox-check.test.sh | `실행비트 + bash …` | #200 | ⓓ 테스트 러너 (+ⓒ 1237) | 자기 자신. 실행비트는 ci/guards/exec-bit.sh | 없음. 실행비트는 10 과 같음 | L5 (이 PR) |
@@ -151,7 +151,7 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 | 78 | 1278–1303 | scripts/repo-flag.sh · scripts/repo-dir.sh | `repos.conf 3필드 이후 플래그 · 주석 줄 무시 · conf 부재 off · '-' 경로 폴백` | #109 | ⓐ⑵ | 신규 scripts/tests/repo-flag.test.sh (블록 4 와 한 벌) | 그 테스트 파일이 생기면 |  |
 | 79 | 1304–1356 | scripts/make-worktree.sh | `link-secrets off/on/회수/실파일 보호/남의 심링크 보호/깨진 심링크 7케이스` | #109 | ⓐ⑵ | scripts/tests/make-worktree.test.sh (#445, 블록 70) | 그 격자에 시크릿 심링크 절이 들어오면 |  |
 | 80 | 1357–1611 | scripts/claim-issue.sh | `create-only ref 잠금 · takeover D/F 충돌 · 스테일 동시 2회 · live-holder 지연 8케이스 (255줄)` | #108 | ⓐ⑵ | scripts/tests/claim-issue.test.sh (#281, 블록 57) | 그 격자로 이사하면 — bin/ci 단일 최대 이사 대상 |  |
-| 81 | 1612–1709 | SKILL{,.en}.md · skills/{verify-runner,closeout}/SKILL*.md · references/worker-template*.md · scripts/transition.sh | `사다리 참조 · --reason/--note 필수 · --add-label needs-human 금지 · policy-kept 순서 · hold:/verifying 대상 필터 · loop-status.sh --post <루프>` | #147 · #151 · #155 · #163 · #244 · #275 · #344 · #375 | ⓑ 4 · ⓓ 4 · ⓒ 1 (아래 분해 표) | loop-conventions §9 · closeout-rationale §5 · issue-runner-rationale §11·§13 · state-machine.md 「정지와 반송」 | 부행마다 다르다 — 분해 표 참조 | L3 (이 PR · 81-a·81-f·81-g·81-h) |
+| 81 | 1612–1709 | SKILL{,.en}.md · skills/{verify-runner,closeout}/SKILL*.md · references/worker-template*.md · scripts/transition.sh | `사다리 참조 · --reason/--note 필수 · --add-label needs-human 금지 · policy-kept 순서 · hold:/verifying 대상 필터 · loop-status.sh --post <루프>` | #147 · #151 · #155 · #163 · #244 · #275 · #344 · #375 | ⓓ 7 · ⓒ 2 (아래 분해 표) | loop-conventions §9 · closeout-rationale §5 · issue-runner-rationale §11·§13 · state-machine.md 「정지와 반송」 | 부행마다 다르다 — 분해 표 참조 (81-f·81-g·81-h 는 ①-b 대상 필터·규칙0 문단이 스크립트 인자로 옮겨질 때) |  |
 | 82 | 1710–1755 | SKILL{,.en}.md · skills/verify-runner/SKILL.md · skills/closeout/SKILL{,.en}.md · references/worker-template{,.en}.md | `transition.sh verify-pass\|closeout-pick\|handoff-verify · loop-status.sh · BLOCKED: 전이 실패 · --add-label flow:* 금지` | #144 | ⓓ 기계 계약 (+ⓑ 후보 1735–1744) | references/state-machine.md 「전이 실패의 공통 규칙 (세 SKILL 이 각자 14회 재진술하던 것)」 | BLOCKED 문구 축(1735–1744)은 지금 폐기 가능. 전이 호출 배선은 그 계약이 스크립트 인자로 옮겨질 때 | L3 (이 PR · 82-b 세 루프 SKILL 축만) |
 | 83 | 1756–1809 | scripts/loop-status.sh | `--state closed --search '"Epic #" in:body' · is:closed 금지 · --limit "$EPIC_CLOSED_LIMIT" · epic_of 1벌 · what: "닫힌 이슈" 금지` | #292 · #236 · #190 · #191 | ⓒ (+ⓐ 후보 1771–1781) | ci/guards/single-definition.sh (epic_of 축) · scripts/tests/loop-status.test.sh (쿼리 형태 축 — gh 인자 캡처) | 쿼리 형태 축은 그 스위트가 gh 인자를 캡처하면. epic_of 축은 정규식이 lib/loop.jq 로 가면 |  |
 | 84 | 1810–1849 | scripts/setup-labels.sh · scripts/lib/constants.sh | `gh label create "full-cycle" · 기존 18개 라벨 정의 생존 · RESUME_AFTER_MIN 정의 · --description 100자 이하` | #245 · #364 · #346 · #401 | ⓐ⑵ (1834–1849) · ⓓ (1815–1828) · ⓒ (1829–1833) | 신규 scripts/tests/setup-labels.test.sh (100자 상한·정의 존재를 행동으로) | 그 테스트 파일이 생기면. 라벨 이름 목록은 블록 7 과 한 자리로 합친다 |  |
@@ -176,7 +176,7 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 | 12-c | 185–188 | 회차를 산문으로 읽고 쓰는 형태 금지 | ⓒ | ci/guards/prose-regression.sh |
 | 13-a | 196 | pr-state.sh 실행비트 | ⓒ | ci/guards/exec-bit.sh |
 | 13-b | 197–201 | 규칙0 의 pr-state.sh·mismatch 배선 | ⓓ | 기계 계약 |
-| 13-c | 202–205 | 판정 기호 → flow:<칸> 매핑 산문 금지 | ⓑ | state-machine.md 「정상 사다리」 표 + pr-state.sh 진입점 선언(머리 6–8행) |
+| 13-c | 202–205 | 판정 기호 → flow:<칸> 매핑 산문 금지 | ⓓ | **L3 재판정**: state-machine.md 「정상 사다리」·issue-runner-rationale §13 은 위임 *경위*를 설명할 뿐, SKILL 규칙0 이 매핑을 다시 적는 것을 막지 않는다 — 이 가드가 그 형태의 유일한 강제자다(형태는 산문 회귀라 L6 prose-regression.sh 후보) |
 | 13-d | 206–208 | state-machine.md 가 pr-state.sh 를 가리키는가 | ⓒ | ci/guards/section-pointers.sh 와 한 몸 |
 | 15-a | 229 | bounce-comment.sh 실행비트 | ⓒ | ci/guards/exec-bit.sh |
 | 15-b | 230–277 | 헬퍼 출력 → bounce-state.sh 가 bounced 로 읽는가 | ⓐ⑵ | bounce-comment.test.sh × bounce-state.test.sh |
@@ -197,19 +197,19 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 | 71-d | 1107–1130 | 3값 어휘 fail-closed 스모크 3건 | ⓐ⑵ | progress-evidence.test.sh |
 | 72-a | 1135 | claim-at.sh 실행비트 | ⓒ | ci/guards/exec-bit.sh |
 | 72-b | 1136–1147 | finish-classify 의 claim-at.sh·claimed_arg·--claimed-at 배선 | ⓓ | 기계 계약 |
-| 72-c | 1148–1161 | ISSUE_TIMEBOX_HOURS 기본값이 1벌 · 두 리더가 읽는가 | ⓑ | scripts/lib/constants.sh (값 한 자리, #427) |
+| 72-c | 1148–1161 | ISSUE_TIMEBOX_HOURS 기본값이 1벌 · 두 리더가 읽는가 | ⓒ | ci/guards/single-definition.sh (L4) — constants.sh 밖 정의 거부 + 두 리더 배선. **L3 재판정**: constants.sh 머리 주석은 "값은 한 자리" 를 *설명*할 뿐 강제하지 않는다 |
 | 72-d | 1162–1186 | 입력 어휘 3값 스모크 4건 | ⓐ⑵ | progress-evidence.test.sh |
 | 72-e | 1187–1192 | 호출부 tripwire(head_rc 보존·head_lookup=unknown) | ⓒ | ci/guards/prose-regression.sh 또는 finish-classify 뮤테이션 |
 | 77-a | 1251–1257 | SKILL 한/영의 STALL_MIN·MAX_TIMEBOX_GRACE·timebox-check.sh 배선 | ⓓ | 기계 계약 |
 | 77-b | 1258–1277 | 상수 값이 SKILL 로 되살아나지 않았는가 + constants.sh 를 가리키는가 | ⓒ | scripts/lib/constants.sh 머리 주석의 형태 강제자 |
-| 81-a | 1612–1618 | 네 문서가 live-verification-ladder.md 를 가리킨다 | ⓑ | loop-conventions §9 「검증 사다리 칸 규율」(칸 정의 SSOT 를 명시) |
+| 81-a | 1612–1618 | 네 문서가 live-verification-ladder.md 를 가리킨다 | ⓒ | ci/guards/prose-regression.sh (L6) — 다섯 운영 문서의 포인터 + 파일 존재. **L3 재판정**: loop-conventions §9 는 칸 정의 SSOT 가 그 파일임을 *명시*할 뿐, 운영 문서가 그것을 가리키게 *강제*하지 않는다 |
 | 81-b | 1619–1633 | --reason 필수 · policy\|conflict 는 --note 필수 · 산문 --add-label needs-human 금지 | ⓓ | state-machine.md 「정지와 반송」(ⓑ 후보 — 리터럴 인자 형태라 보수적으로 ⓓ) |
 | 81-c | 1634 | SKILL 한/영의 resume-sweep.sh 배선 | ⓓ | 기계 계약 |
 | 81-d | 1635–1643 | policy-kept 배선 + transition.sh 에 그 전이 존재 | ⓓ | 기계 계약(전이 동사 리터럴) |
 | 81-e | 1644–1663 | policy_review_due 불릿의 전이-먼저·마커-나중 순서 | ⓒ | issue-runner-rationale §11 은 근거만 — 문단 순서 검사는 대체물 없음 |
-| 81-f | 1664–1676 | ①-b 대상 문단의 hold: 접두 미부착 필터 | ⓑ | closeout-rationale §5 「①-b 대상 필터」 |
-| 81-g | 1677–1687 | 같은 문단의 verifying 미부착 필터 | ⓑ | closeout-rationale §5 + state-machine.md 「게이트 세 개가 공유하는 제외 집합」 |
-| 81-h | 1688–1693 | 규칙0 문단이 verifying PR 을 건너뛴다 · needs-human+hold:* 쌍 서술 금지 | ⓑ | issue-runner-rationale §13 「② Maintain — 규칙0 위임」 + state-machine.md 「정지와 반송」 |
+| 81-f | 1664–1676 | ①-b 대상 문단의 hold: 접두 미부착 필터 | ⓓ | 기계 계약(모델이 실행하는 ①-b 대상 문단). **L3 재판정**: closeout-rationale §5 는 근거만 — 만료 조건: ①-b 대상 필터가 스크립트 인자로 옮겨질 때 |
+| 81-g | 1677–1687 | 같은 문단의 verifying 미부착 필터 | ⓓ | 기계 계약(같은 문단). **L3 재판정**: closeout-rationale §5·state-machine.md 제외 집합은 근거·게이트 스크립트 축만 — 만료 조건: ①-b 대상 필터가 스크립트 인자로 옮겨질 때 |
+| 81-h | 1688–1693 | 규칙0 문단이 verifying PR 을 건너뛴다 · needs-human+hold:* 쌍 서술 금지 | ⓓ | 기계 계약(규칙0 문단 = 모델의 실행 지시). **L3 재판정**: issue-runner-rationale §13·state-machine.md 는 근거만 — 쌍 서술 금지 축은 형태가 산문 회귀라 L6 prose-regression.sh 후보 |
 | 81-i | 1694–1705 | verify-runner ④ held 절차문(needs-human 승격 금지 · verify-held --reason 서술) | ⓓ | verify-runner-rationale §2 는 근거만 — 리터럴 인자 형태(ⓑ 후보) |
 | 81-j | 1706–1709 | 다섯 문서의 loop-status.sh --post <루프> 배선 | ⓓ | loop-conventions §7 이 규약을 갖지만 --post 리터럴은 기계 계약 |
 | 82-a | 1710–1734 | transition.sh 전이 동사 · loop-status.sh · --label spinoff\|deploy-wait 배선 | ⓓ | 기계 계약 |
@@ -245,12 +245,20 @@ L5 가 열두 자리의 실행비트를 먼저 걷어내면 나머지 leaf 의 d
 
 ### L3 · SSOT 가 인수한 산문 단언 폐기 (ⓑ)
 
-- **대상 행** — 13-c · 60-a · 72-c · 73 · 81-a · 81-f · 81-g · 81-h · 82-b · 85-d
-- **예상 규모** — bin/ci −약 95줄. 커밋 메시지마다 인수한 SSOT 절 번호를 적는다(loop-conventions §5·§9 · closeout-rationale §5·§6 · issue-runner-rationale §13 · state-machine.md 「정상 사다리」·「정지와 반송」·「전이 실패의 공통 규칙」 · constants.sh 머리 주석).
+- **대상 행** — 60-a · 73 · 82-b(세 루프 SKILL 축) · 85-d
+- **착지(#539)** — bin/ci 1,441 → 1,392줄(−49). 커밋 메시지마다 인수한 SSOT 절·줄을 적었다
+  (loop-status.sh 머리 주석 :14-31 · loop-conventions §5 :92-100·:112-116 ·
+  state-machine.md 「전이 실패의 공통 규칙」 :84-89 · closeout-rationale **§7** :357-366).
+- **애초 목록에서 빠진 여섯 자리** — codex 1회차 P2 로 재판정했다. 판정 잣대는 **"가드는
+  대체가 *강제*할 때만 폐기"** 이고, rationale·규약 문서는 규칙을 *설명*할 뿐 SKILL 실행 지시나
+  코드 배선을 강제하지 않는다: 72-c → **ⓒ(L4)** · 81-a → **ⓒ(L6)** ·
+  81-f·81-g·81-h·13-c → **ⓓ**. 넷 다 원문 그대로 복원했다.
+- **남은 ⓑ 판정의 조건** — 82-b 의 워커 템플릿 축은 그 절이 규약을 ④ Report 로 한정해
+  **미인수**라 유지했다. ⓑ 는 SSOT 가 그 문장을 인수하고 **다른 강제자가 남아 있을 때**만 쓴다.
 
 ### L4 · 단일 정의 불변식을 ci/guards/single-definition.sh 한 파일로 (ⓒ)
 
-- **대상 행** — 11 · 14 · 27-c · 30 · 61 · 71-a · 74 · 83-b · 84-b
+- **대상 행** — 11 · 14 · 27-c · 30 · 61 · 71-a · 72-c(#539 재판정으로 편입) · 74 · 83-b · 84-b
 - **예상 규모** — 신규 파일 1개(약 90줄) + bin/ci −약 80줄. 항목마다 만료 조건 한 줄 필수. 61·74 는 만료 조건이 이미 구체적이다(include 전환 · lib 통합).
 
 ### L5 · 실행비트 검사를 ci/guards/exec-bit.sh 목록 하나로 (ⓒ)
@@ -260,7 +268,7 @@ L5 가 열두 자리의 실행비트를 먼저 걷어내면 나머지 leaf 의 d
 
 ### L6 · 문서 형태 가드를 ci/guards/ 로 (ⓒ)
 
-- **대상 행** — 3 · 5-a · 5-b · 17 · 77-b · 86 · 12-c · 72-e · 83-c
+- **대상 행** — 3 · 5-a · 5-b · 17 · 77-b · 81-a(#539 재판정으로 편입) · 86 · 12-c · 72-e · 83-c
 - **예상 규모** — 신규 파일 5개(heredoc-lint · ko-en-sync · worker-report-prefix · prose-regression · section-pointers). bin/ci −약 170줄. 만료 조건 주석이 이미 있는 것(86)과 없는 것(17·77-b)을 가른다.
 
 ## 검증

@@ -150,8 +150,10 @@ for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md; do
     echo "  ✗ $f: 회차 카운터를 산문으로 직접 읽거나 쓴다 — attempt-counter.sh 를 부르라 (#444)"; exit 1; fi
 done
 
-echo "[#449] 규칙0 은 pr-state.sh 한 자리 — 배선·진입점 선언"
+echo "[#449] 규칙0 은 pr-state.sh 한 자리 — 판정→목표 라벨 매핑 산문 0"
 # `references/state-machine.md` 가 표 SSOT 이고 `pr-state.sh` 가 그 표를 기계가 읽는 진입점이다.
+# 산문이 "마지막 판정 → flow:<칸>" 매핑을 다시 들면 표와 두 벌이 되고, 그 차이는 라벨이
+# 어긋난 뒤에야 보인다(#281 미러가 갈리는 자리).
 # 만료 조건: 한/영 ② Maintain 규칙0 이 매핑을 스크립트에 위임하는 형태를 유지하는 한
 # 이 가드가 그 형태의 강제자다.
 for f in SKILL.md SKILL.en.md; do
@@ -159,6 +161,9 @@ for f in SKILL.md SKILL.en.md; do
     || { echo "  ✗ $f: 규칙0 에 pr-state.sh 배선 없음 (#449)"; exit 1; }
   grep -qF 'mismatch' "$f" \
     || { echo "  ✗ $f: 규칙0 이 pr-state.sh 의 mismatch 를 처분하지 않는다 (#449)"; exit 1; }
+  # 산문 회귀 — 판정 기호에서 목표 flow 라벨을 직접 유도하는 매핑 화살표.
+  if grep -nE '(머지 판정|Merge verdict): (✅|🔄)[^\n]*→ *`?flow:' "$f" | grep -q .; then
+    echo "  ✗ $f: 규칙0 의 판정→flow 라벨 매핑 산문이 되살아났다 — pr-state.sh 의 mismatch 를 쓰라 (#449)"; exit 1; fi
 done
 # 표(SSOT)가 이 진입점을 가리키는지 — 표만 고치고 스크립트를 안 고치는 드리프트 방지.
 grep -qF 'pr-state.sh' references/state-machine.md \
@@ -595,10 +600,9 @@ bash scripts/tests/resume-sweep.test.sh
 
 echo "[test] loop-status.sh 파이프라인 스냅샷 버킷·창 필터·warn·부분 실패 (#144)"
 bash scripts/tests/loop-status.test.sh
-# (#276) 사다리 버킷은 "누가 들고 있나" 로 이름 짓는다 — 옛 버킷 문구(구현중·마감중·사람대기)가
-# loop-status·README·스킬·테스트 어디에도 남지 않는다(이슈 #276 수용 기준의 grep 그대로).
-# 산문이 옛 이름으로 대시보드 줄을 가리키면 사람이 없는 줄을 찾는다. 새 이름은 라벨/루프
-# 이름 그 자체(issue-runner·verify-runner·closeout·needs-human)라 이 grep 이 오탐할 자리가 없다.
+# (#276) 사다리 버킷은 "누가 들고 있나" 로 이름 짓는다 — 이름·라벨·jq 키의 SSOT 는
+# `scripts/loop-status.sh` 머리 주석 「★버킷 정의 — 이 주석이 SSOT★」 다. 여기서 무는 것은
+# 렌더 계약(그 이름 9개가 RENDER_JQ padded 리터럴에 있고 폭이 같은가) 하나다.
 echo "[#276] 루프 현황 9줄 — RENDER_JQ padded 이름·폭 리터럴"
 # 9줄 렌더 계약 — RENDER_JQ 의 padded 리터럴에 새 이름 9개가 전부 있고 폭이 같다(15칸 = verify-runner 13 + 2).
 for lit in '"waiting":"대기           "' '"claimed":"issue-runner   "' '"verify":"검증대기       "' \
@@ -667,7 +671,7 @@ for f in scripts/timebox-check.sh scripts/finish-classify.sh; do
   grep -qF 'progress-evidence.sh' "$f" || { echo "  ✗ $f 에 progress-evidence.sh 배선 없음"; exit 1; }
 done
 
-echo "[#206] 현재 회차 시작 증거 — claim-at.sh 한 자리 배선"
+echo "[#206] 현재 회차 시작 증거 — claim-at.sh 한 자리·ISSUE_TIMEBOX_HOURS 드리프트"
 # `agent:claimed` 의 **부착 시각**은 첫 푸시 전 창을 덮는 유일한 신호다(#206 attempt 3
 # codex BLOCKER). 조회가 한 자리(claim-at.sh)에 있어야 "존재로 판정하지 않는다"(#196 3항)와
 # "부착 시각으로 판정한다"(#206)가 한 문서에서 갈리지 않는다.
@@ -682,6 +686,20 @@ for token in 'claim-at.sh' 'claimed_arg' '--claimed-at'; do
 done
 grep -qF -e '--claimed-at' -- scripts/progress-evidence.sh \
   || { echo "  ✗ scripts/progress-evidence.sh 에 --claimed-at 입력 없음"; exit 1; }
+# claim 신선도 상한은 timebox 와 **같은 상수**다(두 자리가 같은 경계를 쓴다는 계약).
+# 기본값이 갈리면 스윕과 ① Reconcile 이 서로 다른 창에서 같은 워커를 살리고 죽인다.
+# (#427) 기본값의 한 자리는 `scripts/lib/constants.sh` 의 `: "${ISSUE_TIMEBOX_HOURS:=1}"` 다.
+# 두 리더(timebox-check·progress-evidence)가 자기 기본값을 되살리면 이 검사가 2건을 본다.
+tb_defaults=$(grep -ho 'ISSUE_TIMEBOX_HOURS:[-=][0-9]*' scripts/*.sh scripts/lib/*.sh | sort -u)
+tb_n=$(printf '%s\n' "$tb_defaults" | grep -c . || true)
+[ "$tb_n" -ge 1 ] \
+  || { echo "  ✗ ISSUE_TIMEBOX_HOURS 기본값을 읽는 자리가 없다 — 가드가 의미를 잃었다"; exit 1; }
+[ "$tb_n" = 1 ] \
+  || { echo "  ✗ ISSUE_TIMEBOX_HOURS 기본값이 파일마다 다르다: $(printf '%s ' $tb_defaults)"; exit 1; }
+for f in scripts/timebox-check.sh scripts/progress-evidence.sh; do
+  grep -qF 'ISSUE_TIMEBOX_HOURS' "$f" \
+    || { echo "  ✗ $f 가 ISSUE_TIMEBOX_HOURS 를 읽지 않는다 — 두 자리가 같은 상수를 써야 한다"; exit 1; }
+done
 # 호출부 tripwire — head 조회의 **종료코드를 버리면**(`|| head_raw=''`) 실패가 부재로
 # 둔갑한다(PR#139). 헬퍼가 아무리 3값을 구분해도 호출부가 삼키면 계약은 거기서 깨진다.
 if grep -qE 'pr-head-at\.sh[^|]*\|\|[[:space:]]*head_raw=' scripts/finish-classify.sh; then
@@ -1080,12 +1098,14 @@ case "$out" in *"claimed:"*) echo "  ✗ claim live-holder 지연: 늦게 뜬 �
   || { echo "  ✗ claim live-holder 지연: 재조회가 1회뿐(대기창 폴링 미동작)"; rm -rf "$tmp"; exit 1; }
 rm -rf "$tmp"
 
-echo "[#147] 검증 사다리 파일 존재 · 정지 전이 인자 · 재개 스윕 배선 검사"
-# 사다리 **참조 배선**(다섯 문서가 이 파일을 가리킨다)은 `references/loop-conventions.md` §9 가
-# 인수했다 — 칸 정의·명령·인용 규칙의 SSOT 가 이 파일임을 §9 첫 문단이 명시한다. 남기는 것은
-# 파일 **존재**뿐이다: §9 가 가리키는 대상이 사라지면 SSOT 가 허공을 가리키는데, 블록 [#507] 의
-# §N 포인터 검사는 loop-conventions·*-rationale 만 훑어 이 파일을 보지 않는다.
-[ -f references/live-verification-ladder.md ] || { echo "  ✗ references/live-verification-ladder.md 없음 — loop-conventions §9 가 SSOT 로 가리키는 파일이다"; exit 1; }
+echo "[#147] 검증 사다리 배선 검사 — 네 문서가 사다리를 가리킨다"
+# 실측 필요는 멈출 이유가 아니라 다음 할 일이다(Plans/live-verification-ladder.md). 사다리 참조가
+# 빠지면 워커·검증·마감이 다시 "라이브 항목은 [ ]" 로 도망간다.
+# ('이월' 금지 sweep 은 #398 로 걷었다 — 산문 어휘 핀이라 읽는 스크립트가 없다.)
+[ -f references/live-verification-ladder.md ] || { echo "  ✗ references/live-verification-ladder.md 없음"; exit 1; }
+for f in references/worker-template.md references/worker-template.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
+  grep -qF "live-verification-ladder.md" "$f" || { echo "  ✗ $f: 검증 사다리 참조 없음"; exit 1; }
+done
 for f in SKILL.md SKILL.en.md skills/verify-runner/SKILL.md skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
   if grep -nE 'transition\.sh (verify-held|closeout-blocked|runner-held) [^\n]*' "$f" | grep -v -- '--reason' | grep -q .; then
     echo "  ✗ $f: --reason 없는 verify-held/closeout-blocked/runner-held 호출"; exit 1; fi
@@ -1129,6 +1149,36 @@ for f in SKILL.md SKILL.en.md; do
     || { echo "  ✗ $f: kept 마커가 policy-kept 전이보다 앞이다 — 전이가 죽으면 재심이 봉인된다 (#244)"; exit 1; }
   printf '%s\n' "$pr_body" | grep -qF 'BLOCKED: 전이 실패 policy-kept' \
     || { echo "  ✗ $f: 전이 비0 시의 목적지(\`BLOCKED: 전이 실패 policy-kept\` · 마커 미부착)가 없다 (#244)"; exit 1; }
+done
+# (#244) closeout ①-b 스윕 **대상 필터** — 기계 정지의 마지막 소비자. 이 필터는 `needs-human`
+# 미부착만 보던 자리인데, #244 가 기계 정지에서 그 라벨을 떼므로 홀드된 PR(harvesting·
+# flow:verify·needs-human 이 전부 없고 `hold:*` 만 남은 PR)이 매 틱 다시 대상이 된다 —
+# hold-note 를 다시 달고, `stale_reverify` 갈래에선 `closeout-redispatch` 가 verify-runner 가
+# 방금 세운 홀드를 통째로 벗긴다(#151 재현). 그래서 ⑴ **대상 문단 안에** `hold:` 접두
+# 미부착이 함께 적혀 있어야 하고(문단 스코프 — 파일 아무 데나 `hold:` 가 있다고 통과하지
+# 않는다), ⑵ 같은 두 파일이 기계 정지를 `needs-human`+`hold:*` **쌍**으로 계속 광고하면
+# 안 된다(전이는 이제 사유 라벨 하나만 붙인다 — 읽는 사람과 다음 구현자가 서로 다른
+# 계약을 믿게 된다, #191).
+awk 'BEGIN{RS="";ok=0} /\*\*대상\*\*:/ && /`hold:` 접두 미부착/ {ok=1} END{exit ok?0:1}' skills/closeout/SKILL.md \
+  || { echo "  ✗ skills/closeout/SKILL.md: ①-b 대상 문단에 \`hold:\` 접두 미부착 필터 없음 (#244)"; exit 1; }
+awk 'BEGIN{RS="";ok=0} /\*\*Targets\*\*:/ && /no `hold:`-prefixed label/ {ok=1} END{exit ok?0:1}' skills/closeout/SKILL.en.md \
+  || { echo "  ✗ skills/closeout/SKILL.en.md: ①-b Targets 문단에 no \`hold:\`-prefixed label 필터 없음 (#244)"; exit 1; }
+# (#275) 같은 대상 문단이 verify-runner **점유** 라벨 `verifying` 도 제외해야 한다 — `flow:verify`
+# 는 검증대기이고 `verifying` 은 verify-runner 가 집는 순간 flow:verify 를 떼고 붙이는 점유
+# 라벨(harvesting 동형)이라, 이 문단이 `flow:verify` 만 보면 검증이 **지금 도는** PR 이
+# 스윕의 입양·재디스패치 대상이 된다(closeout-eligible.sh 는 둘 다 제외한다 — 스윕 문단만
+# 빠지면 두 필터가 갈린다). 문단 스코프로 잰다 — 파일 아무 데나 `verifying` 이 있다고 통과하지 않는다.
+awk 'BEGIN{RS="";ok=0} /\*\*대상\*\*:/ && /`verifying` 미부착/ {ok=1} END{exit ok?0:1}' skills/closeout/SKILL.md \
+  || { echo "  ✗ skills/closeout/SKILL.md: ①-b 대상 문단에 \`verifying\` 미부착 필터 없음 (#275)"; exit 1; }
+awk 'BEGIN{RS="";ok=0} /\*\*Targets\*\*:/ && /not labeled `verifying`/ {ok=1} END{exit ok?0:1}' skills/closeout/SKILL.en.md \
+  || { echo "  ✗ skills/closeout/SKILL.en.md: ①-b Targets 문단에 not labeled \`verifying\` 필터 없음 (#275)"; exit 1; }
+# issue-runner ② Maintain 규칙0(단계 라벨 보정)·소유 규칙도 `verifying` PR 을 건드리지 않아야 한다 —
+# 보정이 `🔄` 만 보고 `flow:verify` 를 되붙이면 검증 중인 PR 에 단계 라벨이 둘이 된다.
+awk 'BEGIN{RS="";ok=0} /\*\*0\. 단계 라벨 보정/ && /`verifying`/ {ok=1} END{exit ok?0:1}' SKILL.md \
+  || { echo "  ✗ SKILL.md: ② Maintain 규칙0 문단이 \`verifying\` PR 을 건너뛰지 않는다 (#275)"; exit 1; }
+for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md skills/verify-runner/SKILL.md; do
+  if grep -nE '`needs-human` *\+ *`hold:' "$f" | grep -q .; then
+    echo "  ✗ $f: 기계 정지를 \`needs-human\` + \`hold:*\` 쌍으로 서술 — #244 이후 전이는 사유 라벨 하나만 붙인다"; exit 1; fi
 done
 # (#244 WARN) 같은 파일 안에서 계약이 **두 값**으로 갈리지 않게 — `verify-runner` 의 ④ held 절차문은
 # `transition.sh verify-held` 가 붙일 수 있는 라벨(`hold:<reason>`)만 광고해야 한다. 옛 문구(재디스패치
@@ -1291,7 +1341,6 @@ grep -qF 'bounce-state.sh' scripts/finish-classify.sh \
   || { echo "  ✗ scripts/finish-classify.sh 에 bounce-state.sh 되묻기 배선 없음"; exit 1; }
 # 마커 집합 정의가 한 자리인지는 위 `[closeout] 반송 마커 집합은 bounce-state.sh 한 자리`
 # 블록이 이미 전수로 검사한다 — 여기 두 번째 술어를 만들지 않는다(PR#216 규율).
-
 
 echo "[#507] SKILL 의 rationale·conventions §N 포인터 — 실재하는 절만 가리킨다 (헤더 중복도 빨강)"
 # 3단계(#451)로 근거 서사는 references/<루프>-rationale.md 로, 공용 규약은 references/loop-conventions.md 로
