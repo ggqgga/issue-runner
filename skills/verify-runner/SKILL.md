@@ -177,12 +177,17 @@ no-op 로 통과한다). 이 라벨이 루프 현황(`loop-status.sh`)에서 `�
 범프·툴 설정 변경 등) 그 사실과 해소 방법을 사람이 읽을 코멘트에 명시하라 — `flow:verify`
 가 남아 있으므로 해소 즉시 다음 틱이 자동으로 재집는다.
 
-**1. worktree 확보·동기화.** `$SCRIPTS/make-worktree.sh <repo> <issue>` 로 worktree
-경로를 얻고(마지막 줄), **PR 의 현재 head 로 강제 동기화**한다(기존 worktree 는 옛 SHA
-일 수 있다 — closeout revalidate 경로와 동일 함정):
-`git -C <wt> fetch origin` → `git -C <wt> reset --hard origin/<head>`(`<head>`=verify-eligible
-의 head, 예 `agent/issue-<issue>`). `<issue>` 가 빈 문자열이면(연결 이슈 없음) PR head
-`agent/issue-N` 에서 N 을 파싱해 쓴다.
+**1. worktree 확보·동기화.** `$SCRIPTS/make-worktree.sh --sync <repo> <issue> [--branch <head>]`
+**한 호출**로 worktree 를 확보하고 **PR 의 현재 head 로 강제 동기화**한다(#445). 경로는
+**마지막 줄**, 동기화된 SHA 는 그 앞의 `synced:` 줄이다. `fetch` + `reset --hard origin/<branch>`
+절차와 "기존 worktree 는 옛 SHA 일 수 있다" 는 함정(closeout revalidate 경로와 동일)은 그
+스크립트의 머리 주석이 SSOT 다 — 여기서 손으로 밟지 마라. `--branch` 는 verify-eligible 의
+head 가 기본값 `agent/issue-<issue>` 가 **아닐 때만** 준다. `<issue>` 가 빈 문자열이면(연결
+이슈 없음) PR head `agent/issue-N` 에서 N 을 파싱해 쓴다.
+- **exit 3(worktree 에 미커밋 변경 — 덮지 않았다)·exit 4(원격에 그 head 브랜치 없음)** 이면
+  검증을 진행하지 마라. 이 PR 을 skip 하고 ④ Report 에
+  `BLOCKED: worktree 동기화 실패 PR #<pr> — <stderr 한 줄>` 로 올린다(옛 SHA 를 검증하면
+  그린라이트가 실재하지 않는 코드에 찍힌다).
 
 **2. E2E (test:system).** 레포가 시스템 테스트를 가지면(예 Rails: `test/system/`) worktree
 에서 실행한다. Rails 기준:

@@ -1,14 +1,56 @@
 #!/usr/bin/env bash
-# usage: make-worktree.sh <owner/repo> <issue-number>
+# usage: make-worktree.sh [--sync] [--branch <ref>] <owner/repo> <issue-number>
 # 레포가 ~/Projects/<name>에 없으면 clone, 있으면 fetch 후
 # .claude/worktrees/issue-<N> 에 agent/issue-<N> 브랜치로 worktree 생성.
 # 성공 시 worktree 절대경로를 stdout 마지막 줄에 출력.
+#
+# ── `--sync` — 기존 worktree 를 PR 의 현재 head 로 강제 동기화 (#445) ──────────
+# 이 스크립트는 worktree 가 이미 있으면 **그대로 반환**한다. 그래서 rebase·force-push 뒤에
+# 부르면 **옛 SHA 가 체크아웃된 채**인데 호출자는 최신인 줄 안다 — verify-runner 1단계와
+# closeout 3단계·revalidate 경로가 각자 산문으로 `git fetch` + `git reset --hard` 를 복붙하던
+# 이유다(세 자리가 갈라지면 한 곳만 고쳐진다). `--sync` 는 그 절차를 한 자리로 옮긴 것이다:
+#   · worktree 가 있으면 `git fetch origin <branch>` → `git reset --hard origin/<branch>`
+#     (이 SHA 가 `closeout-ci-pass.sh` 가 `gh pr view headRefOid` 로 보는 바로 그 SHA다 —
+#      안 맞추면 run-local-ci 가 옛 SHA 를 캐시해 영구 exit 2 로 남는다)
+#   · 원격에 그 브랜치가 없으면 **덮지 않고** exit 4 (동기화 대상이 없는데 리셋하면 엉뚱한
+#     커밋으로 되감긴다)
+#   · **추적 파일에 미커밋 변경이 있으면 덮지 않고 exit 3** + stderr. 판정은
+#     `git status --porcelain --untracked-files=no` 다 — `reset --hard` 는 추적 안 되는
+#     파일을 건드리지 않으므로 untracked 를 세면 잘못 막는다. 특히 `link-secrets` 레포는
+#     `.env`·`config/master.key` 심링크가 untracked 로 뜨므로, 그것까지 세면 정작 이 옵션이 필요한 레포에서
+#     **영구 exit 3** 이 된다. 같은 exit 3 을 두 경우에 더 쓴다 — 대상이 그 worktree 의
+#     **루트가 아니거나**(반쯤 만들어진 디렉토리는 메인 체크아웃 안이라 `git -C` 가 성공해
+#     버리고, 확인 없이 진행하면 `reset --hard` 가 **메인 체크아웃**을 되감는다) `git status`
+#     **조회 자체가 실패**하면(빈 결과와 실패를 섞지 않는다, PR#139) 덮지 않는다.
+#   · worktree 가 없으면 종전 생성 경로 그대로(원격 브랜치가 있으면 그 위에 만들므로 이미 동기).
+#   · `--branch <ref>` 로 head 브랜치를 지정할 수 있다(기본 `agent/issue-<N>`). verify-runner 의
+#     head 는 `agent/issue-*` 가 아닐 수 있어 그 자리를 산문으로 두면 이 옵션 없이는 못 옮긴다.
+#     지정한 브랜치가 지금 체크아웃된 것과 다르면 **먼저 갈아탄다**(`checkout -B`) — 안 그러면
+#     `reset --hard` 가 지금 물고 있는 로컬 브랜치를 남의 head 로 옮긴다. 갈아타지 못하면 exit 3.
+#   · 동기화 결과 SHA 를 `synced: <sha>` 로 먼저 출력한다 — **마지막 줄은 여전히 worktree
+#     절대경로**다(호출자 셋이 마지막 줄로 경로를 읽는 종전 계약, 깨지 마라).
 set -euo pipefail
-repo="${1:?usage: make-worktree.sh <owner/repo> <num>}"
-num="${2:?usage: make-worktree.sh <owner/repo> <num>}"
+
+sync=0
+branch_override=
+pos=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --sync)   sync=1; shift ;;
+    --branch) [ $# -ge 2 ] || { echo "usage: make-worktree.sh [--sync] [--branch <ref>] <owner/repo> <num>" >&2; exit 1; }
+              branch_override=$2; shift 2 ;;
+    --)       shift ;;
+    -*)       echo "usage: make-worktree.sh [--sync] [--branch <ref>] <owner/repo> <num>" >&2; exit 1 ;;
+    *)        pos[${#pos[@]}]=$1; shift ;;
+  esac
+done
+repo=${pos[0]:-}
+num=${pos[1]:-}
+[ -n "$repo" ] && [ -n "$num" ] \
+  || { echo "usage: make-worktree.sh [--sync] [--branch <ref>] <owner/repo> <num>" >&2; exit 1; }
 here="$(cd "$(dirname "$0")" && pwd)"
 dir="$("$here/repo-dir.sh" "$repo")"
-branch="agent/issue-$num"
+branch="${branch_override:-agent/issue-$num}"
 wt="$dir/.claude/worktrees/issue-$num"
 
 # 시크릿 파일 — repos.conf 의 link-secrets 플래그가 있는 레포에서만 워크트리에 심링크
@@ -71,6 +113,75 @@ grep -qx '.claude/' "$dir/.git/info/exclude" 2>/dev/null \
 if [ -d "$wt" ]; then
   echo "exists: $wt" >&2
   if [ "$link_secrets" = 1 ]; then link_secret_files "$wt"; else reap_secret_links "$wt"; fi
+  if [ "$sync" = 1 ]; then
+    # 원격 head 로 강제 동기화 — 없는 브랜치로는 되감지 않는다(exit 4).
+    if ! git -C "$dir" fetch origin "$branch" >/dev/null 2>&1 \
+       || ! git -C "$dir" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+      echo "sync: 원격 브랜치 없음 origin/$branch — 동기화하지 않는다" >&2
+      exit 4
+    fi
+    # 대상이 **정말 그 worktree 의 루트**인지 먼저 확인한다. 반쯤 만들어진(혹은 손으로 만든)
+    # `.claude/worktrees/issue-N` 디렉토리는 메인 체크아웃 **안**에 있어서 `git -C` 가 성공해
+    # 버린다 — 확인 없이 진행하면 `reset --hard` 가 **메인 체크아웃**을 되감는다.
+    top=$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null) || top=
+    wt_real=$(cd "$wt" 2>/dev/null && pwd -P) || wt_real=
+    top_real=$(cd "$top" 2>/dev/null && pwd -P 2>/dev/null) || top_real=
+    if [ -z "$top_real" ] || [ "$top_real" != "$wt_real" ]; then
+      echo "sync: $wt 가 worktree 루트가 아니다(깨진 디렉토리?) — 덮지 않는다" >&2
+      exit 3
+    fi
+    # 추적 파일의 미커밋 변경만 센다(`reset --hard` 는 untracked 를 건드리지 않고,
+    # link-secrets 심링크가 untracked 로 떠 영구 거부가 되는 것을 막는다).
+    # **조회 실패와 "깨끗함" 을 섞지 않는다**(PR#139 규율) — 못 읽었으면 덮지 않는다.
+    if ! st=$(git -C "$wt" status --porcelain --untracked-files=no 2>/dev/null); then
+      echo "sync: worktree 상태를 못 읽었다 — 덮지 않는다: $wt" >&2
+      exit 3
+    fi
+    if [ -n "$st" ]; then
+      echo "sync: worktree 에 미커밋 변경이 있어 덮지 않는다 — $wt" >&2
+      exit 3
+    fi
+    # **새로 추적될 경로가 지금 미추적 파일로 있으면 덮지 않는다.** `reset --hard` 는 "추적
+    # 안 되는 파일" 을 일반적으로 건드리지 않지만, 대상 커밋이 **그 경로를 추가**하면 얘기가
+    # 다르다 — 체크아웃이 그 자리를 덮어써 스크래치 파일이나 우리가 깐 시크릿 심링크가
+    # 소리 없이 사라진다. 그래서 "새로 추가되는 경로 ∩ 지금 미추적 경로" 를 미리 잰다.
+    if ! added=$(git -C "$wt" diff --name-only --diff-filter=A HEAD "origin/$branch" 2>/dev/null); then
+      echo "sync: 추가 경로 목록을 못 읽었다 — 덮지 않는다: $wt" >&2
+      exit 3
+    fi
+    if [ -n "$added" ]; then
+      addf=$(mktemp) || exit 1
+      printf '%s\n' "$added" > "$addf"
+      # `--exclude-standard` 는 gitignore 된 경로를 빼므로, 우리가 깐 시크릿 심링크
+      # (`.env`·`config/master.key` — 대개 gitignore 대상)는 따로 후보에 더한다.
+      untracked=$(git -C "$wt" ls-files --others --exclude-standard 2>/dev/null)
+      for f in $secret_files; do
+        [ -e "$wt/$f" ] && untracked="$untracked
+$f"
+      done
+      clash=$(printf '%s\n' "$untracked" | grep -v '^[[:space:]]*$' | sort -u \
+              | grep -Fx -f "$addf" || true)
+      rm -f "$addf"
+      if [ -n "$clash" ]; then
+        echo "sync: 새로 추적될 경로가 미추적 파일로 있어 덮지 않는다 — $wt" >&2
+        printf '%s\n' "$clash" | sed 's/^/  충돌: /' >&2
+        exit 3
+      fi
+    fi
+    # **다른 브랜치에 체크아웃돼 있으면 먼저 갈아탄다** (#467 2회차 P1-1). `--branch` 로 head 를
+    # 지정했는데 worktree 가 아직 `agent/issue-N` 에 있으면, `reset --hard origin/<ref>` 는
+    # **지금 체크아웃된 그 로컬 브랜치**를 남의 head 로 옮겨 버린다(agent/issue-N 이 feature/x 를
+    # 가리키게 되고, 뒤따르는 커밋이 엉뚱한 이름으로 푸시된다). detached 면 현재 브랜치는 빈 값.
+    cur=$(git -C "$wt" symbolic-ref --short HEAD 2>/dev/null) || cur=
+    if [ "$cur" != "$branch" ]; then
+      if ! git -C "$wt" checkout -q -B "$branch" "origin/$branch" 2>/dev/null; then
+        echo "sync: $branch 로 갈아타지 못했다(다른 worktree 가 물고 있나?) — 덮지 않는다: $wt" >&2
+        exit 3
+      fi
+    fi
+    git -C "$wt" reset --hard "origin/$branch" >/dev/null
+    echo "synced: $(git -C "$wt" rev-parse HEAD)"
+  fi
   echo "$wt"
   exit 0
 fi
@@ -103,4 +214,9 @@ else
   done
 fi
 
+# 새로 만든 worktree 는 원격 브랜치가 있으면 그 위에서 났으므로 이미 동기 상태다 —
+# `--sync` 호출자에게 같은 형태로 SHA 만 알려 준다(마지막 줄은 여전히 경로).
+if [ "$sync" = 1 ]; then
+  echo "synced: $(git -C "$wt" rev-parse HEAD)"
+fi
 echo "$wt"

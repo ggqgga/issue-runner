@@ -678,6 +678,9 @@ for f in scripts/loop-status.sh scripts/spinoff-inherit.sh; do
 done
 bash scripts/tests/spinoff-inherit.test.sh
 
+echo "[test] spinoff-issue.sh 파생 발행 격자 — 상속·Epic 첫 줄·라벨 3단 fail-closed·부모 PR 마커 (#447)"
+bash scripts/tests/spinoff-issue.test.sh
+
 echo "[closeout] ③-1 네이티브↔폴백 프롬프트 동기화 검사 (#207 attempt8)"
 # 이 이슈의 뿌리는 SKILL.md 가 폴백(general-purpose)이 diff 를 동봉한다고 적어놓고
 # 실제로는 네이티브 전용 템플릿(<DIFF> 없음·"이 워크트리는 최신" 전제)을 그대로
@@ -1060,6 +1063,15 @@ bash scripts/tests/closeout-ci-pass.test.sh
 
 echo "[test] closeout-reconcile.sh harvesting 점검 격자 — 상태별 이벤트·needs-human fail-closed·범위 필터 (#428)"
 bash scripts/tests/closeout-reconcile.test.sh
+
+echo "[test] smoke-tally.sh 스모크 집계 격자 — 표식 분모 제외·보류 합산·문법 위반 fail-closed (#448)"
+bash scripts/tests/smoke-tally.test.sh
+
+echo "[test] deploy-wait-issue.sh 배포 대기 발행 격자 — 제목·절 파싱 계약·(승격만)·라벨 3단 사다리 (#446)"
+bash scripts/tests/deploy-wait-issue.test.sh
+
+echo "[test] make-worktree.sh --sync 격자 — 원격 head 강제 동기화·더티 거부·untracked 무해·원격 부재 (#445)"
+bash scripts/tests/make-worktree.test.sh
 
 echo "[#206] 진행 증거 술어는 progress-evidence.sh 한 자리 (#200 → #206)"
 # 커밋 신선도(STALL_MIN)와 CI 큐 티켓 판정을 다른 스크립트가 자기 벌로 들고 있으면 언젠가
