@@ -506,7 +506,11 @@ FX
 #   #40   hold:ladder + agent-ready             보류 `#40(ladder)`  (재개 대기)
 #   #41   hold:policy 단독                      보류 `#41(policy)`  (재심 전)
 #   #42   hold:policy + needs-human             needs-human (재심이 "사람 몫 유지" 로 끝난 꼴)
-#   #43   hold:conflict 단독                    보류 `#43(conflict)` (#345 — 창 뒤 스윕이 1회 재개하는 기계 정지)
+#   #43   hold:conflict 단독                    보류 `#43(conflict, 0/1)` (#345 — 창 뒤 스윕이 1회 재개하는 기계 정지;
+#                                               #346 — 재개 횟수/상한 병기 = `conflict-resume` 마커 수 / CONFLICT_RESUME_LIMIT)
+#   #39   hold:conflict 단독 + 마커 1(+인용 1)  보류 `#39(conflict, 1/1)` (코드 인용 속 마커는 안 센다 — resume-sweep 의 JQ_UNQUOTE 와 같은 규율)
+#   #38   hold:conflict 단독 + 코멘트 조회 실패  보류 `#38(conflict)` — 횟수 미상은 `0/1` 로 접지 않고 warn `재개 횟수 미확인`
+#   #37   hold:conflict + needs-human           needs-human `#37(대기, conflict, 질문 없음)` (종전대로 — 횟수 아닌 질문 조회)
 #   #49   hold:conflict + full-cycle            needs-human (사람이 인수한 충돌 — 스윕이 절대 재개 안 함)
 #   #44   needs-human 단독                      needs-human `사유 없음` + note(정상 상태)
 #   #45   agent-ready 만                        대기
@@ -519,6 +523,9 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Holds.issues.json" <<'FX'
  {"number":41,"title":"정책 재심 전","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:policy"}]},
  {"number":42,"title":"재심 유지 — 사람 몫 확정","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:policy"},{"name":"needs-human"}]},
  {"number":43,"title":"충돌 — 스윕이 재개하는 기계 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
+ {"number":39,"title":"충돌 — 이미 1회 재개됨(상한 도달)","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
+ {"number":38,"title":"충돌 — 코멘트 조회 실패","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
+ {"number":37,"title":"충돌 + 사람이 세운 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"},{"name":"needs-human"}]},
  {"number":49,"title":"충돌 — 사람이 full-cycle 로 인수","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"},{"name":"full-cycle"}]},
  {"number":44,"title":"사람이 직접 세운 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"needs-human"}]},
  {"number":45,"title":"집을 수 있는 이슈","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"}]},
@@ -551,6 +558,13 @@ FX
 cat > "$tmp/fx/ggqgga_Holds.comments.49.json" <<'FX'
 {"comments":[{"body":"사람 확인(conflict): 충돌 #5114·client.rb — 워커 재개 범위: origin/main 위로 rebase\n<!-- hold-note: conflict --><!-- bodat:worker -->"}]}
 FX
+# 보류 칸의 conflict 는 **재개 횟수**를 같은 코멘트 조회로 센다(#346) — `<!-- conflict-resume: N -->`
+# 마커를 품은 코멘트 수. 코드 인용(백틱·펜스) 속 마커는 마커가 아니다(resume-sweep 과 같은 unquoted).
+cat > "$tmp/fx/ggqgga_Holds.comments.39.json" <<'FX'
+{"comments":[{"body":"재개 안내: 마커는 `<!-- conflict-resume: 1 -->` 형식이다\n<!-- bodat:worker -->"},
+             {"body":"충돌 재개 1/1 — 워커 한 회차 더\n<!-- conflict-resume: 1 -->\n<!-- bodat:worker -->"}]}
+FX
+: > "$tmp/fx/ggqgga_Holds.comments.38.fail"
 
 # ── 픽스처: ggqgga/Verifying (verifying) — verify-runner 점유 칸 (#276 · 라벨은 #275) ──
 # `verifying` 은 verify-runner 가 **지금 들고 있는** 이슈다(집는 순간 flow:verify 를 떼고
@@ -706,12 +720,15 @@ FX
 #         앞에 다른 낱말)
 #   #22   `blockedby #900`(구분자 없음)          대기 ← **과잉 포획 반증**
 #   #23   issue-runner 버킷인데 본문에 블로커          issue-runner 그대로(막힘은 `대기` 에서만 갈린다)
+#   #24   `Blocked by #904`(hold:conflict 단독)  막힘 ← #904(보류) → warn **없음**(#346 — 보류는 루프가 풀 것,
+#                                                사람 게이트가 아니다; 블로커 warn 은 needs-human·테스트·배포대기만)
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Blockers.issues.json" <<'FX'
 [
  {"number":900,"title":"사람이 답해야 풀리는 블로커","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"needs-human"},{"name":"hold:ladder"}]},
  {"number":901,"title":"루프가 처리 중인 블로커","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
  {"number":902,"title":"대기 중인 블로커","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"}]},
  {"number":903,"title":"배포 게이트 블로커","createdAt":"@NOW@","body":"","labels":[{"name":"deploy-wait"}]},
+ {"number":904,"title":"보류 블로커 — 충돌 재개 대기","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
  {"number":10,"title":"본문 블로커 — 줄 앞에 다른 줄이 있다","createdAt":"@NOW@","body":"배경 설명 한 줄\nBlocked by #900","labels":[{"name":"agent-ready"}]},
  {"number":11,"title":"라벨 블로커","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"blocked-by:901"}]},
  {"number":12,"title":"닫힌 블로커 — 자동 해제","createdAt":"@NOW@","body":"Blocked by #999","labels":[{"name":"agent-ready"}]},
@@ -725,7 +742,8 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Blockers.issues.json" <<'FX'
  {"number":20,"title":"대문자","createdAt":"@NOW@","body":"BLOCKED BY #902","labels":[{"name":"agent-ready"}]},
  {"number":21,"title":"줄 시작이지만 앞에 낱말이 있다","createdAt":"@NOW@","body":"not blocked by #900","labels":[{"name":"agent-ready"}]},
  {"number":22,"title":"구분자 없음","createdAt":"@NOW@","body":"blockedby #900","labels":[{"name":"agent-ready"}]},
- {"number":23,"title":"issue-runner인데 블로커가 있다","createdAt":"@NOW@","body":"Blocked by #900","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]}
+ {"number":23,"title":"issue-runner인데 블로커가 있다","createdAt":"@NOW@","body":"Blocked by #900","labels":[{"name":"agent-ready"},{"name":"agent:claimed"}]},
+ {"number":24,"title":"보류 블로커의 하위","createdAt":"@NOW@","body":"Blocked by #904","labels":[{"name":"agent-ready"}]}
 ]
 FX
 # PR #950 — 블로커로 지목되는 열린 PR. head 가 agent/issue-* 가 아니고 연결 이슈도 없어
@@ -1491,18 +1509,19 @@ ck "stale marker: warn 0(사유 있는 홀드뿐)" "$(grep -c '질문 유무 미
 # ── ⑭ (#248) 대기/막힘 — 블로커가 열려 있으면 `대기` 가 아니라 `막힘` ────────
 run --repo ggqgga/Blockers --since 24h
 ck "blockers: exit 0" "$RC" 0
-has_line "blockers 헤더 — 열림 18(막힘은 대기에서 옮겨 온 것이라 총합 불변)" "$tmp/out" \
-  "파이프라인 blockers — 열림 18 · 스코프 blockers · 창 24h"
+has_line "blockers 헤더 — 열림 20(막힘은 대기에서 옮겨 온 것이라 총합 불변)" "$tmp/out" \
+  "파이프라인 blockers — 열림 20 · 스코프 blockers · 창 24h"
 # ③⑥ 과잉 포획 반증이 사는 자리 — 닫힌 블로커(#12)·산문(#15)·라벨 접미가 숫자 아님(#18)
 # ·앵커 앞 낱말(#21)·구분자 없음(#22)은 전부 `대기` 로 남는다.
 has_line "① 대기 6 — 블로커가 없거나 이미 해제된 것만" "$tmp/out" \
   "  대기           6  #902 #22 #21 #18 #15 #12"
-has_line "② 막힘 8 — 항목마다 블로커와 그 버킷(PR 이면 PR #n)" "$tmp/out" \
-  "  막힘           8  #20 ← #902(대기) #19 ← #901(issue-runner) #17 ← #903(배포대기) #16 ← #900(needs-human) #14 ← #902(대기) #13 ← PR #950 #11 ← #901(issue-runner) #10 ← #900(needs-human)"
+has_line "② 막힘 9 — 항목마다 블로커와 그 버킷(PR 이면 PR #n) · 보류 블로커는 (보류)(#346)" "$tmp/out" \
+  "  막힘           9  #24 ← #904(보류) #20 ← #902(대기) #19 ← #901(issue-runner) #17 ← #903(배포대기) #16 ← #900(needs-human) #14 ← #902(대기) #13 ← PR #950 #11 ← #901(issue-runner) #10 ← #900(needs-human)"
 # 다른 버킷은 블로커와 무관하게 그대로 — 막힘은 `대기` 판정을 통과한 것에서만 갈린다
 has_line "⑨ issue-runner 이슈는 블로커가 있어도 issue-runner 그대로" "$tmp/out" "  issue-runner   2  #901 #23"
 has_line "blockers needs-human 1" "$tmp/out" "  needs-human    1  #900(대기, ladder)"
 has_line "blockers 배포대기 1" "$tmp/out" "  배포대기       1  #903"
+has_line "blockers 보류 1 — 단독 hold:conflict 블로커(횟수 병기)" "$tmp/out" "  보류           1  #904(conflict, 0/1)"
 # 개별 반례를 부분 문자열로도 못 박는다 — 줄 전체 비교가 다른 이유로 깨져도 무엇이
 # 틀렸는지 보이게(과잉 포획은 `막힘` 줄에 그 번호가 나타나는 것으로 드러난다).
 no_sub "③ 닫힌 블로커(#999)는 대기 유지 — 막힘으로 안 내려간다" "$tmp/out" "#12 ← "
@@ -1521,22 +1540,27 @@ has_sub "배포대기 블로커도 같은 규칙(사람 게이트)" "$tmp/out" \
 no_sub "issue-runner 블로커(#901)는 warn 아님" "$tmp/out" "블로커 issue-runner"
 no_sub "대기 블로커(#902)는 warn 아님" "$tmp/out" "블로커 대기"
 no_sub "PR 블로커는 warn 아님" "$tmp/out" "블로커 #950"
+# (#346) 보류 블로커는 루프(재개 스윕)가 풀 것 — 사람 게이트 warn 대상이 아니다
+no_sub "(#346) 보류 블로커(#904)는 warn 아님" "$tmp/out" "블로커 보류"
 # issue-runner 버킷의 #23 은 막힘이 아니므로 #900 warn 의 하위에도 안 들어간다
 no_sub "막힘이 아닌 이슈는 warn 하위에 안 섞인다" "$tmp/out" "하위 #23"
-# 추가 gh 호출 0 — 블로커 상태는 이미 받은 목록 안에서만 판정한다(개별 view 금지)
-ck "(#248) 블로커 판정에 개별 issue view 를 쓰지 않는다" \
-  "$(grep -c '^comments ' "$STUB_CALL_LOG")" 0
+# 추가 gh 호출 0 — 블로커 상태는 이미 받은 목록 안에서만 판정한다(개별 view 금지).
+# 코멘트 조회는 보류 conflict #904 의 **재개 횟수**(#346) 한 건뿐 — 하위(#24)·다른 블로커엔 없다.
+ck "(#248) 블로커 판정에 개별 issue view 를 쓰지 않는다 — 코멘트 조회는 #904 횟수 1건뿐" \
+  "$(grep -c '^comments ' "$STUB_CALL_LOG")" 1
+check "(#248) 그 1건은 보류 conflict 블로커 #904 의 횟수 조회다" \
+  "$(grep -qxF "comments ggqgga/Blockers 904" "$STUB_CALL_LOG" && echo ok || echo no)"
 ck "(#248) 타임라인 조회도 없다" "$(grep -c '^timeline ' "$STUB_CALL_LOG")" 0
 
 # ⑦ --json — blocked[] 항목은 기존 item 필드 + blockers[{n,state,bucket}]
 run --repo ggqgga/Blockers --since 24h --json
 ck "⑦ --json: blocked[].blockers 형태" \
   "$(jq -c '[.repos[0].buckets.blocked[] | {n:.number, b:.blockers}]' < "$tmp/out")" \
-  '[{"n":20,"b":[{"n":902,"state":"OPEN","bucket":"대기"}]},{"n":19,"b":[{"n":901,"state":"OPEN","bucket":"issue-runner"}]},{"n":17,"b":[{"n":903,"state":"OPEN","bucket":"배포대기"}]},{"n":16,"b":[{"n":900,"state":"OPEN","bucket":"needs-human"}]},{"n":14,"b":[{"n":902,"state":"OPEN","bucket":"대기"}]},{"n":13,"b":[{"n":950,"state":"OPEN PR","bucket":null}]},{"n":11,"b":[{"n":901,"state":"OPEN","bucket":"issue-runner"}]},{"n":10,"b":[{"n":900,"state":"OPEN","bucket":"needs-human"}]}]'
+  '[{"n":24,"b":[{"n":904,"state":"OPEN","bucket":"보류"}]},{"n":20,"b":[{"n":902,"state":"OPEN","bucket":"대기"}]},{"n":19,"b":[{"n":901,"state":"OPEN","bucket":"issue-runner"}]},{"n":17,"b":[{"n":903,"state":"OPEN","bucket":"배포대기"}]},{"n":16,"b":[{"n":900,"state":"OPEN","bucket":"needs-human"}]},{"n":14,"b":[{"n":902,"state":"OPEN","bucket":"대기"}]},{"n":13,"b":[{"n":950,"state":"OPEN PR","bucket":null}]},{"n":11,"b":[{"n":901,"state":"OPEN","bucket":"issue-runner"}]},{"n":10,"b":[{"n":900,"state":"OPEN","bucket":"needs-human"}]}]'
 ck "⑦ --json: blocked 항목에도 repo_short·label" \
-  "$(jq -c '[.repos[0].buckets.blocked[] | select(.repo_short=="blockers")] | length' < "$tmp/out")" 8
+  "$(jq -c '[.repos[0].buckets.blocked[] | select(.repo_short=="blockers")] | length' < "$tmp/out")" 9
 ck "⑦ --json: open_total 에 blocked 가 든다" \
-  "$(jq '.repos[0].open_total' < "$tmp/out")" 18
+  "$(jq '.repos[0].open_total' < "$tmp/out")" 20
 ck "⑦ --json: waiting 에는 막힘이 안 남는다" \
   "$(jq -c '[.repos[0].buckets.waiting[].number]' < "$tmp/out")" '[902,22,21,18,15,12]'
 ck "⑦ --json: warn kind 는 blocker_human_wait" \
@@ -1591,12 +1615,21 @@ ck "--json: buckets 키 = 종전 12개 + verifying + test_wait" \
 # ── ⑮ (#244) 보류 칸 — hold:* 만 붙은(needs-human 없는) 이슈는 대기가 아니다 ───
 run --repo ggqgga/Holds --since 24h
 ck "holds: exit 0" "$RC" 0
-has_line "holds 헤더 — 열림 10(보류 5 + needs-human 3 + 대기 1 + 막힘 1)" "$tmp/out" \
-  "파이프라인 holds — 열림 10 · 스코프 holds · 창 24h"
-has_line "보류 5 — 사유 병기, 번호 내림차순, 열린 연결 PR 병기 · 단독 hold:conflict 도 보류(#345)" "$tmp/out" \
-  "  보류           5  #48(ladder) #46(ladder) #43(conflict) #41(policy, PR #72) #40(ladder, PR #70)"
-has_line "needs-human 3 — needs-human ∪ (hold:conflict ∧ full-cycle) ∪ 재심 끝난 hold:policy" "$tmp/out" \
-  "  needs-human    3  #49(대기, conflict) #44(대기, 사유 없음) #42(대기, policy)"
+has_line "holds 헤더 — 열림 13(보류 7 + needs-human 4 + 대기 1 + 막힘 1)" "$tmp/out" \
+  "파이프라인 holds — 열림 13 · 스코프 holds · 창 24h"
+# (#346) 단독 hold:conflict 는 ladder 와 같은 꼴로 사유 뒤에 **재개 횟수/상한**을 병기한다 —
+# `#43(conflict, 0/1)`. 횟수 = `<!-- conflict-resume: N -->` 마커 코멘트 수, 상한 = CONFLICT_RESUME_LIMIT.
+# 못 센 건(#38, 조회 실패)은 `0/1` 로 접지 않고 사유만 찍는다(횟수 미상 ≠ 0회).
+has_line "보류 7 — 사유 병기, 번호 내림차순, 열린 연결 PR 병기 · 단독 hold:conflict 는 재개 횟수/상한 병기(#346)" "$tmp/out" \
+  "  보류           7  #48(ladder) #46(ladder) #43(conflict, 0/1) #41(policy, PR #72) #40(ladder, PR #70) #39(conflict, 1/1) #38(conflict)"
+has_sub "(#346) conflict 재개 0회 → 0/1" "$tmp/out" "#43(conflict, 0/1)"
+has_sub "(#346) conflict 재개 1회 — 코드 인용 속 마커는 안 센다(2/1 아님)" "$tmp/out" "#39(conflict, 1/1)"
+no_sub "(#346) 조회 실패건은 0/1 로 접지 않는다" "$tmp/out" "#38(conflict, 0/1)"
+has_sub "(#346) 횟수 미상은 warn 으로 드러난다" "$tmp/out" \
+  "    - 재개 횟수 미확인 #38(holds) — 조회 실패"
+has_line "needs-human 4 — needs-human ∪ (hold:conflict ∧ full-cycle) ∪ 재심 끝난 hold:policy · conflict+needs-human 은 종전대로(질문 판정)" "$tmp/out" \
+  "  needs-human    4  #49(대기, conflict) #44(대기, 사유 없음) #42(대기, policy) #37(대기, conflict, 질문 없음)"
+no_sub "(#346) needs-human 줄의 conflict 엔 횟수를 안 붙인다" "$tmp/out" "#37(대기, conflict, 0/1"
 has_line "대기 1 — 보류가 대기로 새지 않는다" "$tmp/out" "  대기           1  #45"
 has_line "막힘 1 — 보류는 막힘으로도 안 샌다(우선순위: 보류 > 막힘)" "$tmp/out" \
   "  막힘           1  #47 ← #45(대기)"
@@ -1605,18 +1638,19 @@ has_line "검증대기 0 — 단계 라벨보다 보류가 앞(#46)" "$tmp/out" 
 no_sub "보류: #40 은 대기 줄에 없다" "$tmp/out" "  대기           1  #45 #40"
 no_sub "보류: #46 은 검증대기 줄에 없다" "$tmp/out" "  검증대기       1"
 no_sub "보류: #48 은 막힘 줄에 없다" "$tmp/out" "#48 ←"
-# 질문(hold-note) 조회는 **needs-human 버킷**의 policy·conflict 에만 — 보류로 간 #41 엔 안 묻는다
-ck "holds: 코멘트 조회 2건(#42·#49)" "$(grep -c '^comments ' "$STUB_CALL_LOG")" 2
-for n in 42 49; do
+# 코멘트 조회는 한 자리다 — needs-human 버킷의 policy·conflict(질문 유무) + **보류 버킷의 conflict**
+# (재개 횟수, #346). 보류로 간 ladder·policy(#40·#41·#46·#48)엔 여전히 안 묻는다(새 조회를 열지 않는다).
+ck "holds: 코멘트 조회 6건(#42·#49·#37 질문 + #43·#39·#38 횟수)" "$(grep -c '^comments ' "$STUB_CALL_LOG")" 6
+for n in 42 49 37 43 39 38; do
   check "holds: 코멘트 조회 #$n" "$(grep -qxF "comments ggqgga/Holds $n" "$STUB_CALL_LOG" && echo ok || echo no)"
 done
-for n in 40 41 43 46 48; do
-  check "holds: 보류 이슈 #$n 엔 안 묻는다" \
+for n in 40 41 46 48; do
+  check "holds: 보류 ladder·policy 이슈 #$n 엔 안 묻는다" \
     "$(grep -qxF "comments ggqgga/Holds $n" "$STUB_CALL_LOG" && echo no || echo ok)"
 done
-# 사람이 직접 세운 정지(#44)는 note 1건, warn 은 0
+# 사람이 직접 세운 정지(#44)는 note 1건, warn 은 무소속 PR #71 + 횟수 미확인 #38
 # 무소속 PR warn — 정지 라벨이 있는 쪽 둘은 빠지고, 없는 쪽 하나만 남는다
-has_line "holds: warn 1(무소속 PR 은 정지 라벨 없는 #71 뿐)" "$tmp/out" "  warn           1"
+has_line "holds: warn 2(무소속 PR #71 + 재개 횟수 미확인 #38)" "$tmp/out" "  warn           2"
 has_sub "holds: #71 은 종전대로 무소속 warn" "$tmp/out" \
   "    - 무소속 PR #71(holds) — 열린 agent PR 인데 단계 라벨 0 · 연결 이슈 #45 도 정지 라벨 없음"
 no_sub "holds: 연결 이슈가 보류인 PR #70 은 warn 아님" "$tmp/out" "무소속 PR #70"
@@ -1625,13 +1659,17 @@ has_sub "holds: #44 는 note" "$tmp/out" \
   "    - 사람이 직접 세운 정지 #44(holds) — hold:* 라벨 없음(정상)"
 
 run --repo ggqgga/Holds --since 24h --json
-ck "--json: held 버킷 항목(번호·holds)" \
-  "$(jq -c '.repos[0] | [.buckets.held[] | {n:.number, h:.holds, p:.pr}]' < "$tmp/out")" \
-  '[{"n":48,"h":["ladder"],"p":null},{"n":46,"h":["ladder"],"p":null},{"n":43,"h":["conflict"],"p":null},{"n":41,"h":["policy"],"p":72},{"n":40,"h":["ladder"],"p":70}]'
+# (#346) conflict 항목엔 `resume_count`(마커 수 · 못 셌으면 null)·`resume_limit` 가 붙고, 다른 사유엔 둘 다 null.
+ck "--json: held 버킷 항목(번호·holds·재개 횟수/상한)" \
+  "$(jq -c '.repos[0] | [.buckets.held[] | {n:.number, h:.holds, p:.pr, c:.resume_count, l:.resume_limit}]' < "$tmp/out")" \
+  '[{"n":48,"h":["ladder"],"p":null,"c":null,"l":null},{"n":46,"h":["ladder"],"p":null,"c":null,"l":null},{"n":43,"h":["conflict"],"p":null,"c":0,"l":1},{"n":41,"h":["policy"],"p":72,"c":null,"l":null},{"n":40,"h":["ladder"],"p":70,"c":null,"l":null},{"n":39,"h":["conflict"],"p":null,"c":1,"l":1},{"n":38,"h":["conflict"],"p":null,"c":null,"l":1}]'
 ck "--json: open_total 에 보류가 합산된다" \
-  "$(jq '.repos[0].open_total' < "$tmp/out")" 10
+  "$(jq '.repos[0].open_total' < "$tmp/out")" 13
 ck "--json: held 항목에도 repo_short" \
   "$(jq '[.repos[0].buckets.held[] | select(has("repo_short") | not)] | length' < "$tmp/out")" 0
+# 상한은 scripts/lib/constants.sh 의 CONFLICT_RESUME_LIMIT 한 자리 — env 로 올리면 분모가 따라온다
+CONFLICT_RESUME_LIMIT=3 run --repo ggqgga/Holds --since 24h
+has_sub "(#346) 상한은 CONFLICT_RESUME_LIMIT 를 읽는다(0/3)" "$tmp/out" "#43(conflict, 0/3)"
 
 run --repo ggqgga/Epics --since 24h
 ck "epics: exit 0" "$RC" 0

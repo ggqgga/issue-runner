@@ -97,3 +97,11 @@ def stage_labels: map(select(startswith("flow:")));
 def short_repo:
   (split("/") | last) as $r
   | if $r == "issue-runner" or $r == "Issue-Runner" then "runner" else ($r | ascii_downcase) end;
+
+# ── 코멘트 본문 인용 제거 (#346 · 원본은 resume-sweep.sh 의 JQ_UNQUOTE, #197) ─────
+# 마커(`<!-- conflict-resume: N -->` 등)를 세기 전에 코드 인용을 걷어낸다 — 펜스 블록
+# (``` / ~~~)과 인라인 백틱 안의 텍스트는 마커가 아니라 마커를 **설명하는 글**이다. 안 걷으면
+# 안내 코멘트에 인용된 마커가 회차로 세어져 상한이 조기에 닿는다(#197 실측). 정의 텍스트는
+# `resume-sweep.sh` 의 `JQ_UNQUOTE` 와 **글자 단위로 같아야** 한다 — `bin/ci` 가 두 벌을 대조한다
+# (한쪽만 고치면 loop-status 의 횟수와 스윕의 횟수가 갈린다).
+def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " ");
