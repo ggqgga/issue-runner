@@ -14,7 +14,7 @@ CID·PR 까지 마치고 `flow:verify` 로 넘긴 PR 을 받아 **느린 외부�
 > **소유권·정지·전이 실패 규칙의 SSOT 는 `references/state-machine.md` 다**(#393). 어느 상태를 어느 루프가 들고
 > 있고(소유 라벨 `flow:verify`·`verifying`·`flow:ready`·`harvesting`), 기계 정지(`hold:*`)와 사람 정지(`needs-human`)가
 > 어떻게 풀리며, `transition.sh` 가 exit 1·2 로 끝난 반쯤 이동 상태를 누가 회수하는지는 그 표를 본다 — 아래 산문에
-> 같은 규칙이 남아 있으면 표가 이긴다(산문 정리는 플랜 3단계).
+> 같은 규칙이 남아 있으면 표가 이긴다.
 >
 > **세 루프가 공유하는 규약의 SSOT 는 `references/loop-conventions.md` 다**(#452). fail-closed 의 뜻(§1) ·
 > warn·note·막힘 채널 경계(§2) · 스크립트 stderr → ④ Report 릴레이(§3) · 센티널 마커(§4) · `Closes #N`
@@ -45,7 +45,7 @@ CID·PR 까지 마치고 `flow:verify` 로 넘긴 PR 을 받아 **느린 외부�
   여기선 그 계약을 다시 적지 않는다:
   read-only·BLOCKER/WARN/NIT·CLEAN·BLOCKER 는 게이트, 그대로 적용된다(이 레인에선 미해결
   BLOCKER 가 있으면 통과 판정 금지). 검증자는 이 SKILL.md 를 안 읽으므로 호출
-  프롬프트(`references/verify-prompt.md`)에 계약 문안이 담겨 있다. **폴백**: (a) codex 미설치(Agent 툴 subagent_type 목록에 없거나 unknown
+  프롬프트(`skills/verify-runner/references/verify-prompt.md`)에 계약 문안이 담겨 있다. **폴백**: (a) codex 미설치(Agent 툴 subagent_type 목록에 없거나 unknown
   타입 오류) 또는 (b) codex stall/실패로 verdict 미산출이면 `general-purpose` 로 같은
   프롬프트 재시도. 폴백도 verdict 를 못 내면 BLOCKER 로 간주(fail-closed).
 - `VERIFIER_TIMEOUT_MIN` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
@@ -194,7 +194,7 @@ N < 2 면 `$SCRIPTS/codex-review-gate.sh --base origin/<default>
 를 내고 본문을 `<out>/review.md` 에 남긴다. 자체 타임아웃(`CODEX_GATE_TIMEOUT` — 값은 `scripts/lib/constants.sh` 한 자리이고
 `VERIFIER_TIMEOUT_MIN` 이 그 값을 분으로 환산한 것이다, #427)이 있어 스폰·폴링·`TaskStop` 배선이 필요 없다 — 서브에이전트 없이 명령 하나. `[P0]`·`[P1]` 이 BLOCKER, `[P2]` 가 WARN, `[P3+]` 가 NIT(비차단).
 - **exit 2(`verdict=NONE`) = 리뷰 미산출**(codex 부재·모델 오류·타임아웃·본문 없음). 그때만 ## 상수의 `VERIFIER`
-  폴백(general-purpose, `references/verify-prompt.md` 에 `gh pr diff`·이슈 본문·`.loop/lessons-verifier.md` 동봉,
+  폴백(general-purpose, `skills/verify-runner/references/verify-prompt.md` 에 `gh pr diff`·이슈 본문·`.loop/lessons-verifier.md` 동봉,
   `run_in_background` + `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을 쓴다. 헬퍼의 stderr 가 모델 오류(404·
   not supported·requires a newer version)를 원문으로 보여주니 "스톨"로 오진하지 말고 그대로 코멘트에 남긴다.
 - **lessons 파일**은 폴백 프롬프트에만 주입한다(`.loop/lessons-verifier.md` → 없으면 `.loop/lessons.md` → `없음`).
@@ -224,7 +224,7 @@ PR 본문의 `follow-up:` 항목만 파생 이슈 입력으로 읽으므로 이 
 
 **3-b. 보조 리뷰 (`AUX_REVIEWERS`, 비게이트).** ③-3 의 Codex 스폰과 **같은 시점**에, 같은 동봉
 diff·이슈 본문으로 `AUX_REVIEWERS` 두 타입을 각각 `run_in_background: true` 로 스폰한다(직렬 레인의
-벽시계를 늘리지 않게 Codex 와 병렬). 프롬프트 계약은 `references/verify-prompt.md` 와 같은 뼈대
+벽시계를 늘리지 않게 Codex 와 병렬). 프롬프트 계약은 `skills/verify-runner/references/verify-prompt.md` 와 같은 뼈대
 — 동봉 텍스트만 근거·gh/git 실행 금지·read-only·한국어 — 에 역할만 바꾼다: silent-failure-hunter
 는 "이 diff 가 예외를 삼키거나·조용히 폴백하거나·실패를 로그 없이 넘기는 지점", pr-test-analyzer
 는 "이 diff 의 동작 중 테스트가 안 덮는 것" **과** "과잉인 테스트"(소스·문서 문구 단언·구조 되적기·지적
