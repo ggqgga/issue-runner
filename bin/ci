@@ -600,17 +600,10 @@ bash scripts/tests/resume-sweep.test.sh
 
 echo "[test] loop-status.sh 파이프라인 스냅샷 버킷·창 필터·warn·부분 실패 (#144)"
 bash scripts/tests/loop-status.test.sh
-# (#276) 사다리 버킷은 "누가 들고 있나" 로 이름 짓는다 — 옛 버킷 문구(구현중·마감중·사람대기)가
-# loop-status·README·스킬·테스트 어디에도 남지 않는다(이슈 #276 수용 기준의 grep 그대로).
-# 산문이 옛 이름으로 대시보드 줄을 가리키면 사람이 없는 줄을 찾는다. 새 이름은 라벨/루프
-# 이름 그 자체(issue-runner·verify-runner·closeout·needs-human)라 이 grep 이 오탐할 자리가 없다.
-echo "[#276] 루프 현황 9줄 — 옛 버킷 문구(구현중·마감중·사람대기) 잔존 0건"
-old_bucket_hits=$(grep -rn '구현중\|마감중\|사람대기' scripts README.ko.md README.md skills 2>/dev/null || true)
-if [ -n "$old_bucket_hits" ]; then
-  echo "  ✗ 옛 버킷 문구가 남아 있다 — issue-runner·closeout·needs-human 으로 (#276):"
-  printf '%s\n' "$old_bucket_hits" | head -20 | sed 's/^/      /'
-  exit 1
-fi
+# (#276) 사다리 버킷은 "누가 들고 있나" 로 이름 짓는다 — 이름·라벨·jq 키의 SSOT 는
+# `scripts/loop-status.sh` 머리 주석 「★버킷 정의 — 이 주석이 SSOT★」 다. 여기서 무는 것은
+# 렌더 계약(그 이름 9개가 RENDER_JQ padded 리터럴에 있고 폭이 같은가) 하나다.
+echo "[#276] 루프 현황 9줄 — RENDER_JQ padded 이름·폭 리터럴"
 # 9줄 렌더 계약 — RENDER_JQ 의 padded 리터럴에 새 이름 9개가 전부 있고 폭이 같다(15칸 = verify-runner 13 + 2).
 for lit in '"waiting":"대기           "' '"claimed":"issue-runner   "' '"verify":"검증대기       "' \
            '"verifying":"verify-runner  "' '"ready":"마감대기       "' '"harvesting":"closeout       "' \
@@ -714,33 +707,6 @@ if grep -qE 'pr-head-at\.sh[^|]*\|\|[[:space:]]*head_raw=' scripts/finish-classi
 fi
 grep -qF 'head_lookup=unknown' scripts/finish-classify.sh \
   || { echo "  ✗ finish-classify.sh: 조회 실패를 기억하는 head_lookup 플래그가 없다"; exit 1; }
-
-echo "[#206] 브랜치 이슈 추정은 head \`agent/issue-N\` 1순위 — 코드와 한/영 산문이 같은 계약"
-# `claimed_arg` 가 이슈 인자 생략 시 고르는 이슈는 "이 PR 이 닫는 이슈" 가 아니라
-# **"이 브랜치의 워커가 집어간 이슈"** 다. `closingIssuesReferences[0]` 은 닫는 이슈가 둘
-# 이상일 때 남의 이슈를 가리킨다(실측 PR #113 head=`agent/issue-109` refs=`[108,109]`) —
-# 그걸 물으면 claim 이 `none` 이 되어 살아있는 워커가 재디스패치된다(#206 회차3 BLOCKER).
-#
-# 행동 자체는 `scripts/tests/finish-classify.test.sh` 의 격자가 문다(뮤테이션 방증까지).
-# 여기서 막는 것은 그 격자가 **못 보는 축**이다: 코드만 고치고 산문이 옛 계약을 계속
-# 광고하면 다음 구현자가 되돌린다(PR#191 교훈 — 실제로 그 사고로 한 회차를 태웠다).
-grep -qF 'headRefName' scripts/finish-classify.sh \
-  || { echo "  ✗ finish-classify.sh 가 head(headRefName)를 안 묻는다 — 브랜치 이슈 추정이 [0] 로 되돌아갔다"; exit 1; }
-grep -qF 'agent/issue-' scripts/finish-classify.sh \
-  || { echo "  ✗ finish-classify.sh 가 head 의 agent/issue-N 을 파싱하지 않는다"; exit 1; }
-# 한/영 산문이 **둘 다** head 1순위를 말해야 한다(한쪽만 고치면 두 독자가 다른 계약을 믿는다).
-grep -qF '1순위' skills/closeout/SKILL.md \
-  || { echo "  ✗ SKILL.md 가 head 1순위 계약을 안 적었다"; exit 1; }
-grep -qF 'first' skills/closeout/SKILL.en.md \
-  || { echo "  ✗ SKILL.en.md 가 head-first 계약을 안 적었다"; exit 1; }
-# 그리고 **옛 계약 문장이 남아 있으면** 빨갛게 한다 — 새 문장을 덧붙이고 옛 문장을 안 지우는
-# 것이 PR#191 이 실제로 겪은 실패 형태다.
-if grep -qF '안 주면 `closingIssuesReferences` 로 한 번 묻는다' skills/closeout/SKILL.md; then
-  echo "  ✗ SKILL.md 에 옛 계약 문장이 남아 있다(closingIssuesReferences 로 묻는다)"; exit 1
-fi
-if grep -qF 'asks `closingIssuesReferences` once when omitted' skills/closeout/SKILL.en.md; then
-  echo "  ✗ SKILL.en.md 에 옛 계약 문장이 남아 있다"; exit 1
-fi
 
 echo "[#206] iso_to_epoch 형식 패턴은 모든 사본에서 동일 (한쪽만 느슨해지면 조용히 갈린다)"
 # finish-classify.sh 와 progress-evidence.sh 는 같은 시각 문자열을 각자 파싱한다. 패턴이
@@ -1253,16 +1219,14 @@ for f in references/worker-template.md references/worker-template.en.md; do
   grep -qF -- 'transition.sh handoff-verify' "$f" \
     || { echo "  ✗ $f 에 transition.sh handoff-verify 배선 없음"; exit 1; }
 done
-# 전이 실패(exit 1 readback 불일치 · 2 gh 실패)를 조용히 넘기지 않는다는 보고 규약이
-# 호출부 문서마다 살아 있는지. 이게 빠지면 라벨이 반쯤 이동한 채 루프가 다음으로 넘어간다.
-# (문구는 파일마다 다르다 — 워커 템플릿은 종료 보고에 적는 `전이 실패: handoff-verify`,
-#  루프 SKILL 은 ④ Report 에 올리는 `BLOCKED: …`, 영문 closeout 은 그 영어판.)
+# 전이 실패(exit 1 readback 불일치 · 2 gh 실패)를 조용히 넘기지 않는다는 보고 규약 —
+# **워커 템플릿 축만** 여기서 본다. 세 루프 SKILL 의 `BLOCKED: 전이 실패 …` 는
+# `references/state-machine.md` 「전이 실패의 공통 규칙」 이 인수했다(그 절 제목이 "세 SKILL 이
+# 각자 14회 재진술하던 것" 이다 · 문구까지 그 자리에 있다). 워커 템플릿은 ④ Report 가 없어
+# 그 절의 범위 밖이라 종료 보고 문구(`전이 실패: handoff-verify`)를 여기서 계속 문다.
 check_phrase() {
   grep -qF -- "$2" "$1" || { echo "  ✗ $1 에 전이 실패 보고 규약('$2') 없음"; exit 1; }
 }
-check_phrase skills/verify-runner/SKILL.md   'BLOCKED: 전이 실패'
-check_phrase skills/closeout/SKILL.md        'BLOCKED: 전이 실패'
-check_phrase skills/closeout/SKILL.en.md     'BLOCKED: transition failed'
 check_phrase references/worker-template.md    '전이 실패: handoff-verify'
 check_phrase references/worker-template.en.md '전이 실패: handoff-verify'
 # 산문 회귀 가드 — 위 파일들에서 손수 라벨을 옮기는 형태가 되살아나면 실패.
@@ -1370,26 +1334,13 @@ sl_n=$(grep -c -- '--description "' scripts/setup-labels.sh)
 [ "$sl_n" -ge 20 ] || { echo "  ✗ scripts/setup-labels.sh: 한 줄 --description 정의가 $sl_n 건뿐 — 길이 검사가 설명을 못 보고 있다"; exit 1; }
 
 # [#308] 반송 마커 시각이 스테일 클록에 든다 — 판별은 bounce-state.sh 한 자리
-echo "[#308] 반송 마커 시각 = 스테일 클록의 네 번째 입력 (판별 한 자리·한/영 산문)"
+echo "[#308] 반송 마커 시각 = 스테일 클록의 네 번째 입력 (판별 되묻기 배선)"
 # 배선 — `finish-classify.sh` 는 마커 판별을 **되묻는다**. 이 호출이 사라지면 반송 직후
 # 라벨 공백 창이 다시 열려 살아 있는 반송 회차에 `완결 유실(검증 전 사망)` 이 찍힌다.
 grep -qF 'bounce-state.sh' scripts/finish-classify.sh \
   || { echo "  ✗ scripts/finish-classify.sh 에 bounce-state.sh 되묻기 배선 없음"; exit 1; }
 # 마커 집합 정의가 한 자리인지는 위 `[closeout] 반송 마커 집합은 bounce-state.sh 한 자리`
 # 블록이 이미 전수로 검사한다 — 여기 두 번째 술어를 만들지 않는다(PR#216 규율).
-# 산문 — 한/영 ①-b 예외 갈래 문단이 이 입력을 광고해야 한다. 문서가 "커밋·CI·claim
-# 셋뿐" 이라는 옛 계약을 계속 광고하면 다음 구현자가 그 창을 다시 연다(#206 과 같은 형상).
-for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
-  grep -qF '#308' "$f" \
-    || { echo "  ✗ $f 에 반송 마커 스테일 클록(#308) 표기 없음"; exit 1; }
-  awk 'BEGIN{RS="";ok=0} /#308/ && /bounce-state\.sh/ && /finish-classify\.sh/ {ok=1} END{exit ok?0:1}' "$f" \
-    || { echo "  ✗ $f: #308 문단이 판별 출처(bounce-state.sh)·소비자(finish-classify.sh)를 같이 적지 않았다"; exit 1; }
-done
-grep -qF '라벨 공백 창' skills/closeout/SKILL.md \
-  || { echo "  ✗ skills/closeout/SKILL.md 에 반송 직후 '라벨 공백 창' 표기 없음"; exit 1; }
-grep -qF 'label gap' skills/closeout/SKILL.en.md \
-  || { echo "  ✗ skills/closeout/SKILL.en.md 에 반송 직후 'label gap' 미러 없음"; exit 1; }
-
 
 echo "[#507] SKILL 의 rationale·conventions §N 포인터 — 실재하는 절만 가리킨다 (헤더 중복도 빨강)"
 # 3단계(#451)로 근거 서사는 references/<루프>-rationale.md 로, 공용 규약은 references/loop-conventions.md 로
