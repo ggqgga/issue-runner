@@ -1004,7 +1004,7 @@ echo "[#334] closeout ①-c 배선 — ② Pick 직전 hold-resolve.sh 호출 + 
 # 판정은 스크립트(위 테스트)가 무는데, SKILL 이 그 스크립트를 부르지 않으면 판정이 없는 것과 같다. 두 자리만 본다:
 # ①-c 절 안에 호출 줄이 있는가 · ①-b `done_verdict` 행이 ①-c 를 가리키는가(eligible 이 못 내는 형상을 스윕이 줍는 배선).
 for f in skills/closeout/SKILL.md skills/closeout/SKILL.en.md; do
-  s=$(grep -nE '^## ①-c' "$f" | head -1 | cut -d: -f1); e=$(grep -nE '^## ② Pick' "$f" | head -1 | cut -d: -f1)
+  s=$(grep -nE '^## ①-c' "$f" | head -1 | cut -d: -f1 || true); e=$(grep -nE '^## ② Pick' "$f" | head -1 | cut -d: -f1 || true)
   [ -n "$s" ] && [ -n "$e" ] && [ "$s" -lt "$e" ] || { echo "  ✗ $f: ①-c 절이 ② Pick 앞에 없다"; exit 1; }
   sed -n "${s},${e}p" "$f" | grep -qF 'hold-resolve.sh <repo> <pr> <issue|->' \
     || { echo "  ✗ $f: ①-c 절에 hold-resolve.sh 호출 줄 없음"; exit 1; }
