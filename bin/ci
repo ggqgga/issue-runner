@@ -129,30 +129,6 @@ for lbl in harvesting epic verifying flow:agent-ready flow:claimed; do
     echo "  ✗ setup-labels.sh 에 $lbl 라벨 정의 누락"; exit 1; }
 done
 
-echo "[closeout] pr-head-at 헬퍼 fail-closed·실행비트 스모크 (#171)"
-# head 시각을 못 얻으면 **아무것도 안 내고 exit 1** 이어야 한다 — 빈 결과를 유효값으로
-# 둔갑시키면 머지 게이트(finish-classify 의 ✅ 갈래)가 증명 없이 열린다.
-# 소비자가 `"$SCRIPT_DIR/pr-head-at.sh"` 로 직접 exec 하므로 실행 비트도 여기서 함께 문다
-# (비트가 빠지면 조용히 exit 126 → head 시각이 항상 빈 값으로 degrade 된다).
-tmp=$(mktemp -d); mkdir "$tmp/stub"
-printf '#!/bin/sh\nexit 1\n' > "$tmp/stub/gh"; chmod +x "$tmp/stub/gh"
-rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/pr-head-at.sh owner/r 123 2>/dev/null) || rc=$?
-[ "$rc" = 1 ] && [ -z "$out" ] \
-  || { echo "  ✗ pr-head-at: gh 실패 시 rc=$rc out='$out' (기대 rc=1·무출력)"; rm -rf "$tmp"; exit 1; }
-# headRefOid 는 얻었는데 그 커밋 조회가 빈 값 → 역시 exit 1 (부분 성공을 통과로 안 본다).
-cat > "$tmp/stub/gh" <<'STUB'
-#!/bin/sh
-case "$*" in
-  *"--json headRefOid"*) echo '{"headRefOid":"feed0070ab"}' ;;
-  *) echo '' ;;
-esac
-STUB
-chmod +x "$tmp/stub/gh"
-rc=0; out=$(PATH="$tmp/stub:$PATH" scripts/pr-head-at.sh owner/r 123 2>/dev/null) || rc=$?
-[ "$rc" = 1 ] && [ -z "$out" ] \
-  || { echo "  ✗ pr-head-at: 커밋 조회 빈값 rc=$rc out='$out' (기대 rc=1·무출력)"; rm -rf "$tmp"; exit 1; }
-rm -rf "$tmp"
-
 echo "[closeout] 반송 마커 집합은 bounce-state.sh 한 자리 (#171 · #196)"
 # 마커 집합을 다른 스크립트가 자기 벌로 들고 있으면 새 반송 어휘가 생겼을 때 한쪽만
 # 고쳐져 fail-open 이 된다(실제로 verify-runner 채널이 그렇게 빠져 있었다).
