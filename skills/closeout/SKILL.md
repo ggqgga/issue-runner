@@ -233,54 +233,46 @@ claim 조회는 `$SCRIPTS/claim-at.sh <repo> <이슈>` **한 자리**(타임라�
 
 ## ② Pick — 한 번에 1 PR (MAX_CLOSEOUT=1, 동시성 1)
 
-`$SCRIPTS/closeout-eligible.sh` 출력(✅ 마킹된 정상 후보)과 **①-b 스윕의 입양
-후보**(`stale_inline`·CONFLICTING)를 합쳐 FIFO **첫 후보 1개만** 집는다. 한 번에 1개라
-모듈 겹침 판단은 불필요하다 (직렬 마감 — 이 PR 을 끝까지 마감한 뒤에야 ⑤ Drain 이
-다음 후보를 집는다). 집으면 즉시
-`$SCRIPTS/transition.sh closeout-pick <repo> - <pr>` 로 점유를 선언하라(이슈 번호는 ③-1
-에서야 파싱되므로 여기선 `-`). 전이가 `harvesting` 을 붙이고 워커·verify-runner 단계
-라벨(`flow:ready`·`flow:codex`·`flow:ci`·`flow:verify`·`verifying`)을 함께 뗀다 — `harvesting` 이 있어야
-issue-runner ② Maintain·verify-runner 가 이 PR 을 건드리지 않고(verify-eligible 도
-harvesting 을 제외한다), PR 리스트에서 `harvesting` 하나만 남아 "마감 중"이 명확해진다.
-후보가 0이면 ③ 파이프라인을 건너뛰고 ④ Report 에 clean no-op 으로 보고한다.
+`$SCRIPTS/closeout-eligible.sh` 출력(✅ 마킹된 정상 후보)과 **①-b 스윕의 입양 후보**
+(`stale_inline`·CONFLICTING)를 합쳐 FIFO **첫 후보 1개만** 집는다. 한 번에 1개라 모듈 겹침 판단은
+불필요하다 (직렬 마감 — 이 PR 을 끝까지 마감한 뒤에야 ⑤ Drain 이 다음 후보를 집는다). 집으면 즉시
+`$SCRIPTS/transition.sh closeout-pick <repo> - <pr>` 로 점유를 선언하라(이슈 번호는 ③-1 에서야
+파싱되므로 여기선 `-`). 전이가 `harvesting` 을 붙이고 워커·verify-runner 단계 라벨
+(`flow:ready`·`flow:codex`·`flow:ci`·`flow:verify`·`verifying`)을 함께 뗀다 — `harvesting` 이 있어야
+issue-runner ② Maintain·verify-runner 가 이 PR 을 건드리지 않고(verify-eligible 도 harvesting 을
+제외한다), PR 리스트에서 `harvesting` 하나만 남아 "마감 중"이 명확해진다. 후보가 0이면 ③ 파이프라인을
+건너뛰고 ④ Report 에 clean no-op 으로 보고한다.
 
-**라벨 부재 자동 보강은 전이가 한다** — 메커니즘과 자리별 폴백은
-`references/loop-conventions.md` §8 「라벨 이동」 행 대로. 옵트인 레포여도 `setup-labels.sh`
-재실행 전에는 `harvesting` 라벨이 없을 수 있다(기존 레포 공통). 보강도 실패하면 exit 2 로
-떨어지니 이 PR 을 skip 하고 ④ Report 에
-`BLOCKED: 전이 실패 closeout-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 보고한다.
+**라벨 부재 자동 보강은 전이가 한다** — 메커니즘과 자리별 폴백은 `references/loop-conventions.md` §8
+「라벨 이동」 행 대로. 보강도 실패하면 exit 2 로 떨어지니 이 PR 을 skip 하고 ④ Report 에
+`BLOCKED: 전이 실패 closeout-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 보고한다
+(`setup-labels.sh` 재실행 전에는 `harvesting` 라벨이 없을 수 있다 — 기존 레포 공통).
 
-**원 이슈 미러(진행 가시화).** ③-1 에서 `<issue>`(PR 본문 `Closes #N`/`Refs #N`)를 파싱한
-직후, 연결 이슈가 있으면 `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` 를
-**다시** 부른다(멱등 — PR 쪽은 이미 맞아 no-op, 이슈 쪽만 `harvesting` 으로 옮겨진다).
-**이 미러 호출이 비0이면 머지로 진행하지 마라** — `references/state-machine.md` 의
-「전이 실패의 공통 규칙」 대로 이 PR 을 skip 하고 ④ Report 에
-`BLOCKED: 전이 실패 closeout-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다
-(PR 만 `harvesting` 이고 이슈는 아닌 반쯤 이동한 상태가 남는다).
-이슈 리스트만 봐도 단계(검증→마감)가 보이게 하는 것이다(머지 성공 시 `Closes #N` 으로
-이슈가 닫히므로 잠깐만 보인다). 그리고 ③ 이후 **fail-closed 로 손을 떼는 모든 지점**
-(위임 fail·conflict 사람판단·문서 reconcile 미완 등)은 반드시 `closeout-blocked`(사람에게)
-또는 `closeout-redispatch`(워커로 반송) **전이를 쓴다 — 손으로 `gh issue edit` 하지 않는다**.
-PR·이슈 양쪽의 `harvesting`·`flow:*` 정리를 전이 표가 보장한다(스테일 단계 라벨 잔재 방지).
-`closeout-blocked` 는 **`--reason <conflict|policy|ladder> [--note "<질문 한 줄>" — policy·conflict 필수]` 가 필수**다(없으면 usage
-exit 64 — 사유 없는 정지를 만들 수 없다). rebase/semantic conflict 는
-`conflict`(단 보안 경계·대범위 충돌은 `policy` — 2단계 CONFLICTING 항목의 판정, #344;
-`conflict` 의 `--note` 는 질문이 아니라 워커 재개 범위 한 줄이다), 그 외 루프가 못 정하는 스펙·정책·검증 미산출은 `policy`, 사다리
-(`~/.claude/skills/issue-runner/references/live-verification-ladder.md`)
-의 칸을 실제로 올라가 실패 출력을 인용한 경우만 `ladder` 다.
+**원 이슈 미러(진행 가시화).** ③-1 에서 `<issue>`(PR 본문 `Closes #N`/`Refs #N`)를 파싱한 직후, 연결
+이슈가 있으면 `$SCRIPTS/transition.sh closeout-pick <repo> <issue> <pr>` 를 **다시** 부른다(멱등 — PR
+쪽은 이미 맞아 no-op, 이슈 쪽만 `harvesting` 으로 옮겨진다). **이 미러 호출이 비0이면 머지로 진행하지
+마라** — `references/state-machine.md` 의 「전이 실패의 공통 규칙」 대로 이 PR 을 skip 하고 ④ Report 에
+`BLOCKED: 전이 실패 closeout-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다.
+
+그리고 ③ 이후 **fail-closed 로 손을 떼는 모든 지점**(위임 fail·conflict 사람판단·문서 reconcile 미완 등)은
+반드시 `closeout-blocked`(사람에게) 또는 `closeout-redispatch`(워커로 반송) **전이를 쓴다 — 손으로
+`gh issue edit` 하지 않는다**. PR·이슈 양쪽의 `harvesting`·`flow:*` 정리를 전이 표가 보장한다.
+`closeout-blocked` 는 **`--reason <conflict|policy|ladder> [--note "<질문 한 줄>" — policy·conflict 필수]`
+가 필수**다(없으면 usage exit 64 — 사유 없는 정지를 만들 수 없다). rebase/semantic conflict 는
+`conflict`(단 보안 경계·대범위 충돌은 `policy` — 2단계 CONFLICTING 항목의 판정, #344; `conflict` 의
+`--note` 는 질문이 아니라 워커 재개 범위 한 줄이다), 그 외 루프가 못 정하는 스펙·정책·검증 미산출은
+`policy`, 사다리(`~/.claude/skills/issue-runner/references/live-verification-ladder.md`)의 칸을 실제로
+올라가 실패 출력을 인용한 경우만 `ladder` 다.
 
 **`$SCRIPTS/closeout-eligible.sh` 의 stderr `blocked:` 줄은 ④ Report 로 옮긴다**(세 루프 공통 —
-`references/loop-conventions.md` §3, #379). `✅ 이후 미해결 코멘트 N건` 은
-"검증자가 확인한 경계(✅ 의 `코멘트 스냅샷 N`, 없으면 ✅ 자리) **뒤에** 사람 리뷰가 남아 있어
-fail-closed 로 안 집었다"는 뜻이고(리터럴의 "✅ 이후" 는 이 경계를 가리킨다), 루프가 스스로 풀지
-않는다(사람 코멘트를 기계가 '해결됨'으로 판정하면 fail-open) — 풀리는 길은 verify-runner 가
-재검증해 새 ✅ 를 찍는 것(그 ✅ 직전 확인 단계가 사람 코멘트를 소화한다 — verify-runner ④
-참조)뿐이다. 사람 답글은 풀지 않는다(그 답글도 무마커 코멘트다). 즉 사람이 할 일은 답을
-남기는 게 아니라 PR 을 `flow:verify` 로 되돌리는(또는 `verifying` 재집) 것이다. 그 전엔
-매 틱 같은 줄이 반복되는 것이 정상이다(조용한 탈락 금지, #379). 세는 경계는 ✅ 본문의
-`코멘트 스냅샷 N`(있으면 그 N — verify-runner 가 코멘트를 읽은 시점이라 읽기~게시 사이에
-낀 코멘트도 잡힌다, #384) 또는 스냅샷 토큰 없는 옛 ✅ 면 그 ✅ 의 인덱스다. `warn` 이 아니라
-`막힘` 인 이유는 `references/loop-conventions.md` §2 의 채널 경계 대로다(정당한 미집계).
+`references/loop-conventions.md` §3, #379). `✅ 이후 미해결 코멘트 N건` 은 "검증자가 확인한 경계
+(✅ 의 `코멘트 스냅샷 N`, 없으면 ✅ 자리) **뒤에** 사람 리뷰가 남아 fail-closed 로 안 집었다"는 뜻이고,
+루프가 스스로 풀지 않는다 — 풀리는 길은 verify-runner 가 재검증해 새 ✅ 를 찍는 것뿐이다. 사람 답글은
+풀지 않는다. 즉 사람이 할 일은 PR 을 `flow:verify` 로 되돌리는(또는 `verifying` 재집) 것이다. 그 전엔 매
+틱 같은 줄이 반복되는 것이 정상이다. `warn` 이 아니라 `막힘` 인 이유는 `references/loop-conventions.md`
+§2 의 채널 경계 대로다.
+
+(근거: closeout-rationale §9)
 
 ## ③ 파이프라인 — 1~6단계
 
