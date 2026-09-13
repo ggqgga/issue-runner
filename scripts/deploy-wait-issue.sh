@@ -19,6 +19,8 @@
 #                      `loop-status.sh` 의 배포대기 버킷). 이 하나가 필수다.
 #    본문 골격은 `skills/closeout/references/deploy-check-issue.md`(placeholder
 #    `<PR> <SHA> <SUMMARY> <DEPLOY_CMD> <LIVE_CHECKS> <VERIFY_URL>`) — `--template` 로 갈아끼울 수 있다.
+#    `--deploy-cmd` 값 양끝 백틱은 벗기고 템플릿이 한 번만 감싼다 — 값에 백틱을 넣지
+#    않아도 되고, 넣어도 이중으로 감싸지지 않는다.
 #
 # ── 하는 일 ───────────────────────────────────────────────────────────────────
 # ⑴ 항목 형태 강제(발행 **전**): `--items-file` 은 `없음` 한 줄이거나 **모든 줄이** `- [ ] `
@@ -90,10 +92,26 @@ done
 [ -n "$title_sum" ] || { usage; exit 64; }
 [ -n "$summary_file" ] && [ -r "$summary_file" ] || { echo "deploy-wait-issue: 요약 파일을 읽을 수 없다: $summary_file" >&2; exit 64; }
 [ -n "$items_arg" ] || { usage; exit 64; }
-case "$lane" in closeout|full-cycle) ;; *) echo "deploy-wait-issue: --lane 은 closeout|full-cycle 뿐: $lane" >&2; exit 64 ;; esac
+case "$lane" in
+  closeout)   lane_note='closeout 4단계 → deploy-cycle 레인' ;;
+  full-cycle) lane_note='사람 세션 full-cycle — 사람 게이트' ;;
+  *) echo "deploy-wait-issue: --lane 은 closeout|full-cycle 뿐: $lane" >&2; exit 64 ;;
+esac
 [ -n "$template" ] || template="$here/../skills/closeout/references/deploy-check-issue.md"
 [ -r "$template" ] || { echo "deploy-wait-issue: 본문 템플릿을 읽을 수 없다: $template" >&2; exit 64; }
 [ -n "$deploy_cmd" ] || deploy_cmd="레포 배포 절차"
+# 양끝 백틱은 벗긴다 — 템플릿(`<DEPLOY_CMD>`)이 이미 한 번 감싸므로, 값에 백틱을 넣어도
+# 이중으로 감싸이지 않는다.
+case "$deploy_cmd" in
+  '`'*'`') deploy_cmd=${deploy_cmd#\`}; deploy_cmd=${deploy_cmd%\`} ;;
+esac
+
+# `--verify-url` 이 `없음`(또는 `(해당 없음`으로 시작)이면 BoDAT Tailscale 안내 산문을
+# 붙이지 않고 값만 남긴다 — 그 외엔 지금 그대로. 본문은 아래 tmp 생성 이후에 채운다.
+show_verify_note=1
+case "$verify_url" in
+  없음|'(해당 없음'*) show_verify_note=0 ;;
+esac
 
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
@@ -163,23 +181,42 @@ if [ "$hardware" = 1 ]; then
   fi
 fi
 
+# `<VERIFY_URL_NOTE>` 값(BoDAT Tailscale 안내 산문, 2줄) — 파일로 넘겨야 awk -v 가
+# 개행을 그대로 받는다(-v 인자에 리터럴 개행을 직접 넣으면 "newline in string" 파싱 실패).
+verify_note_file="$tmp/verify-note.md"
+if [ "$show_verify_note" = 1 ]; then
+  cat > "$verify_note_file" <<'EOF'
+ (production 베이스 URL. closeout 5단계가 이 URL 로 Chrome 스모크를 몰아 아래 검증 항목을 대조한다. **자동화 크롬이 실제로 여는 주소를 적어라** — BoDAT 은 `http://100.65.53.51:3000`(Tailscale)이고 `bodat.local`·LAN IP 는 크롬에서만 안 열린다: BoDAT `deploy-bodat` 5절.)
+레포가 dev 스테이지를 두는 경우 상세 검증은 그쪽에서 먼저 수행될 수 있고, 이 URL 스모크는 배포 후 마지막 안전망이다.
+EOF
+else
+  : > "$verify_note_file"
+fi
+
 # 본문 — 템플릿 placeholder 치환(줄 전체 placeholder 는 파일 내용으로, 인라인은 문자열로)
 body="$tmp/body.md"
-awk -v pr="$pr" -v sha="$sha" -v url="$verify_url" -v cmd="$deploy_cmd" \
-    -v sumf="$summary_file" -v itemf="$items" '
+awk -v pr="$pr" -v sha="$sha" -v url="$verify_url" -v notef="$verify_note_file" -v cmd="$deploy_cmd" \
+    -v lane_note="$lane_note" -v sumf="$summary_file" -v itemf="$items" '
   function rep(s, from, to,   i) {
     while ((i = index(s, from)) > 0) s = substr(s, 1, i - 1) to substr(s, i + length(from))
     return s
   }
   function dump(f,   l) { while ((getline l < f) > 0) print l; close(f) }
+  function slurp(f,   l, s) {
+    while ((getline l < f) > 0) s = (s == "" ? l : s "\n" l)
+    close(f); return s
+  }
+  BEGIN { vnote = slurp(notef) }
   {
     if ($0 == "<SUMMARY>")     { dump(sumf);  next }
     if ($0 == "<LIVE_CHECKS>") { dump(itemf); next }
     line = $0
     line = rep(line, "<PR>", pr)
     line = rep(line, "<SHA>", sha)
+    line = rep(line, "<VERIFY_URL_NOTE>", vnote)
     line = rep(line, "<VERIFY_URL>", url)
     line = rep(line, "<DEPLOY_CMD>", cmd)
+    line = rep(line, "<LANE_NOTE>", lane_note)
     line = rep(line, "<SUMMARY>", "")
     line = rep(line, "<LIVE_CHECKS>", "")
     print line

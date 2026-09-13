@@ -113,6 +113,30 @@ run "$tmp/prose.md"
 { [ "$RC" = 65 ] && [ -z "$OUT" ] && [ -z "$CALLS" ]; } && ok \
   || bad "④ 산문 항목 rc=$RC out=[$OUT] calls=[$CALLS] (기대 65·무출력·gh 0회)"
 
+echo "── 템플릿 치환(#484) ────────────────────────────────────────────"
+
+# ⑮ --lane closeout(기본) → 배경 절 레인 문구가 그대로 치환된다
+run "$tmp/items.md"
+printf '%s\n' "$BODY" | grep -qF 'closeout 4단계 → deploy-cycle 레인' && ok \
+  || bad "⑮ closeout 레인 문구 치환 실패"
+
+# ⑯ --lane full-cycle → 배경 절 레인 문구가 사람 게이트 문구로 바뀐다
+run "$tmp/items.md" --lane full-cycle
+printf '%s\n' "$BODY" | grep -qF '사람 세션 full-cycle — 사람 게이트' && ok \
+  || bad "⑯ full-cycle 레인 문구 치환 실패"
+
+# ⑰ --deploy-cmd 값 양끝 백틱은 벗겨지고 템플릿이 한 번만 감싼다(이중 방지)
+run "$tmp/items.md" --deploy-cmd '`custom deploy`'
+printf '%s\n' "$BODY" | grep -qF '`custom deploy`' && ok || bad "⑰ deploy-cmd 값이 본문에 없다"
+printf '%s\n' "$BODY" | grep -qF '``custom deploy``' \
+  && bad "⑰ deploy-cmd 백틱이 이중으로 감싸졌다" || ok
+
+# ⑱ --verify-url 없음 → BoDAT 안내 산문 없이 값만 남는다
+run "$tmp/items.md" --verify-url "없음"
+printf '%s\n' "$BODY" | grep -qx '없음' && ok || bad "⑱ verify-url 값(없음)이 본문에 없다"
+printf '%s\n' "$BODY" | grep -qF 'production 베이스 URL' \
+  && bad "⑱ verify-url 없음인데 안내 산문이 남았다" || ok
+
 echo "── 라벨 ─────────────────────────────────────────────────────────"
 
 # ⑤ 기본 라벨은 deploy-wait 하나
