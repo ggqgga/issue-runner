@@ -192,7 +192,7 @@ The loop is designed to run away safely — each limit bounds "the worst a human
 | Constant | Default | Behavior |
 |---|---|---|
 | `MAX_AGENTS` | `4` | Concurrent in-flight issues. In-flight = working + repairing + red PRs; a green PR waiting on human review does **not** hold a slot |
-| `MAX_OPEN_PRS` | `14` | Open-PR backpressure. On reaching it, new dispatch pauses (repairs continue) and Report raises a backlog warn |
+| `MAX_OPEN_PRS` | `14` | **Per-repo** open-PR backpressure. When a repo reaches it, new dispatch pauses for that repo only (repairs and other repos continue) and Report raises one backlog warn per repo at the cap (#362) |
 | `MAX_REPAIRS_PER_PR` | `3` | Repair cap per PR. Beyond it, the loop stops and labels the issue `needs-human` (circuit breaker) |
 | `ISSUE_TIMEBOX_HOURS` | `1` | Past this claim age a worker with no PR is asked for **progress evidence** — exceeding it alone no longer stops anything (#200). Without evidence it is stopped and its worktree discarded; pushed commits survive for re-dispatch |
 | `STALL_MIN` | `25` | The "no progress" threshold. Evidence = the branch's latest commit is younger than this, or that head SHA's CI ticket is still alive in the box-wide serial queue. Sized so one `bin/ci` run plus its queue wait is not counted as stalling |
