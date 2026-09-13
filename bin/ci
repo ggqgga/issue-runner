@@ -1043,6 +1043,19 @@ for lit in '"waiting":"대기           "' '"claimed":"issue-runner   "' '"verif
     || { echo "  ✗ scripts/loop-status.sh RENDER_JQ padded 에 $lit 이 없다 (#276 — 9줄 이름·15칸 폭)"; exit 1; }
 done
 
+# (#346) 보류 conflict 의 재개 횟수는 loop-status 가 `lib/loop.jq` 의 `unquoted` 로 인용을 걷고 센다 —
+# 재개 스윕(resume-sweep.sh 의 JQ_UNQUOTE)과 **같은 정의**여야 대시보드 횟수와 스윕의 승격 판정이
+# 같은 수를 본다. 정의 텍스트를 글자 단위로 대조한다(한쪽만 고치면 여기서 빨개진다).
+echo "[#346] 인용 제거(def unquoted) — lib/loop.jq 와 resume-sweep.sh JQ_UNQUOTE 동일"
+unq_lib=$(grep -o 'def unquoted:.*;' scripts/lib/loop.jq | head -1)
+unq_sweep=$(grep -o 'def unquoted:.*;' scripts/resume-sweep.sh | head -1)
+[ -n "$unq_lib" ] || { echo "  ✗ scripts/lib/loop.jq 에 def unquoted 가 없다 (#346)"; exit 1; }
+[ -n "$unq_sweep" ] || { echo "  ✗ scripts/resume-sweep.sh 에 def unquoted(JQ_UNQUOTE) 가 없다 (#346)"; exit 1; }
+[ "$unq_lib" = "$unq_sweep" ] \
+  || { echo "  ✗ def unquoted 정의가 lib/loop.jq 와 resume-sweep.sh 에서 다르다 — 한 벌로 맞춰라 (#346)"; exit 1; }
+# 소비 배선(loop-status 가 실제로 unquoted 로 걸러 세는가)은 문구 grep 이 아니라 동작으로 문다 —
+# loop-status.test.sh 의 Holds #39(인용 마커 1 + 실제 마커 1 → `1/1`, `2/1` 아님).
+
 echo "[test] epic-sweep.sh — leaf 전부 종료 에픽 자동 종료·전용 줄 판정·상한 보류·멱등 (#258)"
 # closeout ① 이 `"$SCRIPTS/epic-sweep.sh"` 로 직접 exec 하므로 실행 비트도 여기서 문다
 # (비트가 빠지면 조용히 exit 126 → 에픽 스윕이 매 틱 no-op 으로 degrade, PR#173 교훈과 동일 함정).
@@ -1818,6 +1831,20 @@ done
 # (#427) 정의 자리는 `scripts/lib/constants.sh` 로 이사했다 — 철자 대조라는 취지는 그대로다.
 grep -qE '^: "\$\{RESUME_AFTER_MIN:=' scripts/lib/constants.sh \
   || { echo "  ✗ scripts/lib/constants.sh: 창 상수 RESUME_AFTER_MIN 정의가 없다 — hold:ladder 설명이 가리키는 상수명 (#364)"; exit 1; }
+# ⑷ (#346 반송) 라벨 설명은 **100자 이하** — GitHub 라벨 description 상한. 넘으면
+#    `gh label create --force` 가 validation 으로 실패하고 이 스크립트는 `set -e` 라 그 뒤의
+#    라벨·레포 설정 전부가 중단된다(실측: hold:conflict 설명 138자 → 이후 라벨 미생성).
+#    글자 수는 문자(char) 기준 — UTF-8 바이트가 아니다(한글 설명이 대부분이라 바이트로 재면
+#    전부 빨갛다). 설명이 한 줄 안에 `--description "…"` 로 닫혀 있어야 이 grep 이 센다.
+sl_over=$(grep -o -- '--description "[^"]*"' scripts/setup-labels.sh \
+  | sed 's/^--description "//; s/"$//' \
+  | while IFS= read -r sl_desc; do
+      sl_len=$(printf '%s' "$sl_desc" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')
+      [ "$sl_len" -le 100 ] || printf '%s자: %s\n' "$sl_len" "$sl_desc"
+    done)
+[ -z "$sl_over" ] || { echo "  ✗ scripts/setup-labels.sh: 라벨 설명이 100자를 넘는다 — gh label create 가 실패하고 set -e 로 뒤가 전부 멈춘다 (#346)"; printf '%s\n' "$sl_over"; exit 1; }
+sl_n=$(grep -c -- '--description "' scripts/setup-labels.sh)
+[ "$sl_n" -ge 20 ] || { echo "  ✗ scripts/setup-labels.sh: 한 줄 --description 정의가 $sl_n 건뿐 — 길이 검사가 설명을 못 보고 있다"; exit 1; }
 
 # [#308] 반송 마커 시각이 스테일 클록에 든다 — 판별은 bounce-state.sh 한 자리
 echo "[#308] 반송 마커 시각 = 스테일 클록의 네 번째 입력 (판별 한 자리·한/영 산문)"

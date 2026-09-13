@@ -92,8 +92,26 @@ def hold_labels:  map(select(is_hold_label));
 def owner_labels: map(select(is_owner_label));
 def stage_labels: map(select(startswith("flow:")));
 
+# ── 보류 conflict 가 자동 재개 대상인가 (#346 반송 P2) ─────────────────────
+# 입력은 `hold:` **접미** 배열(loop-status 의 `holds_of` 출력 — `["conflict","policy"]` 꼴).
+# resume-sweep.sh 의 `sweep_issue … conflict` 는 `hold:policy`·`hold:ladder` 가 함께 붙어 있으면
+# 재개를 거부한다(other_hold 가드 — 라벨을 떼면 다른 사유가 조용히 사라진다). 그 건에 대시보드가
+# `n/상한` 을 그리면 아무도 채우지 않을 진행률이라, 횟수/상한 병기와 그 코멘트 조회는 이 술어가
+# 참인 **단독** conflict 에만 붙는다. 술어는 스윕의 거부 조건을 그대로 뒤집은 것 —
+# conflict ∧ ¬policy ∧ ¬ladder (needs-human·full-cycle 동존은 버킷 자체가 needs-human 이라 여기 안 온다).
+def conflict_resumable_holds:
+  (index("conflict") != null) and (index("policy") == null) and (index("ladder") == null);
+
 # ── 레포 짧은 이름 ──────────────────────────────────────────────────────────
 # `owner/repo` → repo 부분 소문자. `issue-runner` 만 `runner` 특례(화면 폭).
 def short_repo:
   (split("/") | last) as $r
   | if $r == "issue-runner" or $r == "Issue-Runner" then "runner" else ($r | ascii_downcase) end;
+
+# ── 코멘트 본문 인용 제거 (#346 · 원본은 resume-sweep.sh 의 JQ_UNQUOTE, #197) ─────
+# 마커(`<!-- conflict-resume: N -->` 등)를 세기 전에 코드 인용을 걷어낸다 — 펜스 블록
+# (``` / ~~~)과 인라인 백틱 안의 텍스트는 마커가 아니라 마커를 **설명하는 글**이다. 안 걷으면
+# 안내 코멘트에 인용된 마커가 회차로 세어져 상한이 조기에 닿는다(#197 실측). 정의 텍스트는
+# `resume-sweep.sh` 의 `JQ_UNQUOTE` 와 **글자 단위로 같아야** 한다 — `bin/ci` 가 두 벌을 대조한다
+# (한쪽만 고치면 loop-status 의 횟수와 스윕의 횟수가 갈린다).
+def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<f>`*[ \\t]*(?=\\n|$)|$)|(^|\\n) {0,3}(?<t>~~~+)[^\\n]*(\\n[\\s\\S]*?)?(\\n {0,3}\\k<t>~*[ \\t]*(?=\\n|$)|$)"; " ") | gsub("(?<!`)(?<r>`+)(?!`)([^\\n]*?)(?<!`)\\k<r>(?!`)"; " ");
