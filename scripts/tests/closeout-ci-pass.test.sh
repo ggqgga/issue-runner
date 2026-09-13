@@ -108,6 +108,14 @@ run_case "하나라도 FAILURE → 비통과" 1
 STUB_ROLLUP='{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"CANCELLED"}]}'
 run_case "SUCCESS 아닌 종결값(CANCELLED) → 비통과" 1
 
+# 같은 축의 대표값 둘을 더 문다 — SUCCESS 와 섞여 들어온 종결 실패(STARTUP_FAILURE)와
+# 스키마에 아직 없는 값(UNKNOWN_STATE). denylist 로 되밀리면 둘 다 조용히 통과가 된다.
+STUB_ROLLUP='{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"STARTUP_FAILURE"}]}'
+run_case "SUCCESS 와 섞인 STARTUP_FAILURE → 비통과" 1
+
+STUB_ROLLUP='{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"UNKNOWN_STATE"}]}'
+run_case "열거되지 않은 종결값(UNKNOWN_STATE) → 비통과" 1
+
 # closeout 진입 필터라 진행 중 PR 은 아직 거두지 않는다.
 STUB_ROLLUP='{"statusCheckRollup":[{"status":"IN_PROGRESS"},{"status":"COMPLETED","conclusion":"SUCCESS"}]}'
 run_case "진행 중 체크가 있으면 → 비통과" 1

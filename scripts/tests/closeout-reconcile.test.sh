@@ -144,6 +144,19 @@ run_case "MERGED·head 가 agent/issue-77 → 그 worktree 를 정리(더티라 
 {"event":"merged_cleanup","repo":"fixture-owner/fixture-428","pr":5}'
 STUB_BRANCH=session/manual-428
 
+# 헬퍼는 `--merged` 로 불러야 한다 — 그 플래그가 미push 가드를 건너뛴다. squash 머지는
+# 원격 head 를 지워 `@{u}` 가 사라지므로, 플래그 없이 부르면 머지가 확정된 worktree 마다
+# `미push 커밋 — 제거 보류` warn 이 나고 정리가 영영 안 된다. 더티가 아닌(=미push 가드
+# 만 남은) worktree 를 심어 그 갈래를 가른다: `--merged` 면 warn 없이 merged_cleanup 뿐.
+WT2="$TMP/proj/fixture-428/.claude/worktrees/issue-78"
+mkdir -p "$WT2"
+git -C "$WT2" init -q 2>/dev/null
+git -C "$WT2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init 2>/dev/null
+STUB_BRANCH=agent/issue-78
+run_case "MERGED·클린 worktree → --merged 로 불러 미push warn 없이 merged_cleanup" \
+  '{"event":"merged_cleanup","repo":"fixture-owner/fixture-428","pr":5}'
+STUB_BRANCH=session/manual-428
+
 # ── 그 외 상태 ──────────────────────────────────────────────────────────
 STUB_STATE=CLOSED
 run_case "CLOSED → 라벨 제거 + stale" \

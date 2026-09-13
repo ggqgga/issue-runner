@@ -199,6 +199,32 @@ check "⑤ 현재 claim 머지: merged 이벤트 발행" \
 check "⑤ 현재 claim 머지: 정리 실행" \
   "$([ "$(destroyed)" = yes ] && echo ok || echo no)"
 
+# ── ⑤-b 더티 worktree — 정리가 보류되면 merged 가 아니라 warn 한 줄 (#62) ──────
+# 위 ⑤ 는 파괴 호출을 스텁으로 가로채 "불렸는가" 만 본다. 헬퍼가 **보류**를 돌려줬을 때
+# reconcile 이 그걸 성공으로 삼키지 않는지는 진짜 헬퍼라야 보인다 — 더티 worktree 를
+# merged 로 찍으면 사람이 손댄 변경이 있는 채로 이슈가 닫히고 아무도 안 본다.
+# 이 케이스만 진짜 cleanup-worktree.sh 를 끼우고 곧바로 스텁으로 되돌린다(다른 케이스는
+# 파괴 호출을 로그로만 재야 하므로). repo-dir.sh 스텁이 픽스처 밖으로 못 나가게 가둔다.
+cp "$DIR/cleanup-worktree.sh" "$sut_dir/cleanup-worktree.sh"
+dirty_wt="$tmp/proj/repo/.claude/worktrees/issue-42"
+mkdir -p "$dirty_wt"
+git -C "$dirty_wt" init -q 2>/dev/null
+printf 'dirty\n' > "$dirty_wt/uncommitted.txt"
+run "$current" "$old_claim" '[]'
+warn_n=$(grep -c '"event":"warn"' "$tmp/events" || true)
+merged_n=$(grep -c '"event":"merged"' "$tmp/events" || true)
+check "⑤-b 더티 worktree: warn 정확히 한 줄" "$([ "$warn_n" = 1 ] && echo ok || echo no)"
+check "⑤-b 더티 worktree: merged 미발행(보류를 성공으로 안 삼킨다)" \
+  "$([ "$merged_n" = 0 ] && echo ok || echo no)"
+check "⑤-b 더티 worktree: warn 사유가 dirty" \
+  "$(grep -q 'dirty' "$tmp/events" && echo ok || echo no)"
+rm -rf "$tmp/proj/repo/.claude"
+cat > "$sut_dir/cleanup-worktree.sh" <<'STUB'
+#!/bin/sh
+printf 'cleanup %s\n' "$*" >> "$STUB_DESTROY_LOG"
+STUB
+chmod +x "$sut_dir/cleanup-worktree.sh"
+
 # ── ⑥ 비공허 실증 — 스텁이 실제로 소비됐는지(테스트 공회전 방지) ─────────────
 check "⑥ 스텁 경유 실증: 타임라인 조회가 실제로 일어난다" \
   "$(grep -q 'timeline' "$tmp/gh.log" && echo ok || echo no)"
