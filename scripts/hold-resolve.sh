@@ -14,7 +14,8 @@
 #   head 커밋 시각      : `pr-head-at.sh`
 #   테스트 주입(finish-classify 와 같은 관행 — 네트워크 무접속):
 #     HR_PR_COMMENTS_JSON · HR_ISSUE_COMMENTS_JSON  (`none` = 조회 실패)
-#     HR_PR_LABELS · HR_ISSUE_LABELS               (콤마 목록 · `none` = 조회 실패)
+#     HR_PR_LABELS · HR_ISSUE_LABELS               (JSON 배열 `["a","b"]` · `none` = 조회 실패 — 라벨 경계는
+#                                                   배열이지 쉼표가 아니다(#266, loop.jq 라벨 술어 규율))
 #     HR_HEAD_AT                                   (ISO8601 · 빈 값 = 조회 실패)
 #
 # ── 코멘트 분류(토큰) — 술어는 lib/loop.jq 한 자리(#426), 각 출처의 배열 안에서 **마지막 매칭 인덱스** ──
@@ -36,7 +37,8 @@
 # ── 판정 순서(계약 — 뒤집지 마라: 해소 → 착수 → 멱등 → 결정문) ─────────────────────
 #   0) PR·이슈 양쪽 경계 0            → H ? keep : pick             (보류가 없었다 — 라벨만 있으면 보류 유지)
 #   1) 이슈측 단독 경계(PR 경계 0)     → H ? keep : restore          (r·f·D 무관 — 비교하지 않고 양측 경계 복구)
-#   2) 해소: f > max(h, r)             → H ? keep : pick             (마커보다 이른 ✅ 는 반송 이전 코드의 판정)
+#   2) 해소: f > max(h, r)             → L ? active : H ? keep : pick (마커보다 이른 ✅ 는 반송 이전 코드의 판정;
+#                                                                     L = 아직 돌고 있는 레인 — flow:ready 는 완료라 pick)
 #      F 가 `마감 검증: ✅ 기각 승계` 면 `resume: step2` 를 덧붙인다(③-1 재실행 금지 — 같은 P1 재생산)
 #   3) 착수: head 시각 > max(h,r) 코멘트 시각(c)
 #        조회 실패                     → blocked head_lookup         (값 없이 되돌리기 판단을 하지 않는다)
@@ -92,15 +94,15 @@ if [ "$issue" != - ]; then
   issue_json=$(fetch_comments "$issue" "${HR_ISSUE_COMMENTS_JSON-__unset__}") || blocked comments_lookup
 fi
 
-fetch_labels() {  # fetch_labels <issue|pr> <번호> <env 값|unset 표식> → 콤마 목록
+fetch_labels() {  # fetch_labels <issue|pr> <번호> <env 값|unset 표식> → JSON 배열
   if [ "$3" != "__unset__" ]; then
     [ "$3" = none ] && return 1
     printf '%s' "$3"; return 0
   fi
-  gh "$1" view "$2" --repo "$repo" --json labels -q '[.labels[].name] | join(",")' 2>/dev/null
+  gh "$1" view "$2" --repo "$repo" --json labels -q '[.labels[].name]' 2>/dev/null
 }
 pr_labels=$(fetch_labels pr "$pr" "${HR_PR_LABELS-__unset__}") || blocked labels_lookup
-issue_labels=''
+issue_labels='[]'
 if [ "$issue" != - ]; then
   issue_labels=$(fetch_labels issue "$issue" "${HR_ISSUE_LABELS-__unset__}") || blocked labels_lookup
 fi
@@ -134,23 +136,22 @@ to_epoch() {  # ISO8601 Z → epoch (BSD/GNU) · 실패면 빈 값
   date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$s" +%s 2>/dev/null || date -u -d "$s" +%s 2>/dev/null || true
 }
 
-# 라벨은 콤마 목록 문자열로 받는다(gh -q join). 정확 일치 또는 `접두*`.
-has_label_pat() {  # has_label_pat <콤마 목록> <이름|접두*>
-  local IFS=',' l pat="$2"
-  for l in $1; do
-    case "$pat" in
-      *\*) case "$l" in "${pat%\*}"*) return 0 ;; esac ;;
-      *)   [ "$l" = "$pat" ] && return 0 ;;
-    esac
-  done
-  return 1
-}
-H=0; { has_label_pat "$issue_labels" needs-human || has_label_pat "$issue_labels" 'hold:*' \
-    || has_label_pat "$pr_labels" needs-human || has_label_pat "$pr_labels" 'hold:*'; } && H=1
-A=0; for l in agent:claimed flow:verify verifying flow:ready harvesting; do has_label_pat "$issue_labels" "$l" && A=1; done
-R=0
-if [ "$issue" != - ] && has_label_pat "$issue_labels" agent-ready && [ "$A" = 0 ] \
-   && ! has_label_pat "$issue_labels" needs-human && ! has_label_pat "$issue_labels" 'hold:*'; then R=1; fi
+# 라벨 술어 — 배열 원소로 판정한다(쉼표 분해 금지, #266). 술어는 lib/loop.jq (#426).
+#   H = 이슈∪PR 에 정지 라벨(is_stop_label: needs-human ∨ hold:*)
+#   A = 이슈에 agent:claimed ∨ 하류 4벌(is_downstream_label: flow:verify·verifying·flow:ready·harvesting)
+#   L = 이슈에 agent:claimed ∨ flow:verify ∨ verifying ∨ harvesting — **flow:ready 를 뺀** "아직 돌고 있는" 레인
+#       (해소 갈래의 P1: 보류 뒤 ✅ 가 섰어도 검증자가 아직 들고 있으면 pick 이 그 레인 라벨을 걷어낸다)
+#   R = 이슈에 agent-ready ∧ A 없음 ∧ 정지 라벨 없음
+lab=$(jq -L "$here/lib" -n -r --argjson il "$issue_labels" --argjson pl "$pr_labels" '
+  include "loop";
+  def has(f): any(.[]; f);
+  (($il | has(is_stop_label)) or ($pl | has(is_stop_label))) as $H
+  | ($il | has(. == "agent:claimed" or is_downstream_label)) as $A
+  | ($il | has(. == "agent:claimed" or . == "flow:verify" or . == "verifying" or . == "harvesting")) as $L
+  | (($il | has(. == "agent-ready")) and ($A | not) and (($il | has(is_stop_label)) | not)) as $R
+  | [$H, $A, $L, $R] | map(if . then 1 else 0 end) | join(" ")' 2>/dev/null) || lab=""
+[ -n "$lab" ] || blocked labels_parse
+set -- $lab; H=$1; A=$2; L=$3; R=$4
 
 keep_or() { [ "$H" = 1 ] && echo keep || echo "$1"; }
 NOTE_RESTORE='이슈측 단독 경계(PR 쪽 hold-note 없음) — 양측 경계를 복구했다. 기각(원안 머지)/시정(코드 수정)을 이 코멘트 뒤에 답해 주세요'
@@ -173,6 +174,9 @@ fi
 # 2) 해소 — PR 배열 안에서만
 base=$h_pr; [ "$r_pr" -gt "$base" ] && base=$r_pr
 if [ "$f_pr" -gt "$base" ]; then
+  # 해소여도 아직 돌고 있는 레인(L)이 들고 있으면 무접촉 — 새 ✅ 를 방금 찍은 검증자가 flow:ready 로 넘기기 전
+  # 창에서 pick 하면 closeout-pick 이 그 레인의 라벨을 걷어낸다(codex 1회차 P1). flow:ready 는 완료 상태라 pick.
+  if [ "$H" = 0 ] && [ "$L" = 1 ]; then echo active; exit 0; fi
   out=$(keep_or pick); echo "$out"
   if [ "$out" = pick ]; then
     case "$(body_at "$pr_json" "$f_pr")" in "마감 검증: ✅ 기각 승계"*) echo "resume: step2" ;; esac

@@ -47,13 +47,16 @@ mkjson() {
   echo "$out]"
 }
 
+labels_json() {  # 콤마 목록(테스트 표기) → JSON 배열. `-`·빈 값은 [] · `none` 은 조회 실패 표식 그대로
+  case "$1" in none) printf none ;; -|'') printf '[]' ;; *) jq -cn --arg s "$1" '$s | split(",")' ;; esac
+}
 # run <PR열> <이슈열|-> <이슈#|-> <PR 라벨> <이슈 라벨> <head: late|early|none>
 GOT=""
 run() {
   local head
   case "$6" in late) head='2026-07-05T11:59:00Z' ;; early) head='2026-07-05T10:00:00Z' ;; *) head='' ;; esac
   GOT=$(HR_PR_COMMENTS_JSON="$(mkjson "$1")" HR_ISSUE_COMMENTS_JSON="$(mkjson "$2")" \
-        HR_PR_LABELS="$4" HR_ISSUE_LABELS="$5" HR_HEAD_AT="$head" \
+        HR_PR_LABELS="$(labels_json "$4")" HR_ISSUE_LABELS="$(labels_json "$5")" HR_HEAD_AT="$head" \
         bash "$SUT" owner/repo 42 "$3" 2>&1)
 }
 first() { printf '%s\n' "$GOT" | head -1; }
@@ -90,6 +93,8 @@ kept_is_not_decision|H|H,K|1|-|agent-ready|early|ambiguous|-
 inherit_marker_step2|H,G|H|1|-|agent-ready|early|pick|-
 no_issue_idem|H,R|-|-|-|-|early|ambiguous|24
 verify_bounce_then_commit|H,V|H|1|-|agent:claimed|late|active|7v
+resolved_but_verifier_live|H,F|H|1|-|verifying|early|active|3v
+resolved_ready_lane|H,F|H|1|-|flow:ready|early|pick|3r
 legacy_no_sentinel_is_machine|H,L|H|1|-|agent-ready|early|ambiguous|-
 '
 while IFS='|' read -r id pr is num prl isl head want row; do
@@ -114,8 +119,11 @@ run 'H' 'H' 1 '-' 'flow:verify' none
 has "blocked 사유" 'reason: head_lookup'
 GOT=$(HR_PR_COMMENTS_JSON=none HR_ISSUE_COMMENTS_JSON='[]' HR_PR_LABELS='-' HR_ISSUE_LABELS='-' HR_HEAD_AT='' bash "$SUT" owner/repo 42 1 2>&1)
 ck "코멘트 조회 실패 → blocked" blocked; has "코멘트 조회 실패 사유" 'reason: comments_lookup'
-GOT=$(HR_PR_COMMENTS_JSON='[]' HR_ISSUE_COMMENTS_JSON='[]' HR_PR_LABELS=none HR_ISSUE_LABELS='-' HR_HEAD_AT='' bash "$SUT" owner/repo 42 1 2>&1)
+GOT=$(HR_PR_COMMENTS_JSON='[]' HR_ISSUE_COMMENTS_JSON='[]' HR_PR_LABELS=none HR_ISSUE_LABELS='[]' HR_HEAD_AT='' bash "$SUT" owner/repo 42 1 2>&1)
 ck "라벨 조회 실패 → blocked" blocked
+# 라벨 경계는 배열이다 — 쉼표를 품은 한 라벨 `triage,needs-human` 은 needs-human 이 아니다(codex P2 · #266)
+GOT=$(HR_PR_COMMENTS_JSON="$(mkjson 'X,F')" HR_ISSUE_COMMENTS_JSON='[]' HR_PR_LABELS='[]' HR_ISSUE_LABELS='["triage,needs-human","agent-ready"]' HR_HEAD_AT='' bash "$SUT" owner/repo 42 1 2>&1)
+ck "쉼표를 품은 라벨명은 정지 라벨로 오독하지 않는다" pick
 bash "$SUT" owner/repo >/dev/null 2>&1; rc=$?; [ "$rc" = 64 ] && ok || bad "인자 부족 exit $rc (기대 64)"
 [ -x "$SUT" ] && ok || bad "hold-resolve.sh 실행 비트 없음"
 
