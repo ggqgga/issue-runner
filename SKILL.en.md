@@ -137,11 +137,18 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
   > line in the form 'When <situation>, do <specific action>'. No speculation or
   > generalities. If there are no failure facts, output 'NONE'."
 
-  If the result is not NONE, append to the `.loop/lessons.md` under the path
-  output by `$SCRIPTS/repo-dir.sh <repo>` (= `<repo-dir>/.loop/lessons.md` — the
-  only interpretation that makes record and read point at the same file even on
-  a repos.conf-mapped machine) in the form `- [YYYY-MM-DD PR#<pr>] <lesson>`.
-  **If the file exceeds 20 lines, delete the oldest lines** (context-rot defense).
+  If the result is not NONE, append one line `- [YYYY-MM-DD PR#<pr>] <lesson>` to
+  the `.loop/lessons.md` under the path output by `$SCRIPTS/repo-dir.sh <repo>`
+  (= `<repo-dir>/.loop/lessons.md` — the only interpretation that makes record and
+  read point at the same file even on a repos.conf-mapped machine), then trim to the
+  cap — **call `$SCRIPTS/lessons-trim.sh append <file> 20 "<line>"` in one place**
+  (it creates the file if absent). **Do not append by hand outside this call** —
+  another tick may be trimming the same file concurrently, and an append done
+  outside the lock can be lost if it lands in that trim's read→write window (#208
+  re-verification BLOCKER② — the same reason closeout steps 1 and 6 use this call).
+  **Cap: 20 entries** — on overflow, drop the oldest entries **until the entry count
+  is at or below the cap** (context-rot defense; the old prose rule "delete the
+  oldest line" netted zero against the append, so once over the cap it never shrank).
   Only a human moves lessons into CLAUDE.md.
 - `rejected` — a human rejected the PR. **If a worker is still alive, stop it first
   with `TaskStop` the same as `merged`** (orphan prevention). Perform the lessons step the same way.

@@ -130,16 +130,23 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 
   결과가 NONE이 아니면 `$SCRIPTS/repo-dir.sh <repo>` 출력 경로의 `.loop/lessons.md`
   (= `<repo-dir>/.loop/lessons.md` — repos.conf 매핑 머신에서도 기록·읽기가 같은 파일을
-  가리키게 하는 유일한 해석)에 `- [YYYY-MM-DD PR#<pr>] <교훈>` 형식으로 append.
-  **20줄 초과 시 가장 오래된 줄 삭제** (context rot 방어). lessons를 CLAUDE.md로 옮기는
-  것은 사람만 한다.
+  가리키게 하는 유일한 해석)에 `- [YYYY-MM-DD PR#<pr>] <교훈>` 형식으로 append 하고 캡까지
+  정리한다 — **`$SCRIPTS/lessons-trim.sh append <파일> 20 "<1줄>"` 한 자리로 부른다**
+  (파일이 없으면 새로 만든다). **append 를 이 호출 밖에서 손으로 하지 마라** — 다른 틱이
+  같은 파일을 동시에 정리 중일 수 있고, 잠금 밖에서 한 append 는 그 정리의 read→write 창에
+  겹치면 유실된다(#208 재검증 BLOCKER② — closeout 1·6단계가 같은 호출을 쓰는 이유다).
+  **캡: 항목 20개** — 초과 시 **항목 수가 캡 이하가 될 때까지** 가장 오래된 항목부터 지운다
+  (context rot 방어. 옛 산문의 "가장 오래된 줄 하나 삭제" 는 append(+1)·삭제(-1) 순증이 0
+  이라 한 번 캡을 넘으면 안 줄었다 — 그 결함을 스크립트가 수렴 규칙으로 고친다).
+  lessons를 CLAUDE.md로 옮기는 것은 사람만 한다.
   **라우팅 — `lessons.md` 는 구현 교훈 전용이다.** 이 파일은 ③-4d 에서 **워커 프롬프트에
   그대로 실린다. 그래서 담기는 것은 "다음 구현자가 같은 코드를 다시 짤 때 쓸 지식"뿐이다.
   교훈이 **검증 판정 계열**(검증자가 무엇을 오판했나 · false BLOCKER 를 어떻게 뒤집었나 ·
   BLOCKER vs WARN 경계)이면 여기 쓰지 말고 같은 디렉토리의 **`.loop/lessons-verifier.md`**
   에 append 하라 — 그 파일은 verify-runner ③-3 과 closeout 1단계가 검증자 프롬프트에
-  주입한다(캡·형식은 closeout 쪽 규칙을 따른다). 두 파일을 섞으면 양쪽 프롬프트가 서로
-  무관한 지식으로 희석된다.
+  주입한다. **이 파일도 같은 호출로 쓴다** — `$SCRIPTS/lessons-trim.sh append <파일> 20 "<1줄>"`
+  (closeout 1·6단계와 같은 자리·같은 캡. 손 append 는 #208 의 유실 창에 걸린다).
+  두 파일을 섞으면 양쪽 프롬프트가 서로 무관한 지식으로 희석된다.
 - `rejected` — 사람이 PR을 거부함. **살아있는 워커가 있으면 `merged` 와 동일하게
   `TaskStop` 으로 먼저 중단**(고아 방지). lessons 단계 동일하게 수행. 이슈는 재디스패치하지
   않는다 (agent-ready가 이미 제거됨).
