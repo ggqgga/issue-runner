@@ -166,6 +166,15 @@ want "⑭ 체크리스트에 없는 판정 줄 → unparsed" '- [ ] a
 pass - [ ] 내가 만든 항목
 ' pass=1 unparsed=1 held=1 verdict=held
 
+# ⑮ 한 항목이 다른 항목의 **접두**여도 각자 제 판정을 받는다 (#467 2회차 P2).
+#    뮤테이션: 매칭을 "첫 일치에서 break" 로 되돌리면 두 판정이 모두 짧은 항목에 붙어
+#    duplicate=1·unparsed=1·verdict=held 로 빨개진다.
+want "⑮ 접두 관계 항목 둘 → 각자 매칭" '- [ ] open page
+- [ ] open page and click
+' 'pass - [ ] open page — 열림 확인
+pass - [ ] open page and click — 클릭까지 확인
+' pass=2 unparsed=0 duplicate=0 held=0 denominator=2 verdict=green
+
 echo "── 체크 모드 격자 ────────────────────────────────────────────────"
 
 # ⑮ `없음` 절 → steppable 0 (스모크를 돌리지 않는다)

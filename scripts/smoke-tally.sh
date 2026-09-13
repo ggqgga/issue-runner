@@ -59,6 +59,8 @@
 #   {"mode":"checks","steppable":N,"held_marked":N,"skipped":N,"open":N}
 #   `steppable` = 크롬이 밟을 열린 줄. **0이면 스모크를 돌리지 마라**(`없음` 절도, 표식
 #   줄만 남은 절도 여기서 0이 된다 — 대조할 항목 0인 스모크는 거짓 초록이다).
+#   **`steppable`=0 이어도 `held_marked`>0 이면 "밟을 항목 0" 이 아니다** — 소비자(5단계)는
+#   `open`=0(`없음` 절 → 완료)과 표식만 남은 절(→ 종결 보류, 이슈 안 닫음)을 갈라야 한다.
 #   체크박스가 아닌 줄(HTML 주석·`없음`)은 항목이 아니다.
 #
 # exit: 0 집계 성공(판정과 무관 — 판정은 JSON 이 낸다) · 64 usage · 66 파일 없음/못 읽음.
@@ -162,13 +164,29 @@ while IFS= read -r line || [ -n "$line" ]; do
 
   # 어느 항목의 판정인가 — 옮겨 적은 원본 항목 줄의 **접두 일치**로 잇는다.
   # (glob 은 못 쓴다: 항목 줄의 `- [ ]`·`[칸 ③]` 이 case 패턴에선 문자 클래스가 된다.)
-  match=-1
+  # **첫 일치가 아니라 가장 긴 일치**를 고른다 (#467 2회차 P2): 한 항목이 다른 항목의 접두이면
+  # (`- [ ] open page` ⊂ `- [ ] open page and click`) 첫 일치로 멈추는 순간 긴 항목의 판정이
+  # 늘 짧은 항목에 붙어, 정상 출력이 duplicate + 누락으로 세어지며 영영 green 이 안 된다.
+  match=-1; best=-1
   i=0
   while [ "$i" -lt "$n" ]; do
     len=${#it_text[$i]}
-    if [ "${rest:0:$len}" = "${it_text[$i]}" ]; then match=$i; break; fi
+    if [ "$len" -gt "$best" ] && [ "${rest:0:$len}" = "${it_text[$i]}" ]; then
+      best=$len; match=$i
+    fi
     i=$((i + 1))
   done
+  # 같은 텍스트의 항목이 여럿이면(체크리스트에 같은 줄이 두 번) 아직 판정이 안 붙은 첫 항목에
+  # 차례로 배정한다 — 다 찼으면 첫 항목에 붙어 duplicate 로 세어진다.
+  if [ "$match" -ge 0 ]; then
+    j=$match
+    while [ "$j" -lt "$n" ]; do
+      if [ "${it_text[$j]}" = "${it_text[$match]}" ] && [ "${it_count[$j]}" = 0 ]; then
+        match=$j; break
+      fi
+      j=$((j + 1))
+    done
+  fi
   if [ "$match" -lt 0 ]; then
     unparsed=$((unparsed + 1)); continue    # 어느 항목에도 안 붙는 줄(요약·산문·오타)
   fi
