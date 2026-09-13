@@ -238,20 +238,6 @@ add_blocker() {  # add_blocker <fx> <num> <state> <라벨 JSON 배열(문자열)
 add_blocker_fail() {  # add_blocker_fail <fx> <num> <에러문>
   printf '%s\n' "$3" > "$1/blocker.$2.fail"
 }
-add_closed_leaf() {  # add_closed_leaf <fx> <owner/repo> <본문>
-  # total_count 는 실응답처럼 items 수를 따라간다(창 절단 픽스처는 set_closed_total 로 따로 세운다).
-  jq --arg r "https://api.github.com/repos/$2" --arg b "$3" \
-    '.items += [{repository_url: $r, body: $b}] | .total_count = (.items | length)' \
-    "$1/closed.json" > "$1/c.tmp"
-  mv "$1/c.tmp" "$1/closed.json"
-}
-set_closed_total() {  # set_closed_total <fx> <total_count(JSON — 숫자 또는 null)>
-  jq --argjson t "$2" '.total_count = $t' "$1/closed.json" > "$1/c.tmp"
-  mv "$1/c.tmp" "$1/closed.json"
-}
-set_closed_fail() {  # set_closed_fail <fx> <에러문>
-  printf '%s\n' "$2" > "$1/closed.fail"
-}
 add_body_fail() {  # add_body_fail <fx> <num> <에러문(여러 줄 가능)>
   printf '%s\n' "$3" > "$1/body.$2.fail"
 }
