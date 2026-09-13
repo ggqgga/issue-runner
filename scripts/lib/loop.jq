@@ -129,6 +129,10 @@ def unquoted: gsub("\\r\\n"; "\n") | gsub("(^|\\n) {0,3}(?<f>```+)[^`\\n]*(\\n[\
 # GitHub 이 본문의 `Closes` 를 만난 순서일 뿐이라 남의 이슈(#108)를 가리킨다(#206 회차3). 세
 # 소비자가 각자 다른 축(head 1순위+[0] 폴백 / [0] 하나 / head∩refs)을 쓰던 판은 `Closes` 가 둘
 # 이상인 PR 에서 서로 다른 이슈를 봤다(#452 §5 실측) — 그래서 한 자리다.
+# head **단독** 폴백은 일부러 없다 — `Refs #N`·`(no-issue)` PR(refs 빈 배열)은 head 가
+# `agent/issue-N` 이어도 null 이다. 그 PR 은 finish-classify 의 claim 증거 ③ 을 잃지만(커밋·
+# 판정 시각 축은 그대로), 대신 어느 소비자도 본문이 닫지 않는 이슈를 마감·미러 대상으로
+# 삼지 않는다(워커 템플릿은 `Closes #N` 전용 줄을 강제하므로 agent PR 에선 드문 형상).
 # 출력은 **번호(숫자) 또는 null** — `last_index` 와 같은 규율이다. 셸로 꺼내는 소비처는
 # `// empty` 로 "없음" 을 빈 출력으로 받고, 문자열 꼴이 필요하면 소비처가 `tostring` 한다.
 def linked_issue(head; refs):

@@ -98,11 +98,14 @@ closeout 세 SKILL(한/영)과 `references/worker-template.md` 는 아래 규약
   3. 그 외 **빈 값**(fail-closed) — finish-classify 는 claim 증거 없음(`none`), closeout-eligible 은
      `issue` 빈 문자열, pr-state 는 `-`(이슈 축 없음)로 받는다.
 
-  `[0]` 은 어디서도 쓰지 않는다 — GitHub 이 본문의 `Closes` 를 만난 순서일 뿐이라, 닫는 이슈가
+  세 소비자 어디서도 `[0]` 을 쓰지 않는다(`loop-status.sh` 의 `linked()` 는 대시보드라 `[0]`·head
+  폴백 꼬리를 유지한다 — 판정이 아니라 표시다) — GitHub 이 본문의 `Closes` 를 만난 순서일 뿐이라, 닫는 이슈가
   둘 이상인 묶음 디스패치에서는 "이 PR 이 이 이슈 한 쌍으로 붙었다" 를 증명하지 못한다
   (#206 회차3 · 이 레포 PR #113 head `agent/issue-109`·refs `[108,109]`). **`Closes` 를 여러 개
   쓰려면 head 가 그중 하나를 가리켜야 한다** — 아니면 세 소비자 모두 연결 이슈를 못 보고
-  (같은 답으로) 마감·미러 정리가 멈춘다. 연결 이슈는 하나만 쓰는 것이 기본이다.
+  (같은 답으로) 마감·미러 정리가 멈춘다. 연결 이슈는 하나만 쓰는 것이 기본이다. head **단독**
+  폴백도 없다 — `Refs #N`·`(no-issue)` PR 은 head 가 `agent/issue-N` 이어도 연결 이슈가 없다
+  (finish-classify 는 그 PR 의 claim 증거 ③ 을 포기하고 커밋·판정 시각 축으로만 잰다).
 - **부분 착지 PR 은 `Closes` 대신 `Refs`** 를 써서 트래커를 살려 둔다 — 그 경우 이슈는 머지로
   닫히지 않는다(`release-labels.sh`·`reconcile.sh` 가 그 전제를 쓴다).
 
