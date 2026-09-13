@@ -115,8 +115,10 @@ gh label create "loop-dashboard" --repo "$repo" --color 656D76 --force \
 # 설명 접두는 셋 다 "기계 정지 —" 다(#364 — 옛 "사람 대기 사유 —" 는 #244 이전 축). 누가 푸는지는
 # 접두가 아니라 뒷말이 말한다: ladder·conflict 는 스윕이 자동 재개(conflict 는 CONFLICT_RESUME_LIMIT 회 —
 # #345; `full-cycle` 로 사람이 인수했으면 재개 없음), policy 는 재심 1회 뒤 사람.
+# 설명은 **100자 이하**(GitHub 라벨 description 상한 — 넘으면 `--force` 여도 validation 실패,
+# `set -e` 라 뒤의 라벨·레포 설정이 전부 멈춘다. bin/ci 가 전 라벨을 센다, #346 반송).
 gh label create "hold:conflict" --repo "$repo" --color D93F0B \
-  --description "기계 정지 — rebase/semantic 충돌. 창(RESUME_AFTER_MIN) 뒤 재개 스윕이 워커 한 회차로 자동 재개(CONFLICT_RESUME_LIMIT 회, 초과 시 hold:policy · full-cycle 인수 시 재개 없음)" --force
+  --description "기계 정지 — rebase/semantic 충돌. 창 뒤 스윕이 CONFLICT_RESUME_LIMIT 회 재개(full-cycle 땐 제외), 넘으면 hold:policy" --force
 # `hold:policy` 는 재심 1회를 **루프가** 답한다(#155 — 디스패처 ① 재심, resume-sweep ③ 이
 # 이벤트를 낸다). 사람 몫이 되는 것은 그 재심이 "유지" 로 끝나 `needs-human` 이 겹쳐 붙은
 # 뒤뿐이다 — 설명이 "사람 대기" 로만 적혀 있으면 재심 전 정지까지 사람 몫으로 읽힌다.
