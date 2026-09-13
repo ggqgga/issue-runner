@@ -328,6 +328,19 @@ Procedure:
      <REPO> --json comments`) and **fix precisely what it names** (failing E2E test /
      codex BLOCKER / deterministic CI failure) — run steps 1–9 against that failure
      (fix→test→commit→push→local CI). Reuse the existing PR; do not open a new one.
+     **Conflict-resume round (#345)** — if the PR is OPEN and the issue has a
+     `사람 확인(conflict):` comment that is **later** than the PR's last `재검증 실패:` comment
+     (including when there is no `재검증 실패:` at all — decide by **order**, not existence: an
+     issue that was bounced once, fixed, and then hit a conflict carries both), this is not a
+     bounce: closeout stopped on a merge conflict and the resume sweep revived it. The hold
+     note (the one-line "worker resume scope") and the rebase instruction the dispatcher
+     inlined into this prompt are the only work order for this round and take **precedence**
+     over the bounce branch above: bring the branch up with `git fetch origin && git
+     rebase origin/<DEFAULT_BRANCH>`, resolve the conflicts the way the original intended,
+     implement the extra work in the note, push with `--force-with-lease`, and continue the
+     existing PR (no new PR · no merge commit — step 8's force-push ban is about history
+     *cleanup*; this rebase is that rule's one exception). If you cannot merge it, stop with
+     `BLOCKED:` quoting the conflicting files and why.
    - **Bounce-resolution report wording (#251 — the prefix is the contract).** If you post
      a report comment on the PR/issue after fixing a bounce, **do not start its first line
      with a bounce marker** — the markers are `BOUNCE_MARKERS` in `scripts/bounce-state.sh`

@@ -196,7 +196,10 @@ BLOCKER_Q='.state + "\t" + ([.labels[].name] | join(","))'
 blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
   case ",$1," in
     *",needs-human,"*)   printf 'needs-human' ;;
-    *",hold:conflict,"*) printf 'needs-human' ;;
+    # 사람이 `full-cycle` 로 인수한 충돌만 사람 몫이다(#345). 단독 `hold:conflict` 는 창 뒤 재개
+    # 스윕이 1회 되돌리는 **기계 정지**라 아래 일반 `hold:*` 갈래(보류)로 떨어진다 —
+    # `loop-status.sh` 의 needs-human 버킷 정의와 같은 집합이어야 한다.
+    *",hold:conflict,"*) case ",$1," in *",full-cycle,"*) printf 'needs-human' ;; *) printf '보류' ;; esac ;;
     *",테스트,"*)         printf '테스트' ;;
     *",deploy-wait,"*)   printf '배포대기' ;;
     *",hold:"*)          printf '보류' ;;

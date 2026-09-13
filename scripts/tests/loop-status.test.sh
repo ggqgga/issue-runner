@@ -506,7 +506,8 @@ FX
 #   #40   hold:ladder + agent-ready             보류 `#40(ladder)`  (재개 대기)
 #   #41   hold:policy 단독                      보류 `#41(policy)`  (재심 전)
 #   #42   hold:policy + needs-human             needs-human (재심이 "사람 몫 유지" 로 끝난 꼴)
-#   #43   hold:conflict 단독                    needs-human (충돌은 그 자체가 사람 몫)
+#   #43   hold:conflict 단독                    보류 `#43(conflict)` (#345 — 창 뒤 스윕이 1회 재개하는 기계 정지)
+#   #49   hold:conflict + full-cycle            needs-human (사람이 인수한 충돌 — 스윕이 절대 재개 안 함)
 #   #44   needs-human 단독                      needs-human `사유 없음` + note(정상 상태)
 #   #45   agent-ready 만                        대기
 #   #46   hold:ladder + flow:verify             보류 (우선순위: 보류 > 단계 라벨)
@@ -517,7 +518,8 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Holds.issues.json" <<'FX'
  {"number":40,"title":"사다리 재개 대기","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:ladder"}]},
  {"number":41,"title":"정책 재심 전","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:policy"}]},
  {"number":42,"title":"재심 유지 — 사람 몫 확정","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:policy"},{"name":"needs-human"}]},
- {"number":43,"title":"충돌 — 그 자체가 사람 몫","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
+ {"number":43,"title":"충돌 — 스윕이 재개하는 기계 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
+ {"number":49,"title":"충돌 — 사람이 full-cycle 로 인수","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"},{"name":"full-cycle"}]},
  {"number":44,"title":"사람이 직접 세운 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"needs-human"}]},
  {"number":45,"title":"집을 수 있는 이슈","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"}]},
  {"number":46,"title":"단계 라벨보다 보류가 앞","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"hold:ladder"}]},
@@ -546,8 +548,8 @@ echo '[]' > "$tmp/fx/ggqgga_Holds.issues_closed.json"
 cat > "$tmp/fx/ggqgga_Holds.comments.42.json" <<'FX'
 {"comments":[{"body":"사람 확인(policy): A인가 B인가\n<!-- hold-note: policy --><!-- bodat:worker -->"}]}
 FX
-cat > "$tmp/fx/ggqgga_Holds.comments.43.json" <<'FX'
-{"comments":[{"body":"사람 확인(conflict): 어느 쪽으로 풀까\n<!-- hold-note: conflict --><!-- bodat:worker -->"}]}
+cat > "$tmp/fx/ggqgga_Holds.comments.49.json" <<'FX'
+{"comments":[{"body":"사람 확인(conflict): 충돌 #5114·client.rb — 워커 재개 범위: origin/main 위로 rebase\n<!-- hold-note: conflict --><!-- bodat:worker -->"}]}
 FX
 
 # ── 픽스처: ggqgga/Verifying (verifying) — verify-runner 점유 칸 (#276 · 라벨은 #275) ──
@@ -1589,12 +1591,12 @@ ck "--json: buckets 키 = 종전 12개 + verifying + test_wait" \
 # ── ⑮ (#244) 보류 칸 — hold:* 만 붙은(needs-human 없는) 이슈는 대기가 아니다 ───
 run --repo ggqgga/Holds --since 24h
 ck "holds: exit 0" "$RC" 0
-has_line "holds 헤더 — 열림 9(보류 4 + needs-human 3 + 대기 1 + 막힘 1)" "$tmp/out" \
-  "파이프라인 holds — 열림 9 · 스코프 holds · 창 24h"
-has_line "보류 4 — 사유 병기, 번호 내림차순, 열린 연결 PR 병기" "$tmp/out" \
-  "  보류           4  #48(ladder) #46(ladder) #41(policy, PR #72) #40(ladder, PR #70)"
-has_line "needs-human 3 — needs-human ∪ hold:conflict ∪ 재심 끝난 hold:policy" "$tmp/out" \
-  "  needs-human    3  #44(대기, 사유 없음) #43(대기, conflict) #42(대기, policy)"
+has_line "holds 헤더 — 열림 10(보류 5 + needs-human 3 + 대기 1 + 막힘 1)" "$tmp/out" \
+  "파이프라인 holds — 열림 10 · 스코프 holds · 창 24h"
+has_line "보류 5 — 사유 병기, 번호 내림차순, 열린 연결 PR 병기 · 단독 hold:conflict 도 보류(#345)" "$tmp/out" \
+  "  보류           5  #48(ladder) #46(ladder) #43(conflict) #41(policy, PR #72) #40(ladder, PR #70)"
+has_line "needs-human 3 — needs-human ∪ (hold:conflict ∧ full-cycle) ∪ 재심 끝난 hold:policy" "$tmp/out" \
+  "  needs-human    3  #49(대기, conflict) #44(대기, 사유 없음) #42(대기, policy)"
 has_line "대기 1 — 보류가 대기로 새지 않는다" "$tmp/out" "  대기           1  #45"
 has_line "막힘 1 — 보류는 막힘으로도 안 샌다(우선순위: 보류 > 막힘)" "$tmp/out" \
   "  막힘           1  #47 ← #45(대기)"
@@ -1604,11 +1606,11 @@ no_sub "보류: #40 은 대기 줄에 없다" "$tmp/out" "  대기           1  
 no_sub "보류: #46 은 검증대기 줄에 없다" "$tmp/out" "  검증대기       1"
 no_sub "보류: #48 은 막힘 줄에 없다" "$tmp/out" "#48 ←"
 # 질문(hold-note) 조회는 **needs-human 버킷**의 policy·conflict 에만 — 보류로 간 #41 엔 안 묻는다
-ck "holds: 코멘트 조회 2건(#42·#43)" "$(grep -c '^comments ' "$STUB_CALL_LOG")" 2
-for n in 42 43; do
+ck "holds: 코멘트 조회 2건(#42·#49)" "$(grep -c '^comments ' "$STUB_CALL_LOG")" 2
+for n in 42 49; do
   check "holds: 코멘트 조회 #$n" "$(grep -qxF "comments ggqgga/Holds $n" "$STUB_CALL_LOG" && echo ok || echo no)"
 done
-for n in 40 41 46 48; do
+for n in 40 41 43 46 48; do
   check "holds: 보류 이슈 #$n 엔 안 묻는다" \
     "$(grep -qxF "comments ggqgga/Holds $n" "$STUB_CALL_LOG" && echo no || echo ok)"
 done
@@ -1625,9 +1627,9 @@ has_sub "holds: #44 는 note" "$tmp/out" \
 run --repo ggqgga/Holds --since 24h --json
 ck "--json: held 버킷 항목(번호·holds)" \
   "$(jq -c '.repos[0] | [.buckets.held[] | {n:.number, h:.holds, p:.pr}]' < "$tmp/out")" \
-  '[{"n":48,"h":["ladder"],"p":null},{"n":46,"h":["ladder"],"p":null},{"n":41,"h":["policy"],"p":72},{"n":40,"h":["ladder"],"p":70}]'
+  '[{"n":48,"h":["ladder"],"p":null},{"n":46,"h":["ladder"],"p":null},{"n":43,"h":["conflict"],"p":null},{"n":41,"h":["policy"],"p":72},{"n":40,"h":["ladder"],"p":70}]'
 ck "--json: open_total 에 보류가 합산된다" \
-  "$(jq '.repos[0].open_total' < "$tmp/out")" 9
+  "$(jq '.repos[0].open_total' < "$tmp/out")" 10
 ck "--json: held 항목에도 repo_short" \
   "$(jq '[.repos[0].buckets.held[] | select(has("repo_short") | not)] | length' < "$tmp/out")" 0
 

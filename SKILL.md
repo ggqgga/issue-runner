@@ -53,6 +53,10 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
     `hold:ladder` 이슈의 마지막 갱신이 이만큼 지나면 ① 의 재개 스윕이 집는다.
   - `LADDER_RESUME_LIMIT` — 이슈 1건당 자동 재개 상한. 초과하면 재개 대신 `hold:policy`
     승격 — 그때만 사람이다(무한 재시도 금지).
+  - `CONFLICT_RESUME_LIMIT` — `hold:conflict` 의 자동 재개 상한(#345). 실측(BoDAT #5103 ·
+    #185)에서 첫 충돌의 사람 답은 매번 ⓐ(워커 한 회차 더)였고 두 번째는 ⓑ(사람 인수)였다.
+    창은 `RESUME_AFTER_MIN` 공용(그 창이 곧 사람이 `full-cycle` 로 인수할 시간이다).
+    초과하면 `hold:policy` 승격 → 재심(③)의 질문은 "ⓑ 인수인가, 재발행인가".
   - `MIRROR_RETRY_LIMIT` — ① 재개 스윕의 **정지 미러 정리**가 양성 증거를 못 얻었을 때
     같은 건을 다시 시도하는 상한(#397). 회차는 짝 이슈 코멘트의
     `<!-- mirror-retry: <사유> pr=<n> -->` 마커 개수이고 — **그 PR 의 것만**, **사람이 개입한
@@ -245,19 +249,23 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 **재개 스윕 — 멈춘 건은 틱이 다시 시도한다.** 위 이벤트를 전부 처리한 뒤
 `$SCRIPTS/resume-sweep.sh` 를 인자 없이 실행하라(스코프는 세션 cwd 의 `.loop/repos` 를
 스크립트가 알아서 적용한다). 기계 정지(`hold:*`) 중 **`hold:ladder`**
-(실측 사다리 ①~③ 칸이 전부 실패해 멈춘 건)만 창(`RESUME_AFTER_MIN`)이 지나면 자동으로
-되돌린다 — `hold:conflict` 는 사람 결정이고 `hold:policy` 는 재심(③)을 거친다. 사람이
-직접 세운 정지(`needs-human`)가 함께 붙어 있으면 자동 재개 대상이 아니다(#244). ③ Dispatch
+(실측 사다리 ①~③ 칸이 전부 실패해 멈춘 건)와 **`hold:conflict`**(closeout ③ 이 머지 충돌로
+멈춘 건 — #344 가 보안 경계·대범위 충돌은 `policy` 로 보내므로 이 라벨은 "루프가 1회 재개해도
+되는 건" 이다, #345)를 창(`RESUME_AFTER_MIN`)이 지나면 자동으로 되돌린다 — `hold:policy` 만
+사람 결정으로 남고 재심(③) 1회를 거친다. 사람이 직접 세운 정지(`needs-human`)가 함께 붙어
+있으면 자동 재개 대상이 아니다(#244). **`full-cycle` 이 붙은 `hold:conflict` 는 사람이
+인수(ⓑ)한 것이라 절대 재개하지 않는다**(BoDAT #5103 2차 형상 — `note` 로만 남는다). ③ Dispatch
 **앞**에서 돌려야 이번 틱이 그 이슈를 바로 집는다.
-재개 횟수는 이슈 **코멘트**에 붙은 마커(`<!-- ladder-resume: N -->`)의 개수다 — 본문은
+재개 횟수는 이슈 **코멘트**에 붙은 마커(`<!-- ladder-resume: N -->` · `<!-- conflict-resume: N -->`
+— 갈래마다 자기 마커만 센다)의 개수다 — 본문은
 읽지도 쓰지도 않는다(append-only 라 남의 편집을 덮어쓸 일이 없다). 정지 라벨은 이슈와
 **연결된 열린 PR 양쪽**에 미러돼 있으므로 재개·승격은 PR 라벨까지 함께 되돌린다 — 안 그러면
 PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·closeout-pick)가 그걸 안 뗀다.
-재개는 PR 의 `hold:ladder` 를 떼는 그 편집에서 이슈 칸에 맞는 미러(`flow:agent-ready`, 이슈가
+재개는 PR 의 홀드(`hold:ladder`·`hold:conflict`)를 떼는 그 편집에서 이슈 칸에 맞는 미러(`flow:agent-ready`, 이슈가
 `agent:claimed` 면 `flow:claimed`)도 되붙인다(#420, PR 에 칸 라벨이 이미 있으면 겹치지 않는다) — 정지
 전이가 PR 의 단계 라벨을 이미 뗀 뒤라, 안 붙이면 그 PR 은 다음 claim 까지 무라벨이다(#281 불변식 위반).
-그 되돌림은 스윕이 **스스로 재개·승격할 때**뿐이라, 사람이 `hold:policy`·`hold:conflict` 를
-푸는 경로엔 PR 사본을 지우는 자리가 없었다 — 그래서 같은 실행이 **정지 미러 정리**(#265)도
+그 되돌림은 스윕이 **스스로 재개·승격할 때**뿐이라, 사람이 `hold:policy`(또는 상한을 넘긴
+홀드)를 푸는 경로엔 PR 사본을 지우는 자리가 없었다 — 그래서 같은 실행이 **정지 미러 정리**(#265)도
 한다: 이슈에 정지 라벨이 하나도 없는데 짝이 되는 열린 PR 에 남아 있으면 **PR 쪽만** 뗀다
 (짝은 head 가 `agent/issue-*` 이고 `Closes` 링크가 증명된 PR 뿐 — 사람이 연 PR 의 표식과
 `Refs` 전용 PR 의 정상 홀드는 건드리지 않는다).
@@ -281,22 +289,35 @@ PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·
   `BLOCKED: 전이 실패 runner-held #<number>(exit N)` 한 줄 — 다음 틱이 같은 이벤트를 다시 낸다
   (마커를 더 쌓지 않으므로 회차가 부풀지 않는다). 성사되면 이슈에 정지 라벨이 생겨 그 PR 은
   다음 틱부터 미러 정리 대상에서 빠진다(자연 종료). ④ Report 의 warn 에 `미러 상한 #<pr>` 한 줄.
-- `resumed` — `hold:ladder` 가 떨어졌고 `agent-ready` 는 그대로다(자격은
+- `resumed` — 홀드(`reason` 필드: `ladder` 면 `hold:ladder`, `conflict` 면 `hold:conflict`,
+  #345)가 떨어졌고 `agent-ready` 는 그대로다(자격은
   건드리지 않는다). **디스패처가 따로 할 일은 없다** — 이번 틱 ③ 의 `eligible-issues.sh`
-  후보로 자연히 다시 나타난다. ④ Report 의 `재개` 에 번호와 `attempt` 를 적는다. 배포 대기
+  후보로 자연히 다시 나타난다(conflict 재개 건은 ③ 이 프롬프트에 홀드 노트와 rebase 지시를
+  인라인한다 — ③ 의 "재개된 이슈면" 항목). ④ Report 의 `재개` 에 번호와 `reason`·`attempt` 를
+  `재개 #N(conflict 1/1)` 꼴로 적는다. 배포 대기
   라벨(`deploy-wait`)이 붙은 이슈는 창이 지나도 이 이벤트가 나오지 않는다(#217) — 대신
   아래 `note` 로 간다.
-- `escalated` — 재개 상한(`LADDER_RESUME_LIMIT`) 초과라 `hold:policy` 로 승격됐다
-  (`attempt`/`limit` 은 마커 코멘트가 기록한 소진 횟수 대 상한 — `2/2` 로 읽는다). 라벨은
-  스크립트가 이미 붙였으니 **추가 조치 없이** ④ Report 의 `승격` 에 올려 사람이 보게 하라.
-- `warn` — 사람 몫 `hold:*`·`needs-human` 동존(자동 재개 대상이 아니다) · 사람 조작과의
+- `escalated` — 재개 상한(`reason` 이 `ladder` 면 `LADDER_RESUME_LIMIT`, `conflict` 면
+  `CONFLICT_RESUME_LIMIT`) 초과라 `hold:policy` 로 승격됐다
+  (`attempt`/`limit` 은 마커 코멘트가 기록한 소진 횟수 대 상한 — `2/2`·`1/1` 로 읽는다). 라벨은
+  스크립트가 이미 붙였으니 **추가 조치 없이** ④ Report 의 `승격` 에 사유를 병기해
+  (`승격 #N(conflict, hold:policy)`) 사람이 보게 하라.
+  **PR 축**(`number` 가 `null` 이고 `pr` 이 채워진 건, #345 반송): 연결된 열린 이슈가 없는 PR 의
+  `hold:conflict`(`closeout-blocked - <pr>` · 홀드 뒤 참조 이슈 닫힘)다 — 재개할 워커를 태울
+  이슈가 없어(#421 과 같은 사실) 스윕이 창 뒤 곧장 `hold:policy` 로 승격했고 `attempt`/`limit`
+  는 `0/0` 이다(재개 0회·상한 0). 이것도 **추가 조치 없다** — 다음 창이 지나면 같은 스윕의
+  PR 단독 재심이 `policy_review_due`(`pr` 축)로 내고 그 처분은 아래 불릿대로 `policy-kept`
+  하나다. ④ Report 에는 `승격 PR #N(conflict, hold:policy)` 로 적는다.
+- `warn` — 다른 `hold:*`·`needs-human` 동존(자동 재개 대상이 아니다 — conflict 갈래의
+  `needs-human` 동존은 `note`) · 사람 조작과의
   경합 · 첫 쓰기 **전** 실패 ·
   **목록/탐색 상한 도달**(`--limit 200` 에 닿아 잘린 이슈가 이번 틱엔 안 보인다는 뜻 — 반복되면
   `.loop/repos` 로 스코프를 좁히라는 신호다. `repo` 가 `*` 면 계정 전체 탐색 쪽이다).
   스크립트가 **손대지 않은** 건이다 — **건드리지 말고** ④ Report 의 warn 에 그대로 옮겨라.
 - `note` — 스크립트가 **손대지 않은** 정보 줄이다(사유 라벨 없는 `needs-human` — 사람이
   직접 세운 정지라 **정상**이다(#244) · 배포 대기 이슈의 사유 없는 `needs-human` ·
-  배포 대기 이슈의 `hold:ladder`(#217, 창이 지나도 재개·승격 대상이 아니다)처럼
+  배포 대기 이슈의 `hold:ladder`(#217, 창이 지나도 재개·승격 대상이 아니다) · 사람이
+  인수한(`full-cycle`) 또는 `needs-human` 을 세운 `hold:conflict`(#345)처럼
   **정상 상태**라 조치할 것이 없는 건). warn 이 아니므로 ④ Report warn 에 올리지 않는다 —
   보고가 필요하면 정보 줄로만 남긴다. warn 을 "루프가 교정 가능한 불변식 위반" 으로 좁히고
   나머지를 note 로 내리는 것이 #188/#190 이 정한 규약이다.
@@ -342,7 +363,7 @@ PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·
 - `waiting` — 아직 창 안이다. 조용히 넘긴다(보고 불필요).
 - exit 2 — 일부 레포의 목록 조회 실패(나머지 레포는 정상 처리됐다) 또는 계정 전체 탐색 실패.
   ④ Report warn 에 `resume-sweep 부분 실패(레포 조회)` 한 줄을 남긴다.
-- exit 64 — `RESUME_AFTER_MIN`·`LADDER_RESUME_LIMIT` 값이 정수가 아니다(쓰기 전에 멈춘다).
+- exit 64 — `RESUME_AFTER_MIN`·`LADDER_RESUME_LIMIT`·`CONFLICT_RESUME_LIMIT` 값이 정수가 아니다(쓰기 전에 멈춘다).
   상수를 고치기 전엔 스윕이 통째로 안 도니 ④ Report warn 에 올려라.
 
 ## ② Maintain — 벌린 일 먼저 끝낸다
@@ -495,13 +516,27 @@ N 도 디스패치당 1만 올린다.
       반복하지 말고 다음 칸부터 시도하라(N번째 재개다). 그래도 못 오르면 시도한 칸과 실패
       출력을 인용해 `BLOCKED:` 로 멈춰라"** — 인용 없는 미룸은 허용되지 않는다.
 
+      **충돌 재개 갈래(#345).** 마커가 `<!-- conflict-resume: N -->` 이면(위 jq 의 `ladder-resume`
+      자리를 `conflict-resume` 으로 바꿔 센다 — 같은 `unquoted` 정의) ① 이 `hold:conflict` 를
+      되돌린 건이다. 이 워커에는 사다리 문서 대신 두 가지를 인라인하라:
+      ⓐ 이슈의 **마지막 `사람 확인(conflict):` 코멘트 본문** — closeout ③ 이 `--reason conflict
+      --note` 로 남긴 "워커 재개 범위" 한 줄(#344)이다:
+      `$SCRIPTS/pr-comments.sh <repo> <num> | jq -r '[.[] | select(.body|test("^사람 확인\\(conflict\\):"))] | last.body // ""'`
+      ⓑ 한 줄 지시: **"이 브랜치에 열린 PR 이 있다. `git fetch origin && git rebase origin/<DEFAULT_BRANCH>`
+      로 올려 충돌을 원안 의도대로 해소하고 노트의 추가 작업을 구현한 뒤 `--force-with-lease` 로
+      push, 기존 PR 을 이어 써라(새 PR 금지 · merge 커밋 금지). 못 합치면 충돌 파일과 이유를
+      인용해 `BLOCKED:` 로 멈춰라"**. 워커 템플릿 10단계의 재디스패치 감지가 이 회차를
+      "이슈의 `사람 확인(conflict):` 가 PR 의 마지막 `재검증 실패:` 보다 **나중**(없음 포함)"
+      으로 알아보고, 인라인된 이 지시를 반송 갈래보다 우선한다.
+
 ## ④ Report
 
 한 줄 요약: `정리 N · 보수 N · 신규 N · 재개 N · 승격 N · 막힘 N · 대기(사람 리뷰) N · warn N`
-(`재개`·`승격` 은 ① 재개 스윕의 `resumed`·`escalated` 수. `막힘` 은 ③-2 eligible 스캔의
+(`재개`·`승격` 은 ① 재개 스윕의 `resumed`·`escalated` 수 — 항목에는 이벤트의 `reason`
+(`ladder`|`conflict`, #345)을 병기한다. `막힘` 은 ③-2 eligible 스캔의
 `blocked-summary:` 수 — 후보였는데 OPEN 블로커로 탈락한 건이다. 0 이어도 적는다).
 그 아래 **항목마다 번호를 적는다** — 숫자만으론 어느 이슈·PR 이 어디로 갔는지 다음 틱이 못 읽는다:
-`정리: #4801(bodat, PR #4810 머지) · 보수: PR #4812(bodat, rebase) · 신규: #4818(bodat) · 재개: #4772(bodat, 2/2) · 승격: #4803(bodat, hold:policy) · 막힘: #4986(bodat ← #4985 needs-human) · warn: #4799(bodat) dirty worktree`.
+`정리: #4801(bodat, PR #4810 머지) · 보수: PR #4812(bodat, rebase) · 신규: #4818(bodat) · 재개: #4772(bodat, ladder 2/2) #5103(bodat, conflict 1/1) · 승격: #4803(bodat, ladder, hold:policy) · 막힘: #4986(bodat ← #4985 needs-human) · warn: #4799(bodat) dirty worktree`.
 검색 창 `warn:`(`검색 창 절단`·`검색 창 임박`)은 warn 줄에 그대로 옮긴다 — 창이 차면
 **가장 새 이슈부터** 후보 목록에서 조용히 사라지므로, 그 신호가 사라지면 큐가 죽어도 안 보인다.
 레포 짧은 이름 규칙은 `loop-status.sh` 와 같다(`owner/repo` 의 repo 를 소문자로 — bodat·bodac,

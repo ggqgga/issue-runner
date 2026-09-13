@@ -61,6 +61,12 @@ maintenance must come before new work).
   - `LADDER_RESUME_LIMIT` — cap on automatic resumes per issue. Beyond it the issue is
     escalated to `hold:policy` instead of resumed — only then is it a human's (no
     infinite retries).
+  - `CONFLICT_RESUME_LIMIT` — cap on automatic resumes of `hold:conflict` (#345). In the
+    field (BoDAT #5103 · #185) a human's answer to the first conflict was ⓐ (one more
+    worker round) every time, and the second was ⓑ (human takeover). The window is the
+    shared `RESUME_AFTER_MIN` (that window is exactly the time a human has to take over
+    with `full-cycle`). Beyond the cap: `hold:policy` escalation → the re-review (③)
+    question is "ⓑ takeover, or reissue?".
   - `MIRROR_RETRY_LIMIT` — cap on retries when ①'s resume sweep **stop-mirror cleanup**
     cannot obtain positive evidence (#397). The round count is the number of
     `<!-- mirror-retry: <reason> pr=<n> -->` marker comments on the paired issue —
@@ -270,23 +276,29 @@ Run `$SCRIPTS/reconcile.sh` and handle each event:
 **Resume sweep — a stalled issue is retried by the tick.** After handling every event
 above, run `$SCRIPTS/resume-sweep.sh` with no arguments (the script applies the loop
 session cwd's `.loop/repos` scope on its own). Of the machine stops (`hold:*`),
-only **`hold:ladder`** (stopped because ladder rungs ①–③ of live
-verification all failed) is reverted automatically once the window (`RESUME_AFTER_MIN`)
-passes — `hold:conflict` is a human decision and `hold:policy` goes through re-review (③).
-A stop a human set by hand (`needs-human`) alongside it is never auto-resumed (#244). Run it
+**`hold:ladder`** (stopped because ladder rungs ①–③ of live verification all failed) and
+**`hold:conflict`** (closeout ③ stopped on a merge conflict — since #344 routes
+security-boundary and large-scope conflicts to `policy`, this label means "the loop may
+resume it once", #345) are reverted automatically once the window (`RESUME_AFTER_MIN`)
+passes — only `hold:policy` stays a human decision, after one re-review (③).
+A stop a human set by hand (`needs-human`) alongside it is never auto-resumed (#244).
+**A `hold:conflict` carrying `full-cycle` was taken over by a human (ⓑ) and is never
+resumed** (the BoDAT #5103 second-round shape — it only leaves a `note`). Run it
 **before** ③ Dispatch so this same tick can pick the issue up.
 The resume count is the number of issue **comments** carrying the marker
-`<!-- ladder-resume: N -->` — the body is neither read nor written (append-only, so it can
+`<!-- ladder-resume: N -->` / `<!-- conflict-resume: N -->` (each branch counts only its own
+marker) — the body is neither read nor written (append-only, so it can
 never overwrite someone's edit). Stop labels are mirrored onto the issue **and its open
 linked PR**, so a resume/escalation reverts the PR's labels too — otherwise the PR stays
 permanently human-blocked and the downstream transitions (handoff-verify, verify-pass,
-closeout-pick) never remove it. In the same edit that drops the PR's `hold:ladder`, a resume
+closeout-pick) never remove it. In the same edit that drops the PR's hold (`hold:ladder` /
+`hold:conflict`), a resume
 also re-attaches the mirror matching the issue rung (`flow:agent-ready`, or `flow:claimed` when
 the issue carries `agent:claimed`; never stacked on a PR that already has a rung label) (#420) — the hold transition already stripped the PR's stage
 label, so without it the PR would sit unlabeled until the next claim (breaking the #281
 invariant). That revert only ever happened when the sweep itself
-resumed or escalated, so the path where a **human** clears `hold:policy`/`hold:conflict`
-had nowhere to drop the PR copy — the same run therefore also does a **stop-mirror
+resumed or escalated, so the path where a **human** clears `hold:policy` (or a hold past
+its cap) had nowhere to drop the PR copy — the same run therefore also does a **stop-mirror
 cleanup** (#265): when the issue carries no stop label at all but its paired open PR still
 does, it removes them **from the PR only** (a pair means an `agent/issue-*` head with a
 proven `Closes` link — a human-opened PR's marks and a `Refs`-only PR's legitimate hold are
@@ -315,27 +327,42 @@ so it is a brake a human put there by hand. Per event:
   in ④ Report — the next tick re-emits the same event (no new marker is added, so the round count
   does not inflate). Once it lands, the issue carries a stop label and the PR drops out of mirror
   cleanup on the next tick (it terminates itself). Report one warn line `미러 상한 #<pr>` in ④.
-- `resumed` — `hold:ladder` is off and `agent-ready` is untouched (the
+- `resumed` — the hold (`reason` field: `ladder` → `hold:ladder`, `conflict` →
+  `hold:conflict`, #345) is off and `agent-ready` is untouched (the
   eligibility label is never touched). **Nothing for the dispatcher to do** — the issue
-  reappears naturally as an `eligible-issues.sh` candidate in ③ this tick. Record the
-  number and `attempt` under `resumed` in ④ Report. An issue carrying the deploy-wait
+  reappears naturally as an `eligible-issues.sh` candidate in ③ this tick (for a conflict
+  resume, ③ inlines the hold note and the rebase instruction into the prompt — see the
+  "If the issue was resumed" item in ③). Record the
+  number with `reason` and `attempt` under `resumed` in ④ Report, as `resumed #N(conflict 1/1)`.
+  An issue carrying the deploy-wait
   label (`deploy-wait`) never emits this event even once the window passes (#217) — it
   goes to `note` below instead.
-- `escalated` — the resume cap (`LADDER_RESUME_LIMIT`) was exceeded, so the issue was
+- `escalated` — the resume cap (`LADDER_RESUME_LIMIT` when `reason` is `ladder`,
+  `CONFLICT_RESUME_LIMIT` when `conflict`) was exceeded, so the issue was
   escalated to `hold:policy` (`attempt`/`limit` are the resumes the marker comments actually
-  recorded vs. the cap — read as `2/2`). The script already applied the label, so with
-  **no further action** list it under `escalated` in ④ Report for a human to see.
-- `warn` — another stop the ladder sweep may not clear (`needs-human`, or `hold:policy`/
-  `hold:conflict` — policy still owes its one re-review) coexisting with
-  `hold:ladder`, so it is not an auto-resume target; a race against human edits; a failure **before** any write; or a
+  recorded vs. the cap — read as `2/2` / `1/1`). The script already applied the label, so with
+  **no further action** list it under `escalated` in ④ Report with the reason
+  (`escalated #N(conflict, hold:policy)`) for a human to see.
+  **PR axis** (`number` is `null` and `pr` is set, #345 bounce): a `hold:conflict` on a PR
+  with no open linked issue (`closeout-blocked - <pr>`, or the references closed after the
+  hold) — there is no issue to dispatch a resume worker on (the same fact as #421), so the
+  sweep escalated it to `hold:policy` right after the window and `attempt`/`limit` read
+  `0/0` (zero resumes, cap zero). Also **no further action** — once the next window passes
+  the same sweep's PR-only re-review emits `policy_review_due` (`pr` axis), whose only
+  disposition is `policy-kept` per the bullet below. In ④ Report write
+  `escalated PR #N(conflict, hold:policy)`.
+- `warn` — another stop the sweep may not clear (`needs-human`, or another `hold:*` —
+  policy still owes its one re-review) coexisting with the hold, so it is not an
+  auto-resume target (a `needs-human` next to `hold:conflict` is a `note` instead); a race against human edits; a failure **before** any write; or a
   **listing/search cap hit** (the `--limit 200` window filled, so truncated issues are
   invisible this tick — repeated hits mean it is time to narrow scope with `.loop/repos`;
   a `repo` of `*` means the account-wide search). The script did **not** touch it —
   **do not touch it either**; copy it verbatim into ④ Report's warns.
 - `note` — an informational line the script did **not** touch (a `needs-human` with no reason
   label — a stop a human set by hand, which is **normal** (#244); the same on a deploy-wait
-  issue, which says so in its own wording; or a deploy-wait issue's `hold:ladder` (#217, not a resume/
-  escalation target even once the window passes) — a **normal state** with nothing to act
+  issue, which says so in its own wording; a deploy-wait issue's `hold:ladder` (#217, not a resume/
+  escalation target even once the window passes); or a `hold:conflict` a human took over
+  (`full-cycle`) or parked with `needs-human` (#345) — a **normal state** with nothing to act
   on). It is not a warn, so it does not go into ④ Report's warns — if it is worth reporting at all,
   carry it as an info line only. Narrowing `warn` to "an invariant violation the loop can
   correct" and demoting everything else to `note` is the contract #188/#190 set.
@@ -389,7 +416,7 @@ so it is a brake a human put there by hand. Per event:
 - exit 2 — a listing failed for some repos (the rest were processed normally), or the
   account-wide search failed. Leave one warn line `resume-sweep 부분 실패(레포 조회)` in
   ④ Report.
-- exit 64 — `RESUME_AFTER_MIN` / `LADDER_RESUME_LIMIT` is not an integer (it stops before any
+- exit 64 — `RESUME_AFTER_MIN` / `LADDER_RESUME_LIMIT` / `CONFLICT_RESUME_LIMIT` is not an integer (it stops before any
   write). The sweep does not run at all until the constant is fixed, so raise it as a warn.
 
 ## ② Maintain — finish what you started first
@@ -561,15 +588,32 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       rung (this is resume N). If you still cannot climb it, stop with `BLOCKED:` quoting the
       rung you tried and its failure output"** — deferring without a quote is not allowed.
 
+      **Conflict-resume branch (#345).** If the marker is `<!-- conflict-resume: N -->` (count
+      it with the jq above, swapping `ladder-resume` for `conflict-resume` — same `unquoted`
+      definition), ① reverted a `hold:conflict`. Instead of the ladder document, inline two
+      things for this worker:
+      ⓐ the body of the issue's **last `사람 확인(conflict):` comment** — the one-line
+      "worker resume scope" closeout ③ left via `--reason conflict --note` (#344):
+      `$SCRIPTS/pr-comments.sh <repo> <num> | jq -r '[.[] | select(.body|test("^사람 확인\\(conflict\\):"))] | last.body // ""'`
+      ⓑ one line of instruction: **"This branch already has an open PR. Bring it up with
+      `git fetch origin && git rebase origin/<DEFAULT_BRANCH>`, resolve the conflicts the way the
+      original intended, implement the extra work in the note, push with
+      `--force-with-lease`, and continue the existing PR (no new PR · no merge commit). If
+      you cannot merge it, stop with `BLOCKED:` quoting the conflicting files and why"**.
+      The worker template's redispatch detection (step 10) recognises this round as "the
+      issue's `사람 확인(conflict):` is **later** than the PR's last `재검증 실패:` (or there is
+      none)" and gives this inlined instruction precedence over the bounce branch.
+
 ## ④ Report
 
 One-line summary: `reconciled N · maintained N · new N · resumed N · escalated N · blocked N · waiting(human review) N · warn N`
-(`resumed`/`escalated` are the counts of ①'s resume-sweep `resumed`/`escalated` events;
+(`resumed`/`escalated` are the counts of ①'s resume-sweep `resumed`/`escalated` events — each
+item carries the event's `reason` (`ladder`|`conflict`, #345);
 `blocked` is the count from the ③-2 eligible scan's `blocked-summary:` — candidates dropped
 by an OPEN blocker. Print it even when it is 0).
 Below it, **name the numbers item by item** — counts alone do not tell the next tick where
 each issue/PR went:
-`reconciled: #4801(bodat, PR #4810 merged) · maintained: PR #4812(bodat, rebase) · new: #4818(bodat) · resumed: #4772(bodat, 2/2) · escalated: #4803(bodat, hold:policy) · blocked: #4986(bodat ← #4985 needs-human) · warn: #4799(bodat) dirty worktree`.
+`reconciled: #4801(bodat, PR #4810 merged) · maintained: PR #4812(bodat, rebase) · new: #4818(bodat) · resumed: #4772(bodat, ladder 2/2) #5103(bodat, conflict 1/1) · escalated: #4803(bodat, ladder, hold:policy) · blocked: #4986(bodat ← #4985 needs-human) · warn: #4799(bodat) dirty worktree`.
 Copy the search-window `warn:` lines (`검색 창 절단` / `검색 창 임박`) into the warn list as
 they are — once the window fills, the **newest** issues silently drop out of the candidate
 list, so losing that signal means a dying queue looks exactly like a healthy one.
