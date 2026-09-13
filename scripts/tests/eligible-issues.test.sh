@@ -829,6 +829,17 @@ ck "⑩-b stderr 문구가 블로커로 둔갑하지 않는다(블로커 조회 
 no_line "⑩-b 유령 블로커로 탈락시키지 않는다" "$ERR" "blocked: owner/repo#33"
 ck "⑩-b 후보는 그대로 stdout 에 남는다" "$(jq -c '[.[].number]' "$OUT")" '[33]'
 
+# ── ⑩-c mktemp 실패도 `warn:` 으로 말한다 ──────────────────────────────────
+# 싱크가 /dev/null 로 내려가면 후보별 warn 의 사유가 전부 비는데, mktemp 의 오류문엔
+# `warn:` 접두어가 없어 ④ Report 가 옮기지 않는다 — 원인 한 줄이 리포트에 남아야 한다.
+fx=$(mkfx tmpfail 34)
+add_issue "$fx" 30 '["agent-ready"]' '앞 후보' ''
+add_issue "$fx" 31 '["agent-ready"]' '본문 조회가 죽는 후보' '' '2026-01-01T00:00:31Z'
+add_body_fail "$fx" 31 'gh: HTTP 502 Bad Gateway'
+run_sut "$fx" TMPDIR="$fx/없는디렉터리"
+ck "⑩-c mktemp 실패에도 후보 판정은 그대로(exit 0 · 30 남음)" "$RC:$(jq -c '[.[].number]' "$OUT")" '0:[30]'
+ck "⑩-c 임시파일 실패를 warn 한 줄로 말한다" "$(count_of "$ERR" 'warn: 임시파일 생성 실패')" "1"
+
 # ── ⑪ page=1 조회 실패는 fail-closed — 빈 목록으로 둔갑시키지 않는다 (#330) ──
 # search 2차 레이트리밋은 이 레포가 이미 사고로 기록한 모양이다: stdout `[]` + rc=0 이면
 # 디스패처가 "신규 0" 으로 읽어 **빈 큐와 구분 없이** 조용히 지나간다. 그래서 단언은

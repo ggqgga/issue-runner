@@ -256,10 +256,15 @@ body_fail_n=0
 # 정상 후보가 소리 없이 큐에서 빠졌다 — 이 PR 이 막으려는 결함과 같은 모양). #316(#257)
 # 이 합류하면 같은 문자열을 `Epic #N` 파싱이 한 번 더 훑어 표면이 는다.
 # mktemp 실패는 틱을 죽이지 않는다 — 싱크만 /dev/null 로 내려가고(오류문 없는 warn)
-# 판정 동작은 같다. trap 은 mktemp **앞에** 건다(#232 h2 관행).
+# 판정 동작은 같다. 다만 그 사실은 `warn:` 한 줄로 말한다 — mktemp 자체의 오류문은
+# `warn:` 접두어가 없어 ④ Report 에 안 실리고, 그 뒤 후보별 warn 의 사유가 전부 빈 채로
+# 나오는 이유를 리포트만 봐서는 알 수 없다(보조 리뷰 실측). trap 은 mktemp **앞에** 건다(#232 h2 관행).
 gh_err=/dev/null
 trap '[ "$gh_err" = /dev/null ] || rm -f "$gh_err"' EXIT
-gh_err=$(mktemp "${TMPDIR:-/tmp}/eligible-issues-gh-err.XXXXXX") || gh_err=/dev/null
+if ! gh_err=$(mktemp "${TMPDIR:-/tmp}/eligible-issues-gh-err.XXXXXX" 2>/dev/null); then
+  gh_err=/dev/null
+  echo "warn: 임시파일 생성 실패(TMPDIR=${TMPDIR:-/tmp}) — 이 틱의 본문 조회 오류문을 못 싣는다(사유 빈 warn 으로 나간다)" >&2
+fi
 
 out="[]"
 count=$(printf '%s' "$cands" | jq 'length')
