@@ -104,10 +104,17 @@ if [ -n "$epic_line" ] && [ "$(head -1 "$rendered")" != "$epic_line" ]; then
   { printf '%s\n\n' "$epic_line"; cat "$rendered"; } > "$tmp/body2.md"
   mv "$tmp/body2.md" "$rendered"
 fi
-if ! grep -qF -- "$origin_line" "$rendered"; then
-  # 옛 본문 파일(슬롯 없음)도 출처 줄 없이 나가지 않는다 — 첫 줄(에픽 줄 또는 빈 줄) 다음에 끼운다.
-  { head -1 "$rendered"; printf '%s\n' "$origin_line"; tail -n +2 "$rendered"; } > "$tmp/body2.md"
-  mv "$tmp/body2.md" "$rendered"
+if [ "$(sed -n 2p "$rendered")" != "$origin_line" ]; then
+  # 출처 줄은 존재가 아니라 **둘째 줄 위치**가 계약이다(첫 줄 = 에픽 줄 또는 빈 줄, 둘째 줄 = 출처).
+  # 슬롯이 없는 옛 본문(또는 슬롯 앞에 산문이 남은 본문)은 다른 자리의 출처 줄을 걷어 낸 뒤, 첫 줄이
+  # 에픽 줄도 빈 줄도 아니면 빈 줄을 먼저 세우고 그 다음에 끼운다 — 본문 절 한가운데를 가르지 않는다.
+  grep -vxF -- "$origin_line" "$rendered" > "$tmp/body2.md" || true
+  first_line=$(head -1 "$tmp/body2.md")
+  if [ -z "$epic_line" ] && [ -n "$first_line" ]; then
+    { printf '\n%s\n' "$origin_line"; cat "$tmp/body2.md"; } > "$rendered"
+  else
+    { head -1 "$tmp/body2.md"; printf '%s\n' "$origin_line"; tail -n +2 "$tmp/body2.md"; } > "$rendered"
+  fi
 fi
 
 # ⑶⑷ 발행 — 라벨 부재면 setup-labels 1회 + 재시도 1회, 그래도 안 되면 무라벨 폴백
