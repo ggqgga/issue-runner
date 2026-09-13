@@ -1,6 +1,6 @@
 ---
 name: issue-runner
-description: Autonomous dispatcher that picks up agent-ready issues across your entire GitHub account, implements them in worktrees, and opens PRs. Use with /loop (e.g. /loop 15m /issue-runner). Each tick performs Reconcile → Maintain → Dispatch → Report. Never merges.
+description: Autonomous dispatcher that picks up agent-ready issues across your entire GitHub account, implements them in worktrees, and opens PRs. Use with /loop (e.g. /loop 5m /issue-runner). Each tick performs Reconcile → Maintain → Dispatch → Report. Never merges.
 ---
 
 > English translation of [SKILL.md](SKILL.md). The Korean original is the source of

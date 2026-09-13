@@ -97,7 +97,7 @@ ln -s ~/Projects/refs/issue-runner ~/.claude/skills/issue-runner
    gh issue edit <N> --repo <owner/repo> --add-label agent-ready --add-label P1
    ```
    ```
-   /loop 15m /issue-runner
+   /loop 5m /issue-runner
    ```
 
 Every 15 minutes a tick fires: the dispatcher claims the issue, a background worker implements it and opens a PR. You review and merge; the next tick's Reconcile cleans up the worktree and moves on.
@@ -327,7 +327,7 @@ Without the flag, `make-worktree.sh` prints a `secrets: … 미링크` note on s
 **Run it in its own session.** Keep planning (writing issues) and the loop in separate terminals — the planning session makes issues, the loop session consumes them.
 
 ```
-/loop 15m /issue-runner
+/loop 5m /issue-runner
 ```
 
 **Scoping to specific repos.** By default the loop targets your whole account. To run per-project loops without one session stealing another's issues, drop a `.loop/repos` allowlist in the session's working directory (one `owner/repo` per line). No file = whole account.

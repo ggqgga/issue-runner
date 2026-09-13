@@ -94,7 +94,7 @@ ln -s ~/Projects/refs/issue-runner ~/.claude/skills/issue-runner
    gh issue edit <N> --repo <owner/repo> --add-label agent-ready --add-label P1
    ```
    ```
-   /loop 15m /issue-runner
+   /loop 5m /issue-runner
    ```
 
 15분마다 틱이 돈다: 디스패처가 이슈를 claim 하고, 백그라운드 워커가 구현해 PR 을 연다. 사람이 리뷰·머지하면 다음 틱의 Reconcile 이 worktree 를 정리하고 넘어간다.
@@ -324,7 +324,7 @@ acme/other  -                          link-secrets   # `-` = 기본 경로 그�
 **별도 세션에서 돌린다.** 기획(이슈 작성)과 루프를 다른 터미널로 분리한다 — 기획 세션은 이슈만 만들고, 루프 세션이 소비한다.
 
 ```
-/loop 15m /issue-runner
+/loop 5m /issue-runner
 ```
 
 **특정 레포로 스코프 좁히기.** 기본은 계정 전체다. 프로젝트별 루프를 한 세션이 다른 세션의 이슈를 집어가지 않게 돌리려면 세션의 작업 디렉토리에 `.loop/repos` 허용목록(줄당 `owner/repo` 하나)을 둔다. 파일이 없으면 계정 전체.
