@@ -517,6 +517,9 @@ bash scripts/tests/cleanup-worktree.test.sh
 echo "[test] repo-flag.sh · repo-dir.sh repos.conf 파싱 — 3필드 이후 플래그·주석·conf 부재 off·'-' 경로 폴백 (#109)"
 bash scripts/tests/repo-flag.test.sh
 
+echo "[test] setup-labels.sh 라벨 세트 생성 — 설명 100자 상한·세트 전량 생성·전수 설명 (#346)"
+bash scripts/tests/setup-labels.test.sh
+
 echo "[#206] 진행 증거 술어는 progress-evidence.sh 한 자리 (#200 → #206)"
 # 커밋 신선도(STALL_MIN)와 CI 큐 티켓 판정을 다른 스크립트가 자기 벌로 들고 있으면 언젠가
 # 한쪽만 고쳐져 두 소비자(timebox-check · finish-classify)가 다른 수를 센다 — 반송 마커
