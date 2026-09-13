@@ -209,57 +209,6 @@ dup=$(grep -nE 'startswith\("머지 판정|startswith\("Merge verdict|startswith
 grep -qF 'def is_verdict_ok' scripts/lib/loop.jq \
   || { echo "  ✗ scripts/lib/loop.jq 에 판정 술어 정의가 없다 — 위 검사가 의미를 잃었다"; exit 1; }
 
-echo "[closeout·verify-runner] bounce-comment 헬퍼 실행비트·생성 본문 판정 스모크 (#212 · #221)"
-# 문구 생성 헬퍼가 실행 비트 없이 배포되면 조용히 exit 126 → 두 SKILL 이 부르는 반송
-# 코멘트가 전부 게시 실패로 degrade 한다(PR#173 교훈, bounce-state.sh 와 같은 함정).
-tmp=$(mktemp -d); mkdir "$tmp/stub"
-# gh 스텁은 **마지막 인자**(호출 계약상 항상 --body 값)만 파일에 그대로 쓴다 — 이
-# 레포는 bash 3.2 를 지원해야 해 mapfile/연관배열을 못 쓴다(transition.sh:177 선례).
-# body 는 개행을 담을 수 있으므로(reverify-fail) 널/줄바꿈 구분자로 여러 인자를
-# 합쳐 쓰지 않고, "마지막 인자 하나만 통째로" 쓰는 방식으로 그 문제를 피한다.
-cat > "$tmp/stub/gh" <<'STUB'
-#!/bin/sh
-last=""
-for a in "$@"; do last="$a"; done
-printf '%s' "$last" > "$STUB_CAPTURE"
-exit 0
-STUB
-chmod +x "$tmp/stub/gh"
-# 판정 호출용 별도 스텁 — 항상 실패한다(주입 경로가 gh 를 타면 안 된다는 계약의 봉인).
-mkdir "$tmp/nogh"
-printf '#!/bin/sh\nexit 1\n' > "$tmp/nogh/gh"; chmod +x "$tmp/nogh/gh"
-# 생성 본문이 판정기에 실제로 걸리는지를 문다 — **리터럴 대조가 아니라** 그 본문을
-# `BOUNCE_COMMENTS_FILE` 로 `bounce-state.sh` 에 먹여 `bounced` 가 나오는지로 판정한다
-# (#221 ②). 옛 방식은 본문을 **이 검사 안의 마커 리터럴**과 맞췄고, 그래서 SSOT
-# (`bounce-state.sh` 의 `BOUNCE_MARKERS`)만 바뀌면 헬퍼와 판정기가 **둘 다 낡은 채로**
-# CI 가 초록이었다 — 바로 위 "마커 집합은 한 자리" 검사가 세운 원칙을 검사 자신이 어긴
-# 자리다. 이제 이 블록에는 마커 리터럴이 한 글자도 없어, 마커 집합이 바뀌면 검사가
-# 자동으로 따라간다(가짜 마커를 하나 더해도 이 스모크는 그 형태를 그대로 받아들인다).
-for args in \
-  "redispatch owner/r 1 2" \
-  "reverify-fail owner/r 1 2 3 사유" \
-  "closeout-blocker owner/r 1 2 사유"; do
-  # shellcheck disable=SC2086
-  out=$(PATH="$tmp/stub:$PATH" STUB_CAPTURE="$tmp/cap" scripts/bounce-comment.sh $args 2>&1)
-  rc=$?
-  [ "$rc" = 0 ] || { echo "  ✗ bounce-comment.sh $args 실패(rc=$rc): $out"; rm -rf "$tmp"; exit 1; }
-  # 본문은 개행을 담을 수 있으므로(reverify-fail) 통째로 한 문자열로 싸서 넘긴다.
-  # 선행 `머지 판정: ✅` 를 함께 깔아 **실제 판정 형상**(✅ 뒤에 반송이 달린 PR)으로 묻는다
-  # — 마커 1건만 넣으면 "✅ 0건이면 bounced" 라는 다른 분기에 기대게 된다.
-  jq -Rs '[{body: "머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->", createdAt: "2026-01-01T00:00:00Z"},
-           {body: ., createdAt: "2026-01-01T00:00:01Z"}]' < "$tmp/cap" > "$tmp/inject.json" \
-    || { echo "  ✗ bounce-comment.sh $args 본문을 판정 입력으로 싸지 못했다"; rm -rf "$tmp"; exit 1; }
-  # 판정 실패(exit≠0)와 `ok` 를 같은 방향(실패)으로 받는다 — 반송으로 읽힌다는 것을
-  # **증명**해야 통과다(PR#139: 증명 실패는 통과가 아니다).
-  # PATH 의 `gh` 는 항상 실패하는 스텁이다 — 주입 경로가 실조회로 새면(계약 위반) 판정이
-  # 빈 값이 되어 여기서 즉시 빨개진다. CI 머신의 gh 인증 상태에 이 검사가 기대지 않는다.
-  state=$(PATH="$tmp/nogh:$PATH" BOUNCE_COMMENTS_FILE="$tmp/inject.json" \
-    scripts/bounce-state.sh owner/r 1) || state=""
-  [ "$state" = bounced ] \
-    || { echo "  ✗ bounce-comment.sh $args 가 낸 본문을 bounce-state.sh 가 반송으로 못 읽는다(판정=[$state]): $(cat "$tmp/cap")"; rm -rf "$tmp"; exit 1; }
-done
-rm -rf "$tmp"
-
 echo "[closeout ① Reconcile] SKILL 한/영 이벤트 목록에 human_hold 행선지가 있는가 (#271 ⑺)"
 # 스크립트가 내는 이벤트에 SKILL 쪽 목적지가 없으면 봇은 그 줄을 그냥 흘려보낸다 —
 # 사람이 붙인 보류가 아무 데도 도착하지 않고 PR 이 레인에 남는다. 판정 자체(needs-human

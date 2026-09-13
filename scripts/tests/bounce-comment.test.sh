@@ -125,6 +125,45 @@ check_eq "closeout-blocker 여러 줄 사유 — 첫 줄 앵커 유지" \
 last_line=$(printf '%s\n' "$body" | tail -1)
 check_eq "closeout-blocker 여러 줄 사유 — 마지막 줄 = 머신 마커" "<!-- bodat:worker -->" "$last_line"
 
+# ── 교차 절 — 이 헬퍼가 낸 본문을 판정기가 반송으로 읽는가 ────────────────
+# 위 절들은 본문을 SKILL.md 문구와 **바이트로** 맞춘다. 그것만으로는 마커 집합
+# (`bounce-state.sh` 의 `BOUNCE_MARKERS`)이 바뀌었을 때 헬퍼와 판정기가 **둘 다 낡은
+# 채로** 초록일 수 있다. 그래서 생성 본문을 리터럴과 대조하지 않고 `BOUNCE_COMMENTS_FILE`
+# 로 판정기에 그대로 먹여 `bounced` 가 나오는지로 잰다 — 이 절에는 마커 리터럴이 한 자도
+# 없어 집합이 바뀌면 검사가 따라간다.
+# 판정 호출의 PATH 는 **항상 실패하는 gh** 다: 주입 경로가 실조회로 새면 판정이 빈 값이
+# 되어 여기서 즉시 빨개진다(CI 머신의 gh 인증 상태에 기대지 않는다).
+mkdir -p "$tmp/nogh"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/nogh/gh"; chmod +x "$tmp/nogh/gh"
+
+cross_case() {  # cross_case <이름> <채널 인자...>
+  local name="$1"; shift
+  local body state
+  STUB_CAPTURE="$tmp/cross-cap"; : > "$STUB_CAPTURE"
+  if ! PATH="$tmp/bin:$PATH" STUB_CAPTURE="$STUB_CAPTURE" bash "$SUT" "$@" >/dev/null 2>&1; then
+    fail=$((fail + 1)); echo "  ✗ $name — bounce-comment.sh $* 가 실패했다"; return
+  fi
+  body=$(get_body "$STUB_CAPTURE")
+  # 선행 `머지 판정: ✅` 를 함께 깔아 **실제 판정 형상**(✅ 뒤에 반송이 달린 PR)으로 묻는다
+  # — 반송 코멘트 하나만 넣으면 "✅ 0건이면 bounced" 라는 다른 분기에 기대게 된다.
+  printf '%s' "$body" | jq -Rs '[{body: "머지 판정: ✅ 머지 가능\n<!-- bodat:worker -->",
+                                  createdAt: "2026-01-01T00:00:00Z"},
+                                 {body: ., createdAt: "2026-01-01T00:00:01Z"}]' \
+    > "$tmp/cross.json" || {
+      fail=$((fail + 1)); echo "  ✗ $name — 본문을 판정 입력으로 싸지 못했다"; return; }
+  # 판정 실패(비0)와 `ok` 를 같은 방향(실패)으로 받는다 — 반송으로 읽힌다는 것을 **증명**해야
+  # 통과다(증명 실패는 통과가 아니다).
+  state=$(PATH="$tmp/nogh:$PATH" BOUNCE_COMMENTS_FILE="$tmp/cross.json" \
+    bash "$DIR/bounce-state.sh" owner/repo 42) || state=""
+  check_eq "$name" "bounced" "$state"
+}
+
+cross_case "redispatch 본문 → bounce-state 가 반송으로 읽는다" redispatch owner/repo 42 166
+cross_case "reverify-fail 본문 → bounce-state 가 반송으로 읽는다" \
+  reverify-fail owner/repo 42 166 3 "codex BLOCKER"
+cross_case "closeout-blocker 본문 → bounce-state 가 반송으로 읽는다" \
+  closeout-blocker owner/repo 42 166 "폴백 경로가 diff 를 못 받는다 해소"
+
 # ── 인자 누락 — usage(exit 2), gh 호출 없음 ──────────────────────────────
 STUB_CAPTURE="$tmp/cap3"; : > "$STUB_CAPTURE"
 rc=0
