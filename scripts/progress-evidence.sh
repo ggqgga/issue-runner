@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 # progress-evidence.sh --now <epoch> --commit-at <ISO8601|none|unknown> --head-sha <sha|none|unknown>
+#                      [--claimed-at <ISO8601|none|unknown>]
 #
 # 질문 하나에만 답한다: **이 브랜치의 워커가 지금도 진행 중이라는 증거가 있는가.**
-# 판정 입력은 두 가지뿐이고(커밋 시각·head SHA), 큐 로그는 이 스크립트가 직접 읽는다.
+# 판정 입력은 커밋 시각·head SHA·claim 부착 시각이고, 큐 로그는 이 스크립트가 직접 읽는다.
 #
-# ── 입력 어휘는 **3값**이다 (#206 회차2) ─────────────────────────────────────
+# ── 입력 어휘는 **3값**이다 ──────────────────────────────────────────────────
 #   <실제 값>  조회에 성공했고 이것이 그 값이다
 #   none       조회에 성공했고 **그런 것이 없다**(브랜치에 커밋 없음 등)
 #   unknown    **조회 자체가 실패**했다 — 값이 있는지조차 모른다
-# 호출자가 `unknown` 을 `none` 으로 접으면 조회 실패가 "증거 없음" 으로 둔갑해, 이 파일이
-# 지키려는 계약(아래 35행 부근)이 호출부에서 깨진다. 그래서 어휘를 입력 쪽에도 둔다 —
-# 실패를 표현할 말이 없으면 호출자는 결국 `none` 을 쓴다(회차1 이 그렇게 반송됐다).
 #
 # 출력(한 줄, 공백 구분):
 #   <verdict> <reason> commit=<분>m|none|- queue=<state>|- claim=<분>m|none|-
@@ -19,47 +17,26 @@
 #   none     no_progress                exit 0  증거 없음 — 무진전
 #   unknown  <사유>                     exit 2  판정 입력을 못 얻음(증거 없음이 **아니다**)
 #
-# ── 왜 스크립트로 뽑았나 (#206) ──────────────────────────────────────────────
-# 이 술어의 소비자가 둘이 됐다:
-#   1. `timebox-check.sh` (#200) — ① Reconcile 의 timebox 판정. 원래 주인.
-#   2. `finish-classify.sh` (#206) — 완결 유실 갈래에서 "🔄 가 낡았지만 워커가 살아
-#      있는가" 를 묻는다. 커밋 신선도를 빼먹으면 **살아 있는 attempt N+1 워커를 죽인다**
-#      (이 레포의 반복 오탐).
-# 두 벌로 복제하면 사람 눈에 안 보이는 두 번째 계산기가 다른 수를 센다 — 마커 집합을
-# `bounce-state.sh` 한 자리에 묶은 것과 같은 규율이다(#171·#196, PR#191 교훈).
-# `bin/ci` 가 `^STALL_MIN=`·`^queue_alive()` 정의가 이 파일 밖에 생기면 실패시킨다.
-#
 # ── 진행 증거 (셋 중 하나라도 참이면 progress) ───────────────────────────────
 #   ① 최신 커밋이 STALL_MIN 이내
 #   ② 그 head SHA 의 CI 티켓이 큐에 살아 있음(queue.log 의 그 SHA **마지막 줄**이
-#      `대기열 N번째`) — 박스 전역 직렬 CI 큐(#127) 대기는 워커가 통제할 수 없는
-#      시간이다(실측 bodat #5020 72분 · #5024 64분, 둘 다 살아 있었다).
+#      `대기열 N번째`)
 #   ③ 현재 회차의 `agent:claimed` 가 ISSUE_TIMEBOX_HOURS 안에 붙어 **아직 붙어 있음**
-#      (`--claimed-at`, 부착 시각은 `claim-at.sh` 가 낸다 — #206 attempt 3).
+#      (`--claimed-at` — **옵션 입력**이다. 안 주면 ①②만으로 판정한다)
 #
-# ①②는 워커가 **이미 뭔가 남긴 뒤에만** 존재하는 증거다. 반송 직후 교체 워커가 디스패치됐지만
-# **첫 푸시 전**인 창에는 둘 다 없고, 그때 호출자가 보는 커밋·판정 시각은 전부 *이전* attempt
-# 의 것이다 — 그래서 ①②만으로는 살아있는 워커를 죽인다(#206 attempt 2 codex BLOCKER).
-# ③이 그 창을 덮는다. 상한이 ISSUE_TIMEBOX_HOURS 인 이유: 그 시간을 넘긴 claim 은
-# `timebox-check.sh`(① Reconcile)가 이미 회수 대상으로 보는 구간이라 여기서 살릴 이유가 없다
-# — 두 자리가 같은 상수를 읽어 같은 경계를 쓴다(정의는 SKILL.md 상수 절).
-# ③은 **옵션 입력**이다 — `--claimed-at` 을 안 주면 종전과 똑같이 ①②만으로 판정한다
-# (`timebox-check.sh` 는 자기 경과 검사로 이미 같은 경계를 재므로 넘기지 않는다).
-#
-# queue.log 판정은 반드시 **그 SHA 의 마지막 줄**로 한다. 같은 SHA 가 여러 줄인 것이
-# 정상이다 — `폐기 — 실행 시점 HEAD 가 …` · `중단(INT/TERM)` · `유령 티켓 회수(pid 사망)`
-# 뒤의 재큐는 정상 동작이라, "어딘가에 대기열 줄이 있나" 로 재면 이미 끝난 티켓을 살아
-# 있다고 읽는다.
-#
-# `unknown` 을 `none` 과 섞지 않는 이유: 조회 실패로 살아있는 워커를 죽이는 것은 되돌릴
-# 수 없는 손해다. 빈 결과와 실패를 구분해(PR#139) 실패는 호출자가 보수적으로 받는다.
+# 불변식:
+#   · `unknown`(조회 실패)을 `none`(부재)과 섞지 않는다 — 호출자가 접으면 살아 있는 워커를 죽인다.
+#   · 큐 판정은 그 SHA 의 **마지막 줄**로만 한다 — 같은 SHA 가 여러 줄인 것이 정상이다.
+#   · 이 술어의 정의는 이 파일 한 자리다(소비자 둘: timebox-check.sh · finish-classify.sh).
+#     `bin/ci` 가 `^STALL_MIN=`·`^queue_alive()` 정의가 이 파일 밖에 생기면 실패시킨다.
 #
 # env 오버라이드:
 #   PE_QUEUE_LOG  queue.log 경로(기본 ~/.claude/.local-ci/queue.log)
-#   STALL_MIN     커밋 신선도 임계(분) — 값·근거는 `scripts/lib/constants.sh` (#427 로 한 자리로)
-#   ISSUE_TIMEBOX_HOURS  claim 신선도 상한(시간) — `timebox-check.sh` 와 **같은 상수 한 자리**를
-#                        읽는다(종전엔 두 파일이 각자 기본값을 들고 bin/ci 가 대조했다)
+#   STALL_MIN     커밋 신선도 임계(분) — 값은 `scripts/lib/constants.sh` (#427 로 한 자리로)
+#   ISSUE_TIMEBOX_HOURS  claim 신선도 상한(시간) — `timebox-check.sh` 와 **같은 상수 한 자리**
 # macOS bash 3.2 대상.
+#
+# 근거: references/scripts-rationale.md progress-evidence.sh §1–§4
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
