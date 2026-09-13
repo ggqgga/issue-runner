@@ -79,10 +79,14 @@
 #   warn 이 그 에픽을 계속 보여 준다.
 #   (대안이던 "마커 2종 — 코멘트에 close 성공 여부를 실어 넣기" 는 close 뒤 코멘트 편집이라는
 #   세 번째 쓰기가 필요하고 그 편집이 실패하는 창에서 같은 버그가 좁게 남아 택하지 않았다.)
-#   같은 종류의 창이 선택안에도 남는다 — **코멘트 쓰기의 거짓 실패**(서버엔 반영됐는데 클라이언트가
-#   타임아웃 등으로 실패로 본 경우): 이 틱은 warn 으로 끝나고 다음 틱은 마커를 보고 note(되돌림)로
-#   읽어 닫지 않는다. 방향이 "덜 닫는다" 쪽이고 `loop-status.sh` warn 이 계속 보여 주므로 사람이
-#   직접 닫거나 마커를 지운다(closeout 검증 WARN, #377 파생).
+#   같은 종류의 창이 선택안에도 남았었다 — **코멘트 쓰기의 거짓 실패**(서버엔 반영됐는데 클라이언트가
+#   타임아웃 등으로 실패로 본 경우): 실패 응답을 그대로 믿으면 이 틱은 warn 으로 끝나고 다음 틱은
+#   마커를 보고 note(되돌림)로 읽어 영영 닫지 않는다. 그래서 (#441) 코멘트 쓰기가 실패로 돌아오면
+#   **코멘트를 되읽어** 마커가 이미 있으면 서버 반영으로 간주하고 close 로 진행한다(`marker_count`
+#   — 게이트와 같은 술어). 되읽기에 마커가 없으면 진짜 실패다(warn · 다음 틱이 코멘트부터 재시도).
+#   되읽기까지 실패하면 마커 유무를 모르므로 닫지 않고, warn 이 "마커가 남았으면 다음 틱은 note 로
+#   굳는다 — 사람이 마커 코멘트를 지우거나 직접 닫아라" 를 말한다. `loop-status.sh` 는 "마커 있음 +
+#   열림" 에픽을 `사람 몫(스윕 되돌림)` 으로 갈라 보여 준다(같은 마커 술어 · #441).
 #
 # 알려진 느슨함 ⑴ (숨기지 않는다): **검색 인덱싱 지연**. leaf 를 GitHub 검색으로 찾으므로,
 # 방금 열린 leaf 가 아직 색인되지 않았으면 세 상한 신호(items·total_count·incomplete)가 전부
@@ -254,6 +258,22 @@ close_epic() {  # close_epic <repo> <num>
     i=$((i + 1))
     [ "$EPIC_CLOSE_RETRY_SLEEP" -eq 0 ] || sleep "$EPIC_CLOSE_RETRY_SLEEP"
   done
+}
+
+# 마커 개수 — 에픽 코멘트 전량에서 `<!-- epic-sweep -->` 를 센다. 출력은 개수(정수) 한 줄.
+# 조회 실패 rc 1 · 파싱 실패 rc 2(출력 없음) — 둘 다 "모른다" 라 호출자는 fail-closed 로 받는다.
+# 코멘트 전량은 `pr-comments.sh` 로 읽는다: `gh issue view --json comments` 는 페이지네이션 없이
+# **첫 100건만** 주고, 그 상한을 넘긴 에픽은 마커를 못 봐 매 틱 코멘트를 하나씩 더 붙인다
+# (PR#173 교훈, 같은 함정의 이슈 판). 마커 게이트(sweep_epic)와 코멘트 거짓 실패 되읽기(#441)가
+# **같은 이 술어**를 쓴다 — 두 자리가 다른 정규식을 쓰면 되읽기가 본 마커를 다음 틱 게이트가
+# 못 보거나(중복 코멘트) 그 반대(영영 안 닫힘)가 된다.
+marker_count() {  # marker_count <repo> <num>
+  local cjson n
+  cjson=$("$SCRIPT_DIR/pr-comments.sh" "$1" "$2") || return 1
+  n=$(printf '%s' "$cjson" \
+    | jq -r '[.[]? | select((.body // "") | test("<!--\\s*epic-sweep\\s*-->"))] | length' 2>/dev/null) || n=""
+  [ -n "$n" ] || return 2
+  printf '%s\n' "$n"
 }
 
 # leaf 판정 — `loop-status.sh` 의 `epic_of`(#260)와 **같은 술어**다. 본문의 **전용 줄**
@@ -501,22 +521,18 @@ EOF
   # ── 마커 게이트 — dry-run **앞**에서 본다(읽기라 쓰기 0 규약과 무관) ──────────
   # 마커(`<!-- epic-sweep -->`)가 있는데 이 에픽이 열려 있다 = 스윕이 한 번 닫았고 사람이
   # 되돌렸다. 코멘트도 close 도 하지 않는다. dry-run 도 같은 판정을 내야 한다 — #377 의 실측이
-  # `--dry-run` 으로 "다시 닫겠다" 는 거짓 예측을 봤다. 코멘트 전량은 `pr-comments.sh` 로
-  # 읽는다: `gh issue view --json comments` 는 페이지네이션 없이 **첫 100건만** 주고, 그
-  # 상한을 넘긴 에픽은 마커를 못 봐 매 틱 코멘트를 하나씩 더 붙인다(PR#173 교훈, 같은 함정의
-  # 이슈 판).
-  if ! cjson=$("$SCRIPT_DIR/pr-comments.sh" "$repo" "$num"); then
-    emit_warn "$repo" "$num" "코멘트 조회 실패 — 마커 유무를 몰라 쓰지 않는다(중복 코멘트 방지)"
-    rc=1
-    return 0
-  fi
-  marker=$(printf '%s' "$cjson" \
-    | jq -r '[.[]? | select((.body // "") | test("<!--\\s*epic-sweep\\s*-->"))] | length' 2>/dev/null) || marker=""
-  if [ -z "$marker" ]; then
-    emit_warn "$repo" "$num" "코멘트 파싱 실패 — 마커 유무를 몰라 쓰지 않는다"
-    rc=1
-    return 0
-  fi
+  # `--dry-run` 으로 "다시 닫겠다" 는 거짓 예측을 봤다. 마커 술어는 `marker_count` 한 자리다
+  # (코멘트 전량 · 100건 상한 함정은 그 주석 참조).
+  marker=$(marker_count "$repo" "$num")
+  case $? in
+    0) ;;
+    1) emit_warn "$repo" "$num" "코멘트 조회 실패 — 마커 유무를 몰라 쓰지 않는다(중복 코멘트 방지)"
+       rc=1
+       return 0 ;;
+    *) emit_warn "$repo" "$num" "코멘트 파싱 실패 — 마커 유무를 몰라 쓰지 않는다"
+       rc=1
+       return 0 ;;
+  esac
   if [ "$marker" -gt 0 ]; then
     emit_note "$repo" "$num" "스윕 마커가 있는데 열려 있다 — 다시 닫지 않는다(사람 되돌림 또는 이전 close 실패 잔여 — 종료는 사람 몫)"
     return 0
@@ -535,10 +551,22 @@ EOF
   # 닫힌 에픽에 근거가 없다(사람이 왜 닫혔는지 못 읽고, 다음 틱은 열린 에픽만 보므로
   # 영영 안 고친다). 이 순서의 실패(코멘트만 남고 안 닫힘)는 위 마커 게이트 때문에 다음 틱이
   # 이어받지 못한다 — 그래서 close 는 `close_epic` 이 같은 틱에서 재시도한다.
+  # 실패 응답은 **되읽고 나서** 믿는다(#441): 서버엔 붙었는데 클라이언트만 실패로 본 거짓
+  # 실패를 warn 으로 끝내면, 다음 틱이 그 마커를 되돌림으로 읽어(위 게이트) 영영 닫지 않는다.
+  # 되읽기에 마커가 있으면 서버 반영으로 간주하고 close 로 간다 — 코멘트를 다시 쓰지 않는다.
   if ! gh issue comment "$num" --repo "$repo" --body "$ctext" >/dev/null 2>&1; then
-    emit_warn "$repo" "$num" "종료 근거 코멘트 실패 — 닫지 않는다(다음 틱 재시도)"
-    rc=1
-    return 0
+    marker=$(marker_count "$repo" "$num")
+    case $? in
+      0) ;;
+      *) emit_warn "$repo" "$num" "종료 근거 코멘트 실패 + 되읽기 실패 — 마커 유무를 몰라 닫지 않는다: 마커가 남았으면 다음 틱은 되돌림(note)으로 굳는다 — 사람이 마커 코멘트를 지우거나 직접 닫아라"
+         rc=1
+         return 0 ;;
+    esac
+    if [ "$marker" -eq 0 ]; then
+      emit_warn "$repo" "$num" "종료 근거 코멘트 실패 — 닫지 않는다(다음 틱 재시도)"
+      rc=1
+      return 0
+    fi
   fi
 
   if ! close_epic "$repo" "$num"; then
