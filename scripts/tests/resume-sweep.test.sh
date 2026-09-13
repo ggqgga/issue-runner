@@ -1827,7 +1827,7 @@ check "미러 ⑩: removed 에 새 사유"           "$(printf '%s' "$out" | jq 
 #   PR / head / closes             이슈                         want
 #   ─────────────────────────────  ──────────────────────────  ────────────────────────────
 #   220 agent/issue-342 [399,342]  399 깨끗 · 342 정지 有       무편집 — #113 모양(순서 역전)
-#   221 agent/issue-343 [395]      브랜치의 N 이 closes 밖      무편집 · 이슈 조회조차 안 함
+#   221 agent/issue-109 [108]      브랜치의 N 이 closes 밖 · closes 1건  **편집** · 짝은 108 (#517 규칙⑵)
 #   222 agent/issue-344 [398,344]  둘 다 깨끗                   **편집** · 짝은 398 이 아니라 344
 #   223 agent/issue-345 [345,397]  345 깨끗 · 397 정지 有       무편집 — 묶음 디스패치 갈래
 #   224 agent/issue-346 [346]      346 이 `hold:policy` **만**  무편집 — has_stop 접두 갈래
@@ -1835,8 +1835,8 @@ setup "needs-human,hold:policy" 10 0
 mirror_prs '[
  {"number":220,"headRefName":"agent/issue-342","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
   "closingIssuesReferences":[{"number":399},{"number":342}]},
- {"number":221,"headRefName":"agent/issue-343","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
-  "closingIssuesReferences":[{"number":395}]},
+ {"number":221,"headRefName":"agent/issue-109","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
+  "closingIssuesReferences":[{"number":108}]},
  {"number":222,"headRefName":"agent/issue-344","labels":[{"name":"hold:policy"},{"name":"flow:verify"}],
   "closingIssuesReferences":[{"number":398},{"number":344}]},
  {"number":223,"headRefName":"agent/issue-345","labels":[{"name":"needs-human"},{"name":"hold:policy"}],
@@ -1845,11 +1845,10 @@ mirror_prs '[
   "closingIssuesReferences":[{"number":346}]}
 ]'
 mirror_issue 399 OPEN "agent-ready"
-mirror_issue 395 OPEN "agent-ready"
+mirror_issue 108 OPEN "agent-ready"
 mirror_issue 398 OPEN "agent-ready"
 mirror_issue 397 OPEN "agent-ready,hold:policy"
 mirror_issue 342 OPEN "agent-ready,needs-human,hold:conflict"
-mirror_issue 343 OPEN "agent-ready"
 mirror_issue 344 OPEN "agent-ready"
 mirror_issue 345 OPEN "agent-ready"
 mirror_issue 346 OPEN "agent-ready,hold:policy"
@@ -1859,11 +1858,13 @@ check "미러 격자2: exit 0"                      "$([ "$RC" = 0 ] && echo ok 
 check "미러 ⑪(closes 순서 역전): 무편집"        "$(none 'pr edit 220')"
 check "미러 ⑪: PR 라벨 그대로"                  "$([ "$(mpl 220)" = "needs-human,hold:policy" ] && echo ok || echo no)"
 check "미러 ⑪: 이벤트 없음"                     "$([ -z "$(mev 220)" ] && echo ok || echo no)"
-# ② 브랜치의 N 이 closes 에 없다 → 짝이 성립 안 함(무편집·무조회). `Refs #N` 전용 PR 과
-#    같은 자리다 — 짝이 증명 안 된 채 남은 정지는 정상일 수 있다.
-check "미러 ⑫(브랜치 N 이 closes 밖): 무편집"   "$(none 'pr edit 221')"
-check "미러 ⑫: 이슈 조회조차 안 한다(343)"      "$(none 'issue view 343 .*json labels,state')"
-check "미러 ⑫: 다른 closes 도 조회 안 한다(395)" "$(none 'issue view 395 .*json labels,state')"
+# ② (#517) 브랜치의 N 이 closes 에 없지만 closes 가 **정확히 1건** → 짝은 그 하나(#108).
+#    `lib/loop.jq` `linked_issue` 규칙⑵ — pr-state 의 `stop:` 축과 같은 술어다. 종전(엄격
+#    교집합)엔 짝 없음으로 넘겨 pr-state 가 매 틱 warn 을 내는데 아무도 안 고치는 칸이었다.
+#    정지 미러를 붙인 전이(verify-held 등)도 `linked_issue` 로 이슈를 고르므로 #108 이 곧
+#    그 미러의 실제 짝이다. head 단독 폴백은 여전히 없다(⑧ Refs 전용 PR 은 그대로 무편집).
+check "미러 ⑫(브랜치 N ∉ closes · closes 1건): 정리된다"   "$([ "$(mpl 221)" = "" ] && echo ok || echo no)"
+check "미러 ⑫: 이벤트의 짝은 head(109)가 아니라 closes 의 108" "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==221) | .number==108' >/dev/null 2>&1 && echo ok || echo no)"
 # ③ 전부 깨끗하면 종전대로 정리된다 — 짝은 `[0]`(#398)이 아니라 **브랜치의 이슈 #344** 다
 check "미러 ⑬(둘 다 깨끗): 정리된다"            "$([ "$(mpl 222)" = "flow:verify" ] && echo ok || echo no)"
 check "미러 ⑬: 이벤트의 짝은 [0] 이 아니라 344" "$(printf '%s' "$out" | jq -e 'select(.event=="mirror_cleared" and .pr==222) | .number==344' >/dev/null 2>&1 && echo ok || echo no)"

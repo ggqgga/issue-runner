@@ -255,6 +255,14 @@ expect "짝 이슈 — head 109 ∉ refs[108] → 108 의 라벨을 본다(refs 
   '.mismatch | any(startswith("stop: "))' \
   '["flow:verify"]' 'x' OPEN "$C_PENDING" '[108]' 'agent/issue-109'
 STUB_ISSUE_MAP_OVERRIDE=""
+# (#517) 같은 짝으로 **정지 미러**(stop 축)도 낸다 — PR 에만 `hold:policy`, #108 은 깨끗.
+# `resume-sweep.sh` ④ 와 `loop-status.sh` 의 정지 미러가 같은 입력에 #108 을 짝으로 내는
+# 것과 한 술어(`linked_issue` 규칙⑵)다. stop 축만 엄격 교집합으로 되돌리면 이 줄이 빈다.
+STUB_ISSUE_MAP_OVERRIDE=$(imap 108 '["flow:verify","agent-ready"]')
+expect "정지 미러 — head 109 ∉ refs[108] · PR 에만 hold → stop 축의 이슈는 108" "H:policy" issue-runner \
+  '.mismatch == ["stop: pr=[hold:policy] issue=[]"]' \
+  '["flow:verify","hold:policy"]' 'x' OPEN "$C_PENDING" '[108]' 'agent/issue-109'
+STUB_ISSUE_MAP_OVERRIDE=""
 # head 가 `agent/issue-*` 꼴이 아니고 refs 가 둘 이상이면 짝을 증명할 축이 없다 → 연결 없음(`-`).
 # 첫 참조로 추측하지 않는다 — 이슈 축이 없으니 `stop` 미러 축도 안 난다(108 의 hold:policy 가
 # 상태를 뒤엎지 않는다).
