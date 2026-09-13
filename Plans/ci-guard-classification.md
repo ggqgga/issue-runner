@@ -74,7 +74,7 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 | 1 | 13–22 | scripts/*.sh · scripts/manual/*.sh · scripts/lib/*.sh · hooks/*.sh · bin/ci | `bash -n "$f"` | — | ⓓ 도구 단계 | 자기 자신(문법 검사 — 대체물 없음) | 없음. 4단계 뒤 leaf 가 ci/steps/01-syntax.sh 로 옮기는 것뿐 |  |
 | 2 | 23–33 | 같음 | `shellcheck -x -S warning …` | #427 | ⓓ 도구 단계 | 자기 자신 | 없음. ci/steps/02-shellcheck.sh |  |
 | 3 | 34–40 | 같음 | `scripts/lint-heredoc.sh …` | #119 | ⓒ | ci/guards/heredoc-lint.sh | 인용 안 한 heredoc 이 0 이 되고 그 형태를 shellcheck 가 직접 물면 | L6 (이 PR) |
-| 4 | 41–44 | scripts/repo-dir.sh | `ISSUE_RUNNER_PROJECTS_ROOT=/tmp … = "/tmp/some-repo"` | — | ⓐ⑵ | 신규 scripts/tests/repo-dir.test.sh (78 의 `-` 폴백과 한 벌) | 그 테스트 파일이 생기면 즉시 |  |
+| 4 | 41–44 | scripts/repo-dir.sh | `ISSUE_RUNNER_PROJECTS_ROOT=/tmp … = "/tmp/some-repo"` | — | ⓐ⑵ | 신규 scripts/tests/repo-flag.test.sh (78 의 `-` 폴백과 한 벌 — 78 행이 지목한 그 파일) | 그 테스트 파일이 생기면 즉시 |  |
 | 5 | 45–99 | SKILL.md↔SKILL.en.md · skills/loop-issues/* · skills/closeout/* · references/worker-template*.md | `grep -c '^## ' 개수 · ①②③ 순서 마커 · <WT_PATH> 외 placeholder 6종` | — | ⓒ (+ⓓ 86–96) | ci/guards/ko-en-sync.sh. placeholder 축(86–96)은 디스패처 런타임 치환 계약이라 대체물 없음 | 한/영 쌍이 없어지거나 번역 동기 검사기가 들어오면. placeholder 축은 워커 프롬프트 조립이 스크립트 인자로 옮겨질 때 | L6 (이 PR · 5-a·5-b — ⓓ placeholder 축은 같은 루프 안이라 동반 이사) |
 | 6 | 100–120 | hooks/ci-gate-before-pr-merge.sh | `gh pr merge <번호\|URL\|브랜치> → exit 2` | — | ⓐ⑵ | 신규 scripts/tests/ci-gate.test.sh (33·34 와 한 벌) | 그 테스트 파일이 생기면 |  |
 | 7 | 121–128 | scripts/setup-labels.sh | `gh label create $lbl  (harvesting·epic·verifying·flow:agent-ready·flow:claimed)` | #281 | ⓓ 기계 계약 | references/state-machine.md 「정상 사다리」·「정지와 반송」 표가 라벨의 뜻을 갖지만, 스크립트에 정의가 있는지는 아무도 안 본다 | 라벨 목록이 84⑵ 와 한 자리로 합쳐지고 setup-labels.test.sh 가 생기면 |  |
