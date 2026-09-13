@@ -17,6 +17,12 @@ maintenance must come before new work).
 > which state (owner labels `flow:verify`·`verifying`·`flow:ready`·`harvesting`), how machine holds (`hold:*`) and human
 > holds (`needs-human`) clear, and who recovers a half-moved state after `transition.sh` exits 1·2 — read that table;
 > where prose below restates a rule, the table wins (prose cleanup is plan stage 3).
+>
+> **The SSOT for the conventions all three loops share is `references/loop-conventions.md`** (#452, Korean only).
+> What fail-closed means (§1) · the warn·note·blocked channel boundary (§2) · relaying script stderr into ④ Report
+> (§3) · the sentinel marker (§4) · the dedicated `Closes #N` line (§5) · repo short names (§6) · the pipeline
+> snapshot discipline (§7) · the missing-label fallback (§8) · verification-ladder rungs (§9) · the surface-correction
+> criterion (§10) — the prose below points at those sections instead of restating them.
 
 ## Constants
 
@@ -373,8 +379,8 @@ so it is a brake a human put there by hand. Per event:
   escalation target even once the window passes); or a `hold:conflict` a human took over
   (`full-cycle`) or parked with `needs-human` (#345) — a **normal state** with nothing to act
   on). It is not a warn, so it does not go into ④ Report's warns — if it is worth reporting at all,
-  carry it as an info line only. Narrowing `warn` to "an invariant violation the loop can
-  correct" and demoting everything else to `note` is the contract #188/#190 set.
+  carry it as an info line only. The boundary between the three channels is per
+  `references/loop-conventions.md` §2.
 - `warn_after_edit` — a side failure **after** a write was already applied (label-release
   failure · escalate/resume readback lookup failure or mismatch · **linked-PR mirror label
   release failure**, whose message names `PR #<number>`). The
@@ -519,11 +525,8 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
    `머지 대기 적체 <repo> N개` ("merge backlog <repo> N") warn line in ④ Report (`<repo>` is ④'s repo short name —
    runner·bodat; repos under the cap are not listed. Maintenance keeps running in ②).
 2. Run `$SCRIPTS/eligible-issues.sh` → priority-sorted candidates (**stdout**).
-   **Carry its stderr `blocked:` / `blocked-summary:` / `warn:` lines into ④ Report** (#247):
-   each `blocked: <repo>#<num> ← #<b>(<state>)` becomes a `blocked` item, the N in
-   `blocked-summary:` becomes the `blocked N` count, and the search-window `warn:` goes
-   into Report's `warn` verbatim. Gate rejections leave through a silent `continue`, so if
-   you do not carry them nothing anywhere says why N waiting issues never move.
+   **Carry its stderr `blocked:` / `blocked-summary:` / `warn:` lines into ④ Report** (#247) —
+   which channel goes where, and why, is per `references/loop-conventions.md` §3.
 3. **LLM judgment (only toward picking less)**: if two or more candidates look
    like they will touch the same repo and the same module, pick only one this
    tick. If you cannot tell, pick it (a conflict gets resolved by the next tick's
@@ -627,8 +630,7 @@ each issue/PR went:
 Copy the search-window `warn:` lines (`검색 창 절단` / `검색 창 임박`) into the warn list as
 they are — once the window fills, the **newest** issues silently drop out of the candidate
 list, so losing that signal means a dying queue looks exactly like a healthy one.
-The repo short-name rule is the same as `loop-status.sh`'s (the repo part of `owner/repo`
-lowercased — bodat·bodac; `issue-runner` alone maps to `runner`).
+Repo short names are per `references/loop-conventions.md` §6.
 If there are warns, list the paths and reasons below it.
 **Token observation (soft budget)**: if any worker delivered a completion report, add
 one line per issue — `tokens: <repo>#<num> <this report's count> (cumulative <sum>)`.
@@ -640,15 +642,9 @@ If every count is 0, output the single line "quiet" — `blocked N` is one of th
 A tick with blocked issues is not a quiet tick (that silence is why the item exists).
 
 **Pipeline snapshot (required every tick).** After the lines above, run
-`$SCRIPTS/loop-status.sh --post issue-runner --delta "<this tick's one-line summary>"` (it also overwrites the per-repo pinned dashboard issue `루프 현황` — label `loop-dashboard` — so GitHub alone shows who holds what and when each loop last ticked, #163) and paste its output **verbatim** — the counters only say "what
-this tick did"; what is piled up is visible only in this block. Call it with no `cd` (the
-scope auto-applies from the loop session cwd's `.loop/repos`). **Paste it even on a quiet
-tick where every count is 0** — the snapshot is the only window onto what is idling.
-- On exit 1 (partial failure — some repos failed to query), paste the output as-is and add
-  one warn line `loop-status 부분 실패`.
-- On exit 64 (no scope — an account-wide session with no `.loop/repos`), call it once more
-  naming the repos touched this tick with `--repo <owner/repo>`; if there are none, leave one
-  warn line `loop-status: 스코프 없음(.loop/repos 부재)`.
+`$SCRIPTS/loop-status.sh --post issue-runner --delta "<this tick's one-line summary>"` and paste its
+output verbatim — the pasting discipline (no `cd` · even on a quiet tick) and the exit 1·64 handling
+are per `references/loop-conventions.md` §7.
 Even on a quiet tick, **run the eligible scan of ③ Dispatch (eligible-issues.sh)
 every tick** — new agent-ready issues create no reconcile events, so skipping the
 eligible scan makes quiet mode permanently blind to new candidates (on an empty

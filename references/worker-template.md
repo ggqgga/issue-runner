@@ -31,10 +31,8 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
 
 머신 코멘트 마커(필수): 네가 PR·이슈에 남기는 모든 코멘트(`gh pr comment`/
 `gh issue comment` — 머지 판정·검증자 리뷰·BLOCKED·그 외 자기-노트 일체)는 **마지막
-줄에 정확히 `<!-- bodat:worker -->` 한 줄**을 포함해야 한다. 이 마커가 머신 코멘트를
-사람 리뷰와 구분하는 유일한 신호다(closeout-eligible 의 미해결-코멘트 판정 기준) —
-빠지면 그 PR 이 "미해결 사람 코멘트 있음"으로 오인돼 자동 마감에서 탈락한다. (긍정
-게이트는 "머지 판정: ✅" 로 시작하는지 보므로 마커는 **반드시 마지막 줄**에 둔다.)
+줄에 정확히 `<!-- bodat:worker -->` 한 줄**을 포함해야 한다. 왜 마지막 줄인지, 빠지면
+어떻게 되는지는 `~/.claude/skills/issue-runner/references/loop-conventions.md` §4 대로.
 
 절차:
 1. <WT_PATH> 의 CLAUDE.md 를 읽고 빌드/테스트 방법을 파악하라.
@@ -268,11 +266,11 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    agent PR 을 만들지 않는다. 인계(11b)가 이것을 `flow:verify` 로 바꾼다.
    **라벨 부재 fail-closed** — `gh pr create` 는 `--label` 에 레포에 없는 라벨이 있으면 PR 자체를
    안 만들고 실패한다. `'flow:claimed' not found` 류로 실패하면
-   `~/.claude/skills/issue-runner/scripts/setup-labels.sh <REPO>` 를 **1회** 돌린 뒤 같은 명령을
-   **1회만** 재시도하라. 재시도도 실패하면 더 반복하지 말고 `--label` 없이 열어라 — PR 유실이 라벨
-   유실보다 나쁘다(라벨 보강은 `handoff-verify` 가 다시 시도하고, 그것도 실패하면 exit 2 로 BLOCKED 에
-   드러난다 — 조용히 정리되는 것이 아니다). 이 보강 호출은 아래 "금지"의 좁은 예외다.)
-   본문에 반드시 전용 라인 `Closes #<NUM>` 과 `## Test plan` 섹션(수용 기준 기반
+   `~/.claude/skills/issue-runner/references/loop-conventions.md` §8 「PR 생성」 행 대로 하라
+   (`~/.claude/skills/issue-runner/scripts/setup-labels.sh <REPO>` **1회** → 같은 명령 **1회만**
+   재시도 → 그래도 실패면 `--label` 없이 열기). 이 보강 호출은 아래 "금지"의 좁은 예외다.)
+   본문에 반드시 **전용 라인** `Closes #<NUM>`(에픽 부분 진행은 `Refs #N` — 규약은
+   `~/.claude/skills/issue-runner/references/loop-conventions.md` §5) 과 `## Test plan` 섹션(수용 기준 기반
    체크박스), 그리고 `## 사전 리뷰` 절(9-b 결과)을 포함하라. PR 생성 직후
    `gh pr comment <PR번호> --repo <REPO> --body "머지 판정: 🔄 진행 중 — 검증(E2E·codex) 전, 머지 보류
 <!-- bodat:worker -->"`
@@ -318,7 +316,9 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
       의 칸을 올라 시도하고, 시도한 칸·실패 출력(명령 한 줄 + 마지막 20줄)을
       PR `## Test plan` 에 인용한 뒤에만 `[ ]` 로
       남긴다** — "실장비가 필요하다" 는 서술만으로는 `[ ]` 로 둘 수 없다(칸 ①②는
-      워크트리에서 그대로 시도할 수 있다. 아래 "금지" 는 그대로 지킨다).
+      워크트리에서 그대로 시도할 수 있다. 네가 올라가는 상한은 칸 ③ 이다 —
+      `~/.claude/skills/issue-runner/references/loop-conventions.md` §9 주체별 상한 표.
+      아래 "금지" 는 그대로 지킨다).
       **본문 전체 재생성 금지** — 체크박스 마크만 보수적으로
       치환하고 나머지 텍스트는 한 글자도 바꾸지 마라(글로벌 훅이 서브에이전트엔 안 닿아
       직접 한다).

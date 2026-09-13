@@ -12,6 +12,11 @@ description: GitHub 계정 전체에서 agent-ready 이슈를 자동으로 집�
 > 있고(소유 라벨 `flow:verify`·`verifying`·`flow:ready`·`harvesting`), 기계 정지(`hold:*`)와 사람 정지(`needs-human`)가
 > 어떻게 풀리며, `transition.sh` 가 exit 1·2 로 끝난 반쯤 이동 상태를 누가 회수하는지는 그 표를 본다 — 아래 산문에
 > 같은 규칙이 남아 있으면 표가 이긴다(산문 정리는 플랜 3단계).
+>
+> **세 루프가 공유하는 규약의 SSOT 는 `references/loop-conventions.md` 다**(#452). fail-closed 의 뜻(§1) ·
+> warn·note·막힘 채널 경계(§2) · 스크립트 stderr → ④ Report 릴레이(§3) · 센티널 마커(§4) · `Closes #N`
+> 전용 줄(§5) · 레포 짧은 이름(§6) · 파이프라인 스냅샷 규율(§7) · 라벨 부재 폴백(§8) · 검증 사다리 칸
+> 규율(§9) · 표면 교정 판정(§10) — 아래 산문은 그 절들을 가리키지 재진술하지 않는다.
 
 ## 상수
 
@@ -328,8 +333,7 @@ PR 이 영구 needs-human 으로 남고 뒤 전이(handoff-verify·verify-pass·
   배포 대기 이슈의 `hold:ladder`(#217, 창이 지나도 재개·승격 대상이 아니다) · 사람이
   인수한(`full-cycle`) 또는 `needs-human` 을 세운 `hold:conflict`(#345)처럼
   **정상 상태**라 조치할 것이 없는 건). warn 이 아니므로 ④ Report warn 에 올리지 않는다 —
-  보고가 필요하면 정보 줄로만 남긴다. warn 을 "루프가 교정 가능한 불변식 위반" 으로 좁히고
-  나머지를 note 로 내리는 것이 #188/#190 이 정한 규약이다.
+  보고가 필요하면 정보 줄로만 남긴다. 세 채널의 경계는 `references/loop-conventions.md` §2 대로.
 - `warn_after_edit` — 쓰기가 **이미 반영된 뒤**의 부수 실패(라벨 해제 실패 · 승격/재개 readback
   조회 실패·불일치 · **연결 PR 미러 라벨 해제 실패**(문구에 `PR #<번호>`)). 재개/승격 자체는 일어났을 수 있으니 되돌리지 말고, ④ Report 의
   warn 에 `(편집 반영됨)` 표기로 옮겨라 — 다음 틱의 loop-status 가 실제 라벨 상태를 보여 준다.
@@ -462,9 +466,7 @@ N 도 디스패치당 1만 올린다.
    보수는 ② 에서 계속 돈다).
 2. `$SCRIPTS/eligible-issues.sh` 실행 → 우선순위 정렬된 후보(**stdout**).
    **stderr 의 `blocked:`·`blocked-summary:`·`warn:` 줄은 ④ Report 로 옮긴다** (#247) —
-   `blocked: <repo>#<num> ← #<b>(<상태>)` 는 `막힘` 항목으로, `blocked-summary:` 의 N 은
-   `막힘 N` 카운트로, 검색 창 `warn:` 은 Report 의 `warn` 에 그대로. 게이트 탈락은
-   조용한 `continue` 라, 안 옮기면 "대기 N건이 왜 안 도는가"가 어디에도 안 남는다.
+   채널별로 어디에 어떻게 옮기는지는 `references/loop-conventions.md` §3 대로.
 3. **LLM 판단 (덜 집는 쪽으로만)**: 후보 중 같은 레포·같은 모듈을 건드릴 것으로
    보이는 이슈가 둘 이상이면 이번 틱에는 하나만 집는다. 판단이 서지 않으면 집는다
    (충돌은 다음 틱 rebase 가 풀어준다).
@@ -549,8 +551,7 @@ N 도 디스패치당 1만 올린다.
 `정리: #4801(bodat, PR #4810 머지) · 보수: PR #4812(bodat, rebase) · 신규: #4818(bodat) · 재개: #4772(bodat, ladder 2/2) #5103(bodat, conflict 1/1) · 승격: #4803(bodat, ladder, hold:policy) · 막힘: #4986(bodat ← #4985 needs-human) · warn: #4799(bodat) dirty worktree`.
 검색 창 `warn:`(`검색 창 절단`·`검색 창 임박`)은 warn 줄에 그대로 옮긴다 — 창이 차면
 **가장 새 이슈부터** 후보 목록에서 조용히 사라지므로, 그 신호가 사라지면 큐가 죽어도 안 보인다.
-레포 짧은 이름 규칙은 `loop-status.sh` 와 같다(`owner/repo` 의 repo 를 소문자로 — bodat·bodac,
-`issue-runner` 만 `runner` 특례).
+레포 짧은 이름은 `references/loop-conventions.md` §6 대로.
 warn 이 있으면 경로와 사유를 그 아래 나열.
 **토큰 관측 (소프트 예산)**: 완료 보고를 낸 워커가 있으면 이슈별 한 줄
 `토큰: <repo>#<num> <이번 보고치> (누적 <합>)` 을 추가하라. 같은 워커 보고의 `사전 리뷰: <값>` 도
@@ -562,15 +563,8 @@ needs-human 승격 권고"** 를 명시하라 (보고만 — 라벨 부착·워�
 모든 카운트가 0이면 "조용함" 한 줄만 — `막힘 N` 도 카운트다. 막힌 건이 있으면 조용한 틱이
 아니다(그 침묵이 이 항목을 만든 이유다).
 
-**파이프라인 스냅샷 (매 틱 필수).** 위 줄들 뒤에 `$SCRIPTS/loop-status.sh --post issue-runner --delta "<이 틱 한 줄 요약>"`(레포마다 고정 이슈 `루프 현황`(라벨 `loop-dashboard`) 본문도 덮어쓴다 — 깃헙만 보고 누가 들고 있고 루프가 마지막으로 언제 돌았는지 알게, #163) 를 실행해
-출력을 **그대로** 붙인다 — 카운터는 "이 틱에 한 일"만 말하고 무엇이 쌓여 있는지는
-이 블록만 본다. `cd` 없이 부른다(스코프는 루프 세션 cwd 의 `.loop/repos` 를 자동 적용).
-**카운트가 전부 0인 조용한 틱에도 붙인다** — 스냅샷은 "놀고 있는 것"을 보는 유일한 창이다.
-- exit 1(부분 실패 — 일부 레포 조회 실패)이면 그 출력을 그대로 붙이고 warn 에
-  `loop-status 부분 실패` 한 줄을 더한다.
-- exit 64(스코프 없음 — 계정 전체 세션이라 `.loop/repos` 가 없음)면 이 틱에 만진 레포들을
-  `--repo <owner/repo>` 로 명시해 한 번 더 부르고, 그래도 없으면 warn 에
-  `loop-status: 스코프 없음(.loop/repos 부재)` 한 줄.
+**파이프라인 스냅샷 (매 틱 필수).** 위 줄들 뒤에 `$SCRIPTS/loop-status.sh --post issue-runner --delta "<이 틱 한 줄 요약>"` 를 실행해 출력을 그대로 붙인다 —
+붙이는 규율(`cd` 없이 · 조용한 틱에도)과 exit 1·64 처리는 `references/loop-conventions.md` §7 대로.
 조용한 틱이라도 **③ Dispatch 의 eligible 스캔(eligible-issues.sh)은 매 틱 실행하라** —
 새 agent-ready 이슈는 reconcile 이벤트를 만들지 않으므로 eligible 스캔을 거르면 절전
 모드가 신규 후보에 영구히 맹목이 된다(빈 큐에서는 search/issues 1콜이라 비용 무시 가능).

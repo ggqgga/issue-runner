@@ -19,6 +19,12 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
 > which state (owner labels `flow:verify`·`verifying`·`flow:ready`·`harvesting`), how machine holds (`hold:*`) and human
 > holds (`needs-human`) clear, and who recovers a half-moved state after `transition.sh` exits 1·2 — read that table;
 > where prose below restates a rule, the table wins (prose cleanup is plan stage 3).
+>
+> **The SSOT for the conventions all three loops share is `references/loop-conventions.md`** (#452, Korean only).
+> What fail-closed means (§1) · the warn·note·blocked channel boundary (§2) · relaying script stderr into ④ Report
+> (§3) · the sentinel marker (§4) · the dedicated `Closes #N` line (§5) · repo short names (§6) · the pipeline
+> snapshot discipline (§7) · the missing-label fallback (§8) · verification-ladder rungs (§9) · the surface-correction
+> criterion (§10) — the prose below points at those sections instead of restating them.
 
 ## Constants
 
@@ -556,11 +562,10 @@ is what keeps issue-runner ② Maintain and verify-runner off this PR (verify-el
 excludes harvesting), and leaving only `harvesting` makes "closing out" unambiguous in the
 PR list. If there are 0 candidates, skip the ③ pipeline and report a clean no-op in ④ Report.
 
-**Missing labels are auto-provisioned by the transition.** Even an opted-in repo may lack
-the `harvesting` label until `setup-labels.sh` is re-run (common for existing repos); on a
-`not found`-type failure `transition.sh` runs `setup-labels.sh` **once per process** and
-retries the same edit **exactly once** (no infinite loop). If that still fails it exits 2 —
-skip this PR and report
+**Missing labels are auto-provisioned by the transition** — the mechanism and the per-site
+fallback are per the 「라벨 이동」 row of `references/loop-conventions.md` §8. Even an opted-in
+repo may lack the `harvesting` label until `setup-labels.sh` is re-run (common for existing
+repos). If the provisioning also fails it exits 2 — skip this PR and report
 `BLOCKED: transition failed closeout-pick PR #<pr>(<repo_short>) — <one stderr line>`
 in ④ Report.
 
@@ -590,7 +595,7 @@ no verdict) is `policy`; `ladder` only when the rungs of
 were actually climbed and the failure output cited.
 
 **The stderr `blocked:` line from `$SCRIPTS/closeout-eligible.sh` is moved into ④ Report**
-(same shape as issue-runner's `eligible-issues.sh` `blocked:` hand-off rule, #379). The
+(the rule is shared by all three loops — `references/loop-conventions.md` §3, #379). The
 `✅ 이후 미해결 코멘트 N건` line (literally "N unresolved comments after ✅") means "a human review
 remains after the boundary the verifier acknowledged (the ✅'s `코멘트 스냅샷 N`, or the ✅ itself
 when absent), so it was not picked up, fail-closed" (the literal's "after ✅" refers to that boundary) — the loop does not resolve this on its own (a machine judging a
@@ -602,9 +607,9 @@ the PR back to `flow:verify` (or re-pick it into `verifying`). Until then, the s
 repeating every tick is expected (never drop it silently). The counting boundary is the
 `코멘트 스냅샷 N` snapshot token in the ✅ body when present (that N is the moment verify-runner
 read the comments, so comments that slipped in between the read and the ✅ are caught too,
-#384); for an older ✅ without the snapshot token it is that ✅'s index. Why not `warn`: warn is reserved for
-invariant violations the loop can correct (`loop-status.sh` definition) — this is a legitimate
-non-pick, so it belongs to the `막힘` (blocked) bucket.
+#384); for an older ✅ without the snapshot token it is that ✅'s index. It is `막힘` (blocked)
+rather than `warn` per the channel boundary in `references/loop-conventions.md` §2 (a
+legitimate non-pick).
 
 ## ③ Pipeline — steps 1–6
 
@@ -612,8 +617,9 @@ For the picked PR, perform the 6 steps below in order. At the end of each step, 
 the marker command (① Reconcile marker table) so the next tick can resume idempotently.
 
 **Step 1 — plan-conformance verification — one `general-purpose` call, no codex (#375).** Get
-`<issue>` from the PR body's `Closes #N` / `Refs #N` line (parse via `gh pr view <pr> --repo <repo>
---json body`). Correctness review is already done — verify-runner ran codex (`머지 판정: ✅` is the
+`<issue>` from the PR body's dedicated `Closes #N` / `Refs #N` line (parse via `gh pr view <pr>
+--repo <repo> --json body`; that line's production/consumption contract is
+`references/loop-conventions.md` §5). Correctness review is already done — verify-runner ran codex (`머지 판정: ✅` is the
 premise of this step; its `검증자 리뷰:` comment carries BLOCKER 0 or `자체 리뷰(codex 2회 소진)`).
 Here we check **plan conformance only**: does the change satisfy the issue AC/plan, is anything
 out of scope. One call of the ## constant `VERIFIER` (general-purpose) with
@@ -631,11 +637,9 @@ merge, #96). No worktree (`make-worktree.sh`) is needed in this step — step 3 
 `codex-review-gate.sh` is not called in this step (bin/ci asserts this document has zero such calls).
 - Verdict: BLOCKER → BLOCKER. CLEAN/NIT/WARN → pass (`[P3+]` = NIT is non-blocking).
   Machine-comment marker (required): the closeout-verification comment posted below via
-  `gh pr comment` must include **a final line `<!-- bodat:worker -->`** — it is how
-  closeout-eligible tells a machine comment from a human review (#72). Without it, on
-  re-evaluation, the PR is mistaken for an unresolved human comment and drops out only when
-  this comment comes after the latest `머지 판정: ✅` (a comment before that ✅ is treated as
-  already seen by verify-runner, #379).
+  `gh pr comment` must include **a final line `<!-- bodat:worker -->`** — the production/
+  consumption contract, and what happens when it is missing, are per
+  `references/loop-conventions.md` §4.
 - **Duplicate — the loop closes it itself (never handed to a human).** If the verifier
   judges that the fix the issue asked for is **already on `origin/main`**, or that this PR
   duplicates another, treat it as neither BLOCKER nor CLEAN. Confirm the evidence commit
@@ -917,13 +921,9 @@ comment.
   checked out and the cache reinforcement below re-runs local CI on the new SHA, so this
   costs **zero extra cycles** — whereas issuing it spends a whole dispatch→implement→
   verify→closeout lap on a one-line fix.
-  **The criterion, one line: does this change flip the pass/fail of any test at all?**
-  If none, fix it here; if even one, it is a step-6 issue. What the criterion admits —
-  comment prose, terminology/notation unification, numbers and coordinates inside
-  comments, dead-reference removal, **test names** (the description string in `test "…"`
-  executes but does not flip pass/fail). What it blocks — new assertions·new guards·
-  added coverage·constant values·execution branches. "While I'm fixing the comment, one
-  more assertion" is an issue.
+  **The criterion, what it admits and what it blocks are one copy in
+  `references/loop-conventions.md` §10** (the **same one line** verify-runner ⓪ uses).
+  If the change clears it, fix it here; if anything catches, it is a step-6 issue.
   - State what was fixed in a comment on the original PR:
     `표면 교정(closeout 3단계): <file> — <what>`. Closeout merges what it fixed itself,
     so that fact must be visible to a human.
@@ -1003,7 +1003,8 @@ not be copied into this section as-is — doing so shoves work nobody attempted 
 into the deploy lane. closeout attempts **rung ① (dev server — `bin/rails runner`·localhost) and
 rung ② (`bin/dry-run`·the AdsPower relay)** of
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-**once each** first. **Rung ③ (the TEST worker) is `e2e-test`'s job after the deploy** — that is why
+**once each** first (the per-actor ceiling table is `references/loop-conventions.md` §9 — this
+loop stops at rung ②). **Rung ③ (the TEST worker) is `e2e-test`'s job after the deploy** — that is why
 the item moves into `<LIVE_CHECKS>` rather than being escalated into a human's lap, and
 the ①② attempt results ride along so ⑦ does not repeat the same rungs.
 - If rung ①② **yields a verdict**, **drop** the item from `<LIVE_CHECKS>` (it is not a
@@ -1067,11 +1068,8 @@ and that fact must be visible to a human.
   - **exit 2 (the issue exists — its number is on stdout)** — labels or the marker went
     wrong, and that state is not normal (deploy-cycle cannot find it by the lane mark).
     Report `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` in ④ Report and
-    demand the **three-step human recovery** (skipping the second step leaves the ticket
-    label-less forever — `setup-labels.sh` only creates the label *definition*, it does not
-    attach it to an existing issue): ⑴ rerun `$SCRIPTS/setup-labels.sh <repo>`
-    ⑵ `gh issue edit <number> --repo <repo> --add-label deploy-wait` to attach it **to that
-    issue** ⑶ `gh issue view <number> --repo <repo> --json labels` to confirm. Do not
+    demand the **three-step human recovery of `references/loop-conventions.md` §8**
+    (recreate the label definition → attach it to that issue → read it back). Do not
     duplicate that label edit here (#223) — it just fails again, and that failure cuts off
     the marker and the report (the ticket exists but nobody knows = exactly the loss the
     fallback exists to prevent). Never let it pass silently.
@@ -1151,7 +1149,8 @@ structure/empty-state confirmation from real-data render confirmation in the res
       below: leave
       `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` (`<n>` = `held_marked`)
       plus `보류 내역: 표식 <a>건 · 표식 없는 미밟음 0건` (`<a>` = `held_marked`), and
-      **do not close the issue** — rung ③ is `e2e-test`'s (deploy-cycle ⑦'s) job after the deploy.
+      **do not close the issue** — rung ③ is `e2e-test`'s (deploy-cycle ⑦'s) job after the
+      deploy (`references/loop-conventions.md` §9).
   - **After the smoke — what did it see?** Collect **only the verdict lines** the prompt
     produced (`<verdict> <original item line>` — the vocabulary is `pass`·`fail`·`보류`,
     the grammar is in the script header) into a file, call
@@ -1307,9 +1306,9 @@ literally carried the label — was correct on all 186).
   guarantees it is the **first line** (an epic is linked by that dedicated body line, not
   by a sub-issue link or a label — `loop-status.sh`'s epic section counts leaves by it) →
   creates the issue with `--label agent-ready --label spinoff --label "$priority"` plus the
-  convention labels you passed → on a missing label, calls `setup-labels.sh` once and
-  retries once, and if that still fails **creates the issue without labels** (never lose
-  the issuance) → reads the labels and the `Epic #N` first line back and tops up what is
+  convention labels you passed → on a missing label, per the 「이슈 발행」 row of
+  `references/loop-conventions.md` §8 (`setup-labels.sh` once + one retry → issue without
+  labels rather than lose it) → reads the labels and the `Epic #N` first line back and tops up what is
   missing → leaves the marker `파생: #<new number> (Epic #<N|없음> · <P>)` on the parent PR.
   stdout is the new issue number, one line.
   - **exit 0** — copy the `marker:` line from stderr into ④ Report's `파생` item verbatim
@@ -1400,15 +1399,9 @@ step 4 went back to "merged ⇒ always a ticket".
 the duplication is deliberate redundancy given that omission history.)
 
 **Pipeline snapshot (required every tick).** After the lines above, run
-`$SCRIPTS/loop-status.sh --post closeout --delta "<this tick's one-line summary>"` (it also overwrites the per-repo pinned dashboard issue `루프 현황` — label `loop-dashboard` — so GitHub alone shows who holds what and when each loop last ticked, #163) and paste its output **verbatim** — the counters only say "what
-this tick did"; what is piled up is visible only in this block. Call it with no `cd` (the
-scope auto-applies from the loop session cwd's `.loop/repos`). **Paste it even on a quiet
-tick where every count is 0** — the snapshot is the only window onto what is idling.
-- On exit 1 (partial failure — some repos failed to query), paste the output as-is and add
-  one warn line `loop-status 부분 실패`.
-- On exit 64 (no scope — an account-wide session with no `.loop/repos`), call it once more
-  naming the repos touched this tick with `--repo <owner/repo>`; if there are none, leave one
-  warn line `loop-status: 스코프 없음(.loop/repos 부재)`.
+`$SCRIPTS/loop-status.sh --post closeout --delta "<this tick's one-line summary>"` and paste its
+output verbatim — the pasting discipline (no `cd` · even on a quiet tick) and the exit 1·64
+handling are per `references/loop-conventions.md` §7.
 - The stderr `blocked: PR #<pr>(<repo>) — ✅ 이후 미해결 코멘트 <n>건(마커 없음 = 사람 리뷰
   대기)` line from `$SCRIPTS/closeout-eligible.sh` (see ② Pick; literally "N unresolved
   comments after ✅, no marker = awaiting human review") is pasted verbatim as a `막힘`

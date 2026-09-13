@@ -21,11 +21,8 @@ If there is no index, ignore this paragraph.
 Machine-comment marker (required): every comment you leave on a PR or issue
 (`gh pr comment`/`gh issue comment` — merge verdict, verifier review, BLOCKED, and
 any other self-note) must include **exactly one final line `<!-- bodat:worker -->`**.
-This marker is the only signal that distinguishes a machine comment from a human
-review (it is closeout-eligible's unresolved-comment criterion) — without it, the PR
-is mistaken for "has an unresolved human comment" and drops out of auto-closeout. (The
-positive gate checks whether a comment starts with "머지 판정: ✅", so the marker must
-be the **last** line.)
+Why the last line, and what happens without it, are per
+`~/.claude/skills/issue-runner/references/loop-conventions.md` §4 (Korean only).
 
 Procedure:
 1. Read CLAUDE.md in <WT_PATH> to learn how to build and test.
@@ -306,12 +303,14 @@ Procedure:
    never leave an open agent PR without a label; the handoff in 11b swaps it for
    `flow:verify`. **Missing label is fail-closed** — `gh pr create` refuses to create the PR
    at all when a `--label` does not exist in the repo. If it fails with something like
-   `'flow:claimed' not found`, run `~/.claude/skills/issue-runner/scripts/setup-labels.sh <REPO>`
-   **once**, then retry the same command **once**. If the retry also fails, stop retrying and
-   open the PR without `--label` — losing the PR is worse than losing the label (`handoff-verify`
-   retries the label repair, and if that fails too it surfaces as BLOCKED via exit 2 — nothing is
-   tidied silently). That repair call is a narrow exception to "Forbidden" below.)
-   The body must include a dedicated line `Closes #<NUM>`, a
+   `'flow:claimed' not found`, follow the 「PR 생성」 row of
+   `~/.claude/skills/issue-runner/references/loop-conventions.md` §8
+   (`~/.claude/skills/issue-runner/scripts/setup-labels.sh <REPO>` **once** → retry the same
+   command **once** → if that fails too, open the PR without `--label`).
+   That repair call is a narrow exception to "Forbidden" below.)
+   The body must include a dedicated line `Closes #<NUM>` (`Refs #N` for partial epic
+   progress — the contract is
+   `~/.claude/skills/issue-runner/references/loop-conventions.md` §5), a
    `## Test plan` section (checkboxes based on the acceptance criteria), and a
    `## Pre-review` section (the step 9-b outcome). Immediately
    after creating the PR, leave the comment
@@ -368,7 +367,9 @@ Procedure:
       its failure output (the
       command plus its last 20 lines) in the PR `## Test plan`** — "real hardware is
       needed" as prose is not enough to leave it `[ ]` (rungs ① and ② can be attempted
-      from the worktree as-is; the "Forbidden" list below still stands).
+      from the worktree as-is; your own ceiling is rung ③ — see the per-actor table in
+      `~/.claude/skills/issue-runner/references/loop-conventions.md` §9; the "Forbidden"
+      list below still stands).
       **Do not regenerate the whole
       body** — conservatively replace only the mark in checkbox lines, leave every
       other character unchanged (the global hook does not reach subagents, so do it yourself).

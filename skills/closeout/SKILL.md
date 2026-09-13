@@ -14,6 +14,11 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 > 있고(소유 라벨 `flow:verify`·`verifying`·`flow:ready`·`harvesting`), 기계 정지(`hold:*`)와 사람 정지(`needs-human`)가
 > 어떻게 풀리며, `transition.sh` 가 exit 1·2 로 끝난 반쯤 이동 상태를 누가 회수하는지는 그 표를 본다 — 아래 산문에
 > 같은 규칙이 남아 있으면 표가 이긴다(산문 정리는 플랜 3단계).
+>
+> **세 루프가 공유하는 규약의 SSOT 는 `references/loop-conventions.md` 다**(#452). fail-closed 의 뜻(§1) ·
+> warn·note·막힘 채널 경계(§2) · 스크립트 stderr → ④ Report 릴레이(§3) · 센티널 마커(§4) · `Closes #N`
+> 전용 줄(§5) · 레포 짧은 이름(§6) · 파이프라인 스냅샷 규율(§7) · 라벨 부재 폴백(§8) · 검증 사다리 칸
+> 규율(§9) · 표면 교정 판정(§10) — 아래 산문은 그 절들을 가리키지 재진술하지 않는다.
 
 ## 상수
 
@@ -494,10 +499,10 @@ issue-runner ② Maintain·verify-runner 가 이 PR 을 건드리지 않고(veri
 harvesting 을 제외한다), PR 리스트에서 `harvesting` 하나만 남아 "마감 중"이 명확해진다.
 후보가 0이면 ③ 파이프라인을 건너뛰고 ④ Report 에 clean no-op 으로 보고한다.
 
-**라벨 부재 자동 보강은 전이가 한다.** 옵트인 레포여도 `setup-labels.sh` 재실행 전에는
-`harvesting` 라벨이 없을 수 있는데(기존 레포 공통), `transition.sh` 가 `not found` 류
-실패를 보면 `setup-labels.sh` 를 **프로세스당 1회** 돌리고 같은 편집을 **1회만** 재시도한다
-(무한루프 금지). 그래도 실패하면 exit 2 로 떨어지니 이 PR 을 skip 하고 ④ Report 에
+**라벨 부재 자동 보강은 전이가 한다** — 메커니즘과 자리별 폴백은
+`references/loop-conventions.md` §8 「라벨 이동」 행 대로. 옵트인 레포여도 `setup-labels.sh`
+재실행 전에는 `harvesting` 라벨이 없을 수 있다(기존 레포 공통). 보강도 실패하면 exit 2 로
+떨어지니 이 PR 을 skip 하고 ④ Report 에
 `BLOCKED: 전이 실패 closeout-pick PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 보고한다.
 
 **원 이슈 미러(진행 가시화).** ③-1 에서 `<issue>`(PR 본문 `Closes #N`/`Refs #N`)를 파싱한
@@ -519,8 +524,8 @@ exit 64 — 사유 없는 정지를 만들 수 없다). rebase/semantic conflict
 (`~/.claude/skills/issue-runner/references/live-verification-ladder.md`)
 의 칸을 실제로 올라가 실패 출력을 인용한 경우만 `ladder` 다.
 
-**`$SCRIPTS/closeout-eligible.sh` 의 stderr `blocked:` 줄은 ④ Report 로 옮긴다**(issue-runner
-`eligible-issues.sh` 의 `blocked:` 이관 규칙과 같은 꼴, #379). `✅ 이후 미해결 코멘트 N건` 은
+**`$SCRIPTS/closeout-eligible.sh` 의 stderr `blocked:` 줄은 ④ Report 로 옮긴다**(세 루프 공통 —
+`references/loop-conventions.md` §3, #379). `✅ 이후 미해결 코멘트 N건` 은
 "검증자가 확인한 경계(✅ 의 `코멘트 스냅샷 N`, 없으면 ✅ 자리) **뒤에** 사람 리뷰가 남아 있어
 fail-closed 로 안 집었다"는 뜻이고(리터럴의 "✅ 이후" 는 이 경계를 가리킨다), 루프가 스스로 풀지
 않는다(사람 코멘트를 기계가 '해결됨'으로 판정하면 fail-open) — 풀리는 길은 verify-runner 가
@@ -529,8 +534,8 @@ fail-closed 로 안 집었다"는 뜻이고(리터럴의 "✅ 이후" 는 이 �
 남기는 게 아니라 PR 을 `flow:verify` 로 되돌리는(또는 `verifying` 재집) 것이다. 그 전엔
 매 틱 같은 줄이 반복되는 것이 정상이다(조용한 탈락 금지, #379). 세는 경계는 ✅ 본문의
 `코멘트 스냅샷 N`(있으면 그 N — verify-runner 가 코멘트를 읽은 시점이라 읽기~게시 사이에
-낀 코멘트도 잡힌다, #384) 또는 스냅샷 토큰 없는 옛 ✅ 면 그 ✅ 의 인덱스다. `warn` 이 아닌 이유: warn 은 루프가 교정
-가능한 불변식 위반에만 쓴다(`loop-status.sh` 정의) — 이건 정당한 미집계라 `막힘` 부류다.
+낀 코멘트도 잡힌다, #384) 또는 스냅샷 토큰 없는 옛 ✅ 면 그 ✅ 의 인덱스다. `warn` 이 아니라
+`막힘` 인 이유는 `references/loop-conventions.md` §2 의 채널 경계 대로다(정당한 미집계).
 
 ## ③ 파이프라인 — 1~6단계
 
@@ -538,7 +543,8 @@ fail-closed 로 안 집었다"는 뜻이고(리터럴의 "✅ 이후" 는 이 �
 (① Reconcile 마커표) 다음 틱이 멱등 재개할 수 있게 한다.
 
 **1단계 — 계획 부합 검증 — `general-purpose` 한 번, codex 없음(#375).** `<issue>` 는 PR 본문의
-`Closes #N` / `Refs #N` 줄에서 얻는다(`gh pr view <pr> --repo <repo> --json body` 로 파싱). 정확성 리뷰는
+`Closes #N` / `Refs #N` 전용 줄에서 얻는다(`gh pr view <pr> --repo <repo> --json body` 로 파싱 —
+그 줄의 생산·소비 규약은 `references/loop-conventions.md` §5). 정확성 리뷰는
 verify-runner 가 이미 codex 로 마쳤다(`머지 판정: ✅` 가 이 단계의 전제 — 그 코멘트의 `검증자 리뷰:` 에
 BLOCKER 0 또는 `자체 리뷰(codex 2회 소진)`). 여기서는 **계획 부합만** 본다: 이 변경이 이슈 AC/플랜을
 충족하는가, 범위 이탈은 없는가. 호출은 ## 상수 `VERIFIER`(general-purpose) 하나, 프롬프트는
@@ -555,10 +561,8 @@ BLOCKER 0 또는 `자체 리뷰(codex 2회 소진)`). 여기서는 **계획 부�
 `codex-review-gate.sh` 는 이 단계에서 부르지 않는다(bin/ci 가 이 문서에 그 호출이 0건임을 문다).
 - 판정: BLOCKER → BLOCKER. CLEAN/NIT/WARN → 통과(`[P3+]` = NIT 는 비차단).
   머신 코멘트 마커(필수): 아래 `gh pr comment` 로 남기는 마감 검증 코멘트는 **마지막 줄에
-  `<!-- bodat:worker -->`** 를 포함한다 — closeout-eligible 이 머신 코멘트를 사람 리뷰와
-  구분하는 신호다(#72). 빠지면 그 PR 이 재평가 때, 이 코멘트가 최신 `머지 판정: ✅` 이후에
-  있는 경우에만 미해결 사람 코멘트로 오인돼 탈락한다(✅ 이전 코멘트는 verify-runner 가 이미
-  본 것으로 친다, #379).
+  `<!-- bodat:worker -->`** 를 포함한다 — 생산/소비 규약과 빠뜨렸을 때의 결말은
+  `references/loop-conventions.md` §4 대로.
 - **중복 — 루프가 직접 닫는다 (사람에게 넘기지 않는다).** 검증자가 "이슈가 요구한 수정이
   **이미 `origin/main` 에 있다**" 또는 "이 PR 은 다른 PR 과 중복" 으로 판정하면 —
   BLOCKER 로도 CLEAN 으로도 취급하지 마라. 근거 커밋을 확인한 뒤(`git log origin/<default>`
@@ -797,11 +801,8 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
   이미 PR 브랜치 worktree 를 잡았고 아래 캐시 보강이 새 SHA 로 로컬 CI 를 다시 돌리므로
   **추가 사이클이 0**이다 — 반면 이슈로 내보내면 디스패치→구현→검증→마감 한 바퀴가
   한 줄 고치자고 통째로 돈다.
-  **판정 기준 한 줄: 이 변경으로 통과/실패가 바뀌는 테스트가 하나도 없는가.**
-  없으면 여기서 고치고, 하나라도 있으면 6단계 이슈다. 이 기준이 받는 것 — 주석 문장,
-  용어·표기 통일, 주석 안의 수치·좌표, 죽은 참조 제거, **테스트 이름**(`test "…"` 의
-  설명 문자열은 실행되지만 통과/실패를 안 바꾼다). 이 기준이 막는 것 — 새 단언·새
-  가드·커버리지 추가·상수값·실행 분기. "주석만 고치는 김에 단언 하나" 는 이슈다.
+  **판정 기준·받는 것·막는 것은 `references/loop-conventions.md` §10 한 벌이다**(verify-runner
+  ⓪ 과 **같은 한 줄**). 기준을 통과하면 여기서 고치고, 하나라도 걸리면 6단계 이슈다.
   - 고친 것을 **원본 PR 코멘트에 명시**한다: `표면 교정(closeout 3단계): <파일> — <무엇을>`.
     자기가 고친 것을 자기가 머지하는 구조라 그 사실이 사람에게 보여야 한다.
   - 아래 캐시 보강이 비0(로컬 CI 실패)이면 **그 교정 커밋을 되돌리고** 원래 fail-closed
@@ -866,7 +867,8 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
 시도하지 않은 일이 그대로 배포 레인으로 떠넘겨진다. closeout 이
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
 의 **칸 ①(dev 서버 — `bin/rails runner`·localhost)와 칸 ②(`bin/dry-run`·AdsPower 릴레이)**
-를 **한 번씩** 시도한 뒤에 옮긴다. **칸 ③(TEST 워커)은 배포 뒤 `e2e-test` 의 몫이다** —
+를 **한 번씩** 시도한 뒤에 옮긴다(주체별 상한 표는 `references/loop-conventions.md` §9 —
+이 루프의 상한은 칸 ② 다). **칸 ③(TEST 워커)은 배포 뒤 `e2e-test` 의 몫이다** —
 그래서 `<LIVE_CHECKS>` 로 옮기는 것이지 사람 몫으로 승격하는 게 아니다. ①② 시도 결과를
 함께 남겨 ⑦ 이 같은 칸을 반복하지 않게 한다.
 - 칸 ①② 에서 **판정이 서면** 그 항목은 `<LIVE_CHECKS>` 에서 **뺀다**(배포 레인이 밟을
@@ -918,11 +920,9 @@ cwd 세션에서 issue-runner PR 머지 시 훅이 cwd 레포를 조회해 차�
     올린다. 머지된 PR 이 티켓 없이 끝나면 승격 범위가 사람 눈에서 사라진다.
   - **exit 2 (이슈는 생성됨 — 번호는 stdout)** — 라벨·마커가 어긋났다. 그 상태는 정상이 아니다
     (deploy-cycle 이 레인 표식으로 못 찾는다). ④ Report 에
-    `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로 올리고 사람에게 **3단 복구**를
-    요구한다(둘째 단을 빠뜨리면 첫째 단만으로는 그 티켓이 계속 무라벨이다 — `setup-labels.sh` 는
-    라벨 *정의* 만 만들 뿐 기존 이슈에 부착하지 않는다): ⑴ **`$SCRIPTS/setup-labels.sh <repo>`
-    재실행** ⑵ `gh issue edit <번호> --repo <repo> --add-label deploy-wait` 로 **그 이슈에** 부착
-    ⑶ `gh issue view <번호> --repo <repo> --json labels` 로 확인. 여기서 같은 라벨 편집을 겹쳐
+    `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로 올리고, 사람에게
+    **`references/loop-conventions.md` §8 의 3단 복구**(라벨 정의 재생성 → 그 이슈에 부착 →
+    readback)를 요구한다. 여기서 같은 라벨 편집을 겹쳐
     시도하지 마라(#223) — 또 실패하면 그 실패에 걸려 마커·보고가 끊긴다(티켓은 만들어졌는데
     아무도 모르는 상태 = 폴백이 막으려던 바로 그 유실). 조용히 넘어가지 마라.
 
@@ -1007,9 +1007,9 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
   실장비로도 일반 항목으로도 읽혀 판정이 흔들린다(#309). `held` 가 0이 아니면 나머지가 전부
   통과해도 배포 이슈를 닫지 말고
   `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다`(`<n>`=`held`)
-  코멘트로 끝낸다 — 칸 ③ 은 배포 뒤 `e2e-test` 의 몫이라, 여기서 닫으면 실장비 항목이 든
-  티켓이 TEST 워커를 한 번도 안 거치고 종결된다. 그 이슈는 deploy-cycle 레인의 ⑦ 이 칸 ③ 을
-  밟고 닫는 그릇이다.
+  코멘트로 끝낸다 — 칸 ③ 은 배포 뒤 `e2e-test` 의 몫이라(`references/loop-conventions.md` §9
+  주체별 상한 표), 여기서 닫으면 실장비 항목이 든 티켓이 TEST 워커를 한 번도 안 거치고
+  종결된다. 그 이슈는 deploy-cycle 레인의 ⑦ 이 칸 ③ 을 밟고 닫는 그릇이다.
   - **표식 없는 줄의 보류는 관측이지 해석이 아니다.** 표식 없는 줄은 프롬프트가 **일단 밟아
     본다** — 밟았는데 기대와 다른 값이 나왔으면 `fail`(크롬이 화면·값을 실제로 봤으므로 진짜
     결함 → 아래 fail 갈래), 밟을 수단이 브라우저 밖(워커 박스·`ssh`·AdsPower 클라이언트 조작 ·
@@ -1110,8 +1110,9 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
   읽어 `epic=`·`priority=` 를 받고 → 본문의 `<EPIC_LINE>` 전용 줄을 `Epic #N`(에픽 없으면 빈 줄)로
   채워 **첫 줄**을 보장하고(에픽은 sub-issue 링크나 라벨이 아니라 본문 전용 줄로 잇는다 —
   `loop-status.sh` 에픽 절이 그 줄로 leaf 를 센다) → `--label agent-ready --label spinoff --label "$priority"`
-  + 넘긴 규약 라벨로 발행하고 → 라벨 부재면 `setup-labels.sh` 1회 + 재시도 1회, 그래도 안 되면
-  **무라벨로라도 발행**하고(발행 유실 방지) → 라벨·`Epic #N` 첫 줄을 readback 해 보강하고 →
+  + 넘긴 규약 라벨로 발행하고 → 라벨 부재면 `references/loop-conventions.md` §8 「이슈 발행」
+  행 대로(`setup-labels.sh` 1회 + 재시도 1회 → 무라벨로라도 발행) → 라벨·`Epic #N` 첫 줄을
+  readback 해 보강하고 →
   부모 PR 에 `파생: #<새번호> (Epic #<N|없음> · <P>)` 마커를 남긴다. stdout 은 새 이슈 번호 한 줄이다.
   - **exit 0** — stderr 의 `marker:` 줄을 ④ Report 의 `파생` 항목에 그대로 옮긴다(에픽 밖으로
     새는 파생을 매 틱 관측하기 위한 것이다).
@@ -1169,8 +1170,7 @@ approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스�
 `마감: PR #4795(bodat)←#4788 · 파생: #4823(bodat)←PR #4788 (Epic #4968 · P1) · 재디스패치: #4770(bodat, stale_reverify)`.
 `파생` 항목은 6단계 PR 코멘트 마커와 **같은 꼴**로 `#<새번호> (Epic #<N|없음> · <P>)` 를 적는다 —
 에픽을 못 물려받은 파생(`Epic 없음`)이 쌓이는지 매 틱 눈으로 보이게 하려는 것이다.
-레포 짧은 이름 규칙은 `loop-status.sh` 와 같다(`owner/repo` 의 repo 를 소문자로 — bodat·bodac,
-`issue-runner` 만 `runner` 특례).
+레포 짧은 이름은 `references/loop-conventions.md` §6 대로.
 ① 의 에픽 스윕이 닫은 에픽도 같은 줄에 `에픽 종료: #285(runner, leaf 4)` 로 덧붙인다 —
 닫은 게 없으면 이 조각은 **생략한다**(`note` 는 보고하지 않는다).
 
@@ -1185,15 +1185,8 @@ approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스�
 (아래 `loop-status.sh` 블록도 승격 대기를 찍지만 이 줄은 **그대로 유지한다** — 중복은
 누락 사고 이력에 대한 의도된 이중화다.)
 
-**파이프라인 스냅샷 (매 틱 필수).** 위 줄들 뒤에 `$SCRIPTS/loop-status.sh --post closeout --delta "<이 틱 한 줄 요약>"`(레포마다 고정 이슈 `루프 현황`(라벨 `loop-dashboard`) 본문도 덮어쓴다 — 깃헙만 보고 누가 들고 있고 루프가 마지막으로 언제 돌았는지 알게, #163) 를 실행해
-출력을 **그대로** 붙인다 — 카운터는 "이 틱에 한 일"만 말하고 무엇이 쌓여 있는지는
-이 블록만 본다. `cd` 없이 부른다(스코프는 루프 세션 cwd 의 `.loop/repos` 를 자동 적용).
-**카운트가 전부 0인 조용한 틱에도 붙인다** — 스냅샷은 "놀고 있는 것"을 보는 유일한 창이다.
-- exit 1(부분 실패 — 일부 레포 조회 실패)이면 그 출력을 그대로 붙이고 `loop-status 부분 실패`
-  한 줄을 warn 으로 더한다.
-- exit 64(스코프 없음 — 계정 전체 세션이라 `.loop/repos` 가 없음)면 이 틱에 만진 레포들을
-  `--repo <owner/repo>` 로 명시해 한 번 더 부르고, 그래도 없으면
-  `loop-status: 스코프 없음(.loop/repos 부재)` 한 줄을 warn 으로 남긴다.
+**파이프라인 스냅샷 (매 틱 필수).** 위 줄들 뒤에 `$SCRIPTS/loop-status.sh --post closeout --delta "<이 틱 한 줄 요약>"` 를 실행해 출력을 그대로 붙인다 —
+붙이는 규율(`cd` 없이 · 조용한 틱에도)과 exit 1·64 처리는 `references/loop-conventions.md` §7 대로.
 - `$SCRIPTS/closeout-eligible.sh` 의 stderr `blocked: PR #<pr>(<repo>) — ✅ 이후 미해결 코멘트
   <n>건(마커 없음 = 사람 리뷰 대기)` (② Pick 참조) 는 한 줄 그대로 `막힘` 항목으로 옮겨 적는다
   (warn 아님) — verify-runner 가 재검증해 새 ✅ 를 찍기 전까진 매 틱 반복되는 것이 정상이다
