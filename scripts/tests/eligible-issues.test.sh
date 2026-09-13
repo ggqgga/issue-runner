@@ -24,6 +24,12 @@
 #      상한 소진·임박 경계·빈 페이지 정지·페이지 조회 실패는 상수를 env 로 줄여(창 5×3=15) 문다.
 #   ⑦ 스캔 끝 요약 `blocked-summary: 막힘 N건 (사람 게이트 블로커 M건)` 의 N·M 이 정확하다 —
 #      M 은 needs-human ∪ 테스트 ∪ 배포대기(loop-status `blocker_human_wait` warn 과 같은 집합, #431).
+#   ⑩ 본문 조회 실패 (#330) — 한 건이 죽어도 **그 후보만** 빠지고 나머지 판정·stdout 은
+#      살아남는다(수정 전: `set -e` 로 스크립트가 비0 종료해 목록이 통째로 증발).
+#   ⑪ page=1 조회 실패 (#330) — `rc≠0` 이고 stdout 이 **비어 있다**. 빈 목록 + rc=0 으로
+#      둔갑하면 디스패처가 "신규 0" 으로 읽어 빈 큐와 구분 없이 지나간다(레이트리밋 사고).
+#   ⑫ 창 상수 env 방어 (#330) — 비숫자·선행 0·하한·per_page 클램프·임박선 바닥이
+#      **요청(per_page)과 상한 산술에 실제로 반영**된다.
 #
 # 정렬 (#401) — Ⓕ 로 시작하는 절. 키는 `(priority, createdAt)` 둘뿐이다:
 #   Ⓕ① `P0` 는 더 늦게 만들어져도 큐 맨 앞이다.
@@ -104,15 +110,22 @@ esac
 case "$args" in
   *search/issues*)
     # #277: SUT 는 페이지를 이어 받는다 — `-f page=N` 을 읽어 페이지별 픽스처를 낸다.
+    # per_page 도 남긴다 — env 방어(비숫자 정규화 · 하한 · per_page≤100 클램프)가
+    # **실제로 요청에 반영됐는지**는 warn 문구만으로는 안 보인다(⑫).
     page=1
+    pp=""
     pprev=""
     for a in "$@"; do
       case "$pprev" in
-        -f|--field|-F|--raw-field) case "$a" in page=*) page="${a#page=}" ;; esac ;;
+        -f|--field|-F|--raw-field)
+          case "$a" in
+            page=*) page="${a#page=}" ;;
+            per_page=*) pp="${a#per_page=}" ;;
+          esac ;;
       esac
       pprev="$a"
     done
-    printf 'search page=%s\n' "$page" >> "$STUB_CALL_LOG"
+    printf 'search page=%s per_page=%s\n' "$page" "$pp" >> "$STUB_CALL_LOG"
     if [ -f "$STUB_DIR/search.p$page.fail" ]; then
       cat "$STUB_DIR/search.p$page.fail" >&2
       exit 1
@@ -135,6 +148,13 @@ if [ "${1:-} ${2:-}" = "issue view" ]; then
     *"--json body"*)
       printf 'body %s\n' "$num" >> "$STUB_CALL_LOG"
       [ -n "$jqf" ] || { echo "gh stub: 본문 조회는 -q 로 불러야 한다: $args" >&2; exit 1; }
+      # 블로커 조회와 같은 이음매 — `body.<num>.fail` 이 있으면 그 내용을 stderr 로 내고 실패한다.
+      if [ -f "$STUB_DIR/body.$num.fail" ]; then
+        cat "$STUB_DIR/body.$num.fail" >&2
+        exit 1
+      fi
+      # `body.<num>.warn` 은 **성공하면서** stderr 로도 쓰는 갈래다(gh 의 업데이트 알림 등).
+      [ -f "$STUB_DIR/body.$num.warn" ] && cat "$STUB_DIR/body.$num.warn" >&2
       [ -f "$STUB_DIR/body.$num.json" ] || { echo "gh stub: 본문 픽스처 없음: #$num" >&2; exit 1; }
       jq -r "$jqf" "$STUB_DIR/body.$num.json" || exit 1
       exit 0 ;;
@@ -218,6 +238,27 @@ add_blocker() {  # add_blocker <fx> <num> <state> <라벨 JSON 배열(문자열)
 add_blocker_fail() {  # add_blocker_fail <fx> <num> <에러문>
   printf '%s\n' "$3" > "$1/blocker.$2.fail"
 }
+add_closed_leaf() {  # add_closed_leaf <fx> <owner/repo> <본문>
+  # total_count 는 실응답처럼 items 수를 따라간다(창 절단 픽스처는 set_closed_total 로 따로 세운다).
+  jq --arg r "https://api.github.com/repos/$2" --arg b "$3" \
+    '.items += [{repository_url: $r, body: $b}] | .total_count = (.items | length)' \
+    "$1/closed.json" > "$1/c.tmp"
+  mv "$1/c.tmp" "$1/closed.json"
+}
+set_closed_total() {  # set_closed_total <fx> <total_count(JSON — 숫자 또는 null)>
+  jq --argjson t "$2" '.total_count = $t' "$1/closed.json" > "$1/c.tmp"
+  mv "$1/c.tmp" "$1/closed.json"
+}
+set_closed_fail() {  # set_closed_fail <fx> <에러문>
+  printf '%s\n' "$2" > "$1/closed.fail"
+}
+add_body_fail() {  # add_body_fail <fx> <num> <에러문(여러 줄 가능)>
+  printf '%s\n' "$3" > "$1/body.$2.fail"
+}
+add_body_stderr() {  # add_body_stderr <fx> <num> <성공하면서 stderr 로 쓰는 문구>
+  printf '%s\n' "$3" > "$1/body.$2.warn"
+}
+
 OUT=""; ERR=""; LOG=""; RC=0
 run_sut() {  # run_sut <fx> [env 대입…] — 기본 상수(창 50 × 5페이지 = 250)
   local fx="$1"
@@ -268,6 +309,7 @@ ck "① 검색 1회" "$(count_of "$LOG" 'search page=')" "1"
 ck "① page=1 한 번" "$(count_of "$LOG" 'search page=1')" "1"
 ck "① page=2 는 안 부른다(창 안 = 호출 1회 그대로)" "$(count_of "$LOG" 'search page=2')" "0"
 no_line "① 창 경고 침묵(34 ≤ 실질 상한 250)" "$ERR" "warn: 검색 창"
+no_line "① 조회 실패 0건이면 집계 warn 도 침묵" "$ERR" "warn: 본문 조회 실패"
 
 # ── ②③④⑦ 블로커 상태 격자 ────────────────────────────────────────────────
 fx=$(mkfx b 34)
@@ -759,6 +801,151 @@ ck "Ⓔ⑭ 2페이지 후보가 실제로 있다" \
   "$(jq -c '[.[].number] | map(select(. >= 305)) | sort' "$OUT")" '[305,306]'
 ck "Ⓔ⑭ 2페이지를 이어 받았다" "$(count_of "$LOG" 'search page=2')" "1"
 no_line "Ⓔ⑭ 큰 페이로드가 진단을 만들지 않는다" "$ERR" "warn:"
+# ── ⑩ 본문 조회 실패는 **그 후보만** 접는다 (#330) ────────────────────────
+# 수정 전: `body=$(gh issue view …)` 에 가드가 없어 `set -euo pipefail`(:15) 아래서
+# 단 한 건의 502 가 스크립트를 비0 종료시켰다 — **앞서 정상 판정한 후보까지** stdout 째로
+# 버려져 디스패처가 그 틱을 "후보 0" 으로 읽는다(창이 250 으로 커진 뒤 호출 수가 5배라
+# 같은 단건 실패 확률에서 틱 사망 확률도 5배). 자세는 바로 아래 블로커 조회와 같다.
+fx=$(mkfx bodyfail 34)
+add_issue "$fx" 30 '["agent-ready"]' '앞 후보' ''
+add_issue "$fx" 31 '["agent-ready"]' '본문 조회가 죽는 후보' '' '2026-01-01T00:00:31Z'
+add_issue "$fx" 32 '["agent-ready"]' '뒤 후보' '' '2026-01-01T00:00:32Z'
+# 실제 gh 오류문은 여러 줄로 온다 — warn 은 ④ Report 가 옮기는 **한 줄**이어야 한다.
+add_body_fail "$fx" 31 'gh: HTTP 502 Bad Gateway
+try again later'
+run_sut "$fx"
+ck "⑩ 한 건이 실패해도 스크립트는 끝까지 간다(exit 0)" "$RC" "0"
+ck "⑩ 앞·뒤 후보가 stdout 에 남는다(목록 전체를 버리지 않는다)" \
+  "$(jq -c '[.[].number]' "$OUT")" '[30,32]'
+ck "⑩ 실패 다음 후보도 판정한다(루프가 안 끊긴다)" "$(count_of "$LOG" 'body 32')" "1"
+has_line "⑩ 실패를 한 줄 warn 으로 말한다(여러 줄 오류문은 접는다)" "$ERR" \
+  "warn: owner/repo#31 본문 조회 실패 — 블로커 미상이라 이번 틱 후보에서 제외(다음 틱 재시도): gh: HTTP 502 Bad Gateway try again later"
+# 오류문 접기를 지우면 `try again later` 가 **둘째 줄**로 떨어진다 — 줄 수를 직접 센다
+# (후보별 warn 1 + 집계 warn 1 + blocked-summary 1 = 3줄이 이 픽스처의 stderr 전부다).
+ck "⑩ stderr 는 정확히 3줄(오류문이 줄을 늘리지 않는다)" "$(wc -l < "$ERR" | tr -d ' ')" "3"
+# 후보별 warn 만 두면 2차 레이트리밋에서 100줄로 풀려 ④ Report 에 **숫자로는** 안 남는다.
+has_line "⑩ 몇 건이 빠졌는지 집계 한 줄" "$ERR" \
+  "warn: 본문 조회 실패 1건 — 그만큼 이번 틱 후보에서 빠졌다(다음 틱 재시도)"
+# 빈 본문으로 이어 가지 않는다(PR#139: 빈 결과 ≠ 실패) — 본문을 못 읽으면 "Blocked by #N"
+# 유무가 **미상**이라, 통과시키면 블로커 0건으로 읽혀 게이트가 증명 없이 열린다.
+no_line "⑩ 실패 후보를 빈 본문으로 통과시키지 않는다" "$OUT" '"number": 31'
+# `막힘` 은 **OPEN 블로커로 탈락한 수**라는 정의를 그대로 둔다(SKILL.md ③-2 계약) —
+# 조회 실패는 그 정의가 아니라 `warn:` 줄로 Report 에 실린다.
+has_line "⑩ blocked-summary 정의는 안 바뀐다(OPEN 블로커 0건)" "$ERR" "blocked-summary: 막힘 0건"
+
+# ── ⑩-b 성공 경로의 stderr 가 **본문에 섞이지 않는다** ─────────────────────
+# 조회 값을 `2>&1` 로 받으면 성공했을 때도 gh 의 stderr 한 줄이 본문에 붙고, 그 문자열을
+# 아래 `Blocked by #N` 파싱이 그대로 훑는다 — **유령 블로커**로 정상 후보가 소리 없이
+# 큐에서 빠진다(이 PR 이 막으려는 결함과 같은 모양). 바로 아래 블로커 조회는 `2>&1` 을
+# 쓰지만 그쪽은 성공 출력에 TAB 구분자가 있어 오염을 검사해 걸러낸다 — 자유 문자열인
+# 본문엔 그 이음매가 없으므로 여기서는 stderr 를 **따로** 받는다.
+# 픽스처 문구는 일부러 결정적이다(실제 gh 알림 문구가 이 정규식에 걸린다는 주장이 아니라,
+# "stderr 는 어떤 내용이든 본문에 안 들어간다"를 무는 칸이다).
+fx=$(mkfx bodystderr 34)
+add_issue "$fx" 33 '["agent-ready"]' '본문은 깨끗한데 gh 가 stderr 로도 쓴다' ''
+add_body_stderr "$fx" 33 'Blocked by #900'
+run_sut "$fx"
+ck "⑩-b exit 0" "$RC" "0"
+ck "⑩-b stderr 문구가 블로커로 둔갑하지 않는다(블로커 조회 0회)" "$(count_of "$LOG" 'blocker ')" "0"
+no_line "⑩-b 유령 블로커로 탈락시키지 않는다" "$ERR" "blocked: owner/repo#33"
+ck "⑩-b 후보는 그대로 stdout 에 남는다" "$(jq -c '[.[].number]' "$OUT")" '[33]'
+
+# ── ⑪ page=1 조회 실패는 fail-closed — 빈 목록으로 둔갑시키지 않는다 (#330) ──
+# search 2차 레이트리밋은 이 레포가 이미 사고로 기록한 모양이다: stdout `[]` + rc=0 이면
+# 디스패처가 "신규 0" 으로 읽어 **빈 큐와 구분 없이** 조용히 지나간다. 그래서 단언은
+# `rc≠0` 과 `stdout 이 비어 있음`(부분/빈 목록 미채택)을 **함께** 물어야 한다.
+# `search.p1.fail` 이 먼저 걸려 스텁은 `search.json` 을 아예 안 읽는다 — 후보 픽스처를
+# 두지 않는 것이 형상 그대로다(있어도 판정에 안 쓰인다).
+fx=$(mkfx p1fail 13)
+printf 'gh: HTTP 403 API rate limit exceeded\n' > "$fx/search.p1.fail"
+run_sut_small "$fx"
+ck "⑪ page=1 조회 실패 → exit 1" "$RC" "1"
+ck "⑪ 빈 후보 목록을 stdout 으로 내지 않는다(빈 큐와 구분)" "$(cat "$OUT")" ""
+has_line "⑪ 어느 페이지에서 끊겼는지 말한다" "$ERR" \
+  "eligible-issues: 검색 page=1 조회 실패 — 후보 목록 없이 진행하지 않는다(이번 틱 중단): gh: HTTP 403 API rate limit exceeded"
+ck "⑪ 2페이지를 부르지 않는다" "$(count_of "$LOG" 'search page=2')" "0"
+
+# ── ⑫ env 방어 — 정규화·하한·클램프가 **요청에 실제로 반영**된다 (#330) ──────
+# 창 상수는 테스트 격자용 이음매라 임의 문자열이 들어올 수 있다. warn 문구만 보면
+# 값이 어떻게 정규화됐는지 안 보이므로 스텁이 남긴 `per_page=` 를 함께 문다.
+
+# ⑫-a `0` → 하한(≥1)에 걸려 기본값 50 으로 되돌린다. per_page=0 은 창이 없는 요청이다.
+fx=$(mkfx env0 51)
+bulk_issues "$fx" search.json 160 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=0 ELIGIBLE_SEARCH_MAX_PAGES=1
+ck "⑫-a exit 0" "$RC" "0"
+has_line "⑫-a 0 → per_page 는 기본값 50" "$LOG" "search page=1 per_page=50"
+has_line "⑫-a 0 → 실질 상한도 50(페이지 1 × 50)" "$ERR" \
+  "warn: 검색 창 절단 — agent-ready 후보 51건 > 창 50(페이지 1 × 50), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+
+# ⑫-b `abc` → 비숫자는 기본값으로. 정규화를 지우면 `[ abc -ge 1 ]` 이 셸 오류를 stderr 로
+# 흘려 ④ Report 가 옮기는 진단이 오염된다.
+fx=$(mkfx envabc 51)
+bulk_issues "$fx" search.json 161 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=abc ELIGIBLE_SEARCH_MAX_PAGES=1
+ck "⑫-b exit 0" "$RC" "0"
+has_line "⑫-b abc → per_page 는 기본값 50" "$LOG" "search page=1 per_page=50"
+no_line "⑫-b 셸 산술 오류가 stderr 로 새지 않는다" "$ERR" "integer expression"
+
+# ⑫-c `200` → search API 의 per_page 상한은 100 이다. 안 깎으면 1페이지부터 422 로 틱이 죽는다.
+fx=$(mkfx env200 101)
+bulk_issues "$fx" search.json 162 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=200 ELIGIBLE_SEARCH_MAX_PAGES=1
+ck "⑫-c exit 0" "$RC" "0"
+has_line "⑫-c 200 → per_page 는 100 으로 깎인다" "$LOG" "search page=1 per_page=100"
+has_line "⑫-c 깎인 값이 상한 산술에도 반영된다(페이지 1 × 100)" "$ERR" \
+  "warn: 검색 창 절단 — agent-ready 후보 101건 > 창 100(페이지 1 × 100), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+
+# ⑫-d `010` → 10진수로 읽는다. `$((010))` 은 8진수 8 이라 창이 조용히 좁아진다.
+fx=$(mkfx env010 11)
+bulk_issues "$fx" search.json 163 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=010 ELIGIBLE_SEARCH_MAX_PAGES=1
+ck "⑫-d exit 0" "$RC" "0"
+has_line "⑫-d 010 → per_page 는 10(8진수 8 이 아니다)" "$LOG" "search page=1 per_page=10"
+has_line "⑫-d 상한 산술도 10 기준" "$ERR" \
+  "warn: 검색 창 절단 — agent-ready 후보 11건 > 창 10(페이지 1 × 10), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+
+# ⑫-f `ELIGIBLE_SEARCH_MAX_PAGES=010` → 10진수 10. `$((5 * 010))` 은 8진수라 40 인데
+# 루프 조건 `[ "$page" -lt "$SEARCH_MAX_PAGES" ]` 는 test(1) 이라 10 으로 읽는다 —
+# 정규화가 없으면 **상한 산술과 루프가 갈린다**(창 40 이라 경고해 놓고 10페이지까지 돈다).
+fx=$(mkfx envmp010 51)
+mkpage "$fx" 2 51
+bulk_issues "$fx" search.json 165 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=5 ELIGIBLE_SEARCH_MAX_PAGES=010
+ck "⑫-f exit 0" "$RC" "0"
+has_line "⑫-f 010 → 실질 상한은 50(= 5 × 10)" "$ERR" \
+  "warn: 검색 창 절단 — agent-ready 후보 51건 > 창 50(페이지 10 × 5), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+
+# ⑫-g `ELIGIBLE_SEARCH_MAX_PAGES=abc` → 기본값 5. 정규화를 지우면 `[ abc -ge 1 ]` 이
+# 셸 오류를 stderr 로 흘려 ④ Report 가 옮기는 진단이 오염된다.
+fx=$(mkfx envmpabc 26)
+mkpage "$fx" 2 26
+bulk_issues "$fx" search.json 166 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=5 ELIGIBLE_SEARCH_MAX_PAGES=abc
+ck "⑫-g exit 0" "$RC" "0"
+has_line "⑫-g abc → 실질 상한은 기본값 5페이지(= 5 × 5)" "$ERR" \
+  "warn: 검색 창 절단 — agent-ready 후보 26건 > 창 25(페이지 5 × 5), 가장 새 이슈부터 안 보인다(막힌 이슈가 창을 채운다)"
+no_line "⑫-g 셸 산술 오류가 stderr 로 새지 않는다" "$ERR" "integer expression"
+
+# ⑫-h `ELIGIBLE_SEARCH_MAX_PAGES=0` → 하한에 걸려 기본값 5. 0 이면 실질 상한이 0 이라
+# 후보가 몇 건이든 "절단" 을 외치고 2페이지를 영영 안 받는다(페이지네이션 자체가 꺼진다).
+fx=$(mkfx envmp0 6)
+mkpage "$fx" 2 6
+bulk_issues "$fx" search.json 167 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=5 ELIGIBLE_SEARCH_MAX_PAGES=0
+ck "⑫-h exit 0" "$RC" "0"
+no_line "⑫-h 0 → 상한 0 으로 굳지 않는다(절단 warn 없음)" "$ERR" "검색 창 절단"
+ck "⑫-h 0 → 페이지네이션이 살아 있다(page=2 호출)" "$(count_of "$LOG" 'search page=2')" "1"
+
+# ⑫-e 상한이 아주 작으면 80% 임박선이 0 으로 깎인다 — 바닥이 없으면 후보 1건에도 임박
+# warn 이 상시 켜져 진짜 상한 신호가 묻힌다(경고가 늘 켜져 있으면 신호가 아니다).
+fx=$(mkfx envsoft 1)
+bulk_issues "$fx" search.json 164 1
+run_sut "$fx" ELIGIBLE_SEARCH_WINDOW=1 ELIGIBLE_SEARCH_MAX_PAGES=1
+ck "⑫-e exit 0" "$RC" "0"
+no_line "⑫-e 상한과 같은 후보 수에 임박 warn 이 켜지지 않는다" "$ERR" "검색 창 임박"
+no_line "⑫-e 절단도 아니다(1 > 1 이 아니다)" "$ERR" "검색 창 절단"
+ck "⑫-e 후보는 그대로 낸다" "$(jq -c '[.[].number]' "$OUT")" '[164]'
 
 echo "eligible-issues.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]
