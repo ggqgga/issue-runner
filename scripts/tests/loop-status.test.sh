@@ -1892,7 +1892,8 @@ has_line "무회귀: 파생 줄은 에픽 병기 없이 종전 그대로(레포�
 #                          이 목록 밖 · closes 1건). 짝은 `lib/loop.jq` `linked_issue` 규칙⑵ 로
 #                          #108 — pr-state 의 `stop:` 축·resume-sweep ④ 와 같은 답(#517)
 #
-# 짝짓기는 `closingIssuesReferences[0]` 이 아니라 **head 의 `agent/issue-N` ∩ closes** 다
+# 짝짓기는 `closingIssuesReferences[0]` 이 아니라 `lib/loop.jq` `linked_issue` 다 — head 의
+# `agent/issue-N` ∩ closes, 없으면 closes 1건 폴백(#517)
 # (이 레포 실데이터: PR #113 head=`agent/issue-109` refs=`[108,109]` — `[0]` 은 #108 이다).
 # 그리고 경보는 **closes 전건이 깨끗할 때만** 낸다 — 교정(resume-sweep ④)이 그 조건에서만
 # 편집하므로, 여기서 더 울리면 조치 불가능한 잡음이고 덜 울리면 교정이 몰래 돈다.
