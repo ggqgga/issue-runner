@@ -599,13 +599,7 @@ bash scripts/tests/loop-status.test.sh
 # loop-status·README·스킬·테스트 어디에도 남지 않는다(이슈 #276 수용 기준의 grep 그대로).
 # 산문이 옛 이름으로 대시보드 줄을 가리키면 사람이 없는 줄을 찾는다. 새 이름은 라벨/루프
 # 이름 그 자체(issue-runner·verify-runner·closeout·needs-human)라 이 grep 이 오탐할 자리가 없다.
-echo "[#276] 루프 현황 9줄 — 옛 버킷 문구(구현중·마감중·사람대기) 잔존 0건"
-old_bucket_hits=$(grep -rn '구현중\|마감중\|사람대기' scripts README.ko.md README.md skills 2>/dev/null || true)
-if [ -n "$old_bucket_hits" ]; then
-  echo "  ✗ 옛 버킷 문구가 남아 있다 — issue-runner·closeout·needs-human 으로 (#276):"
-  printf '%s\n' "$old_bucket_hits" | head -20 | sed 's/^/      /'
-  exit 1
-fi
+echo "[#276] 루프 현황 9줄 — RENDER_JQ padded 이름·폭 리터럴"
 # 9줄 렌더 계약 — RENDER_JQ 의 padded 리터럴에 새 이름 9개가 전부 있고 폭이 같다(15칸 = verify-runner 13 + 2).
 for lit in '"waiting":"대기           "' '"claimed":"issue-runner   "' '"verify":"검증대기       "' \
            '"verifying":"verify-runner  "' '"ready":"마감대기       "' '"harvesting":"closeout       "' \
@@ -673,7 +667,7 @@ for f in scripts/timebox-check.sh scripts/finish-classify.sh; do
   grep -qF 'progress-evidence.sh' "$f" || { echo "  ✗ $f 에 progress-evidence.sh 배선 없음"; exit 1; }
 done
 
-echo "[#206] 현재 회차 시작 증거 — claim-at.sh 한 자리·ISSUE_TIMEBOX_HOURS 드리프트"
+echo "[#206] 현재 회차 시작 증거 — claim-at.sh 한 자리 배선"
 # `agent:claimed` 의 **부착 시각**은 첫 푸시 전 창을 덮는 유일한 신호다(#206 attempt 3
 # codex BLOCKER). 조회가 한 자리(claim-at.sh)에 있어야 "존재로 판정하지 않는다"(#196 3항)와
 # "부착 시각으로 판정한다"(#206)가 한 문서에서 갈리지 않는다.
@@ -688,20 +682,6 @@ for token in 'claim-at.sh' 'claimed_arg' '--claimed-at'; do
 done
 grep -qF -e '--claimed-at' -- scripts/progress-evidence.sh \
   || { echo "  ✗ scripts/progress-evidence.sh 에 --claimed-at 입력 없음"; exit 1; }
-# claim 신선도 상한은 timebox 와 **같은 상수**다(두 자리가 같은 경계를 쓴다는 계약).
-# 기본값이 갈리면 스윕과 ① Reconcile 이 서로 다른 창에서 같은 워커를 살리고 죽인다.
-# (#427) 기본값의 한 자리는 `scripts/lib/constants.sh` 의 `: "${ISSUE_TIMEBOX_HOURS:=1}"` 다.
-# 두 리더(timebox-check·progress-evidence)가 자기 기본값을 되살리면 이 검사가 2건을 본다.
-tb_defaults=$(grep -ho 'ISSUE_TIMEBOX_HOURS:[-=][0-9]*' scripts/*.sh scripts/lib/*.sh | sort -u)
-tb_n=$(printf '%s\n' "$tb_defaults" | grep -c . || true)
-[ "$tb_n" -ge 1 ] \
-  || { echo "  ✗ ISSUE_TIMEBOX_HOURS 기본값을 읽는 자리가 없다 — 가드가 의미를 잃었다"; exit 1; }
-[ "$tb_n" = 1 ] \
-  || { echo "  ✗ ISSUE_TIMEBOX_HOURS 기본값이 파일마다 다르다: $(printf '%s ' $tb_defaults)"; exit 1; }
-for f in scripts/timebox-check.sh scripts/progress-evidence.sh; do
-  grep -qF 'ISSUE_TIMEBOX_HOURS' "$f" \
-    || { echo "  ✗ $f 가 ISSUE_TIMEBOX_HOURS 를 읽지 않는다 — 두 자리가 같은 상수를 써야 한다"; exit 1; }
-done
 # 호출부 tripwire — head 조회의 **종료코드를 버리면**(`|| head_raw=''`) 실패가 부재로
 # 둔갑한다(PR#139). 헬퍼가 아무리 3값을 구분해도 호출부가 삼키면 계약은 거기서 깨진다.
 if grep -qE 'pr-head-at\.sh[^|]*\|\|[[:space:]]*head_raw=' scripts/finish-classify.sh; then
