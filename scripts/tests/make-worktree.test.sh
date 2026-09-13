@@ -157,6 +157,59 @@ mkwt --sync --branch feature/x o/r 9
 mkwt --sync o/r 9 --branch
 [ "$RC" != 0 ] && ok || bad "⑩ --branch 값 누락인데 rc=0"
 
+echo "── link-secrets 심링크 opt-in (#109) ─────────────────────────────"
+
+# 기본은 워크트리에 라이브 시크릿을 안 깐다 — 무인 워커 작업공간이라 유출 벡터다.
+# repos.conf 의 `link-secrets` 를 켠 레포에서만 메인 체크아웃의 `.env`·`config/master.key`
+# 를 심링크하고, 껐는데 이전에 깔린 심링크가 남아 있으면 **우리가 만든 것만** 회수한다.
+printf 'SECRET=live\n' > "$tmp/proj/r/.env"      # 메인 체크아웃의 라이브 시크릿
+printf 'o/r - link-secrets\n' > "$tmp/on.conf"
+printf 'o/r -\n'              > "$tmp/off.conf"
+mkwt_sec() {  # mkwt_sec <conf> <issue-num> — W(worktree 경로)/RC/ERR 를 채운다
+  local out
+  out=$(ISSUE_RUNNER_REPOS_CONF="$1" ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" \
+        PATH="$tmp/stub:$PATH" bash "$SUT" o/r "$2" 2>"$tmp/err.log")
+  RC=$?
+  W=$(printf '%s\n' "$out" | tail -1)
+  ERR=$(cat "$tmp/err.log")
+}
+
+# ⓐ 플래그 off → 심링크 미생성(기본 안전값)
+mkwt_sec "$tmp/off.conf" 21
+{ [ "$RC" = 0 ] && [ -d "$W" ]; } && ok || bad "ⓐ off: worktree 미생성 rc=$RC err=[$ERR]"
+[ ! -e "$W/.env" ] && ok || bad "ⓐ off: .env 가 워크트리에 깔렸다(유출 벡터 잔존)"
+
+# ⓑ 플래그 on → 심링크 생성 + 메인 체크아웃의 파일을 가리킨다
+mkwt_sec "$tmp/on.conf" 22
+[ -L "$W/.env" ] && ok || bad "ⓑ on: .env 심링크 미생성 err=[$ERR]"
+grep -q 'SECRET=live' "$W/.env" 2>/dev/null && ok || bad "ⓑ on: 심링크가 메인 .env 를 안 가리킨다"
+
+# ⓒ 같은 worktree 를 off 로 재실행 → 우리가 깐 심링크는 회수한다
+mkwt_sec "$tmp/off.conf" 22
+[ ! -e "$W/.env" ] && ok || bad "ⓒ 회수: 기존 .env 심링크가 안 지워졌다"
+
+# ⓓ 워커가 만든 **실제 파일**은 회수 대상이 아니다(심링크만 지운다)
+printf 'worker-local\n' > "$W/.env"
+mkwt_sec "$tmp/off.conf" 22
+{ [ -f "$W/.env" ] && [ ! -L "$W/.env" ]; } && ok || bad "ⓓ 회수: 실제 파일을 지웠다"
+
+# ⓔ 우리 대상이 아닌 심링크도 보존한다 — "우리가 만든 것만 지운다" 가 계약
+printf 'other\n' > "$tmp/other.env"
+rm -f "$W/.env"; ln -s "$tmp/other.env" "$W/.env"
+mkwt_sec "$tmp/off.conf" 22
+{ [ -L "$W/.env" ] && [ "$(readlink "$W/.env")" = "$tmp/other.env" ]; } && ok \
+  || bad "ⓔ 회수: 우리 것 아닌 심링크를 지웠다"
+
+# ⓕ 플래그 on 이어도 다른 대상의 심링크를 조용히 갈아끼우지 않는다
+mkwt_sec "$tmp/on.conf" 22
+[ "$(readlink "$W/.env")" = "$tmp/other.env" ] && ok || bad "ⓕ on: 기존 심링크 대상을 덮어썼다"
+
+# ⓖ 깨진 심링크가 있어도 on 이 크래시하지 않는다 (`[ ! -e ]` 는 깨진 심링크에 참이라
+#    대상 확인 없이 `ln -s` 를 부르면 "File exists" 로 죽는 경로).
+rm -f "$W/.env"; ln -s "$tmp/does-not-exist" "$W/.env"
+mkwt_sec "$tmp/on.conf" 22
+[ "$RC" = 0 ] && ok || bad "ⓖ on: 깨진 심링크에서 exit $RC (크래시) err=[$ERR]"
+
 echo "── 계약(usage·실행비트) ──────────────────────────────────────────"
 
 # ⑧ 인자 부족 → 비0 (종전과 같이 exit 1)
