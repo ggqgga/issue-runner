@@ -652,50 +652,38 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
 
 ## ⑤ Drain — 다음 후보로 즉시 이어가기
 
-③ 파이프라인이 집은 PR 을 종료 상태(success·approval-required·blocked·dup·exhausted)에
-닿게 한 **직후**, 그 PR 의 결과를 ④ Report 용으로 누적해 두고 **다음 틱을 기다리지
-말고 ①①-b② 로 되돌아간다** — 한 번에 하나씩만 처리해 적체가 쌓이던 문제를 이 드레인이
-한 틱 안에서 소진한다:
+③ 파이프라인이 집은 PR 을 종료 상태(success·approval-required·blocked·dup·exhausted)에 닿게 한 **직후**,
+그 PR 의 결과를 ④ Report 용으로 누적해 두고 **다음 틱을 기다리지 말고 ①①-b② 로 되돌아간다**:
 
-- ① Reconcile + ①-b 정체 스윕 + ② Pick 을 다시 수행한다. ② Pick 이 **새 후보를
-  집으면**(이번에 처리한 PR 은 이미 eligible/입양후보에서 빠졌다) 그 PR 로 ③ 파이프라인을
-  즉시 이어간다.
-- ② Pick 후보가 **0이면** 큐가 빈 것이다 — 드레인을 멈추고 ④ Report 로 이 틱에서
-  처리한 **모든 PR 을 한 번에 집계**해 보고한 뒤, `/loop` 주기로 다음 틱을 예약한다.
+- ① Reconcile + ①-b 정체 스윕 + ② Pick 을 다시 수행한다. ② Pick 이 **새 후보를 집으면** 그 PR 로
+  ③ 파이프라인을 즉시 이어간다.
+- ② Pick 후보가 **0이면** 큐가 빈 것이다 — 드레인을 멈추고 ④ Report 로 이 틱에서 처리한 **모든 PR 을 한
+  번에 집계**해 보고한 뒤, `/loop` 주기로 다음 틱을 예약한다.
 
-무한루프 방지: 각 반복은 eligible/입양후보를 최소 1개 줄인다(머지→OPEN 소멸 · blocked→
-`needs-human` · dup→머지 없이 PR 이 닫혀 OPEN 소멸 ·
-approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스패치:` 마커로
-재선정 배제(마커 후 새 활동 없으면 스윕이 재발행 안 함)). 같은 PR 이 두 번 집히면(마커
-누락 등 예상 밖) 그 PR 을 skip 하고 ④ Report 에 `BLOCKED: 재선정 루프 — #<pr>` 로 보고해
-드레인을 끊는다. 별도 상한이 필요하면 한 틱 드레인은 최대 eligible 스냅샷 길이만큼만
-돈다(스냅샷 이후 새로 열린 PR 은 다음 틱 몫).
+무한루프 방지: 각 반복은 eligible/입양후보를 최소 1개 줄인다. 같은 PR 이 두 번 집히면(마커 누락 등 예상
+밖) 그 PR 을 skip 하고 ④ Report 에 `BLOCKED: 재선정 루프 — #<pr>` 로 보고해 드레인을 끊는다. 별도 상한이
+필요하면 한 틱 드레인은 최대 eligible 스냅샷 길이만큼만 돈다(스냅샷 이후 새로 열린 PR 은 다음 틱 몫).
 
 ## ④ Report
 
-드레인이 끝나면(② Pick 후보 0) 이 틱에서 처리한 **모든 PR 을 합산**해 한 줄 요약(N 은
-이 틱 누적치): `마감 N · 검증보류 N · 중복종료 N · 배포대기 N · 파생 N · 회수 N · 재디스패치 N · stale N`.
+드레인이 끝나면(② Pick 후보 0) 이 틱에서 처리한 **모든 PR 을 합산**해 한 줄 요약(N 은 이 틱 누적치):
+`마감 N · 검증보류 N · 중복종료 N · 배포대기 N · 파생 N · 회수 N · 재디스패치 N · stale N`.
 ①-b 스윕이 입양해 마감·rebase 한 건은 `회수 N`(마감까지 갔으면 `마감` 에도 반영),
 `stale_reverify` 재디스패치·`held` needs-human 건은 `재디스패치 N` 으로 집계한다.
 
-그 아래 **항목마다 번호를 적는다** — 숫자만으론 어느 PR·이슈가 어디로 갔는지 다음 틱이 못 읽는다:
+그 아래 **항목마다 번호를 적는다**:
 `마감: PR #4795(bodat)←#4788 · 파생: #4823(bodat)←PR #4788 (Epic #4968 · P1) · 재디스패치: #4770(bodat, stale_reverify)`.
-`파생` 항목은 6단계 PR 코멘트 마커와 **같은 꼴**로 `#<새번호> (Epic #<N|없음> · <P>)` 를 적는다 —
-에픽을 못 물려받은 파생(`Epic 없음`)이 쌓이는지 매 틱 눈으로 보이게 하려는 것이다.
+`파생` 항목은 6단계 PR 코멘트 마커와 **같은 꼴**로 `#<새번호> (Epic #<N|없음> · <P>)` 를 적는다.
 레포 짧은 이름은 `references/loop-conventions.md` §6 대로.
-① 의 에픽 스윕이 닫은 에픽도 같은 줄에 `에픽 종료: #285(runner, leaf 4)` 로 덧붙인다 —
-닫은 게 없으면 이 조각은 **생략한다**(`note` 는 보고하지 않는다).
+① 의 에픽 스윕이 닫은 에픽도 같은 줄에 `에픽 종료: #285(runner, leaf 4)` 로 덧붙인다 — 닫은 게 없으면 이
+조각은 **생략한다**(`note` 는 보고하지 않는다).
 
-**`승격 대기 N커밋` 을 매 틱 반드시 함께 보고한다 (누락 금지).** 이 틱에 마감이 0건이어도
-빼지 마라 — 사람이 "승격할 게 쌓여 있는지" 를 보는 유일한 숫자다. 승격 포인터 브랜치가
-있으면(`release` 등) `git fetch origin <포인터> <기본브랜치>` 후
-`git rev-list --count origin/<포인터>..origin/<기본브랜치>` 로 세고, 포인터 브랜치가
-없는 레포면 `승격 대기 —` 로 적어 해당 없음을 명시한다. 0이면 `승격 대기 0커밋` 이라고
-그대로 적는다(생략하지 마라 — 생략과 0은 다르다).
-실증 2026-08-16: 이 줄을 3틱 연속 빠뜨렸더니, 배포 이슈도 없던 시기와 겹쳐 마감분이
-증발한 것처럼 보였다. 그 사고가 4단계를 "머지하면 무조건 티켓" 으로 되돌린 계기다.
-(아래 `loop-status.sh` 블록도 승격 대기를 찍지만 이 줄은 **그대로 유지한다** — 중복은
-누락 사고 이력에 대한 의도된 이중화다.)
+**`승격 대기 N커밋` 을 매 틱 반드시 함께 보고한다 (누락 금지).** 이 틱에 마감이 0건이어도 빼지 마라 —
+사람이 "승격할 게 쌓여 있는지" 를 보는 유일한 숫자다. 승격 포인터 브랜치가 있으면(`release` 등)
+`git fetch origin <포인터> <기본브랜치>` 후 `git rev-list --count origin/<포인터>..origin/<기본브랜치>` 로
+세고, 포인터 브랜치가 없는 레포면 `승격 대기 —` 로 적어 해당 없음을 명시한다. 0이면 `승격 대기 0커밋`
+이라고 그대로 적는다(생략하지 마라 — 생략과 0은 다르다). (아래 `loop-status.sh` 블록도 승격 대기를 찍지만
+이 줄은 **그대로 유지한다** — 중복은 누락 사고 이력에 대한 의도된 이중화다.)
 
 **파이프라인 스냅샷 (매 틱 필수).** 위 줄들 뒤에 `$SCRIPTS/loop-status.sh --post closeout --delta "<이 틱 한 줄 요약>"` 를 실행해 출력을 그대로 붙인다 —
 붙이는 규율(`cd` 없이 · 조용한 틱에도)과 exit 1·64 처리는 `references/loop-conventions.md` §7 대로.
@@ -708,34 +696,33 @@ approval-required→`배포 대기:` 마커 · 재디스패치→PR `재디스�
 - **success** — 1~6단계를 다 돌아 PR 을 머지하고 후속까지 발행함(입양·rebase 회수분 포함).
 - **clean no-op** — ② Pick 후보가 0이라 마감할 PR 이 없음(①-b 재디스패치만 있었어도 no-op 아님 — `재디스패치 N` 보고).
 - **blocked** — 1단계 검증이 BLOCKER 이거나 2단계 rebase 통합 실패라 보류(머지 안 함).
-- **dup** — 1단계 검증이 "이미 `origin/main` 에 있다·중복" 으로 판정해 `closeout-dup` 으로
-  PR·이슈를 머지 없이 닫음(`needs-human` 없음 — 루프가 끝낸 것이다). `중복종료 N` 으로 집계.
+- **dup** — 1단계 검증이 "이미 `origin/main` 에 있다·중복" 으로 판정해 `closeout-dup` 으로 PR·이슈를 머지
+  없이 닫음(`needs-human` 없음 — 루프가 끝낸 것이다). `중복종료 N` 으로 집계.
 - **approval-required** — 4단계에서 배포 이슈를 발행하고 deploy-cycle 레인에 인계.
 - **exhausted** — 5단계 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복돼 needs-human 승격.
 - **stagnated** — `QUIET_TICKS` 연속 조용함(①-b 스윕은 stagnated 여도 매 틱 돈다).
 
-`QUIET_TICKS` 연속으로 조용해도 ①②는 다음 틱에도 그대로 수행한다 — stagnated 는
-보고에만 반영되고 어떤 단계도 건너뛰지 않는다.
+`QUIET_TICKS` 연속으로 조용해도 ①②는 다음 틱에도 그대로 수행한다 — stagnated 는 보고에만 반영되고 어떤
+단계도 건너뛰지 않는다. (근거: closeout-rationale §16)
 
 ## 참고 자료
 
 비운영 참고 — 틱 수행에는 영향 없다.
 
-- 역할 분담: issue-runner = 벌리는 공장 (절대 머지하지 않고 불변을 보존), closeout
-  = 마감 도크 (머지를 독점). 두 루프는 `harvesting` 라벨 점유로 충돌을 막는다 —
-  closeout 가 집은 PR 은 issue-runner ② Maintain 이 건드리지 않는다.
-- 배포 레인(deploy-cycle): production 배포·release 승격은 closeout 이 하지 않는다 —
-  4단계가 dry-run 배포 대기 이슈를 발행해 deploy-cycle 루프에 넘기고, 배포·승격·
-  실테스트(칸 ③ TEST 워커)·종료는 그 레인의 ⑦ 이 소유한다. 나머지 머지·문서반영·
-  후속발행은 closeout 이 무인으로 한다.
-- 운용: closeout 은 issue-runner 와 별도의 `/loop` 세션으로 돌린다
-  (예 `/loop 20m /closeout`) — 서로의 점유를 라벨로만 조율한다.
-- 의존: 결정적 헬퍼(`closeout-reconcile.sh`·`closeout-eligible.sh`·
-  `closeout-ci-pass.sh`·`closeout-step1-marker.sh`(① 마커표 1단계 판정)·
-  `transition.sh`(라벨 이동)·`loop-status.sh`(④ Report 스냅샷))는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)에
-  있고, references 3종(`verifier-prompt.md`·`deploy-check-issue.md`·
-  `spinoff-issue.md`)은 `skills/closeout/references/` 에 있다.
+- 사고 이력·설계 근거: `references/closeout-rationale.md`(§1~§16, 한글 전용). 각 절 끝의
+  `(근거: closeout-rationale §N)` 이 그 절을 가리킨다.
+- 역할 분담: issue-runner = 벌리는 공장 (절대 머지하지 않고 불변을 보존), closeout = 마감 도크 (머지를
+  독점). 두 루프는 `harvesting` 라벨 점유로 충돌을 막는다.
+- 배포 레인(deploy-cycle): production 배포·release 승격은 closeout 이 하지 않는다 — 4단계가 dry-run 배포
+  대기 이슈를 발행해 deploy-cycle 루프에 넘기고, 배포·승격·실테스트(칸 ③ TEST 워커)·종료는 그 레인의
+  ⑦ 이 소유한다. 나머지 머지·문서반영·후속발행은 closeout 이 무인으로 한다.
+- 운용: closeout 은 issue-runner 와 별도의 `/loop` 세션으로 돌린다 (예 `/loop 20m /closeout`) — 서로의
+  점유를 라벨로만 조율한다.
+- 의존: 결정적 헬퍼(`closeout-reconcile.sh`·`closeout-eligible.sh`·`closeout-ci-pass.sh`·
+  `closeout-step1-marker.sh`(① 마커표 1단계 판정)·`transition.sh`(라벨 이동)·`loop-status.sh`(④ Report
+  스냅샷))는 `$SCRIPTS`(=`~/.claude/skills/issue-runner/scripts`)에 있고, references 3종
+  (`verifier-prompt.md`·`deploy-check-issue.md`·`spinoff-issue.md`)은 `skills/closeout/references/` 에 있다.
 - 실측이 필요한 항목의 시도 순서·통로·인용 규칙은
   `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-  (칸 ①dev → ②워커 런타임 → ③TEST 워커 → ④사람. 4단계 `<LIVE_CHECKS>` 이관 전 ①② 시도의
-  근거이자 `--reason ladder` 의 전제).
+  (칸 ①dev → ②워커 런타임 → ③TEST 워커 → ④사람. 4단계 `<LIVE_CHECKS>` 이관 전 ①② 시도의 근거이자
+  `--reason ladder` 의 전제).
