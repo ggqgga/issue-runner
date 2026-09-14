@@ -1,2 +1,4 @@
 repos.conf
 .loop/
+# full-cycle 2-b SDD 원장·플랜(<워크트리>/.superpowers/…) — 세션 스크래치, 커밋 금지 (#567)
+.superpowers/
