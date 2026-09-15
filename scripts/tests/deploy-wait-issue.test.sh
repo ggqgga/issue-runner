@@ -27,14 +27,17 @@ mkdir -p "$tmp/stub"
 
 # gh 스텁 — 호출을 기록하고 `issue create` 의 본문을 $DW_BODY 로 떠 둔다.
 #   DW_CREATE=ok|labelfail|labelfail2|allfail · DW_HWLABEL=1 이면 레포에 needs:hardware 있음
+#   (정확 조회 200) · 비우면 404 · `err` 면 비-404 실패(네트워크) — #570
 cat > "$tmp/stub/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$DW_CALLS"
 case "$*" in
-  *"label list"*)
-    echo "deploy-wait"
-    [ "${DW_HWLABEL:-0}" = 1 ] && echo "needs:hardware"
-    exit 0 ;;
+  *"api repos/"*"/labels/needs:hardware"*)
+    case "${DW_HWLABEL:-0}" in
+      1)   echo '{"name":"needs:hardware"}'; exit 0 ;;
+      err) echo "gh: error connecting to api.github.com" >&2; exit 1 ;;
+      *)   echo '{"message":"Not Found","status":"404"}'; echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+    esac ;;
   *"issue create"*)
     prev=""
     for a in "$@"; do
@@ -153,8 +156,25 @@ printf '%s\n' "$CALLS" | grep -q 'issue create.*--label P0' && ok || bad "⑥ �
 DW_HWLABEL=1 run "$tmp/items.md" --hardware
 printf '%s\n' "$CALLS" | grep -q 'issue create.*--label needs:hardware' && ok || bad "⑦ 라벨이 있는데 needs:hardware 미부착"
 run "$tmp/items.md" --hardware
-printf '%s\n' "$CALLS" | grep -q 'needs:hardware' \
+printf '%s\n' "$CALLS" | grep -q 'issue create.*needs:hardware' \
   && bad "⑦ 레포에 없는 needs:hardware 를 붙였다(create 통째 실패 위험)" || ok
+[ "$RC" = 0 ] && ok || bad "⑦ 404(정말 없음)는 종전대로 생략 + exit 0 이어야 한다 (rc=$RC)"
+
+# ⑦-b (#570) 존재 판정이 404 가 아닌 실패면 "없음" 이 아니다 — 이슈는 발행하되 needs:hardware
+#    만 빼고 exit 2 + stderr 사유. 종전엔 목록 조회 실패가 2>/dev/null 에 삼켜져 exit 0 으로
+#    조용히 빠졌다(BoDAT #5341·#5344·#5360).
+DW_HWLABEL=err run "$tmp/items.md" --hardware
+{ [ "$RC" = 2 ] && [ "$OUT" = "5200" ]; } && ok || bad "⑦-b 판정 실패 rc=$RC out=[$OUT] (기대 2·번호 출력)"
+printf '%s\n' "$CALLS" | grep -q 'issue create.*needs:hardware' \
+  && bad "⑦-b 판정 실패인데 needs:hardware 를 붙였다(create 통째 실패 위험)" || ok
+printf '%s\n' "$ERR" | grep -q '존재 판정 실패' && ok || bad "⑦-b stderr 에 판정 실패 사유가 없다"
+printf '%s\n' "$CALLS" | grep -q 'label list' && bad "⑦-b 목록 조회(--limit 상한)가 남아 있다" || ok
+
+# ⑦-c (#570) 붙이려 했는데 readback 에 없으면 보강 1회, 그래도 없으면 exit 2
+DW_HWLABEL=1 DW_READBACK="deploy-wait" run "$tmp/items.md" --hardware
+printf '%s\n' "$CALLS" | grep -q 'issue edit 5200 .*--add-label needs:hardware' && ok \
+  || bad "⑦-c 라벨 보강(--add-label needs:hardware) 없음"
+[ "$RC" = 2 ] && ok || bad "⑦-c 보강 뒤에도 없는데 rc=$RC (기대 2)"
 
 echo "── 라벨 부재 3단 사다리 ──────────────────────────────────────────"
 

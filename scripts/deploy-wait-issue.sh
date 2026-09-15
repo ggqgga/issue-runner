@@ -33,7 +33,12 @@
 #    체크박스가 0이면 제목에 ` (승격만)` 이 붙고 본문 절엔 `없음` 이 그대로 남는다.
 # ⑵ 라벨: `deploy-wait` + 레인(`--lane full-cycle` 이면 `full-cycle`) + P(`--priority`,
 #    없으면 `--parent-issue` 로 `spinoff-inherit.sh` 상속) + `--hardware` 이고 **레포에 그
-#    라벨이 실제로 있을 때만** `needs:hardware`. `needs-human` 은 붙이지 않는다(#243) —
+#    라벨이 실제로 있을 때만** `needs:hardware`. 존재 판정은 REST **정확 조회**
+#    `gh api repos/<repo>/labels/needs:hardware` 다(#570) — HTTP 404 만 "없음"(생략 + stderr
+#    한 줄), 그 밖의 실패(네트워크·API·토큰)는 "없음" 이 아니라 **판정 불가**다: needs:hardware
+#    만 빼고 발행하되 exit 2 로 알린다. 종전의 `gh label list … 2>/dev/null | grep` 은 목록
+#    조회(GraphQL)가 일시 실패하면 빈 출력이 "없음" 으로 읽혀 라벨이 조용히 빠졌다(BoDAT
+#    #5341·#5344·#5360 — 사람이 손으로 붙였다). `needs-human` 은 붙이지 않는다(#243) —
 #    발행 시점엔 사람 몫이 없다(디스패치 게이트는 `agent-ready` 를 요구하고, deploy-bodat
 #    수집은 제목 정규식이다). 그 라벨을 붙이는 주체는 deploy-cycle 이다.
 # ⑶ 라벨 부재 fail-closed — 티켓을 잃지 않는다: `gh issue create` 는 레포에 없는 라벨이
@@ -46,13 +51,15 @@
 #    폴백 건의 복구는 사람 3단 조치가 소유한다: ⑴ `setup-labels.sh <repo>` 재실행으로 라벨
 #    **정의**를 만들고 ⑵ `gh issue edit <번호> --add-label deploy-wait` 로 **그 이슈에** 붙이고
 #    ⑶ `gh issue view <번호> --json labels` 로 확인한다(둘째 단을 빠뜨리면 그 티켓은 계속 무라벨이다).
-# ⑷ 발행 직후 라벨 readback + 보강(`deploy-wait` 이 실제로 붙었는지 다시 읽는다).
+# ⑷ 발행 직후 라벨 readback + 보강(`deploy-wait` 이 실제로 붙었는지 다시 읽는다 —
+#    `--hardware` 로 needs:hardware 를 붙였다면 그것도 같이. 못 붙었으면 exit 2).
 # ⑸ 부모 PR 에 `배포 대기: #<번호>` 마커 코멘트.
 #
 # ── 출력·종료코드 ─────────────────────────────────────────────────────────────
 #   stdout : 새 이슈 번호 한 줄
 #   exit 0 : 정상 · 1 : **이슈 미생성**(발행 실패·인자 해석 실패, 무출력)
-#   exit 2 : **이슈는 생성됨**(번호는 stdout) — 라벨 부착·마커가 어긋났다. 호출자는
+#   exit 2 : **이슈는 생성됨**(번호는 stdout) — 라벨 부착·마커가 어긋났다(`--hardware` 인데
+#            needs:hardware 존재 판정이 실패했거나 부착되지 않은 경우 포함, #570). 호출자는
 #            `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로 보고한다.
 #   exit 64: usage · 65: 항목 형태 위반(발행 전 — 고쳐서 **다시 부르면 된다**, 잃은 것 없음)
 #
@@ -171,13 +178,21 @@ case "${priority:-}" in P0|P1) ;; *) priority= ;; esac
 labels=(--label deploy-wait)
 [ "$lane" = full-cycle ] && { labels[${#labels[@]}]=--label; labels[${#labels[@]}]=full-cycle; }
 [ -n "$priority" ] && { labels[${#labels[@]}]=--label; labels[${#labels[@]}]=$priority; }
+hw_expected=0   # needs:hardware 를 붙이려 했다 → ⑷ readback 이 확인한다
+hw_unknown=0    # 존재 판정 자체가 실패했다(비-404) → 라벨 없이 발행하고 exit 2
 if [ "$hardware" = 1 ]; then
   # **레포에 정의가 있을 때만** 붙인다 — 없는 라벨 하나가 create 를 통째로 실패시키고,
   # 그 실패가 아래 3단 사다리를 태워 `deploy-wait` 까지 잃게 만든다(필수 라벨이 아니다).
-  if gh label list --repo "$repo" --limit 200 --json name -q '.[].name' 2>/dev/null | grep -qx 'needs:hardware'; then
+  # 정확 조회(REST) 한 건 — 404 만 "없음" 이고 다른 실패는 "없음" 으로 읽지 않는다(#570).
+  hw_err=$(gh api "repos/$repo/labels/needs:hardware" 2>&1 >/dev/null); hw_rc=$?
+  if [ "$hw_rc" = 0 ]; then
     labels[${#labels[@]}]=--label; labels[${#labels[@]}]='needs:hardware'
-  else
+    hw_expected=1
+  elif printf '%s\n' "$hw_err" | grep -q 'HTTP 404'; then
     echo "deploy-wait-issue: needs:hardware 라벨이 레포에 없어 생략한다" >&2
+  else
+    echo "deploy-wait-issue: needs:hardware 존재 판정 실패 — 라벨 없이 발행한다(손으로 붙일 것): ${hw_err:-exit $hw_rc}" >&2
+    hw_unknown=1
   fi
 fi
 
@@ -267,10 +282,20 @@ if [ "$labels_ok" = 1 ]; then
     printf '%s\n' "$got" | grep -qx 'deploy-wait' \
       || { echo "deploy-wait-issue: deploy-wait 라벨 부착 실패 — #$num" >&2; rc=2; }
   fi
+  # needs:hardware 도 같은 보강 1회 — 붙이려 했는데 안 붙었으면 조용히 넘기지 않는다(#570)
+  if [ "$hw_expected" = 1 ] && ! printf '%s\n' "$got" | grep -qx 'needs:hardware'; then
+    gh issue edit "$num" --repo "$repo" --add-label needs:hardware >/dev/null 2>&1 || true
+    got=$(gh issue view "$num" --repo "$repo" --json labels -q '.labels[].name' 2>/dev/null)
+    printf '%s\n' "$got" | grep -qx 'needs:hardware' \
+      || { echo "deploy-wait-issue: needs:hardware 라벨 부착 실패 — #$num" >&2; rc=2; }
+  fi
 else
   echo "deploy-wait-issue: 라벨 없이 발행됨(재시도 소진) — #$num" >&2
   rc=2
 fi
+
+# `--hardware` 인데 존재 판정이 실패한 건 — 이슈는 있고 needs:hardware 만 빠졌다(#570)
+[ "$hw_unknown" = 1 ] && rc=2
 
 # ⑸ PR 마커 — 폴백 건에서도 반드시 남긴다(티켓은 있는데 아무도 모르는 상태 방지)
 gh pr comment "$pr" --repo "$repo" --body "배포 대기: #$num" >/dev/null 2>&1 || {
