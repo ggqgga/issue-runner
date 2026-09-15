@@ -4,14 +4,14 @@
 # 실패 시: shellcheck 자신의 진단(파일:줄:열 + SC 코드)을 그대로 찍고 비0 으로 죽는다.
 #
 # 담은 블록 (원 bin/ci 23–33행 · 분류표 행 2 「ⓓ 도구 단계」 · #427):
-#   • [2/12] shellcheck (설치 시)
+#   • [2/11] shellcheck (설치 시)
 #
 # glob 에 `ci/steps/*.sh ci/lib.sh` 가 들어 있다 — 단계 파일 자신도 검사 대상이다(#524).
 # 만료 조건: 없음(린터 단계는 대체물이 없다).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-echo "[2/12] shellcheck (설치 시)"
+echo "[2/11] shellcheck (설치 시)"
 if command -v shellcheck >/dev/null 2>&1; then
   # `scripts/lib/*.sh` 는 source 전용 라이브러리다 — 소비처의 `# shellcheck source=` 지시로
   # 따라 들어가지만, 라이브러리 자체의 문법·경고도 여기서 직접 문다 (#427).

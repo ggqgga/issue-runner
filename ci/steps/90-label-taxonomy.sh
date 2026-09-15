@@ -6,7 +6,7 @@
 # 실패 시: `  ✗ scripts/setup-labels.sh: … (#245)` 한 줄 + exit 1.
 #
 # 담은 블록 (원 bin/ci 620–642행 · 분류표 행 84 · 부행 84-a · #245 · #364 — 그리고 원
-# 55–62행 · 분류표 행 7 · #281 의 다섯 라벨(harvesting·epic·verifying·flow:agent-ready·
+# 121–128행 · 분류표 행 7 · #281 의 다섯 라벨(harvesting·epic·verifying·flow:agent-ready·
 # flow:claimed)을 #571 이 이 목록으로 흡수했다. 단계 40 은 은퇴):
 #   • [setup-labels] 라벨 정의 존재 — full-cycle 추가·기존 라벨 정의 생존
 #
