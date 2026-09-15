@@ -648,6 +648,10 @@ merged means it entered the promotion scope, and that fact must be visible to a 
     `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` in ④ Report and ask the human for
     **the 3-rung recovery in `references/loop-conventions.md` §8**. Do not stack another attempt at the same
     label edit here (#223). Never pass over it silently.
+  - **exit 3 (the issue was created · `deploy-wait` and the marker are fine — only `needs:hardware` is
+    missing, #570)** — `--hardware` was given but the existence lookup failed (transient outage) or the label
+    did not attach. Report `BLOCKED: 배포 대기 이슈 needs:hardware 누락 — #<번호>` in ④ Report and ask the
+    human for one line: `gh issue edit <번호> --repo <repo> --add-label needs:hardware` (not the 3-rung recovery).
 
   `deploy-wait` is both the bucket label `loop-status.sh` uses to separate deploy-waiting from needs-human and
   **the lane mark by which the deploy-cycle loop picks this ticket up** — that one label is mandatory.
