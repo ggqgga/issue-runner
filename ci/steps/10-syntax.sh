@@ -5,14 +5,14 @@
 # 찍고 루프 끝에서 exit 1 — 한 파일이 깨져도 나머지를 다 훑고 목록으로 보여준다.
 #
 # 담은 블록 (원 bin/ci 13–22행 · 분류표 행 1 「ⓓ 도구 단계」):
-#   • [1/12] bash 문법 검사 (bash -n) — 원 이슈 없음(도구 단계)
+#   • [1/11] bash 문법 검사 (bash -n) — 원 이슈 없음(도구 단계)
 #
 # glob 에 `ci/steps/*.sh ci/lib.sh` 가 들어 있다 — 단계 파일 자신도 검사 대상이다(#524).
 # 만료 조건: 없음(문법 검사는 대체물이 없다).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-echo "[1/12] bash 문법 검사 (bash -n)"
+echo "[1/11] bash 문법 검사 (bash -n)"
 fail=0
 for f in scripts/*.sh scripts/manual/*.sh scripts/lib/*.sh ci/guards/*.sh ci/steps/*.sh ci/lib.sh hooks/*.sh bin/ci; do
   if ! bash -n "$f"; then

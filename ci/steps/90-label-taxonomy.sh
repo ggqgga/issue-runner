@@ -5,18 +5,22 @@
 #
 # 실패 시: `  ✗ scripts/setup-labels.sh: … (#245)` 한 줄 + exit 1.
 #
-# 담은 블록 (원 bin/ci 620–642행 · 분류표 행 84 · 부행 84-a · #245 · #364):
+# 담은 블록 (원 bin/ci 620–642행 · 분류표 행 84 · 부행 84-a · #245 · #364 — 그리고 원
+# 121–128행 · 분류표 행 7 · #281 의 다섯 라벨(harvesting·epic·verifying·flow:agent-ready·
+# flow:claimed)을 #571 이 이 목록으로 흡수했다. 단계 40 은 은퇴):
 #   • [setup-labels] 라벨 정의 존재 — full-cycle 추가·기존 라벨 정의 생존
 #
 # 100자 상한 축(84-c)은 scripts/tests/setup-labels.test.sh(#346), RESUME_AFTER_MIN 정의
 # 축(84-b)은 ci/guards/single-definition.sh 로 갔다.
 #
-# 만료 조건: 라벨 이름 목록이 단계 40(분류표 행 7)의 목록과 한 자리로 합쳐지고
-# setup-labels.test.sh 가 「세트 전량 생성」 을 그 한 자리로 물 때.
+# 만료 조건: 스크립트가 `--add-label`/`--label` 로 쓰는 라벨 리터럴 추출이 전수가 되어
+# (지금은 P0·P1·flow:ci·flow:codex 가 변수로 조립된다) 「소비되는 이름은 전부 정의가 있다」 를
+# 소비자 파생 가드가 물 수 있을 때 — 그때 이 손 목록을 지운다. 이 목록이 라벨 이름의
+# **유일한** 손 목록이다(#571) — 새 라벨을 붙이는 스크립트를 넣으면 여기 한 자리만 늘린다.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-echo "[setup-labels] 라벨 정의 존재 — full-cycle 추가·기존 라벨 정의 생존·RESUME_AFTER_MIN 상수 (#245 · #364)"
+echo "[setup-labels] 라벨 정의 존재 — full-cycle 추가·기존 라벨 정의 생존(전이·미러 라벨 포함 21종)·RESUME_AFTER_MIN 상수 (#245 · #364 · #281)"
 # 플랜 4단계(label-taxonomy-cleanup). 스크립트가 읽는 것은 라벨 **이름**뿐이라
 # 여기 남기는 것도 `gh label create <이름>` 정의의 존재다 — `--description` 문구 대조와
 # README 라벨 표 행 검사, resume-sweep.sh 머리 주석 문구 대조는 #398 로 걷었다
@@ -30,8 +34,12 @@ grep -qF 'gh label create "full-cycle"' scripts/setup-labels.sh \
 #    라벨이 레포에 없으면 편집 전체가 실패한다).
 #    예외 하나: `P2` 는 #401 이 축을 P0·P1 둘로 줄이며 **의도적으로** 목록에서 뺐다
 #    (레포별 라벨 삭제는 여전히 데이터 작업이라 이 스크립트 밖이다 — 더 만들지 않을 뿐).
-for lbl in agent-ready agent:claimed needs-human P0 P1 harvesting epic flow:ci flow:verify \
-           flow:codex flow:ready spinoff deploy-wait loop-dashboard hold:conflict hold:policy hold:ladder dup; do
+#    flow:agent-ready·flow:claimed(#281)는 PR 미러 앞 두 칸, verifying(#275)은 verify-runner
+#    점유 라벨 — 정의가 없으면 transition.sh 의 반송 add 와 claim-issue.sh 의 미러 edit 이
+#    레포에서 `not found` 로 실패한다(옛 단계 40 이 보던 다섯, #571 로 여기 합류).
+for lbl in agent-ready agent:claimed needs-human P0 P1 harvesting epic verifying \
+           flow:agent-ready flow:claimed flow:ci flow:verify flow:codex flow:ready \
+           spinoff deploy-wait loop-dashboard hold:conflict hold:policy hold:ladder dup; do
   grep -qE "gh label create \"?${lbl}\"? " scripts/setup-labels.sh \
     || { echo "  ✗ scripts/setup-labels.sh: 기존 라벨 '$lbl' 정의가 사라짐 — 이 축 정리는 삭제·이름변경을 하지 않는다 (#245)"; exit 1; }
 done

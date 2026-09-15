@@ -80,12 +80,14 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
   L2(#542)가 신설한 격자 러너 넷(ci-gate · cleanup-worktree · repo-flag · setup-labels) ·
   `[guard]` 호출 7줄. 행마다 분류와 만료 조건을 원 규율대로 적었다.
 
-행 범위 칸은 **기준 커밋 `7943cc6`(1,939줄) 기준 그대로** 두었다 — 현재 파일과 대조하려면
-`step 파일` 열을 보고 그 단계 파일의 머리 주석(원 `bin/ci` 행 범위를 적어 두었다)을 짚는다.
+`원 행(7943cc6)` 열은 **기준 커밋 `7943cc6`(1,939줄) 의 행 범위 그대로**다 — 열 이름이 그 사실을
+말한다(#571). 현재 파일과 대조하려면 `step 파일` 열을 보고 그 단계 파일의 머리 주석(원 `bin/ci`
+행 범위를 적어 두었다)을 짚는다. 현재 행 번호 열은 두지 않는다 — 소비자가 없고 단계 파일을
+고칠 때마다 어긋난다.
 
 ## 표 — 94행 (원 86 + #524 가 더한 신규 8)
 
-| # | 행 범위 | 대상 파일 | 무는 리터럴 | 원 이슈 | 분류 | 대체물 | 만료 조건 | 처분 | step 파일 |
+| # | 원 행(7943cc6) | 대상 파일 | 무는 리터럴 | 원 이슈 | 분류 | 대체물 | 만료 조건 | 처분 | step 파일 |
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | 13–22 | scripts/*.sh · scripts/manual/*.sh · scripts/lib/*.sh · hooks/*.sh · bin/ci | `bash -n "$f"` | — | ⓓ 도구 단계 | 자기 자신(문법 검사 — 대체물 없음) | 없음. 4단계 뒤 leaf 가 ci/steps/01-syntax.sh 로 옮기는 것뿐 |  | ci/steps/10-syntax.sh |
 | 2 | 23–33 | 같음 | `shellcheck -x -S warning …` | #427 | ⓓ 도구 단계 | 자기 자신 | 없음. ci/steps/02-shellcheck.sh |  | ci/steps/20-shellcheck.sh |
@@ -93,7 +95,7 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 | 4 | 41–44 | scripts/repo-dir.sh | `ISSUE_RUNNER_PROJECTS_ROOT=/tmp … = "/tmp/some-repo"` | — | ⓐ⑵ | 신규 scripts/tests/repo-flag.test.sh (78 의 `-` 폴백과 한 벌 — 78 행이 지목한 그 파일) | 그 테스트 파일이 생기면 즉시 | L2 (이 PR) | —(L2 → scripts/tests/repo-flag.test.sh) |
 | 5 | 45–99 | SKILL.md↔SKILL.en.md · skills/loop-issues/* · skills/closeout/* · references/worker-template*.md | `grep -c '^## ' 개수 · ①②③ 순서 마커 · <WT_PATH> 외 placeholder 6종` | — | ⓒ (+ⓓ 86–96) | ci/guards/ko-en-sync.sh. placeholder 축(86–96)은 디스패처 런타임 치환 계약이라 대체물 없음 | 한/영 쌍이 없어지거나 번역 동기 검사기가 들어오면. placeholder 축은 워커 프롬프트 조립이 스크립트 인자로 옮겨질 때 | L6 (이 PR · 5-a·5-b — ⓓ placeholder 축은 같은 루프 안이라 동반 이사) | ci/guards/ko-en-sync.sh → 30-guards.sh |
 | 6 | 100–120 | hooks/ci-gate-before-pr-merge.sh | `gh pr merge <번호\|URL\|브랜치> → exit 2` | — | ⓐ⑵ | 신규 scripts/tests/ci-gate.test.sh (33·34 와 한 벌) | 그 테스트 파일이 생기면 | L2 (이 PR) | —(L2 → scripts/tests/ci-gate.test.sh) |
-| 7 | 121–128 | scripts/setup-labels.sh | `gh label create $lbl  (harvesting·epic·verifying·flow:agent-ready·flow:claimed)` | #281 | ⓓ 기계 계약 | references/state-machine.md 「정상 사다리」·「정지와 반송」 표가 라벨의 뜻을 갖지만, 스크립트에 정의가 있는지는 아무도 안 본다 | 라벨 목록이 84⑵ 와 한 자리로 합쳐지고 setup-labels.test.sh 가 생기면 |  | ci/steps/40-label-defs.sh |
+| 7 | 121–128 | scripts/setup-labels.sh | `gh label create $lbl  (harvesting·epic·verifying·flow:agent-ready·flow:claimed)` | #281 | ⓓ 기계 계약 | references/state-machine.md 「정상 사다리」·「정지와 반송」 표가 라벨의 뜻을 갖지만, 스크립트에 정의가 있는지는 아무도 안 본다 | 라벨 목록이 84⑵ 와 한 자리로 합쳐지고 setup-labels.test.sh 가 생기면 — **둘 다 충족**(#571 · L2 #542) | #571 (단계 90 흡수 · 단계 40 은퇴) | —(#571 → ci/steps/90-label-taxonomy.sh 목록) |
 | 8 | 129–135 | scripts/closeout-ci-pass.sh | `gh 전부 실패 → exit 1` | — | ⓐ⑵ | scripts/tests/closeout-ci-pass.test.sh (#428, 블록 66) | 그 격자에 fail-closed 절이 있음을 확인하는 즉시 | L1 (이 PR) | —(L1 폐기) |
 | 9 | 136–160 | scripts/pr-head-at.sh | `실행비트 + gh 실패·부분성공 → rc=1·무출력` | #171 | ⓐ⑵ (+ⓒ 141) | scripts/tests/pr-head-at.test.sh (#428, 블록 65). 실행비트는 ci/guards/exec-bit.sh | 스모크는 그 격자에 흡수되면. 실행비트는 소비자가 bash <스크립트> 로 부르게 바뀔 때 | L1 (이 PR — 9-b; 9-a 는 L5) | —(L1 → pr-head-at.test.sh · 9-a 는 exec-bit.sh) |
 | 10 | 161–167 | scripts/bounce-state.sh | `[ -x scripts/bounce-state.sh ]` | #196 | ⓒ | ci/guards/exec-bit.sh (실행비트 목록 한 자리) | 소비자가 직접 exec 를 그만두면 | L5 (이 PR) | ci/guards/exec-bit.sh → 30-guards.sh |
@@ -170,7 +172,7 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 | 81 | 1612–1709 | SKILL{,.en}.md · skills/{verify-runner,closeout}/SKILL*.md · references/worker-template*.md · scripts/transition.sh | `사다리 참조 · --reason/--note 필수 · --add-label needs-human 금지 · policy-kept 순서 · hold:/verifying 대상 필터 · loop-status.sh --post <루프>` | #147 · #151 · #155 · #163 · #244 · #275 · #344 · #375 | ⓓ 6 · ⓒ 3 (아래 분해 표) | loop-conventions §9 · closeout-rationale §5 · issue-runner-rationale §11·§13 · state-machine.md 「정지와 반송」 | 부행마다 다르다 — 분해 표 참조 (81-f·81-g·81-h 는 ①-b 대상 필터·규칙0 문단이 스크립트 인자로 옮겨질 때) | L6 (이 PR · 81-a·81-h) | ci/steps/80-transition-prose.sh (81-a·81-h 쌍금지 축→prose-regression) |
 | 82 | 1710–1755 | SKILL{,.en}.md · skills/verify-runner/SKILL.md · skills/closeout/SKILL{,.en}.md · references/worker-template{,.en}.md | `transition.sh verify-pass\|closeout-pick\|handoff-verify · loop-status.sh · BLOCKED: 전이 실패 · --add-label flow:* 금지` | #144 | ⓓ 기계 계약 (+ⓑ 후보 1735–1744) | references/state-machine.md 「전이 실패의 공통 규칙 (세 SKILL 이 각자 14회 재진술하던 것)」 | BLOCKED 문구 축(1735–1744)은 지금 폐기 가능. 전이 호출 배선은 그 계약이 스크립트 인자로 옮겨질 때 | L3 (이 PR · 82-b 세 루프 SKILL 축만) | ci/steps/80-transition-prose.sh (82-b 워커 템플릿 축만 · check_phrase 는 ci/lib.sh) |
 | 83 | 1756–1809 | scripts/loop-status.sh | `--state closed --search '"Epic #" in:body' · is:closed 금지 · --limit "$EPIC_CLOSED_LIMIT" · epic_of 1벌 · what: "닫힌 이슈" 금지` | #292 · #236 · #190 · #191 | ⓒ (+ⓐ 후보 1771–1781) | ci/guards/single-definition.sh (epic_of 축) · scripts/tests/loop-status.test.sh (쿼리 형태 축 — gh 인자 캡처) | 쿼리 형태 축은 그 스위트가 gh 인자를 캡처하면. epic_of 축은 정규식이 lib/loop.jq 로 가면 | L4 (#558 · 83-b) · L6 (이 PR · 83-c) | ci/steps/85-loop-status.sh (83-b→single-definition · 83-c→prose-regression) |
-| 84 | 1810–1849 | scripts/setup-labels.sh · scripts/lib/constants.sh | `gh label create "full-cycle" · 기존 18개 라벨 정의 생존 · RESUME_AFTER_MIN 정의 · --description 100자 이하` | #245 · #364 · #346 · #401 | ⓐ⑵ (1834–1849) · ⓓ (1815–1828) · ⓒ (1829–1833) | 신규 scripts/tests/setup-labels.test.sh (100자 상한·정의 존재를 행동으로) | 그 테스트 파일이 생기면. 라벨 이름 목록은 블록 7 과 한 자리로 합친다 | L4 (#540 · 84-b) · L2 (이 PR · 84-c) | ci/steps/90-label-taxonomy.sh (84-b→single-definition · 84-c 는 L2) |
+| 84 | 1810–1849 | scripts/setup-labels.sh · scripts/lib/constants.sh | `gh label create "full-cycle" · 기존 라벨 정의 생존(#571 뒤 21개 — 블록 7 의 다섯 합류) · RESUME_AFTER_MIN 정의 · --description 100자 이하` | #245 · #364 · #346 · #401 | ⓐ⑵ (1834–1849) · ⓓ (1815–1828) · ⓒ (1829–1833) | 신규 scripts/tests/setup-labels.test.sh (100자 상한·정의 존재를 행동으로) | 그 테스트 파일이 생기면(L2 #542 로 충족). 라벨 이름 목록은 블록 7 과 한 자리로 합친다(#571 로 충족 — 이제 84-a 가 유일한 손 목록. 다음 만료: 소비자 파생 가드) | L4 (#540 · 84-b) · L2 (#542 · 84-c) · #571 (84-a ← 블록 7) | ci/steps/90-label-taxonomy.sh (84-b→single-definition · 84-c 는 L2) |
 | 85 | 1850–1891 | scripts/finish-classify.sh · scripts/bounce-state.sh · skills/closeout/SKILL{,.en}.md | `bounce-state.sh 되묻기 배선 + 반송 마커 5분/35분 → active/stale_reverify + #308 문단 · 라벨 공백 창/label gap` | #308 | ⓐ⑵ (1862–1879) · ⓑ (1880–1891) · ⓓ (1853–1855) | scripts/tests/finish-classify.test.sh 1140–1200행 — #308 반송 마커 픽스처 11:25·11:30·11:29:59(경계) + 마커 부재(1173행)·시각 미상(1182행) 두 반례. bin/ci 주석의 「J절」 은 옛 이름이고 실제 자리는 여기다 · references/closeout-rationale.md §7 「라벨 공백 창 (#308)」(:357-366 — L3 실측 정정) | 산문 축(1880–1891)은 지금 폐기 가능. 스모크도 즉시 — 그 격자를 실측 확인했다 | L3 (이 PR · 85-d) | ci/steps/95-bounce-wiring.sh (85-b→exec-bit · 85-c 는 L1 · 85-d 는 L3) |
 | 86 | 1892–1939 | SKILL*.md · skills/*/SKILL*.md · references/worker-template*.md · references/{loop-conventions,*-rationale}.md | `(loop-conventions\|…rationale)(\.md)?'? §[0-9]+ 인용 ⊆ ^## §N 헤더 집합` | #507 · #451 · #453 | ⓒ | ci/guards/section-pointers.sh | 블록 주석이 이미 적었다: 「포인터를 앵커 링크로 바꾸고 링크 검사기가 들어오면 지운다」 | L6 (이 PR) | ci/guards/section-pointers.sh → 30-guards.sh |
 | 87 | —(신규 · 원 표 뒤) | scripts/tests/hold-resolve.test.sh | `bash scripts/tests/hold-resolve.test.sh` | #334 | ⓓ 테스트 러너 | 자기 자신 | 없음 | #556 (hold-resolve 신설) | ci/steps/60-tests.sh |
@@ -188,7 +190,7 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 **대표 분류**만 적었고(그래야 행 수 = 블록 수 86 이 재현된다), 뒤 leaf 가 행 단위로 돌 때
 실제로 집는 단위는 아래 부행이다. 부행 59개.
 
-| 부행 | 행 범위 | 무는 것 | 분류 | 대체물 · 근거 | step 파일 |
+| 부행 | 원 행(7943cc6) | 무는 것 | 분류 | 대체물 · 근거 | step 파일 |
 |---|---|---|---|---|---|
 | 5-a | 46–77 | 한/영 ## 헤더 개수·①②③ 순서 마커 일치 | ⓒ | ci/guards/ko-en-sync.sh | ci/guards/ko-en-sync.sh → 30-guards.sh |
 | 5-b | 78–85 | worker-template 절차 번호 줄(^N.) 개수 일치 | ⓒ | 같음 | ci/guards/ko-en-sync.sh → 30-guards.sh |
@@ -242,7 +244,7 @@ glob 세 줄(15·29·38)을 바꿨지만 줄 수·블록 경계는 그대로다.
 | 83-a | 1757–1781 | --state closed 플래그 형태 · is:closed 금지 · --limit "$EPIC_CLOSED_LIMIT" | ⓐ 후보 | loop-status.test.sh 가 gh 인자를 캡처하면 | ci/steps/85-loop-status.sh |
 | 83-b | 1782–1791 | epic_of 정규식이 이 파일에 1벌 | ⓒ | ci/guards/single-definition.sh | ci/guards/single-definition.sh → 30-guards.sh |
 | 83-c | 1792–1809 | 헤더 주석 계약 3토큰 · 닫힌 이슈 절단 warn 부활 금지 | ⓒ | ci/guards/prose-regression.sh | ci/guards/prose-regression.sh → 30-guards.sh |
-| 84-a | 1815–1828 | full-cycle 정의 + 기존 18개 라벨 정의 생존 | ⓓ | 기계 계약(라벨 이름). 블록 7 과 목록 중복 | ci/steps/90-label-taxonomy.sh |
+| 84-a | 1815–1828 (+121–128) | full-cycle 정의 + 기존 라벨 정의 생존 21종(블록 7 의 다섯 합류) | ⓓ | 기계 계약(라벨 이름). #571 로 블록 7 과 합쳐져 유일한 손 목록 — 만료는 소비자 파생 가드가 전수가 될 때 | ci/steps/90-label-taxonomy.sh |
 | 84-b | 1829–1833 | RESUME_AFTER_MIN 정의가 constants.sh 에 있다 | ⓒ | ci/guards/single-definition.sh | ci/guards/single-definition.sh → 30-guards.sh |
 | 84-c | 1834–1849 | --description 100자 이하 · 한 줄 정의가 20건 이상 | ⓐ⑵ | 신규 setup-labels.test.sh | —(L2 → setup-labels.test.sh) |
 | 85-a | 1853–1855 | finish-classify 의 bounce-state.sh 되묻기 배선 | ⓓ | 기계 계약 | ci/steps/95-bounce-wiring.sh |
