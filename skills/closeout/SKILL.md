@@ -569,6 +569,10 @@ worktree(`agent/issue-<N>`)를 직접 정리한다. `--merged` 는 squash 머지
     `BLOCKED: 배포 대기 이슈 deploy-wait 라벨 부착 실패 — #<번호>` 로 올리고, 사람에게
     **`references/loop-conventions.md` §8 의 3단 복구**를 요구한다. 여기서 같은 라벨 편집을 겹쳐 시도하지
     마라(#223). 조용히 넘어가지 마라.
+  - **exit 3 (이슈는 생성됨 · deploy-wait·마커는 정상 — `needs:hardware` 만 빠짐, #570)** — `--hardware`
+    를 줬는데 존재 판정이 실패했거나(일시 장애) 부착이 안 된 것이다. ④ Report 에
+    `BLOCKED: 배포 대기 이슈 needs:hardware 누락 — #<번호>` 로 올리고 사람에게
+    `gh issue edit <번호> --repo <repo> --add-label needs:hardware` 한 줄을 요구한다(3단 복구 아님).
 
   `deploy-wait` 는 `loop-status.sh` 가 배포대기와 needs-human 을 갈라 세는 버킷 라벨이자 **deploy-cycle
   루프가 이 티켓을 집는 레인 표식**이다 — 이 라벨 하나가 필수다. **closeout 은 `needs-human` 을 붙이지
