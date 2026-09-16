@@ -618,6 +618,41 @@ FX
 echo '[]' > "$tmp/fx/ggqgga_Verifying.pr_closed.json"
 echo '[]' > "$tmp/fx/ggqgga_Verifying.issues_closed.json"
 
+# ── 픽스처: ggqgga/Bounce (bounce) — 반송대기 칸 (#577) ─────────────────────
+# `verify:반송` 은 **이슈 축 전용** 표식이다 — `verify-redispatch` 가 붙이고 `claim-issue.sh`
+# 가 뗀다. `agent-ready` 는 그대로 유지되므로 이 이슈들은 지금까지 `대기` 줄에서 한 번도
+# 안 집힌 새 이슈와 **완전히 같아 보였다**(이 이슈의 본체). `대기` 의 갈래로 한 줄을 가른다.
+#
+# 갈래 순서가 이 격자의 전부다 — "verify:반송 이 있으면 반송대기" 를 사슬 **앞**에 두면
+# 사다리를 오른 이슈·정지된 이슈까지 통째로 이 칸으로 새고(#225 교훈: 새 분기를 존재
+# 검사로 앞세우면 기존 분기가 도달 불가가 된다), **뒤**로 너무 밀면 `대기` 가 먼저 물어
+# 새 칸이 영영 0건이 된다. 그래서 `대기` 바로 앞 한 자리다.
+#
+#   번호  입력                                           want
+#   ────  ─────────────────────────────────────────────  ────────────────────────────
+#   #70   agent-ready + verify:반송 (+PR #170 flow:agent-ready)  반송대기 `#70 ← PR #170` · warn 0
+#   #71   agent-ready 만                                 대기 — 회귀 대조군(라벨 없으면 종전 그대로)
+#   #72   agent-ready + verify:반송 + OPEN 블로커 #71     막힘(둘 다 대기의 갈래 · 못 집는 쪽이 이긴다)
+#   #73   agent-ready + verify:반송 + agent:claimed       issue-runner — 사다리 단계가 이긴다(앞세우기 금지의 반례)
+#   #74   agent-ready + verify:반송 + needs-human         needs-human — 사람 게이트가 최우선
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Bounce.issues.json" <<'FX'
+[
+ {"number":74,"title":"반송 + 사람 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"verify:반송"},{"name":"needs-human"}]},
+ {"number":73,"title":"반송 뒤 다시 집힘","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"verify:반송"},{"name":"agent:claimed"}]},
+ {"number":72,"title":"반송인데 블로커가 열려 있다","createdAt":"@NOW@","body":"Blocked by #71","labels":[{"name":"agent-ready"},{"name":"verify:반송"}]},
+ {"number":71,"title":"한 번도 안 집힌 새 이슈","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"}]},
+ {"number":70,"title":"반송됨 — 재디스패치 대기","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"verify:반송"}]}
+]
+FX
+sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Bounce.pr_open.json" <<'FX'
+[
+ {"number":170,"headRefName":"agent/issue-70","state":"OPEN","mergedAt":null,"closedAt":null,"createdAt":"@NOW@",
+  "closingIssuesReferences":[{"number":70}],"labels":[{"name":"flow:agent-ready"}]}
+]
+FX
+echo '[]' > "$tmp/fx/ggqgga_Bounce.pr_closed.json"
+echo '[]' > "$tmp/fx/ggqgga_Bounce.issues_closed.json"
+
 # ── 픽스처: ggqgga/Mirror6 (mirror6) — PR 미러 6쌍 · 대기/issue-runner 줄 PR 첨부 (#282) ──
 # #281 이 PR 미러를 사다리 **전 칸**으로 넓혔다 — 이슈 `agent-ready` 만 ↔ PR `flow:agent-ready`,
 # 이슈 `agent:claimed` ↔ PR `flow:claimed`. 대시보드는 그 두 쌍을 대조에 넣고, 대기·issue-runner
@@ -1618,6 +1653,36 @@ ck "--json: verifying 항목에도 repo_short" \
 ck "--json: buckets 키 = 종전 12개 + verifying + test_wait" \
   "$(jq -c '.repos[0].buckets | keys' < "$tmp/out")" \
   '["blocked","claimed","deploy_wait","dup_closed","failed","harvesting","held","human_wait","ready","spinoff","test_wait","verify","verifying","waiting"]'
+
+# ── ⑯-b (#577) 반송대기 칸 — `대기` 를 `대기`/`반송대기` 로 가른다 ──────────────
+run --repo ggqgga/Bounce --since 24h
+ck "bounce: exit 0" "$RC" 0
+has_line "bounce: 반송대기 1 — 반송된 건만(#70), 반송 PR 을 병기" "$tmp/out" \
+  "  반송대기       1  #70 ← PR #170"
+has_line "bounce: 대기 1 — 안 집힌 새 이슈(#71)는 종전 그대로" "$tmp/out" \
+  "  대기           1  #71"
+# 합은 안 변한다 — 반송대기는 대기에서 옮겨 온 갈래다(막힘과 같은 성질).
+has_line "bounce: 헤더 열림 5(반송대기도 합산)" "$tmp/out" \
+  "파이프라인 bounce — 열림 5 · 스코프 bounce · 창 24h"
+# 갈래 순서 — 앞세우면 #73·#74 가 통째로 반송대기로 샌다.
+has_line "bounce: issue-runner 1 — 사다리 단계가 반송 표식을 이긴다(#73)" "$tmp/out" \
+  "  issue-runner   1  #73"
+has_sub "bounce: needs-human — 사람 게이트가 최우선(#74)" "$tmp/out" "  needs-human    1  #74"
+# 못 집는 쪽이 이긴다 — 블로커가 열려 있으면 `막힘`(대기·반송대기 둘 다의 갈래).
+has_line "bounce: 막힘 1 — 반송인데 블로커가 열려 있으면 막힘(#72)" "$tmp/out" \
+  "  막힘           1  #72 ← #71(대기)"
+no_sub "bounce: 반송대기 줄에 #72 가 겹쳐 세지지 않는다" "$tmp/out" "반송대기       2"
+# PR `flow:agent-ready` 는 단계 라벨이다 — 반송대기 줄에 안 붙으면 무소속 warn 으로 운다.
+has_line "bounce: warn 0(정상 형상)" "$tmp/out" "  warn           0"
+
+run --repo ggqgga/Bounce --since 24h --json
+ck "--json: buckets.redispatch_wait 항목(번호·pr)" \
+  "$(jq -c '.repos[0] | [.buckets.redispatch_wait[] | {n:.number, p:.pr}]' < "$tmp/out")" \
+  '[{"n":70,"p":170}]'
+ck "--json: open_total 에 반송대기가 합산된다" "$(jq '.repos[0].open_total' < "$tmp/out")" 5
+ck "--json: buckets 키에 redispatch_wait 가 늘었다(기존 키는 그대로)" \
+  "$(jq -c '.repos[0].buckets | keys' < "$tmp/out")" \
+  '["blocked","claimed","deploy_wait","dup_closed","failed","harvesting","held","human_wait","ready","redispatch_wait","spinoff","test_wait","verify","verifying","waiting"]'
 
 # ── ★에픽 절★ (#260) — 종료/전체·leaf 버킷·P 분포, warn 2종, 파생 병기 ─────────
 # ── ⑮ (#244) 보류 칸 — hold:* 만 붙은(needs-human 없는) 이슈는 대기가 아니다 ───

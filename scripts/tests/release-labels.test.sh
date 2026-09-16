@@ -60,12 +60,16 @@ check "OPEN: flow:verify 정리"        "$(has  "$out" 'flow:verify')"
 check "OPEN: flow:ready 정리"         "$(has  "$out" 'flow:ready')"
 check "OPEN: harvesting 정리"         "$(has  "$out" 'harvesting')"
 check "OPEN: verifying 정리(#275)"    "$(has  "$out" 'verifying')"
+# `verify:반송`(#577)도 **실행 흔적**이다 — 반송당했다는 이 회차의 사실이지 자격이 아니다.
+# `closeout-dup` 의 이슈 정리 경로(전이 ④)가 이 스크립트이므로, 여기 한 줄이 그 제거 지점이다.
+check "OPEN: verify:반송 정리(#577)"  "$(has  "$out" 'verify:반송')"
 
 # ── ② CLOSED 이슈 — 종전대로 전부 정리(무회귀) ─────────────────────────────
 out=$(run CLOSED)
 check "CLOSED: agent-ready 정리"      "$(has "$out" 'agent-ready')"
 check "CLOSED: agent:claimed 정리"    "$(has "$out" 'agent:claimed')"
 check "CLOSED: harvesting 정리"       "$(has "$out" 'harvesting')"
+check "CLOSED: verify:반송 정리(#577)" "$(has "$out" 'verify:반송')"
 
 # ── ③ 상태 조회 실패 — fail-safe 로 agent-ready 를 남긴다 ───────────────────
 # 잘못 남기면 eligible-issues.sh 의 `is:open` 이 삼키고, 잘못 떼면 조용히 좌초한다.
