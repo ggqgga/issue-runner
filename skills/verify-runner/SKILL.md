@@ -64,8 +64,8 @@ CID·PR 까지 마치고 `flow:verify` 로 넘긴 PR 을 받아 **느린 외부�
   `verifying` 가 아닌 PR 에 손대기. **허용**: 검증 대상 PR 의 `flow:*`·`verifying` 라벨
   이동(전부 `transition.sh` 전이로 — verify-pick: flow:verify→verifying · verify-pass:
   verifying→flow:ready · verify-unpick: verifying→flow:verify), 재디스패치 시 연결 이슈
-  `agent-ready` 재부착·`agent:claimed` 제거(검증 실패 반송 — worker-template 이 이 반송을
-  받아 고친다), 아래 **표면 교정 직접 수정**.
+  `agent-ready` 재부착·`verify:반송` 부착·`agent:claimed` 제거(검증 실패 반송 — worker-template
+  이 이 반송을 받아 고친다), 아래 **표면 교정 직접 수정**.
 - `verifying`(#275) = **이 루프의 점유 라벨**(closeout 의 `harvesting` 과 같은 자리 — PR 과
   연결 이슈 양쪽). ② Pick 이 집는 순간 `flow:verify` 를 이것으로 바꾸고, ④ 의 모든 종료
   상태가 뗀다(passed·redispatched·held 는 출구 전이가, flake_retry 는 `verify-unpick` 이).
@@ -297,6 +297,9 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    그 PR 은 다음 틱에 같은 회차로 다시 codex 를 받으므로 ④ Report warn 에 한 줄 남긴다).
 3. 라벨·반송: `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr>` — PR 의
    `flow:verify` 를 떼고 원 이슈를 `agent-ready`(+`flow:verify`·`agent:claimed` 제거)로 되돌린다.
+   같은 전이가 이슈에 **반송 표식** `verify:반송` 도 붙인다(#577) — 자격 라벨만 남으면
+   반송된 이슈가 목록에서 한 번도 안 집힌 새 이슈와 구별되지 않는다. 게이트가 아니라
+   표식이라 재디스패치를 막지 않고, 다음 `claim-issue.sh` 가 같은 edit 에서 뗀다.
    **전이가 비0이면** `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
    `BLOCKED: 전이 실패 verify-redispatch PR #<pr>(<repo_short>) — <stderr 한 줄>`.
    그 반쯤 이동한 상태를 **다시 집는 주체는 이 루프가 아니다** — 회수는 **issue-runner

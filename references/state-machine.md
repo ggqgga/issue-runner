@@ -24,7 +24,7 @@
 
 | # | 상태 (PR / 이슈 / 마지막 판정) | 소유 | 진입 전이 | 게이트 | 정상 출구 | 회수 |
 |---|---|---|---|---|---|---|
-| S0 | (없음 · 반송 뒤면 `flow:agent-ready`) / `agent-ready` / — | issue-runner ③ Dispatch | (사람·loop-issues·closeout 파생 발행) | `eligible-issues.sh`: open + agent-ready + ¬agent:claimed + ¬needs-human + ¬hold:* + 블로커 전부 CLOSED. 정렬 P0 먼저 · 나머지 생성순(#401) | `claim-issue.sh`(create-only ref 잠금) → S1 | — |
+| S0 | (없음 · 반송 뒤면 `flow:agent-ready`) / `agent-ready`(verify 반송 뒤면 +`verify:반송`, #577) / — | issue-runner ③ Dispatch | (사람·loop-issues·closeout 파생 발행) | `eligible-issues.sh`: open + agent-ready + ¬agent:claimed + ¬needs-human + ¬hold:* + 블로커 전부 CLOSED. 정렬 P0 먼저 · 나머지 생성순(#401) | `claim-issue.sh`(create-only ref 잠금) → S1 | — |
 | S1 | `flow:claimed`(+`flow:ci`·`flow:codex`) / `agent:claimed` / (없음 또는 `🔄`) | 워커(issue-runner ① Reconcile 이 감시) | claim-issue | `reconcile.sh`(working/stale) · `timebox-check.sh` → `progress-evidence.sh`(커밋 `STALL_MIN` 이내 · head SHA 의 CI 티켓 살아 있음) | `handoff-verify` → S2 · 워커 사망 → `runner-held`/재디스패치(S0) | issue-runner ① — 진행 증거 없으면 재디스패치. 반쯤 이동한 `verify-redispatch`(PR 단계 라벨 0 + 마지막 판정이 `재검증 실패`)도 여기서 `half_moved_redispatch` 로 회수한다(#394) |
 | S2 | `flow:verify` / `flow:verify` / `🔄` | verify-runner | `handoff-verify`(worker-template 최종 단계) | `verify-eligible.sh`: open + head `agent/issue-*` + flow:verify ∪ verifying + ¬harvesting + ¬needs-human + ¬hold:*. `verifying` 고아 먼저, 그다음 FIFO. `ci` 필드(pass·revalidate·fail) | `verify-pick` → S3 | verify-runner 자신(FIFO 로 다시 집는다) |
 | S3 | `verifying` / `verifying` / `🔄` | verify-runner ③ Verify(지금 검증 중) | `verify-pick` | `verify-eligible.sh` 가 `orphan:true` 로 **먼저** 낸다 — 틱 시작에 남은 `verifying` 은 정의상 이전 틱의 사망 | `verify-pass` → S4 · `verify-redispatch` → S0(반송 마커 `재검증 실패:`) · `verify-held` → H · `verify-unpick`(flake) → S2 | verify-runner ②(고아 재집) |
@@ -33,7 +33,12 @@
 | E | 종료 — 머지됨 / CLOSED, 또는 `dup` / CLOSED | — | 머지 · `closeout-dup`(`release-labels.sh` 가 닫힌 이슈의 agent-ready 회수) | — | 배포 대기 이슈(`deploy-wait`) → deploy-cycle 레인(루프 밖) → 배포 뒤 검증 항목이 남으면 `테스트` 이슈(e2e-test 레인, 사용자 호출) | — |
 
 `agent-ready` 는 사다리 전체에서 유지되는 **자격** 라벨이다 — 위 표의 어느 remove 칸에도 없고, 반송 두 전이만
-다시 add 한다. `flow:ci`·`flow:codex` 는 PR 에만 있는 워커 내부 단계라 이슈 미러가 없다. 반대로 `flow:claimed`·
+다시 add 한다. 그 자격 라벨만 남으면 반송된 이슈와 한 번도 안 집힌 새 이슈가 목록에서 구별되지 않으므로,
+`verify-redispatch` 는 이슈 축에 **표식** `verify:반송` 을 함께 붙인다(#577 — PR 축 짝은 이미 있는
+`flow:agent-ready`). 자격이 아니라 표식이라 **어느 게이트도 읽지 않고**(아래 제외 집합 표), 이슈가 사다리를
+다시 오르는 순간 떨어진다: `claim-issue.sh`(정상 경로, `agent:claimed` 부착과 같은 edit) · `handoff-verify`
+(claim 없이 인계된 경로의 안전망) · `release-labels.sh`(머지·`closeout-dup` ④). 대시보드는 이 표식을
+`반송대기` 줄로 가른다(`loop-status.sh` — `대기` 의 갈래). `flow:ci`·`flow:codex` 는 PR 에만 있는 워커 내부 단계라 이슈 미러가 없다. 반대로 `flow:claimed`·
 `flow:agent-ready` 는 이슈 칸(`agent:claimed`·`agent-ready`)의 **PR 쪽 미러**다(#281) — 열린 agent PR 이 어느 칸에도
 안 보이는 창을 없앤다. `claim-issue.sh` 가 열린 PR 에 `flow:claimed` 를, 반송 두 전이가 `flow:agent-ready` 를 붙이고,
 `handoff-verify`·`verify-pick`·`closeout-pick`·`closeout-dup` 이 둘을 뗀다(`transition.sh` `WORKER_MIRROR`).
@@ -51,7 +56,7 @@
 | H:policy | `hold:policy` + `<!-- hold-note: policy -->` 질문 코멘트 | 기계 정지 — 재심 1회는 issue-runner ①(#155) | `*-held/blocked --reason policy` · `runner-held` | 재심이 풀면 반송(S0) · "사람 몫 유지" 면 `policy-kept` → H:human | resume-sweep 이 `policy_review_due` 를 **두 축**으로 낸다(#395): 이슈 축(`pr:null`) · 열린 연결 이슈가 없는 PR 은 PR 축(`number:null`, 전이 인자는 `<repo> - <pr>`). **PR 축은 재개가 없다** — 반송해도 그 상태를 집는 레인이 없어 언제나 `policy-kept` → H:human 으로만 끝난다(#421) |
 | H:conflict | `hold:conflict` + `<!-- hold-note: conflict -->` 워커 재개 범위 코멘트(#344) | 기계 정지 — resume-sweep(#345) | `*-held/blocked --reason conflict`(보안 경계·대범위는 #344 가 `policy` 로 보낸다) | 창(`RESUME_AFTER_MIN`) 뒤 `resume-sweep.sh` 가 자동 재개(`CONFLICT_RESUME_LIMIT` 회 — ⓐ 워커 한 회차 더: 재개 워커가 홀드 노트를 받아 rebase) · 사람이 `full-cycle` 로 인수(ⓑ)했으면 재개하지 않는다 · 상한 초과면 `hold:policy` 승격 → H:policy | resume-sweep — 이슈 축(①-c). **열린 연결 이슈가 없는 PR**(`closeout-blocked - <pr>` · 홀드 뒤 참조 이슈 닫힘)은 PR 축(①-d)이 집는다: 재개할 워커가 없어(#421) 창 뒤 곧장 `hold:policy` 승격(`escalated` `number:null`·`pr`·`0/0`) → H:policy 의 PR 축 재심 → `policy-kept` → H:human. loop-status·eligible-issues 는 단독 `hold:conflict` 를 `보류`(기계)로 센다 — `full-cycle` 이 붙은 것만 needs-human |
 | H:human | `needs-human` | 사람 | `policy-kept` 만 루프가 붙인다 — 그 외는 사람이 직접 | 사람이 뗀다 | — (세 게이트 전부 제외) |
-| B | 반송 마커(`재검증 실패:` · `재디스패치:`)가 마지막 판정보다 뒤 · PR `flow:agent-ready` / 이슈 `agent-ready` | 워커 레인 (S0 과 같다) | `verify-redispatch` · `closeout-redispatch` — 둘 다 `needs-human`·`hold:*` 를 뗀다(반송 = 사람 대기 해제) | 새 워커가 같은 브랜치에서 고쳐 `handoff-verify` → 새 `✅` | `bounce-state.sh`(마커 인덱스가 판정 뒤면 `bounced` — closeout-eligible 이 옛 ✅ 로 집지 않는다) |
+| B | 반송 마커(`재검증 실패:` · `재디스패치:`)가 마지막 판정보다 뒤 · PR `flow:agent-ready` / 이슈 `agent-ready`(+`verify:반송` — `verify-redispatch` 만, #577) | 워커 레인 (S0 과 같다) | `verify-redispatch` · `closeout-redispatch` — 둘 다 `needs-human`·`hold:*` 를 뗀다(반송 = 사람 대기 해제) | 새 워커가 같은 브랜치에서 고쳐 `handoff-verify` → 새 `✅`(그 전이가 `verify:반송` 도 뗀다 — 정상 경로는 `claim-issue.sh`) | `bounce-state.sh`(마커 인덱스가 판정 뒤면 `bounced` — closeout-eligible 이 옛 ✅ 로 집지 않는다) |
 
 ## closeout ①-b 스윕이 회수하는 계급 (`finish-classify.sh` × `bounce-state.sh`)
 
@@ -112,6 +117,7 @@ exit 코드별 뜻: **1 = readback 불일치**(편집은 갔는데 되읽은 라
 | `flow:verify` | 제외 | 집음(FIFO) | 제외 |
 | `flow:ready` | 제외 | — | 집음(✅ 등 위 조건) |
 | `agent:claimed` | 제외 | — | — |
+| `verify:반송`(#577) | **제외 안 함**(반송 건은 계속 후보) | — | — |
 
 이 집합은 `scripts/tests/hold-gate.test.sh` 가 네 SUT(eligible-issues·claim-issue·closeout-eligible·verify-eligible)를
 전수 대조해 고정한다. 새 정지 라벨은 `hold:` 접두를 쓰면 세 게이트에 자동으로 걸린다.
