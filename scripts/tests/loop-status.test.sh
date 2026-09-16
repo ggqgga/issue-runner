@@ -1094,9 +1094,9 @@ has_line "헤더: 열림=버킷합(19) · 스코프 · 창" "$tmp/out" \
 # (#276) 줄 **순서** — 사다리 9줄(대기 → issue-runner → 검증대기 → verify-runner → 마감대기 →
 # closeout → 보류 → needs-human → 배포대기; 막힘은 대기의 갈래라 바로 아래)과 그 아래 창 3줄.
 # has_line 은 순서를 못 보므로 라벨 열만 뽑아 한 줄로 대조한다.
-ck "10줄 순서 — 누가 들고 있나 순(보류는 needs-human 앞 · 테스트는 needs-human 뒤·배포대기 앞)" \
-  "$(awk 'NR>=2 && NR<=15 {print $1}' "$tmp/out" | paste -sd' ' -)" \
-  "대기 막힘 issue-runner 검증대기 verify-runner 마감대기 closeout 보류 needs-human 테스트 배포대기 실패 중복종료 파생"
+ck "11줄 순서 — 누가 들고 있나 순(반송대기·막힘은 대기의 갈래라 바로 아래 · 보류는 needs-human 앞 · 테스트는 needs-human 뒤·배포대기 앞)" \
+  "$(awk 'NR>=2 && NR<=16 {print $1}' "$tmp/out" | paste -sd' ' -)" \
+  "대기 반송대기 막힘 issue-runner 검증대기 verify-runner 마감대기 closeout 보류 needs-human 테스트 배포대기 실패 중복종료 파생"
 has_line "대기 3(창 밖 파생건도 대기에는 남는다)" "$tmp/out" \
   "  대기           4  #4901 #4832 #4831 #4600"
 # (#248) 블로커가 없는 픽스처에서는 `막힘 0` 한 줄이 느는 것 말고 출력이 바뀌지 않는다 —
@@ -1650,9 +1650,9 @@ ck "--json: open_total 에 verify-runner 칸이 합산된다" "$(jq '.repos[0].o
 ck "--json: verifying 항목에도 repo_short" \
   "$(jq '[.repos[0].buckets.verifying[] | select(has("repo_short") | not)] | length' < "$tmp/out")" 0
 # 스키마 — 기존 키 이름은 그대로고 `verifying` 만 늘었다(표시 이름을 바꿨지 키를 바꾼 게 아니다).
-ck "--json: buckets 키 = 종전 12개 + verifying + test_wait" \
+ck "--json: buckets 키 = 종전 12개 + verifying + test_wait + redispatch_wait" \
   "$(jq -c '.repos[0].buckets | keys' < "$tmp/out")" \
-  '["blocked","claimed","deploy_wait","dup_closed","failed","harvesting","held","human_wait","ready","spinoff","test_wait","verify","verifying","waiting"]'
+  '["blocked","claimed","deploy_wait","dup_closed","failed","harvesting","held","human_wait","ready","redispatch_wait","spinoff","test_wait","verify","verifying","waiting"]'
 
 # ── ⑯-b (#577) 반송대기 칸 — `대기` 를 `대기`/`반송대기` 로 가른다 ──────────────
 run --repo ggqgga/Bounce --since 24h

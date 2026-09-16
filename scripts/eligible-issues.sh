@@ -198,7 +198,7 @@ BLOCKER_Q='.state + "\t" + ([.labels[].name] | join(","))'
 # `대기`(= 곧 집힐 것)로 찍혀 대시보드의 `배포대기` 줄과 어긋나고, 아래 `blocked_human`
 # 카운트(같은 집합)에서도 빠진다.
 # 순서는 loop-status 의 버킷 우선순위와 같다:
-#   needs-human > 테스트 > 배포대기 > 보류 > 단계 라벨(뒤가 이김) > 대기.
+#   needs-human > 테스트 > 배포대기 > 보류 > 단계 라벨(뒤가 이김) > 반송대기 > 대기.
 blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
   case ",$1," in
     *",needs-human,"*)   printf 'needs-human' ;;
@@ -214,6 +214,10 @@ blocker_state_of() {  # blocker_state_of <콤마로 이은 라벨 목록>
     *",verifying,"*)     printf 'verify-runner' ;;
     *",flow:verify,"*)   printf '검증대기' ;;
     *",agent:claimed,"*) printf 'issue-runner' ;;
+    # 반송대기(#577) — `대기` **바로 앞**. `loop-status.sh` 의 버킷 사슬과 같은 자리다(그쪽은
+    # `agent-ready` 도 함께 보지만, 여기 사슬은 위 단계 라벨 갈래를 이미 지나왔으므로 같은 집합이다).
+    # 갈래가 없으면 반송된 블로커가 `대기`(= 곧 집힐 것)로 찍혀 대시보드의 `반송대기` 줄과 어긋난다.
+    *",verify:반송,"*)    printf '반송대기' ;;
     *)                   printf '대기' ;;
   esac
 }

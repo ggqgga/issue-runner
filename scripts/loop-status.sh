@@ -18,6 +18,7 @@
 #
 #     줄             라벨                              jq 키
 #     대기           `agent-ready` 만(OPEN 블로커 없음)  waiting   (`막힘` = 그 갈래, blocked)
+#     반송대기       `agent-ready` + `verify:반송`       redispatch_wait (#577 — 대기의 갈래)
 #     issue-runner   `agent:claimed`                    claimed
 #     검증대기       `flow:verify`                      verify
 #     verify-runner  `verifying` (#275)                 verifying
@@ -72,9 +73,19 @@
 #     6. verify-runner — `verifying` (#275)
 #     7. 검증대기      — `flow:verify`
 #     8. issue-runner  — `agent:claimed`
-#     9. 대기          — `agent-ready` 만 · **OPEN 블로커가 없음**
-#    10. 막힘          — 9 의 조건인데 **OPEN 블로커가 하나 이상**(#248). 9 의 갈래라 `대기`
-#                  바로 아래 줄. 버킷 1~8 은 블로커와 무관하게 그대로다.
+#     9. 반송대기      — 9-b 의 조건인데 `verify:반송` 이 붙어 있음(#577). 9-b 의 갈래라 `대기`
+#                  바로 아래 줄이고, 소유는 `대기` 와 같은 issue-runner 다(집기 전) — 이름은
+#                  #276 규약대로 "누가 들고 있나" 가 아니라 "왜 아직 안 집혔나" 를 덧붙인 것.
+#                  이 갈래가 없으면 반송된 이슈와 **한 번도 안 집힌 새 이슈가 목록에서 같아
+#                  보인다**(둘 다 `agent-ready` 만 남는다 — 이 칸이 생긴 이유).
+#                  **사슬의 이 자리가 전부다**: 앞세우면 사다리를 오른 이슈(`agent:claimed`
+#                  등)와 정지된 이슈까지 이 칸으로 새고(#225 교훈), 뒤로 밀면 `대기` 가 먼저
+#                  물어 이 칸이 영영 0건이 된다.
+#     9-b. 대기        — `agent-ready` 만 · **OPEN 블로커가 없음**
+#    10. 막힘          — 9·9-b 의 조건인데 **OPEN 블로커가 하나 이상**(#248). 그 갈래라 `대기`
+#                  바로 아래 줄. 버킷 1~8 은 블로커와 무관하게 그대로다. **반송대기도 막힘으로
+#                  내려간다** — 못 집는 쪽이 이긴다(반송이든 아니든 블로커가 열려 있으면
+#                  다음에 할 일은 그 블로커다). 그래서 `열림 N` 의 합은 여전히 안 변한다.
 #                  블로커 = 본문에서 **줄 시작**의 `blocked[- ]by\s+#N`(대소문자 무시, 줄 앞
 #                  공백 허용, 매치 구간의 첫 번호만) ∪ 라벨 `blocked-by:<N>`(숫자만), OR·dedupe.
 #                  **이 규칙의 SSOT 는 `eligible-issues.sh`**(`body_blockers`/`label_blockers`
@@ -325,7 +336,7 @@ post_dashboard() {  # post_dashboard <owner/repo> <short> <블록 텍스트>
     printf '# 루프 현황 — %s\n\n' "$short"
     printf '세 루프가 매 틱 이 본문을 덮어쓴다(직접 편집하지 마라). 읽는 법: 이슈 라벨 `agent-ready` 는 자격(사다리 내내 유지),\n'
     printf '단계 라벨(`agent:claimed`→`flow:verify`→`verifying`→`flow:ready`→`harvesting`)이 "지금 누가 들고 있나", `needs-human`+`hold:*` 는 사람(사유·질문은 코멘트).\n'
-    printf '줄 이름은 누가 들고 있나다 — 대기(`agent-ready` 만) · issue-runner(`agent:claimed`) · 검증대기(`flow:verify`) · verify-runner(`verifying`) · 마감대기(`flow:ready`) · closeout(`harvesting`) · 보류(`hold:*`, 루프가 재개) · needs-human(`needs-human`/사람이 인수한 `hold:conflict`+`full-cycle`) · 테스트(`테스트`, 배포 뒤 검증 — e2e-test 가 비운다) · 배포대기(`deploy-wait`).\n\n'
+    printf '줄 이름은 누가 들고 있나다 — 대기(`agent-ready` 만) · 반송대기(`agent-ready` + `verify:반송` — 반송돼 재디스패치 대기, #577) · issue-runner(`agent:claimed`) · 검증대기(`flow:verify`) · verify-runner(`verifying`) · 마감대기(`flow:ready`) · closeout(`harvesting`) · 보류(`hold:*`, 루프가 재개) · needs-human(`needs-human`/사람이 인수한 `hold:conflict`+`full-cycle`) · 테스트(`테스트`, 배포 뒤 검증 — e2e-test 가 비운다) · 배포대기(`deploy-wait`).\n\n'
     printf '**각 루프의 마지막 틱·델타는 아래 코멘트**(루프당 1개, 자기 것만 편집)에 있다.\n\n'
     printf '## 스냅샷 (%s 가 %s 에 게시)\n\n```\n%s\n```\n' "$post_loop" "$now" "$block"
   } > "$tmpb"
@@ -673,7 +684,7 @@ def blockers_of($body; $l):
 def bucket_ko($k):
   {"test_wait":"테스트","deploy_wait":"배포대기","human_wait":"needs-human","held":"보류","harvesting":"closeout",
    "ready":"마감대기","verifying":"verify-runner","verify":"검증대기","claimed":"issue-runner",
-   "waiting":"대기","blocked":"막힘","outside":"루프 밖"}[$k];
+   "waiting":"대기","redispatch_wait":"반송대기","blocked":"막힘","outside":"루프 밖"}[$k];
 # 에픽 번호 (#260) — 본문의 **전용 줄**(줄 시작의 `epic\s+#N` 뒤가 줄 끝까지 공백뿐,
 # 대소문자 무시)의 **첫 매치**만.
 # `blockers_of` 와 같은 스타일(줄 단위로 가른 뒤 capture — jq 의 `^` 는 문자열 시작만
@@ -753,6 +764,9 @@ def prio_of($l):
        elif .stage == "verifying" then "verifying"
        elif .stage == "verify" then "verify"
        elif .stage == "claimed" then "claimed"
+       # 반송대기(#577) — `대기` **바로 앞** 한 자리다. 위로 올리면 사다리·정지 칸이 통째로
+       # 새고, 아래로 내리면 `waiting` 이 먼저 물어 도달 불가가 된다.
+       elif has(.ln; "agent-ready") and has(.ln; "verify:반송") then "redispatch_wait"
        elif has(.ln; "agent-ready") then "waiting"
        else "outside" end)})) as $iss0
 | ($iss0 | map(.number)) as $onums
@@ -760,7 +774,7 @@ def prio_of($l):
 # 블로커 상태는 **멤버십**으로만 본다 (#248) — 추가 gh 호출 0. 이슈·PR 번호는 레포 안에서
 # 한 수열이라 둘 다에 들 수 없다. 어느 목록에도 없으면 해제(닫힘·머지·미존재를 구분하지
 # 않는다 — `eligible-issues.sh` 도 CLOSED/MERGED 를 한 덩어리로 본다).
-# 버킷 재지정은 `waiting` 에서만 한다: 블로커의 **표시용 버킷**은 재지정 뒤 값을 쓰므로
+# 버킷 재지정은 `waiting`·`redispatch_wait`(#577) 두 대기 갈래에서만 한다: 블로커의 **표시용 버킷**은 재지정 뒤 값을 쓰므로
 # (블로커 자신이 막혔으면 `막힘` 으로 보인다) 막힌 사슬이 서로를 가리켜도 여기서 끝난다 —
 # 열림 여부는 버킷과 무관한 멤버십 판정이라 순환이 생기지 않는다.
 | ($iss0
@@ -768,7 +782,7 @@ def prio_of($l):
        | if ($onums | index($b)) != null then {n: $b, state: "OPEN"}
          elif ($prnums | index($b)) != null then {n: $b, state: "OPEN PR"}
          else empty end]})
-   | map(if .bucket == "waiting" and ((.openblk | length) > 0)
+   | map(if (.bucket == "waiting" or .bucket == "redispatch_wait") and ((.openblk | length) > 0)
          then .bucket = "blocked" else . end)) as $iss
 # ── 에픽 절 (#260) — 열린 leaf(.bucket 은 위에서 이미 확정) + 닫힌 leaf($cls) 를 에픽 번호로
 # 묶는다. 9버킷을 6칸으로 접는다: claimed/verify/verifying/ready/harvesting → `progress`(사람용 `진행`),
@@ -778,14 +792,15 @@ def prio_of($l):
     if ($b == "claimed" or $b == "verify" or $b == "verifying" or $b == "ready" or $b == "harvesting")
     then "progress" else $b end;
   def epic_bucket_ko($k):
-    {"progress":"진행","blocked":"막힘","waiting":"대기","human_wait":"needs-human",
+    {"progress":"진행","blocked":"막힘","waiting":"대기","redispatch_wait":"반송대기",
+     "human_wait":"needs-human",
      "held":"보류","test_wait":"테스트","deploy_wait":"배포대기","outside":"루프 밖"}[$k];
   def bucket_counts($leaves):
     reduce $leaves[] as $x ({}; .[epic_bucket_key($x.bucket)] += 1);
   def priority_counts($leaves):
     reduce $leaves[] as $x ({}; if $x.prio == null then . else .[$x.prio] += 1 end);
   def epic_bucket_segment($bc):
-    (["progress","blocked","waiting","human_wait","held","test_wait","deploy_wait","outside"]
+    (["progress","blocked","waiting","redispatch_wait","human_wait","held","test_wait","deploy_wait","outside"]
      | map(select(($bc[.] // 0) > 0) | "\(epic_bucket_ko(.)) \($bc[.])")
      | join(" · "));
   def epic_prio_segment($pc):
@@ -906,6 +921,12 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
     buckets: {
       # 대기 (#282) — 반송된 PR(`flow:agent-ready`)을 검증대기 줄과 같은 꼴로 병기한다.
       waiting:     bucket("waiting";     . as $i | worker_pr_of($i) as $p
+                     | (item($i; "#\($i.number)" + (if $p == null then "" else " ← PR #\($p.number)" end))
+                        + {pr: (if $p == null then null else $p.number end)})),
+      # 반송대기 (#577) — 대기와 같은 꼴이다(반송 PR `flow:agent-ready` 를 `← PR #n` 으로 병기).
+      # 같은 `worker_pr_of` 를 쓴다 — 이 칸의 PR 미러는 대기 칸과 정확히 같은 모양이라(이슈
+      # 사다리 라벨 0 + `agent-ready`) 판정을 따로 만들면 두 벌이 갈린다.
+      redispatch_wait: bucket("redispatch_wait"; . as $i | worker_pr_of($i) as $p
                      | (item($i; "#\($i.number)" + (if $p == null then "" else " ← PR #\($p.number)" end))
                         + {pr: (if $p == null then null else $p.number end)})),
       # 막힘 (#248) — 항목은 기존 item 필드 + `blockers: [{n, state, bucket|null}]`.
@@ -1234,7 +1255,7 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
                + " · 루프가 못 집어 warn 아님")}))
     )
   }
-| . + {open_total: ([.buckets.waiting, .buckets.blocked, .buckets.claimed, .buckets.verify,
+| . + {open_total: ([.buckets.waiting, .buckets.redispatch_wait, .buckets.blocked, .buckets.claimed, .buckets.verify,
                      .buckets.verifying, .buckets.ready, .buckets.harvesting, .buckets.human_wait,
                      .buckets.held, .buckets.test_wait, .buckets.deploy_wait]
                     | map(length) | add)}
@@ -1247,7 +1268,7 @@ JQ
 # verify-runner 가 한 칸 더 길다). 아래 에픽·승격 대기·warn·note 줄도 같은 폭이다.
 RENDER_JQ=$(cat <<'JQ'
 def padded($k):
-  {"waiting":"대기           ","blocked":"막힘           ","claimed":"issue-runner   ",
+  {"waiting":"대기           ","redispatch_wait":"반송대기       ","blocked":"막힘           ","claimed":"issue-runner   ",
    "verify":"검증대기       ","verifying":"verify-runner  ","ready":"마감대기       ",
    "harvesting":"closeout       ","held":"보류           ","human_wait":"needs-human    ",
    "test_wait":"테스트         ","deploy_wait":"배포대기       ","failed":"실패           ","dup_closed":"중복종료       ",
@@ -1260,7 +1281,7 @@ if .ok == false then
   "파이프라인 \(.repo_short) — 조회 실패: \(.error)"
 else
   ([ "파이프라인 \(.repo_short) — 열림 \(.open_total) · 스코프 \($scope) · 창 \(.since)",
-     row("waiting"), row("blocked"), row("claimed"), row("verify"), row("verifying"), row("ready"),
+     row("waiting"), row("redispatch_wait"), row("blocked"), row("claimed"), row("verify"), row("verifying"), row("ready"),
      row("harvesting"), row("held"), row("human_wait"), row("test_wait"), row("deploy_wait"),
      row("failed"), row("dup_closed"), row("spinoff"),
      "  에픽           \((.epics // []) | length)" ]
