@@ -336,6 +336,12 @@ case "\$sub" in
     esac ;;
   "issue edit")
     shift   # 이슈 번호
+    # 레포에 라벨 **정의**가 없는 상태 모사 — gh 는 제거조차 편집을 통째로 실패시킨다.
+    if [ "\${STUB_NOLABEL:-0}" = 1 ]; then
+      case " \$* " in *" verify:반송 "*)
+        echo "gh: could not remove label: 'verify:반송' not found" >&2; exit 1 ;;
+      esac
+    fi
     while [ \$# -gt 0 ]; do
       case "\$1" in
         --add-label)    shift; printf '%s\n' "\${1:-}" >> "$RT/labels" ;;
@@ -386,6 +392,19 @@ check "왕복 ⑵ claimed 출력" "$(grep -q '^claimed: o/r#5$' "$tmp/rtout" && 
 check "왕복 ⑵ verify:반송 이 떨어졌다" \
   "$([ "$(has_lbl 'verify:반송')" = no ] && echo ok || echo no)"
 check "왕복 ⑵ agent:claimed 가 붙었다" "$(has_lbl 'agent:claimed')"
+
+# ⑶ 라벨 **정의**가 없는 레포(옵트인만 하고 setup-labels.sh 를 다시 안 돌린 레포) — 제거 edit 이
+#    통째로 실패해도 claim 은 살아야 한다. 같은 edit 에 실으면 `set -e` 라 잠금 ref 를 잡은 채
+#    죽어 그 레포의 **모든** 디스패치가 멎는다(사전 리뷰 WARN).
+printf 'agent-ready\n' > "$RT/labels"
+rm -f "$RT/lock"
+RTRC=0
+PATH="$tmp/rtbin:$PATH" CLAIM_STALE_WAIT=0 STUB_NOLABEL=1 bash "$SUT" o/r 5 \
+  >"$tmp/rtout" 2>"$tmp/rterr" || RTRC=$?
+ck "왕복 ⑶ 라벨 정의 부재: exit 0(claim 은 죽지 않는다)" "$RTRC" 0
+check "왕복 ⑶ 라벨 정의 부재: agent:claimed 는 붙었다" "$(has_lbl 'agent:claimed')"
+check "왕복 ⑶ 라벨 정의 부재: best-effort 사유 한 줄" \
+  "$(grep -q '반송 표식 회수 실패(best-effort' "$tmp/rterr" && echo ok || echo no)"
 
 echo "claim-issue: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

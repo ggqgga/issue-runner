@@ -45,4 +45,20 @@ if [ "$state" = "CLOSED" ]; then
   args+=(--remove-label "agent-ready")
 fi
 
-gh issue edit "$num" --repo "$repo" "${args[@]}" >/dev/null 2>&1 || true
+# 한 번에 보낸다(호출 1회). 다만 `verify:반송`(#577)은 **레포에 정의가 없으면** 제거조차 편집을
+# 통째로 실패시키는 라벨이라(옵트인만 하고 setup-labels.sh 를 다시 안 돌린 레포), 실패하면 그것만
+# 빼고 **한 번** 다시 보낸다 — 그러지 않으면 표식 하나 때문에 실행 흔적 정리가 전부 조용히 유실되고,
+# 그게 바로 이 스크립트가 막으려는 조용한 좌초다. 정상 경로는 종전대로 edit 1회다.
+# 재시도 인자는 **다시 조립한다** — `--remove-label` 과 값은 쌍이라 값만 빼면 다음 플래그가
+# 값으로 먹힌다(가운데에서 빠지면 `agent-ready` 회수가 통째로 어긋난다).
+if ! gh issue edit "$num" --repo "$repo" "${args[@]}" >/dev/null 2>&1; then
+  retry=()
+  i=0
+  while [ "$i" -lt "${#args[@]}" ]; do
+    if [ "${args[$i]}" = "--remove-label" ] && [ "${args[$((i + 1))]:-}" = "verify:반송" ]; then
+      i=$((i + 2)); continue
+    fi
+    retry+=("${args[$i]}"); i=$((i + 1))
+  done
+  gh issue edit "$num" --repo "$repo" "${retry[@]}" >/dev/null 2>&1 || true
+fi

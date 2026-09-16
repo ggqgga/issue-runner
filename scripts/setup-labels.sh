@@ -80,9 +80,11 @@ gh label create "flow:ready" --repo "$repo" --color 2DA44E \
 # `release-labels.sh`). 없던 시절엔 반송된 이슈와 한 번도 안 집힌 새 이슈가 목록에서
 # **완전히 같아 보였다**(둘 다 `agent-ready` 만 남는다). PR 축 짝은 기존 `flow:agent-ready` 다.
 # **자격이 아니라 표식이다** — 어느 게이트도 이 라벨을 읽지 않는다(반송 건은 계속 후보로 나온다).
-# 색 A9D6FF 는 PR 짝 `flow:agent-ready`(C6E6FF)와 같은 B 티어 한색 계열이되 한 단계 진한 값 —
-# 목록에서 "루프가 도는 중" 으로 읽히면서 같은 파랑들과 구분된다.
-gh label create verify:반송 --repo "$repo" --color A9D6FF \
+# 색 7A9FE8 은 PR 짝 `flow:agent-ready`(C6E6FF)와 같은 B 티어 한색 계열이되, 이 팔레트의
+# 다른 파랑들과 **식별 가능한** 값이다 — 기존 값들(ADD8FF·9CC9FF·79C0FF·58A6FF)은 전부
+# 하늘색 쪽이라 한 칸만 옮기면 목록에서 구별이 안 된다(사전 리뷰 NIT: A9D6FF 는 flow:ci
+# ADD8FF 와 ΔR=4·ΔG=2). 남색 쪽으로 빼 계열은 유지하고 눈으로는 갈린다.
+gh label create "verify:반송" --repo "$repo" --color 7A9FE8 \
   --description "반송됨 — 워커 재디스패치 대기 (짝: PR flow:agent-ready)" --force
 
 # closeout 파생·배포 대기 표식 (#144) — 지금까지 산문으로만 구분하던 두 종류의 이슈를

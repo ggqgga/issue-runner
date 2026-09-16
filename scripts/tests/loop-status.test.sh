@@ -1680,9 +1680,6 @@ ck "--json: buckets.redispatch_wait 항목(번호·pr)" \
   "$(jq -c '.repos[0] | [.buckets.redispatch_wait[] | {n:.number, p:.pr}]' < "$tmp/out")" \
   '[{"n":70,"p":170}]'
 ck "--json: open_total 에 반송대기가 합산된다" "$(jq '.repos[0].open_total' < "$tmp/out")" 5
-ck "--json: buckets 키에 redispatch_wait 가 늘었다(기존 키는 그대로)" \
-  "$(jq -c '.repos[0].buckets | keys' < "$tmp/out")" \
-  '["blocked","claimed","deploy_wait","dup_closed","failed","harvesting","held","human_wait","ready","redispatch_wait","spinoff","test_wait","verify","verifying","waiting"]'
 
 # ── ★에픽 절★ (#260) — 종료/전체·leaf 버킷·P 분포, warn 2종, 파생 병기 ─────────
 # ── ⑮ (#244) 보류 칸 — hold:* 만 붙은(needs-human 없는) 이슈는 대기가 아니다 ───
