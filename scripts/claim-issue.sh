@@ -167,16 +167,26 @@ if [ "$lock_rc" != 0 ]; then
   echo "note: $repo#$num 잠금 ref 기존재하나 ${stale_wait}초 동안 claim 라벨 없음 — 스테일 잠금 인수(takeover)로 진행" >&2
 fi
 
-# `verify:반송`(#577) 제거 — 이슈가 사다리를 **다시 오르는** 그 자리다. 반송 표식은 "워커가
-# 다시 집어야 한다" 는 뜻이라 집힌 순간 거짓이 된다. 같은 edit 에 실어 claim 과 원자적으로 묶는다
-# (아래 PR 미러처럼 best-effort 로 떼면 실패 시 집힌 이슈가 반송대기 줄에 남아 대시보드가 거짓말한다).
-# 없는 라벨 제거는 무해하다 — 첫 디스패치(반송 이력 없음)에서도 이 edit 는 그대로 성공한다.
-gh issue edit "$num" --repo "$repo" --add-label "agent:claimed" --remove-label "verify:반송" --add-assignee "$me" >/dev/null
+gh issue edit "$num" --repo "$repo" --add-label "agent:claimed" --add-assignee "$me" >/dev/null
 
 # 사후 확인
 post=$(gh issue view "$num" --repo "$repo" --json labels)
 printf '%s' "$post" | jq -e '.labels | map(.name) | index("agent:claimed")' >/dev/null \
   || { echo "claim 실패: 라벨 미부착 $repo#$num" >&2; exit 1; }
+
+# ── 반송 표식 회수 (#577) — 이슈가 사다리를 **다시 오르는** 그 자리다. `verify:반송` 은 "워커가
+# 다시 집어야 한다" 는 뜻이라 집힌 순간 거짓이 된다(대시보드 `반송대기` 줄).
+# **claim 편집과 같은 edit 에 싣지 않는다.** 없는 라벨 제거는 이슈에 안 붙어 있을 땐 무해하지만
+# 레포에 라벨 **정의**가 없으면(옵트인만 하고 setup-labels.sh 를 다시 안 돌린 레포) 그 edit 가
+# 통째로 실패한다 — `set -e` 라 잠금 ref 를 이미 잡은 채 claim 이 죽고, 그 레포의 **모든** 디스패치가
+# 멎는다. 표시용 표식 하나 때문에 감수할 실패가 아니다(PR 미러와 같은 판단).
+# 그래서 claim 확정 **뒤** 별도 best-effort 편집으로 뗀다. 실패해도 손실은 표식 하나뿐이고,
+# 대시보드는 거짓말하지 않는다 — 버킷 사슬이 `agent:claimed`(issue-runner)를 `반송대기` 보다
+# **앞**에서 물기 때문이다. 남은 표식은 다음 `handoff-verify` 가 뗀다(그쪽은 transition.sh 의
+# 라벨 부재 보강 — setup-labels.sh 1회 + 재시도 1회 — 을 타므로 스스로 낫는다).
+if ! rb_out=$(gh issue edit "$num" --repo "$repo" --remove-label "verify:반송" 2>&1); then
+  echo "note: $repo#$num 반송 표식 회수 실패(best-effort — verify:반송 제거 안 됨, handoff-verify 가 정리) — $(printf '%s\n' "$rb_out" | grep -v '^$' | tail -1)" >&2
+fi
 
 # ── PR 미러 (#281) — 이슈가 issue-runner 칸(agent:claimed)에 들어선 그 자리에서, 같은 레포의 열린
 # `agent/issue-<N>` PR 이 있으면(반송 재디스패치) 그 PR 도 같은 칸으로 옮긴다: `flow:claimed`
