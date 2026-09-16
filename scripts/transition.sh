@@ -10,11 +10,11 @@
 #
 #   전이                  | PR add      | PR remove                          | 이슈 add    | 이슈 remove
 #   ----------------------|-------------|------------------------------------|-------------|------------------------------------------------
-#   handoff-verify        | flow:verify | flow:ci flow:codex ⊘wk             | flow:verify | agent:claimed
+#   handoff-verify        | flow:verify | flow:ci flow:codex ⊘wk             | flow:verify | agent:claimed verify:반송
 #   verify-pick(#275)     | verifying   | flow:verify ⊘wk                    | verifying   | flow:verify
 #   verify-unpick(#275)   | flow:verify | verifying                          | flow:verify | verifying
 #   verify-pass           | flow:ready  | flow:verify verifying              | flow:ready  | flow:verify verifying
-#   verify-redispatch     | flow:agent-ready | flow:verify verifying ⊘hold   | agent-ready | flow:verify verifying agent:claimed ⊘hold
+#   verify-redispatch     | flow:agent-ready | flow:verify verifying ⊘hold   | agent-ready verify:반송 | flow:verify verifying agent:claimed ⊘hold
 #   verify-held †         | hold:R      | flow:verify verifying ⊘R           | hold:R      | flow:verify verifying agent:claimed ⊘R
 #   closeout-pick         | harvesting  | flow:ready flow:codex flow:ci flow:verify verifying ⊘wk | harvesting | flow:ready flow:verify verifying
 #   closeout-blocked †    | hold:R      | harvesting verifying ⊘R            | hold:R      | harvesting flow:ready flow:verify verifying ⊘R
@@ -36,6 +36,13 @@
 #     `agent:claimed` → `flow:verify` → `verifying` → `flow:ready` → `harvesting`.
 #   · 이슈의 `agent-ready` 는 사다리 내내 유지되는 **자격** 라벨 — 위에서 명시적으로 add 하는
 #     칸 외엔 건드리지 않는다(어느 이슈 remove 칸에도 없다). 예외는 이슈를 닫는 closeout-dup 뿐.
+#   · `verify:반송`(#577) 은 **이슈 축 전용 표식** — 반송된 이슈와 한 번도 안 집힌 새 이슈가
+#     목록에서 같아 보이던 것을 가른다(PR 축 짝은 `flow:agent-ready`, 이미 있다). 자격이
+#     아니라 표식이라 **어느 게이트도 읽지 않는다**(`eligible-issues.sh` 무변경 — 반송 건은
+#     계속 후보로 나온다). 붙이는 곳은 `verify-redispatch` 하나, 떨어지는 곳은 이슈가 사다리를
+#     다시 오르는 순간 셋이다: `claim-issue.sh`(정상 경로) · 위 `handoff-verify`(claim 없이
+#     인계된 경로의 안전망) · `closeout-dup` 의 이슈 정리 경로(④ `release-labels.sh`).
+#     `closeout-redispatch` 는 붙이지 않는다 — closeout 반송은 별 축(`closeout:반송`)이고 이번 범위 밖.
 #   · 루프가 `needs-human` 을 붙이는 곳은 `policy-kept` 하나뿐(#244) — 기계 정지 세 전이는
 #     `hold:<사유>` 만, **PR 에도** 붙인다. 사람이 손으로 세운 `needs-human` 은 안 건드린다.
 #   · `--reason` 은 정지 세 전이에 **필수**고 `dup`·`hardware` 는 사유가 될 수 없다(#147).
@@ -135,7 +142,7 @@ case "$name" in
   handoff-verify)
     # PR 의 워커 칸 미러(⊘wk)도 뗀다 — 사람이 claim 을 안 거치고 직접 인계해도 단계 라벨이 안 겹친다(#281).
     pr_add="flow:verify"; pr_rm="flow:ci flow:codex $WORKER_MIRROR"
-    iss_add="flow:verify"; iss_rm="agent:claimed" ;;
+    iss_add="flow:verify"; iss_rm="agent:claimed verify:반송" ;;
   verify-pick)
     # verify-runner 가 집는 순간(#275) — closeout-pick 이 flow:ready→harvesting 하는 것과 같은 꼴.
     pr_add="verifying"; pr_rm="flow:verify $WORKER_MIRROR"
@@ -150,7 +157,7 @@ case "$name" in
   verify-redispatch)
     # 반송 = PR 도 대기 칸으로(#281) — 라벨 없는 열린 agent PR 을 남기지 않는다.
     pr_add="flow:agent-ready"; pr_rm="flow:verify verifying needs-human $HOLD_ALL"
-    iss_add="agent-ready"; iss_rm="flow:verify verifying agent:claimed needs-human $HOLD_ALL" ;;
+    iss_add="agent-ready verify:반송"; iss_rm="flow:verify verifying agent:claimed needs-human $HOLD_ALL" ;;
   verify-held)
     pr_add="hold:$reason"; pr_rm="flow:verify verifying $(hold_others "$reason")"
     iss_add="hold:$reason"; iss_rm="flow:verify verifying agent:claimed $(hold_others "$reason")" ;;

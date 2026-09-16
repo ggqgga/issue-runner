@@ -303,7 +303,7 @@ STUB_MODE=ok STUB_STATE_DIR="$tmp/state" STUB_EDIT_LOG="$tmp/edit.log" \
   PATH="$tmp/bin:$PATH" "$SUT" --reason ladder verify-held owner/repo 9 7 >/dev/null 2>&1
 ck "옵션 선행: exit 0" "$?" 0
 ck "옵션 선행: PR 라벨" "$(labels_of 7)" \
-  "$(sorted "agent-ready agent:claimed flow:ci flow:codex flow:ready harvesting needs-human hold:ladder flow:agent-ready flow:claimed")"
+  "$(sorted "agent-ready agent:claimed flow:ci flow:codex flow:ready harvesting needs-human hold:ladder flow:agent-ready flow:claimed verify:반송")"
 
 # ── ② `-` 인자 — 한쪽만 적용, 없는 쪽은 건드리지 않는다 ─────────────────────
 reset; seed 7 flow:verify; seed 9 flow:verify
@@ -715,7 +715,11 @@ seed 9 flow:verify agent:claimed needs-human hold:ladder
 run ok verify-redispatch 9 7
 ck "verify-redispatch: exit 0" "$RC" 0
 ck "verify-redispatch: PR needs-human 해제 + 대기 칸 미러" "$(labels_of 7)" "flow:agent-ready"
-ck "verify-redispatch: 이슈 = agent-ready" "$(labels_of 9)" "agent-ready"
+# 맨몸 픽스처라 이 줄이 `verify:반송`(#577) 부착의 **비공허 실증**이다 — 위 ① 격자는 ALL 픽스처라
+# "이미 있던 것이 남았다" 와 "새로 붙었다" 를 못 가른다. PR 축엔 안 붙는다(위 PR 단언이 증명).
+ck "verify-redispatch: 이슈 = agent-ready + verify:반송(#577)" "$(labels_of 9)" \
+  "$(sorted "agent-ready verify:반송")"
+# closeout 반송은 이 표식을 붙이지 않는다(별 축 `closeout:반송` — 이번 범위 밖).
 
 reset; seed 7 harvesting needs-human hold:policy
 seed 9 harvesting flow:ready agent:claimed needs-human hold:policy

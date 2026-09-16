@@ -167,7 +167,11 @@ if [ "$lock_rc" != 0 ]; then
   echo "note: $repo#$num 잠금 ref 기존재하나 ${stale_wait}초 동안 claim 라벨 없음 — 스테일 잠금 인수(takeover)로 진행" >&2
 fi
 
-gh issue edit "$num" --repo "$repo" --add-label "agent:claimed" --add-assignee "$me" >/dev/null
+# `verify:반송`(#577) 제거 — 이슈가 사다리를 **다시 오르는** 그 자리다. 반송 표식은 "워커가
+# 다시 집어야 한다" 는 뜻이라 집힌 순간 거짓이 된다. 같은 edit 에 실어 claim 과 원자적으로 묶는다
+# (아래 PR 미러처럼 best-effort 로 떼면 실패 시 집힌 이슈가 반송대기 줄에 남아 대시보드가 거짓말한다).
+# 없는 라벨 제거는 무해하다 — 첫 디스패치(반송 이력 없음)에서도 이 edit 는 그대로 성공한다.
+gh issue edit "$num" --repo "$repo" --add-label "agent:claimed" --remove-label "verify:반송" --add-assignee "$me" >/dev/null
 
 # 사후 확인
 post=$(gh issue view "$num" --repo "$repo" --json labels)

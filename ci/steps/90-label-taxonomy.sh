@@ -20,7 +20,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-echo "[setup-labels] 라벨 정의 존재 — full-cycle 추가·기존 라벨 정의 생존(전이·미러 라벨 포함 21종)·RESUME_AFTER_MIN 상수 (#245 · #364 · #281)"
+echo "[setup-labels] 라벨 정의 존재 — full-cycle 추가·기존 라벨 정의 생존(전이·미러 라벨 포함 22종)·RESUME_AFTER_MIN 상수 (#245 · #364 · #281)"
 # 플랜 4단계(label-taxonomy-cleanup). 스크립트가 읽는 것은 라벨 **이름**뿐이라
 # 여기 남기는 것도 `gh label create <이름>` 정의의 존재다 — `--description` 문구 대조와
 # README 라벨 표 행 검사, resume-sweep.sh 머리 주석 문구 대조는 #398 로 걷었다
@@ -37,9 +37,12 @@ grep -qF 'gh label create "full-cycle"' scripts/setup-labels.sh \
 #    flow:agent-ready·flow:claimed(#281)는 PR 미러 앞 두 칸, verifying(#275)은 verify-runner
 #    점유 라벨 — 정의가 없으면 transition.sh 의 반송 add 와 claim-issue.sh 의 미러 edit 이
 #    레포에서 `not found` 로 실패한다(옛 단계 40 이 보던 다섯, #571 로 여기 합류).
+#    verify:반송(#577)은 반송된 이슈의 **이슈 축** 표식 — 정의가 없으면 transition.sh 의
+#    `verify-redispatch` add 와 claim-issue.sh·release-labels.sh 의 remove 가 `not found` 로 실패한다.
 for lbl in agent-ready agent:claimed needs-human P0 P1 harvesting epic verifying \
            flow:agent-ready flow:claimed flow:ci flow:verify flow:codex flow:ready \
-           spinoff deploy-wait loop-dashboard hold:conflict hold:policy hold:ladder dup; do
+           spinoff deploy-wait loop-dashboard hold:conflict hold:policy hold:ladder dup \
+           verify:반송; do
   grep -qE "gh label create \"?${lbl}\"? " scripts/setup-labels.sh \
     || { echo "  ✗ scripts/setup-labels.sh: 기존 라벨 '$lbl' 정의가 사라짐 — 이 축 정리는 삭제·이름변경을 하지 않는다 (#245)"; exit 1; }
 done

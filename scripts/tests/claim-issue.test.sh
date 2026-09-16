@@ -315,6 +315,7 @@ cat > "$tmp/rtbin/gh" <<STUB
 # issue view 가 그 파일을 돌려준다 — edit 를 무시하는 스텁은 remove 단언이 공허하게 통과한다.
 set -uo pipefail
 sub="\${1:-} \${2:-}"
+url="\${2:-}"
 shift 2 || true
 labels_json() {
   printf '['
@@ -344,8 +345,8 @@ case "\$sub" in
       shift
     done
     sort -u "$RT/labels" -o "$RT/labels" ;;
-  "api")
-    case "\${1:-}" in
+  "api "*)
+    case "\$url" in
       *"git/ref/heads/agent/issue-5") echo "cafebabecafebabecafebabecafebabecafebabe" ;;
       *"git/refs")
         if [ -f "$RT/lock" ]; then
