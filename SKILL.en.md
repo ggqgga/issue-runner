@@ -232,7 +232,9 @@ stripping a bare `needs-human`) belongs to the script (rationale §9·§10). Per
   plan (`Plans/*.md`), the issue body, or the verification ladder, **the loop answers** — leave the
   answer as a comment (`재심: <answer> <!-- policy-review: resumed --><!-- bodat:worker -->`) and
   resume with `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr|->` (clears
-  needs-human/hold:*, keeps agent-ready → a ③ candidate this tick). If it truly is a human
+  needs-human/hold:*, keeps agent-ready → a ③ candidate this tick; that transition also attaches
+  the bounce marker `verify:반송` to the issue — a list marker, not a gate, so eligibility is
+  unchanged and the next claim removes it, #577). If it truly is a human
   decision, **the transition comes first** — run
   `$SCRIPTS/transition.sh policy-kept <repo> <issue> <pr|->` to attach `needs-human` to the PR
   and the issue (#244 — the only place the loop attaches it; `hold:policy` stays as the reason),

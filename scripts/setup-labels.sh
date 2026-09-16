@@ -10,6 +10,7 @@ repo="${1:?usage: setup-labels.sh <owner/repo>}"
 #   A 사람 차례 = needs-human · hold:conflict · hold:policy
 #   B 루프 진행 = agent-ready · agent:claimed · flow:agent-ready · flow:claimed(#281) · flow:ci
 #                · flow:verify · verifying(#275) · flow:ready
+#                · verify:반송(#577 — 반송된 이슈의 이슈 축 표식, PR 짝 flow:agent-ready 와 같은 계열)
 #                · harvesting · hold:ladder · 테스트(BoDAT #5197 — 배포 뒤 검증 비용, 사람 정지 아님)
 #                · deploy-wait(#243 — "사람 정지 아님" 으로
 #                재정의된 뒤 A 에서 이리로 옮겼다. 사람이 볼 일이 없다는 점에서 hold:ladder
@@ -73,6 +74,18 @@ gh label create "flow:codex" --repo "$repo" --color D8DEE4 \
   --description "(레거시) 워커 인라인 검증 단계 — verify-runner 도입 후 flow:verify 로 대체" --force
 gh label create "flow:ready" --repo "$repo" --color 2DA44E \
   --description "그린라이트(머지 판정 ✅) — closeout 마감 대기" --force
+
+# 반송 표식 — **이슈 축 전용**(#577). 반송 전이(`transition.sh verify-redispatch`)가 이슈에
+# 붙이고, 사다리를 다시 오르는 순간 떨어진다(`claim-issue.sh` · 안전망으로 `handoff-verify` ·
+# `release-labels.sh`). 없던 시절엔 반송된 이슈와 한 번도 안 집힌 새 이슈가 목록에서
+# **완전히 같아 보였다**(둘 다 `agent-ready` 만 남는다). PR 축 짝은 기존 `flow:agent-ready` 다.
+# **자격이 아니라 표식이다** — 어느 게이트도 이 라벨을 읽지 않는다(반송 건은 계속 후보로 나온다).
+# 색 7A9FE8 은 PR 짝 `flow:agent-ready`(C6E6FF)와 같은 B 티어 한색 계열이되, 이 팔레트의
+# 다른 파랑들과 **식별 가능한** 값이다 — 기존 값들(ADD8FF·9CC9FF·79C0FF·58A6FF)은 전부
+# 하늘색 쪽이라 한 칸만 옮기면 목록에서 구별이 안 된다(사전 리뷰 NIT: A9D6FF 는 flow:ci
+# ADD8FF 와 ΔR=4·ΔG=2). 남색 쪽으로 빼 계열은 유지하고 눈으로는 갈린다.
+gh label create "verify:반송" --repo "$repo" --color 7A9FE8 \
+  --description "반송됨 — 워커 재디스패치 대기 (짝: PR flow:agent-ready)" --force
 
 # closeout 파생·배포 대기 표식 (#144) — 지금까지 산문으로만 구분하던 두 종류의 이슈를
 # 목록에서 바로 가른다. `deploy-wait` 는 **단독으로** 붙는다(#243) — needs-human 과 병행하던

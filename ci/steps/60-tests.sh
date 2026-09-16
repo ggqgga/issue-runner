@@ -19,11 +19,13 @@
 # 동승한 가드 블록 둘 — 원 bin/ci 의 실행 순서가 러너 사이에 끼워 둔 자리라 순서를
 # 지키려고 여기 그대로 뒀다(stdout 불변이 우선). 둘 다 분류 ⓓ 기계 계약이다:
 #   • [#334] closeout ①-c 배선 (원 284–300행 · 표 신규 행) — hold-resolve.test.sh 바로 뒤
-#   • [#276] 루프 현황 9줄 RENDER_JQ padded 리터럴 (원 330–338행 · 부행 60-b) — loop-status.test.sh 바로 뒤
+#   • [#276] 루프 현황 줄 이름 RENDER_JQ padded 리터럴 (원 330–338행 · 부행 60-b) — loop-status.test.sh 바로 뒤
+#     (#577 로 `반송대기` 가 한 줄 늘었다 — 개수는 여기 적지 않는다. 계약은 개수가
+#     아니라 "이름이 있고 폭이 15칸" 이다. 아래 echo·주석도 같은 규칙을 지킨다.)
 #
 # 만료 조건 — 러너 줄: 없음(격자가 곧 자기 대체물이다. 격자 파일을 지울 때 같이 지운다).
 # #334: ①-c 호출이 SKILL 산문이 아니라 스크립트 인자로 옮겨질 때. #276: loop-status.test.sh
-# 가 렌더 9줄(이름·폭)을 스위트 안에서 단언하면 즉시.
+# 가 렌더 줄(이름·폭)을 스위트 안에서 단언하면 즉시.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -113,14 +115,17 @@ echo "[test] loop-status.sh 파이프라인 스냅샷 버킷·창 필터·warn·
 bash scripts/tests/loop-status.test.sh
 # (#276) 사다리 버킷은 "누가 들고 있나" 로 이름 짓는다 — 이름·라벨·jq 키의 SSOT 는
 # `scripts/loop-status.sh` 머리 주석 「★버킷 정의 — 이 주석이 SSOT★」 다. 여기서 무는 것은
-# 렌더 계약(그 이름 9개가 RENDER_JQ padded 리터럴에 있고 폭이 같은가) 하나다.
-echo "[#276] 루프 현황 9줄 — RENDER_JQ padded 이름·폭 리터럴"
-# 9줄 렌더 계약 — RENDER_JQ 의 padded 리터럴에 새 이름 9개가 전부 있고 폭이 같다(15칸 = verify-runner 13 + 2).
-for lit in '"waiting":"대기           "' '"claimed":"issue-runner   "' '"verify":"검증대기       "' \
+# 렌더 계약(아래 이름들이 RENDER_JQ padded 리터럴에 있고 폭이 같은가) 하나다 — 개수는 이 절
+# 어디에도 적지 않는다(위 머리 주석의 규칙 그대로. 개수를 적으면 줄이 늘 때마다 같은 자리를
+# 두 번씩 고치게 되고, 그 중 한쪽을 잊으면 주석이 곧장 거짓이 된다 — #577 회차의 실제 형상이다).
+echo "[#276] 루프 현황 — RENDER_JQ padded 이름·폭 리터럴"
+# 렌더 계약 — RENDER_JQ 의 padded 리터럴에 이름이 전부 있고 폭이 같다(15칸 = verify-runner 13 + 2).
+# `반송대기`(#577)는 `대기` 의 갈래로 늘어난 줄 — 한글 4자 = 8칸이라 공백 7칸이 붙는다.
+for lit in '"waiting":"대기           "' '"redispatch_wait":"반송대기       "' '"claimed":"issue-runner   "' '"verify":"검증대기       "' \
            '"verifying":"verify-runner  "' '"ready":"마감대기       "' '"harvesting":"closeout       "' \
            '"held":"보류           "' '"human_wait":"needs-human    "' '"deploy_wait":"배포대기       "'; do
   grep -qF -- "$lit" scripts/loop-status.sh \
-    || { echo "  ✗ scripts/loop-status.sh RENDER_JQ padded 에 $lit 이 없다 (#276 — 9줄 이름·15칸 폭)"; exit 1; }
+    || { echo "  ✗ scripts/loop-status.sh RENDER_JQ padded 에 $lit 이 없다 (#276 — 줄 이름·15칸 폭)"; exit 1; }
 done
 
 echo "[test] epic-sweep.sh — leaf 전부 종료 에픽 자동 종료·전용 줄 판정·상한 보류·멱등 (#258)"

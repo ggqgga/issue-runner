@@ -187,6 +187,12 @@ grid=(
   # 네 게이트가 같은 표현(라벨 배열 + index/startswith)을 쓰는지 여기서 갈린다.
   'x,hold:y(쉼표 품은 한 라벨) → 통과|["x,hold:y"]|pass'
   'a,needs-human(쉼표 품은 한 라벨) → 통과|["a,needs-human"]|pass'
+  # (#577) `verify:반송` 은 **표식**이지 정지가 아니다 — 네 게이트 어디에서도 자격을 막으면
+  # 안 된다(반송 = 워커가 다시 집어야 한다는 뜻인데 막으면 정반대가 된다). 한 SUT 만 물면
+  # 나머지 셋이 무방비라, `references/state-machine.md` 「게이트 세 개가 공유하는 제외 집합」
+  # 표의 `제외 안 함` 행을 여기 네 열로 고정한다(그 표가 이 격자를 SSOT 로 가리킨다).
+  # `hold:` 접두가 아니고 정확 일치 목록에도 없으므로 넷 다 통과가 옳다.
+  'verify:반송 → 넷 다 통과(표식이지 정지가 아니다)|["verify:반송"]|pass'
 )
 
 for sut in eligible claim closeout verify; do

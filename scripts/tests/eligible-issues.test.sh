@@ -421,6 +421,26 @@ has_line "②-d 테스트 → 테스트" "$ERR" "blocked: owner/repo#53 ← #932
 has_line "②-d 요약 — 배포대기·테스트는 사람 게이트 카운트에 든다(issue-runner 는 안 든다)" "$ERR" \
   "blocked-summary: 막힘 4건 (사람 게이트 블로커 3건)"
 
+# ── ②-e (#577) `verify:반송` 은 **자격을 막지 않는다** — 게이트 무변경 회귀 ─────────
+# 반송 이슈에 이슈 축 표식을 새로 붙이므로, 그 라벨이 게이트의 제외 목록으로 새면 반송된
+# 이슈가 영영 재디스패치되지 않는다(반송 = 워커가 다시 집어야 한다는 뜻인데 정반대가 된다).
+# 이 게이트는 전부 **블랙리스트**(needs-human · hold:* 접두 · agent:claimed · 검증/마감 4벌)라
+# 모르는 라벨은 통과해야 정상이다 — 그 "정상" 을 못 박는다.
+# 곁들여 블로커 표시도 함께 문다: `loop-status.sh` 가 같은 이슈를 `반송대기` 줄로 세므로
+# (#276 "루프 이름 = 버킷 이름"), 여기 갈래가 없으면 두 스크립트가 같은 라벨을 다르게 부른다.
+fx=$(mkfx rb 34)
+add_issue "$fx" 61 '["agent-ready","verify:반송","P1"]' '반송된 이슈' '' '2026-02-01T00:00:00Z'
+# #62 는 블로커(#940)가 OPEN 이라 stdout 에서 빠진다 — 이 건은 블로커 **표시 이름**만 본다.
+add_issue "$fx" 62 '["agent-ready"]' '반송 블로커를 가진 이슈' 'Blocked by #940' '2026-02-02T00:00:00Z'
+add_blocker "$fx" 940 OPEN '["agent-ready","verify:반송"]'
+run_sut "$fx"
+ck "②-e exit 0" "$RC" "0"
+ck "②-e 반송 이슈는 계속 후보로 나온다(게이트 무변경)" "$(jq -c '[.[].number]' "$OUT")" '[61]'
+has_line '②-e 반송 블로커는 반송대기(loop-status 와 같은 이름)' "$ERR" \
+  "blocked: owner/repo#62 ← #940(반송대기)"
+has_line "②-e 반송대기는 사람 게이트가 아니다(요약 0건)" "$ERR" \
+  "blocked-summary: 막힘 1건 (사람 게이트 블로커 0건)"
+
 # ── ⑤ 본문 ∪ 라벨 dedupe — 같은 번호는 한 번만 조회한다 ────────────────────
 fx=$(mkfx c 34)
 add_issue "$fx" 21 '["agent-ready","blocked-by:900"]' '본문·라벨 중복 블로커' \

@@ -198,7 +198,8 @@ LLM 이 판단에 쓰는 노브만 적는다. 값의 실측사는 근거 문서 
   다시 읽고, 그 답이 플랜(`Plans/*.md`)·이슈 본문·검증 사다리에서 나오면 **루프가 답한다** — 답을 코멘트로
   남기고(`재심: <답> <!-- policy-review: resumed --><!-- bodat:worker -->`)
   `$SCRIPTS/transition.sh verify-redispatch <repo> <issue> <pr|->` 로 재개(needs-human·hold:* 해제, agent-ready
-  유지 → 이번 틱 ③ 후보). 답이 정말 사람 결정이면 **전이가 먼저다** —
+  유지 → 이번 틱 ③ 후보. 그 전이는 이슈에 반송 표식 `verify:반송` 도 붙인다 — 게이트가 아니라 목록 표식이라
+  후보 자격은 그대로고, 다음 claim 이 뗀다, #577). 답이 정말 사람 결정이면 **전이가 먼저다** —
   `$SCRIPTS/transition.sh policy-kept <repo> <issue> <pr|->` 로 `needs-human` 을 PR·이슈 양쪽에 붙이고(#244 —
   루프가 `needs-human` 을 붙이는 유일한 자리다. `hold:policy` 는 사유로 남는다), 그 전이가 **exit 0 `ok` 로
   끝난 뒤에만** `재심: 사람 몫 유지 — <이유 한 줄> <!-- policy-review: kept --><!-- bodat:worker -->` 코멘트를
