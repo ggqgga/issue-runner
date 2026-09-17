@@ -25,6 +25,7 @@ description: 이슈를 issue-runner 루프에 넘기기 전 마감 체크리스�
    `scripts/manual/block-issue.sh <owner/repo> <issue#> <blocker#>`로 부착). 본문 라인과
    라벨은 **OR**로 합쳐지고 `<N>`은 **이슈 번호**다 — 블로커 이슈가 CLOSED되면 게이트가
    자동 해제한다. 둘 중 하나면 충분하다.
+   본문 줄·라벨은 루프가 GitHub 네이티브 이슈 의존성으로도 미러한다(`dependency-sweep.sh`, 표시 전용 — 게이트는 여전히 본문 줄·라벨).
 
    **의존의 정의**: `Blocked by` 는 B 가 A 의 산출물(스키마·마이그레이션·함수·명령·라벨)을
    **컴파일·실행 시점에 필요로 해서 A 없이는 B 의 테스트가 돌지 않을 때만** 건다.

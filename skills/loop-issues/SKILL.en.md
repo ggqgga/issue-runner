@@ -36,6 +36,7 @@ context — the issue body is the only spec.
    line and the label are combined with **OR**, and `<N>` is the **issue number** —
    when the blocker issue is CLOSED the gate releases automatically. Either one
    suffices.
+   The loop also mirrors body lines and labels as GitHub native issue dependencies (`dependency-sweep.sh`, display only — the gate is still the body line / label).
 
    **What counts as a dependency**: attach `Blocked by` only when B needs A's output
    (a schema, migration, function, command, or label) **at compile/run time, so that

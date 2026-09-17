@@ -264,6 +264,17 @@ stripping a bare `needs-human`) belongs to the script (rationale §9·§10). Per
 - exit 64 — `RESUME_AFTER_MIN` / `LADDER_RESUME_LIMIT` / `CONFLICT_RESUME_LIMIT` is not an integer (it stops before
   any write). The sweep does not run at all until the constant is fixed, so raise it as a warn.
 
+**Dependency mirror sweep — make blocked issues visible in the list (display only, #581).** After the resume
+sweep, run `$SCRIPTS/dependency-sweep.sh` every tick (same scope rule as the resume sweep — the session cwd's
+`.loop/repos`). For each (issue, open blocker) pair from a body `Blocked by #N` line or a `blocked-by:<N>` label
+that has no GitHub native issue dependency yet, it **adds** a `blocked_by` relationship (it never removes one).
+**It is not a gate** — dispatch eligibility is still decided by `eligible-issues.sh` from body lines ∪ labels, and
+this sweep's outcome does not affect ③. Per event:
+- `linked` — count only, as `dependency mirror N` in ④ Report (no need to list numbers).
+- `warn` — a lookup/write failure or the listing cap. **Do not touch it**; copy it verbatim into ④ Report's warns.
+- `note` — an info line (blocker missing · a PR · self-reference). Not reported.
+- exit 1 is already explained by the warns (no further action) · exit 64 means no scope — one warn line in ④ Report.
+
 ## ② Maintain — finish what you started first
 
 For each `pr_open` event:

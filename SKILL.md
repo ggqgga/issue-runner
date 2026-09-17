@@ -223,6 +223,16 @@ LLM 이 판단에 쓰는 노브만 적는다. 값의 실측사는 근거 문서 
 - exit 64 — `RESUME_AFTER_MIN`·`LADDER_RESUME_LIMIT`·`CONFLICT_RESUME_LIMIT` 값이 정수가 아니다(쓰기 전에 멈춘다).
   상수를 고치기 전엔 스윕이 통째로 안 도니 ④ Report warn 에 올려라.
 
+**의존성 미러 스윕 — 막힌 이슈를 목록에서 보이게 (표시 전용, #581).** 재개 스윕 뒤에 매 틱
+`$SCRIPTS/dependency-sweep.sh` 를 실행하라(스코프 규약은 재개 스윕과 같다 — 세션 cwd 의 `.loop/repos`).
+본문 `Blocked by #N` 줄 · `blocked-by:<N>` 라벨의 (이슈, 열린 블로커) 쌍 중 GitHub 네이티브 이슈 의존성이
+없는 것에만 `blocked_by` 관계를 **추가**한다(지우지 않는다). **게이트가 아니다** — 디스패치 자격은 계속
+`eligible-issues.sh` 가 본문 줄 ∪ 라벨로 판정하고, 이 스윕의 성패는 ③ 에 영향이 없다. 이벤트별 처리:
+- `linked` — 건수만 ④ Report 에 `의존성 미러 N` 으로 적는다(번호 나열 불필요).
+- `warn` — 조회·쓰기 실패 또는 목록 상한. **건드리지 말고** ④ Report 의 warn 에 그대로 옮긴다.
+- `note` — 정보 줄(블로커 미존재·PR·자기 참조). 보고하지 않는다.
+- exit 1 은 warn 이 이미 말한다(추가 조치 없음) · exit 64 는 스코프 없음 — ④ Report warn 에 한 줄.
+
 ## ② Maintain — 벌린 일 먼저 끝낸다
 
 `pr_open` 이벤트 각각에 대해:
