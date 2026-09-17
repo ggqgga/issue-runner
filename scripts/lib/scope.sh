@@ -6,12 +6,12 @@
 # (fail-open — 스코프 파일은 "좁히는" 장치이지 "여는" 장치가 아니므로 부재가
 # 곧 무제한이다. 다른 세션 워커의 claim 에 불간섭하려면 파일을 두어라).
 #
-# 소비처 8곳이 이 파일을 source 한다 — 두 모양이 있고, 둘 다 같은 줄 필터를 쓴다:
+# 소비처 9곳이 이 파일을 source 한다 — 두 모양이 있고, 둘 다 같은 줄 필터를 쓴다:
 #   ⒜ `in_scope <owner/repo>` — 후보를 한 건씩 거른다
 #      (closeout-eligible · closeout-reconcile · eligible-issues · reconcile · verify-eligible)
 #   ⒝ `scope_lines <파일>`     — 순회할 레포 **목록**을 읽는다
-#      (epic-sweep · loop-status · resume-sweep)
-# ⒝ 셋의 나머지 거동(형식 아닌 줄의 stderr 경고·`--repos-file` 인자·exit 64·
+#      (dependency-sweep · epic-sweep · loop-status · resume-sweep)
+# ⒝ 넷의 나머지 거동(형식 아닌 줄의 stderr 경고·`--repos-file` 인자·exit 64·
 # 계정 전체 탐색 폴백)은 스크립트마다 다르고, 그건 **의도된 차이**라 여기서 합치지
 # 않는다 — 여기 있는 것은 "어느 줄이 레포 이름인가" 하나뿐이다.
 

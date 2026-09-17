@@ -11,7 +11,7 @@
 #   bounce-comment(#212) · hold-resolve(#334) · closeout-sweep-gate(#218) ·
 #   release-labels(#117) · ci-queue(#127) · codex-review-gate(#134) · reconcile(#131) ·
 #   transition(#144·#147·#281) · claim-issue(#281) · resume-sweep(#147) · loop-status(#144) ·
-#   epic-sweep(#258) · progress-evidence·claim-at·pr-head-at·closeout-ci-pass·
+#   epic-sweep(#258) · dependency-sweep(#581) · progress-evidence·claim-at·pr-head-at·closeout-ci-pass·
 #   closeout-reconcile(#428) · smoke-tally(#448) · deploy-wait-issue(#446) ·
 #   make-worktree(#445) · ci-gate(#47·#60) · cleanup-worktree(#62) · repo-flag(#109) ·
 #   setup-labels(#346)
@@ -132,6 +132,9 @@ echo "[test] epic-sweep.sh — leaf 전부 종료 에픽 자동 종료·전용 �
 # closeout ① 이 `"$SCRIPTS/epic-sweep.sh"` 로 직접 exec 하므로 실행 비트도 여기서 문다
 # (비트가 빠지면 조용히 exit 126 → 에픽 스윕이 매 틱 no-op 으로 degrade, PR#173 교훈과 동일 함정).
 bash scripts/tests/epic-sweep.test.sh
+
+echo "[test] dependency-sweep.sh — 본문 줄·라벨 → 네이티브 의존성 미러·추가만·열린 블로커·dry-run·실패 계속 (#581)"
+bash scripts/tests/dependency-sweep.test.sh
 
 echo "[test] progress-evidence.sh 진행 증거 3축 격자 — 커밋/큐/claim·3값 어휘·경계 (#428)"
 bash scripts/tests/progress-evidence.test.sh
