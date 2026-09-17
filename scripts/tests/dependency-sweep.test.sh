@@ -2,7 +2,7 @@
 # dependency-sweep.sh 픽스처 테스트 — 네트워크 무접속(gh 를 PATH 스텁으로 가로챈다).
 # epic-sweep.test.sh 와 같은 순수 bash assert 관행.
 #
-# 가드하는 것(#581 수용 기준 — 격자는 이슈 Test plan 의 일곱 칸, 칸마다 1케이스):
+# 가드하는 것(#581 수용 기준 — 격자는 이슈 Test plan 의 일곱 칸 + 조회 실패·422 판정어, 칸마다 1케이스):
 #   ① 본문 `Blocked by #N` 줄만 있는 쌍 → linked + POST 1(블로커의 REST id 로)
 #   ② `blocked-by:<N>` 라벨만 있는 쌍 → linked + POST 1
 #   ③ 이미 네이티브 관계가 있는 쌍 → 쓰기 0. 본문에 없는 기존 관계도 지우지 않는다(DELETE 0)
@@ -11,6 +11,7 @@
 #   ⑥ `--dry-run` → 쓰기 0 · 이벤트에 dry_run:true
 #   ⑦ POST 실패 1건 → warn + rc 1, 다음 쌍은 계속 linked
 #   ⑧ 조회 실패(블로커 조회) → warn + rc 1, 다음 쌍은 계속 linked
+#   ⑨ 422 라도 "already" 가 아닌 사유("does not exist")는 진짜 실패다 → warn + rc 1
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -69,6 +70,7 @@ case "$path" in
     n="${path#repos/owner/repo/issues/}"; n="${n%%/*}"
     if [ "$method" = "POST" ]; then
       case " ${STUB_POST_FAIL:-} " in *" $n "*) echo "gh: boom (HTTP 500)" >&2; exit 1 ;; esac
+      [ -z "${STUB_POST_422:-}" ] || { echo "{\"message\":\"$STUB_POST_422\"}"; echo "gh: Validation Failed (HTTP 422)" >&2; exit 1; }
       echo '{}'; exit 0
     fi
     out=$(jq -c --arg n "$n" '.[$n] // []' "$STUB_DEPS")
@@ -87,7 +89,7 @@ STUB
 chmod +x "$tmp/bin/gh"
 
 export STUB_LOG="$tmp/gh.log" STUB_LIST="$tmp/list.json" STUB_ISSUES="$tmp/issues.json" STUB_DEPS="$tmp/deps.json"
-export STUB_POST_FAIL="" STUB_ISSUE_FAIL=""
+export STUB_POST_FAIL="" STUB_ISSUE_FAIL="" STUB_POST_422=""
 
 # issue <번호> <본문> [라벨 콤마목록] — 열린 이슈 목록의 한 행
 issue() {
@@ -102,7 +104,7 @@ reset() {
   printf '%s' '{"5":{"id":5005,"number":5,"state":"open"},"6":{"id":6006,"number":6,"state":"closed"},"7":{"id":7007,"number":7,"state":"open"}}' > "$STUB_ISSUES"
   printf '%s' '{}' > "$STUB_DEPS"
   : > "$STUB_LOG"
-  STUB_POST_FAIL=""; STUB_ISSUE_FAIL=""
+  STUB_POST_FAIL=""; STUB_ISSUE_FAIL=""; STUB_POST_422=""
   ARGS=()
 }
 
@@ -183,6 +185,15 @@ run
 check "⑧ warn 은 #18 ← #7" "$(is "$(ev warn | jq -c '[.number,.blocker]')" '[18,7]')"
 check "⑧ #18 ← #5 는 linked" "$(is "$(ev linked | jq -c '[.number,.blocker]')" '[18,5]')"
 check "⑧ rc 1" "$(is "$RC" 1)"
+
+echo "── ⑨ 422 does not exist → warn + rc 1 ──"
+reset
+list "[$(issue 19 'Blocked by #5')]"
+STUB_POST_422="Issue does not exist"
+run
+check "⑨ warn 은 #19" "$(is "$(ev warn | jq -r '.number')" 19)"
+check "⑨ note 로 묻히지 않는다" "$(is "$(ev note)" '')"
+check "⑨ rc 1" "$(is "$RC" 1)"
 
 echo "dependency-sweep: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

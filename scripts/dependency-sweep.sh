@@ -25,7 +25,8 @@
 #     (PR#318 교훈 — 흉내내지 말고 복사). 같은 레포 번호만 다룬다.
 #   · 기존 관계는 `GET …/dependencies/blocked_by` 의 **REST id** 로 대조한다(번호로 대조하면
 #     다른 레포의 같은 번호 블로커를 "이미 있음" 으로 오인한다). POST 가 "이미 있음" 류 422 를
-#     내면 note(실패로 세지 않는다).
+#     내면 note(실패로 세지 않는다) — 판정어는 `already` 하나다(`exist` 는 "does not exist" 류
+#     진짜 실패까지 삼킨다).
 #
 # 출력(JSON lines — epic-sweep.sh·resume-sweep.sh 관행):
 #   linked — 관계를 걸었다(`number` 막힌 이슈 · `blocker` 블로커 번호).
@@ -218,7 +219,7 @@ EOF
     else
       perr="$(one_line "$tmp/err") $(one_line "$tmp/post")"
       if printf '%s' "$perr" | grep -q 'HTTP 422' \
-         && printf '%s' "$perr" | grep -qiE 'already|exist'; then
+         && printf '%s' "$perr" | grep -qi 'already'; then
         emit note "$repo" "$num" "$b" "이미 있음(422) — 건너뛴다"
       else
         emit warn "$repo" "$num" "$b" "의존성 추가 실패: $perr"
