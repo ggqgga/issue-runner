@@ -1,6 +1,6 @@
 ### 워커 프롬프트 템플릿
 
-Agent(subagent_type: "general-purpose", run_in_background: true,
+Agent(subagent_type: "general-purpose", model: "opus", run_in_background: true,
       description: "<repo>#<num> 구현", prompt: 아래)
 
 ```
@@ -230,7 +230,7 @@ Agent(subagent_type: "general-purpose", run_in_background: true,
    조용한 종료는 디스패처가 "죽었다"로 오독해 worktree 를 걷어간다 — 이 한 줄이
    "재개 대상이지 사망이 아니다"를 알리는 유일한 신호다.
 9-b. **PR 전 사전 리뷰 — 1회, 비게이트.** 로컬 CI 가 pass 인 뒤 PR 을 열기 전에, 새 컨텍스트의
-   리뷰어를 Agent 툴로 중첩 스폰하라 — `subagent_type: "general-purpose"`(**codex 계열 타입 금지** —
+   리뷰어를 Agent 툴로 중첩 스폰하라 — `subagent_type: "general-purpose", model: "opus"`(**codex 계열 타입 금지** —
    검증 게이트는 verify-runner 소유이고 codex CLI 스톨을 워커에 들이지 않는다). **재디스패치(반송)
    회차에서는 9-b 를 건너뛴다** — 반송 코멘트가 이미 새 눈의 리뷰이고, PR 본문의 옛 `## 사전 리뷰`
    는 그대로 둔다. **예외: 반송 사유에 `최종 회차` 가 있으면 9-b 를 건너뛰지 않는다**(#375 — 그

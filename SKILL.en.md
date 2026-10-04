@@ -69,7 +69,7 @@ Only the knobs the LLM judges with. The measurement history behind the values is
   before they are resolved); lesson-extraction calls (① Reconcile) output 'one lesson line or NONE'. The verifier
   does not read SKILL.md, so the call's prompt string must carry this contract verbatim — the prompt is the only
   delivery path. **Fallback**: in environments without the codex plugin (the type above is missing from the Agent
-  tool's subagent_type list, or the call fails with an unknown subagent type error), use `general-purpose` as the
+  tool's subagent_type list, or the call fails with an unknown subagent type error), use `general-purpose` (pass `model: "opus"` — omitted, it silently drops to whatever `CLAUDE_CODE_SUBAGENT_MODEL` names) as the
   verifier — it is invoked with the same prompt, so the same contract applies.
 - Absolutely forbidden: merging PRs, pushing directly to main, touching human-created branches, attaching the
   agent-ready label on your own, appending the final `Merge verdict: ✅` on behalf of a lost-finish PR (that
@@ -416,7 +416,7 @@ A `harvesting` event = closeout is in progress → **leave it alone** (no repair
       `gh repo view <repo> --json defaultBranchRef -q .defaultBranchRef.name`. Fill `<REPO_DIR>` with the output of
       `$SCRIPTS/repo-dir.sh <repo>` (the main checkout's absolute path) — the worker's codegraph exploration (`-p`)
       reads the index at this path. Fill `<VERIFIER>` from ## Constants with the fallback rule applied
-      (`general-purpose` if codex is not installed). Copy the worker exit report's `pre-review: <value>` line into
+      (`general-purpose` with `model: "opus"` if codex is not installed). Copy the worker exit report's `pre-review: <value>` line into
       ④ Report (absence is a line too) — the nested pre-reviewer (template step 9-b) needs nothing from the
       dispatcher (rationale §14).
       **If the issue was resumed, inline two more things in the prompt.** If any **comment** carries the marker

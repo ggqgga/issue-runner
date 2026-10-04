@@ -36,7 +36,7 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 - `QUIET_TICKS = 3` — N틱 연속 후보·이벤트가 없으면 stagnated 로 보고한다. **① Reconcile·①-b 스윕·
   ② Pick 은 이후에도 매 틱 그대로 수행**한다 — stagnated 는 순수 보고 라벨이라 어떤 단계도 건너뛰지 않는다.
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
-- `VERIFIER = general-purpose` — 1단계 계획 부합 검증자 서브에이전트 타입. **codex 가 아니다**(#375).
+- `VERIFIER = general-purpose` — 1단계 계획 부합 검증자 서브에이전트 타입(호출 시 `model: "opus"` 명시). **codex 가 아니다**(#375).
   **출력 계약은 issue-runner `SKILL.md` 의 `## 상수` 절 `VERIFIER` 항목이 SSOT 다**(#427) — 여기선 다시
   적지 않는다: read-only·BLOCKER/WARN/NIT·CLEAN·BLOCKER 는 하드게이트, 그대로 적용된다. 검증자는 이
   SKILL.md 를 읽지 않으므로 호출 프롬프트 문자열에 그 계약 문안이 그대로 담겨야 한다 — 프롬프트는

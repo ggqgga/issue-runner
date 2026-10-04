@@ -54,7 +54,7 @@ LLM 이 판단에 쓰는 노브만 적는다. 값의 실측사는 근거 문서 
   'CLEAN'·BLOCKER 는 게이트(해결 전 종료 금지), 교훈 추출 호출(① Reconcile)은 '교훈 1줄 또는 NONE'. 검증자는
   SKILL.md 를 읽지 않으므로 호출 프롬프트 문자열에는 이 계약이 그대로 담겨야 한다 — 프롬프트가 유일한 전달
   경로다. **폴백**: codex 플러그인 미설치 환경(Agent 툴의 subagent_type 목록에 위 타입이 없거나, 호출이
-  unknown subagent type 오류로 실패)에서는 `general-purpose` 를 검증자로 쓴다 — 같은 프롬프트로 호출하므로
+  unknown subagent type 오류로 실패)에서는 `general-purpose`(`model: "opus"` 명시 — 생략하면 `CLAUDE_CODE_SUBAGENT_MODEL` 이 정한 모델로 조용히 내려간다)를 검증자로 쓴다 — 같은 프롬프트로 호출하므로
   계약도 동일하게 적용된다.
 - 절대 금지: PR 머지, main 직접 push, 사람이 만든 브랜치 조작, agent-ready 라벨 임의 부착, 완결 유실 PR 에 최종
   `머지 판정: ✅` 대리 append(그 회수는 closeout ①-b 스윕 소유). **허용**: ② Maintain 규칙0 의 단계 라벨
