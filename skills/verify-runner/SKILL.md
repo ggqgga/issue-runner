@@ -46,7 +46,7 @@ CID·PR 까지 마치고 `flow:verify` 로 넘긴 PR 을 받아 **느린 외부�
   read-only·BLOCKER/WARN/NIT·CLEAN·BLOCKER 는 게이트, 그대로 적용된다(이 레인에선 미해결
   BLOCKER 가 있으면 통과 판정 금지). 검증자는 이 SKILL.md 를 안 읽으므로 호출
   프롬프트(`references/verify-prompt.md`(스킬 디렉토리 기준 — 설치본은 `~/.claude/skills/verify-runner/references/verify-prompt.md`))에 계약 문안이 담겨 있다. **폴백**: (a) codex 미설치(Agent 툴 subagent_type 목록에 없거나 unknown
-  타입 오류) 또는 (b) codex stall/실패로 verdict 미산출이면 `general-purpose` 로 같은
+  타입 오류) 또는 (b) codex stall/실패로 verdict 미산출이면 `general-purpose`(`model: "opus"`)로 같은
   프롬프트 재시도. 폴백도 verdict 를 못 내면 BLOCKER 로 간주(fail-closed).
 - `VERIFIER_TIMEOUT_MIN` — `VERIFIER`(및 폴백) 스폰 1회당 벽시계 상한(분). 스폰
   시각 + 이 값을 데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict
@@ -194,7 +194,7 @@ N < 2 면 `$SCRIPTS/codex-review-gate.sh --base origin/<default>
 를 내고 본문을 `<out>/review.md` 에 남긴다. 자체 타임아웃(`CODEX_GATE_TIMEOUT` — 값은 `scripts/lib/constants.sh` 한 자리이고
 `VERIFIER_TIMEOUT_MIN` 이 그 값을 분으로 환산한 것이다, #427)이 있어 스폰·폴링·`TaskStop` 배선이 필요 없다 — 서브에이전트 없이 명령 하나. `[P0]`·`[P1]` 이 BLOCKER, `[P2]` 가 WARN, `[P3+]` 가 NIT(비차단).
 - **exit 2(`verdict=NONE`) = 리뷰 미산출**(codex 부재·모델 오류·타임아웃·본문 없음). 그때만 ## 상수의 `VERIFIER`
-  폴백(general-purpose, `references/verify-prompt.md`(스킬 디렉토리 기준 — 설치본은 `~/.claude/skills/verify-runner/references/verify-prompt.md`) 에 `gh pr diff`·이슈 본문·`.loop/lessons-verifier.md` 동봉,
+  폴백(general-purpose·`model: "opus"`, `references/verify-prompt.md`(스킬 디렉토리 기준 — 설치본은 `~/.claude/skills/verify-runner/references/verify-prompt.md`) 에 `gh pr diff`·이슈 본문·`.loop/lessons-verifier.md` 동봉,
   `run_in_background` + `VERIFIER_TIMEOUT_MIN` 데드라인 + 초과 시 `TaskStop`)을 쓴다. 헬퍼의 stderr 가 모델 오류(404·
   not supported·requires a newer version)를 원문으로 보여주니 "스톨"로 오진하지 말고 그대로 코멘트에 남긴다.
 - **lessons 파일**은 폴백 프롬프트에만 주입한다(`.loop/lessons-verifier.md` → 없으면 `.loop/lessons.md` → `없음`).
@@ -209,7 +209,7 @@ N < 2 면 `$SCRIPTS/codex-review-gate.sh --base origin/<default>
 <review.md 본문>
 <!-- bodat:worker -->"`
 
-**3′. 3회차 자체 리뷰 — codex 없이 (N = 2).** 세 번째 판정은 `general-purpose` 서브에이전트(read-only)가 낸다 —
+**3′. 3회차 자체 리뷰 — codex 없이 (N = 2).** 세 번째 판정은 `general-purpose` 서브에이전트(`model: "opus"`, read-only)가 낸다 —
 입력은 **직전 `재검증 실패:` 코멘트**
 (2회차 codex 의 P1 제목들)와 `git diff origin/<default>...HEAD`, 출력은 **지적별 `해소`/`미해소` + 한 줄 근거**.
 이 리뷰는 게이트가 아니다 — E2E(③-2)·결정적 CI(③-1)만 게이트다. 결과를 PR 코멘트로 남긴다 —

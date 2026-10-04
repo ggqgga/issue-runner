@@ -45,7 +45,7 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
   the ①-b sweep and ② Pick still run on every tick afterwards** — stagnated is a pure reporting label and
   skips no step.
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
-- `VERIFIER = general-purpose` — the sub-agent type for the step-1 plan-conformance verifier. **Not codex**
+- `VERIFIER = general-purpose` — the sub-agent type for the step-1 plan-conformance verifier (call it with `model: "opus"`). **Not codex**
   (#375). **The output contract's SSOT is the `VERIFIER` entry in issue-runner `SKILL.md`'s `## Constants`
   section** (#427) — it is not restated here: read-only · BLOCKER/WARN/NIT · CLEAN · BLOCKER is a hard gate,
   applied as-is. The verifier never reads this SKILL.md, so that contract text must be carried verbatim in the

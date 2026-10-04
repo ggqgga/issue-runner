@@ -1,6 +1,6 @@
 ### Worker prompt template
 
-Agent(subagent_type: "general-purpose", run_in_background: true,
+Agent(subagent_type: "general-purpose", model: "opus", run_in_background: true,
       description: "implement <repo>#<num>", prompt: below)
 
 ```
@@ -258,7 +258,7 @@ Procedure:
    me.** A silent finish makes the dispatcher misread you as dead and reclaim the
    worktree — this one line is the only signal that tells it "resume me, I am not dead."
 9-b. **Pre-PR review — once, non-gating.** After local CI passes and before opening the
-   PR, nest a fresh-context reviewer via the Agent tool — `subagent_type: "general-purpose"`
+   PR, nest a fresh-context reviewer via the Agent tool — `subagent_type: "general-purpose", model: "opus"`
    (**no codex-family types** — the verification gate is owned by verify-runner and a codex
    CLI stall must not enter the worker). **On a re-dispatch (bounce) skip 9-b** — the bounce
    comment already is a fresh-eyes review; leave the PR body's old `## Pre-review` as is.
