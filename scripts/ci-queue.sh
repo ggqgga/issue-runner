@@ -312,10 +312,12 @@ cmd_run() {
       return 3
     fi
     if [ "$(head_ticket)" = "$TICKET" ] && mkdir "$RUNNING" 2>/dev/null; then
-      # pid 는 임시 파일 → mv 로 원자 기록(O_TRUNC 직후 빈 파일을 남의 reap 이 "죽음"으로 읽는 창 제거)
-      echo "$$" > "$RUNNING/pid.$$" && mv "$RUNNING/pid.$$" "$RUNNING/pid"
+      # ticket·root 를 먼저, pid 를 마지막에 — busy 는 pid 생존으로 "실행 중"을 읽으므로 반쯤 쓴 기록을 못 본다.
+      # (pid 없는 .running 은 reap 이 2분 뒤에야 치우므로 이 몇 ms 의 틈은 안전하다.)
       printf '%s' "$TICKET" > "$RUNNING/ticket"
       printf '%s' "$ROOT" > "$RUNNING/root.$$" && mv "$RUNNING/root.$$" "$RUNNING/root"
+      # pid 는 임시 파일 → mv 로 원자 기록(O_TRUNC 직후 빈 파일을 남의 reap 이 "죽음"으로 읽는 창 제거)
+      echo "$$" > "$RUNNING/pid.$$" && mv "$RUNNING/pid.$$" "$RUNNING/pid"
       break
     fi
     sleep "$POLL"

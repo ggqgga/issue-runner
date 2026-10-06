@@ -36,11 +36,14 @@ base=$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null)
 
 # 빠른 거름 — 관심 명령이 없으면 프로세스를 더 띄우지 않는다. 매칭은 bash 내장 [[ =~ ]](모든 Bash 호출마다
 # 도는 훅이라 grep 파이프를 피한다). 정규식은 변수로 넘겨야 bash 3.2 에서도 ERE 로 읽힌다(따옴표 금지).
-G='git([[:space:]]+(-[Cc][[:space:]]+[^[:space:];|&]+|--[a-z-]+(=[^[:space:];|&]+)?))*[[:space:]]+'
+G='git([[:space:]]+(-[Cc][[:space:]]+("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];|&]+)|--[a-z-]+(=[^[:space:];|&]+)?))*[[:space:]]+'
 TEST_RE='(^|[[:space:];|&(/])(rails[[:space:]]+(test|t)|rake[[:space:]]+test)([:[:space:];|&)]|$)|(^|[[:space:];|&(])(\./)?bin/ci([[:space:];|&)]|$)'
 HEAD_RE="${G}(commit|reset|checkout|switch|rebase|merge|pull|cherry-pick|revert|am|stash|restore|clean)([[:space:];|&)]|\$)"
 RM_RE="${G}worktree[[:space:]]+remove([[:space:]]|\$)"
 ANY_RE="$TEST_RE|$HEAD_RE|$RM_RE"
+# 구간 판정용 — git 은 구간 맨 앞(명령 자리)에 있을 때만 센다: `printf 'git commit'`·`git log --format='git commit'` 는 인자다
+HEAD_SEG="^[[:space:]]*$HEAD_RE"
+RM_SEG="^[[:space:]]*$RM_RE"
 [[ $cmd =~ $ANY_RE ]] || exit 0
 
 [ -n "$base" ] && [ -d "$base" ] || base=$PWD
@@ -81,8 +84,8 @@ while IFS= read -r seg; do
   gdir=$dir
   gitc=$(git_c_path "$seg")
   [ -n "$gitc" ] && gdir=$(resolve_path "$gitc" "$dir")
-  [[ $seg =~ $HEAD_RE ]] && block "$gdir" "커밋·HEAD 이동"
-  if [[ $seg =~ $RM_RE ]]; then
+  [[ $seg =~ $HEAD_SEG ]] && block "$gdir" "커밋·HEAD 이동"
+  if [[ $seg =~ $RM_SEG ]]; then
     wt=$(worktree_rm_path "$seg")
     [ -n "$wt" ] && block "$(resolve_path "$wt" "$gdir")" "워크트리 삭제"
   fi

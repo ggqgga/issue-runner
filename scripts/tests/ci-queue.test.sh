@@ -429,6 +429,8 @@ rc=0; guard "$TMP/elsewhere" "git worktree remove --force '$B1'" || rc=$?
 assert_eq "가드 작은따옴표 경로 워크트리 삭제 차단" "$rc" 2
 rc=0; guard "$B1" "git -C $B2 status && git commit -qm x" || rc=$?
 assert_eq "가드 -C 는 그 구간의 git 에만 — 뒤 commit 은 cwd(ROOT) 기준 차단" "$rc" 2
+rc=0; guard "$B1" "printf 'git commit later'" || rc=$?
+assert_eq "가드 인자 속 'git commit' 문구는 통과" "$rc" 0
 rc=0; guard "$B1" "./bin/ci" || rc=$?
 assert_eq "가드 같은 ROOT 에서 bin/ci 직접 실행 차단" "$rc" 2
 rc=0; guard "$B2" "bin/rails test" || rc=$?
