@@ -37,15 +37,28 @@ printf '%s' "$cmd" | grep -qE 'git[[:space:]]+push[^;|&]*--dry-run' && exit 0
 note=""   # 세션에 덧붙일 경고(선두 cd 해석 실패 등)
 ctx() { printf '%s' "$1" | jq -Rs '{ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: . } }'; }
 
-# 선두 `cd <경로> &&|;` — 그 경로로 옮긴다(따옴표 벗김·~ 전개·상대경로는 base 기준)
-lead=$(printf '%s' "$cmd" \
-  | sed -n -E 's/^[[:space:]]*cd[[:space:]]+("([^"]*)"|'"'"'([^'"'"']*)'"'"'|([^;&|[:space:]]+))[[:space:]]*(&&|;).*/\2\3\4/p')
+# scripts/ 위치 — ci-gate-before-pr-merge.sh 와 같은 규칙: ISSUE_RUNNER_SCRIPTS 환경변수 →
+# 이 훅 파일(심링크면 따라간 실제 위치)의 ../scripts → 설치 경로(README 설치 계약).
+src="$0"
+while [ -L "$src" ]; do
+  d=$(cd "$(dirname "$src")" && pwd); src=$(readlink "$src")
+  case "$src" in /*) ;; *) src="$d/$src" ;; esac
+done
+S=""
+for cand in "${ISSUE_RUNNER_SCRIPTS:-}" "$(cd "$(dirname "$src")/.." && pwd)/scripts" "$HOME/.claude/skills/issue-runner/scripts"; do
+  [ -n "$cand" ] && [ -x "$cand/ci-queue.sh" ] && { S="$cand"; break; }
+done
+
+# 선두 `cd <경로> &&|;` — 그 경로로 옮긴다(따옴표 벗김·~ 전개·상대경로는 base 기준).
+# 해석은 scripts/lib/hook-cmd.sh 한 자리(가드 훅과 같은 읽기) — 못 찾으면 선두 cd 를 무시한다.
+lead=""
+if [ -n "$S" ] && [ -f "$S/lib/hook-cmd.sh" ]; then
+  # shellcheck source=scripts/lib/hook-cmd.sh
+  . "$S/lib/hook-cmd.sh"
+  lead=$(lead_cd_path "$cmd")
+  [ -n "$lead" ] && lead=$(resolve_path "$lead" "$base")
+fi
 if [ -n "$lead" ]; then
-  case "$lead" in
-    \~|\~/*) lead="$HOME${lead#\~}" ;;
-    /*) ;;
-    *) lead="$base/$lead" ;;
-  esac
   if [ -d "$lead" ]; then base=$lead
   else note="⚠️ 선두 cd 경로($lead)를 디렉터리로 해석하지 못해 세션 cwd($base) 기준으로 잡았습니다 — 워크트리 push 였다면 그 워크트리에서 \`ci-queue.sh run <ROOT> <SHA>\` 로 직접 넣으세요. "; fi
 fi
@@ -55,17 +68,7 @@ ROOT=$(git -C "$base" rev-parse --show-toplevel 2>/dev/null) || exit 0
 [ -n "$ROOT" ] && [ -x "$ROOT/bin/ci" ] || exit 0
 SHA=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null) || exit 0
 
-# scripts/ 위치 — ci-gate-before-pr-merge.sh 와 같은 규칙: ISSUE_RUNNER_SCRIPTS 환경변수 →
-# 이 훅 파일(심링크면 따라간 실제 위치)의 ../scripts → 설치 경로(README 설치 계약).
-src="$0"
-while [ -L "$src" ]; do
-  d=$(cd "$(dirname "$src")" && pwd); src=$(readlink "$src")
-  case "$src" in /*) ;; *) src="$d/$src" ;; esac
-done
-Q=""
-for cand in "${ISSUE_RUNNER_SCRIPTS:-}" "$(cd "$(dirname "$src")/.." && pwd)/scripts" "$HOME/.claude/skills/issue-runner/scripts"; do
-  [ -n "$cand" ] && [ -x "$cand/ci-queue.sh" ] && { Q="$cand/ci-queue.sh"; break; }
-done
+Q=""; [ -n "$S" ] && Q="$S/ci-queue.sh"
 if [ -z "$Q" ]; then
   # exit 0 의 stderr 는 세션에 안 보인다 — 실패도 additionalContext 로 알린다(머지 게이트에서야 아는 일 방지)
   ctx "❌ 로컬 CI: scripts/ci-queue.sh 를 찾지 못해 ${SHA:0:8} 를 큐에 넣지 못했습니다(issue-runner 설치·심링크 확인, ISSUE_RUNNER_SCRIPTS 로 지정 가능). 이 커밋은 CI 결과가 없어 머지 게이트에 막힙니다."

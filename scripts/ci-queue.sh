@@ -6,13 +6,15 @@
 #   ci-queue.sh result <SHA>
 #   ci-queue.sh wait <SHA> [--timeout <sec>]
 #   ci-queue.sh forget <SHA>          — 결과 캐시 삭제(플레이크·인프라 실패 뒤 정당한 재실행 통로)
+#   ci-queue.sh busy <DIR>            — DIR 이 실행 중 bin/ci 의 ROOT(안)이면 0 + 그 SHA, 아니면 1 (#586 가드 훅용)
 #
 # 세 진입점(push 훅 local-ci.sh · 루프 run-local-ci.sh · 세션 직접)이 전부 이걸 거쳐
 # `bin/ci` 를 **박스 전체에서 한 번에 하나만** 돌린다. 워크트리·레포 무관.
 #
 # 큐 = $HOME/.claude/.local-ci/.queue/ (local-ci 캐시 예외 안 — CLAUDE.md 규칙)
 #   티켓  = <epoch10>.<pid10>.<sha>  파일(내용 slug=). 이름 정렬 = FIFO(같은 초는 pid 순 — 둘 다 0패딩이라 사전순=수순).
-#   실행권 = .queue/.running/ 디렉터리(mkdir 원자 토큰) + 그 안의 pid·ticket.
+#   실행권 = .queue/.running/ 디렉터리(mkdir 원자 토큰) + 그 안의 pid·ticket·root(pwd -P 로 푼 ROOT —
+#   슬러그는 `/`·공백을 둘 다 `_` 로 접어 되돌릴 수 없어서 따로 둔다. hooks/guard-ci-root.sh 가 busy 로 읽는다).
 # 각 잡은 **자기 프로세스 안에서** 기다리다 실행한다 — 런너 데몬이 없으니 "런너가
 # 죽으면 큐가 멈춤"이 없다. 죽은 pid 의 티켓·.running 은 지나가는 대기자가 치운다.
 #
@@ -26,7 +28,9 @@
 # 종료 코드 — run: 0=pass · 1=fail · 2=폐기(실행 시점 HEAD ≠ SHA — 새 push 가 자기 티켓을
 # 냈으니 이 잡은 의미 없음) · 3=ROOT 부재/HEAD 못 읽음/큐 쓰기 불가 · 124=같은 SHA 의 다른 잡을
 # CI_QUEUE_WAIT_TIMEOUT(기본 7200s) 동안 기다리다 포기. wait: 0=pass · 1=fail · 2=큐에 없고 결과도 없음 ·
-# 124=타임아웃. result: 0=있음(`pass|fail <path>` 출력) · 1=없음(`none`).
+# 124=타임아웃. result: 0=있음(`pass|fail <path>` 출력) · 1=없음(`none`). busy: 0=실행 중(SHA 출력) · 1=아님.
+# 실행 **도중** ROOT 가 사라지면(워크트리 삭제 — #586) 판정을 버린다: 로그 끝에 `인프라: ROOT 소실` 마커,
+# status error, result 없이 exit 3. 코드 실패로 캐시하면 같은 SHA 의 재실행이 그 가짜 fail 을 dedup 으로 물려받는다.
 # status 출력: `status` = 줄마다 "running <sha> <slug>" / "queued <n> <sha> <slug>",
 #              `status <sha>` = "running" / "queued <n>" / "none".
 # macOS bash 3.2 대상 — 폴 루프 안은 서브프로세스 없이 파라미터 확장만 쓴다.
@@ -42,7 +46,7 @@ RUNNING="$QDIR/.running"
 POLL="${CI_QUEUE_POLL:-10}"
 
 usage() {
-  printf 'usage: ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo <owner/repo>]\n       ci-queue.sh status [<SHA>]\n       ci-queue.sh result <SHA>\n       ci-queue.sh wait <SHA> [--timeout <sec>]\n       ci-queue.sh forget <SHA>\n' >&2
+  printf 'usage: ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo <owner/repo>]\n       ci-queue.sh status [<SHA>]\n       ci-queue.sh result <SHA>\n       ci-queue.sh wait <SHA> [--timeout <sec>]\n       ci-queue.sh forget <SHA>\n       ci-queue.sh busy <DIR>\n' >&2
   exit 64
 }
 # 로그 — stderr 와 함께 $CACHE/queue.log 에 append(훅이 nohup 으로 띄운 잡의 stderr 는 버려지므로,
@@ -162,6 +166,23 @@ cmd_status() {
   return 0
 }
 
+# busy <DIR> — DIR 이 실행 중 bin/ci 의 ROOT 거나 그 안이면 SHA 를 내고 0, 아니면 1. 세션 가드 훅
+# (hooks/guard-ci-root.sh, #586)이 "지금 이 워크트리에서 테스트·커밋·삭제를 해도 되나"를 묻는 자리.
+# 양쪽 다 pwd -P 로 푼 경로를 비교한다(/tmp ↔ /private/tmp·심링크 경로가 갈리지 않게). 죽은 pid 의
+# .running 은 실행 중이 아니다 — reap 과 같은 기준이되, 읽기 전용이라 여기서 치우지는 않는다.
+cmd_busy() {
+  [ $# -ge 1 ] || usage
+  local dir root t
+  [ -f "$RUNNING/root" ] && alive "$(cat "$RUNNING/pid" 2>/dev/null)" || return 1
+  dir=$(cd "$1" 2>/dev/null && pwd -P) || return 1
+  root=$(cat "$RUNNING/root" 2>/dev/null)
+  [ -n "$root" ] || return 1
+  case "$dir/" in
+    "$root"/*) t=$(running_ticket); printf '%s\n' "$(ticket_sha "$t")"; return 0 ;;
+  esac
+  return 1
+}
+
 # commit status 게시 — 실패는 무시(gh 미설치·미인증·원격 부재여도 큐 본연 동작 무손상).
 # 머지 게이트는 로컬 캐시로 판정하므로 status 는 표시용.
 post_status() {  # <state> <description>
@@ -169,7 +190,9 @@ post_status() {  # <state> <description>
   if [ -n "$REPO" ]; then
     gh api "repos/$REPO/statuses/$SHA" -f state="$1" -f context="local-ci" -f description="$2" >/dev/null 2>&1
   else
-    (cd "$ROOT" 2>/dev/null && gh api "repos/{owner}/{repo}/statuses/$SHA" -f state="$1" -f context="local-ci" -f description="$2") >/dev/null 2>&1
+    # ROOT 가 사라졌으면(워크트리 삭제) 살아남는 공용 git 디렉터리에서 원격을 푼다
+    (cd "$ROOT" 2>/dev/null || { [ -n "${GITDIR:-}" ] && cd "$GITDIR" 2>/dev/null; } || exit 0
+     gh api "repos/{owner}/{repo}/statuses/$SHA" -f state="$1" -f context="local-ci" -f description="$2") >/dev/null 2>&1
   fi
   return 0
 }
@@ -292,6 +315,7 @@ cmd_run() {
       # pid 는 임시 파일 → mv 로 원자 기록(O_TRUNC 직후 빈 파일을 남의 reap 이 "죽음"으로 읽는 창 제거)
       echo "$$" > "$RUNNING/pid.$$" && mv "$RUNNING/pid.$$" "$RUNNING/pid"
       printf '%s' "$TICKET" > "$RUNNING/ticket"
+      printf '%s' "$ROOT" > "$RUNNING/root.$$" && mv "$RUNNING/root.$$" "$RUNNING/root"
       break
     fi
     sleep "$POLL"
@@ -319,6 +343,8 @@ cmd_run() {
     return 2
   fi
 
+  # 워크트리면 공용 git 디렉터리(메인 .git)는 워크트리 삭제 뒤에도 남는다 — ROOT 소실 시 status 게시용
+  GITDIR=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
   post_status pending "bin/ci 실행 중 (로컬)"
   local start verdict dur
   start=$SECONDS
@@ -330,6 +356,13 @@ cmd_run() {
   if wait "$CHILD"; then verdict=pass; else verdict=fail; fi
   CHILD=""
   dur=$(( SECONDS - start ))
+  if [ "$verdict" = fail ] && [ ! -d "$ROOT" ]; then
+    # 실행 중 ROOT 삭제(#586) — 코드 판정이 아니다. 로그 파일은 캐시 쪽이라 남아 있다.
+    printf '\n인프라: ROOT 소실 — bin/ci 실행 중 %s 가 사라져 이 실패는 코드 판정이 아니다(결과 미기록)\n' "$ROOT" >> "$out/$SHA.log"
+    log "$short ROOT 소실(실행 중 삭제, ${dur}s) — 결과 미기록: $ROOT"
+    post_status error "로컬 CI 무효 — 실행 중 ROOT(워크트리) 소실"
+    return 3
+  fi
   printf '%s\n' "$verdict" > "$RESULT"
   if [ "$verdict" = pass ]; then
     post_status success "bin/ci 통과 (로컬, ${dur}s)"
@@ -355,5 +388,6 @@ case "$1" in
   result) shift; cmd_result "$@" ;;
   wait)   shift; cmd_wait "$@" ;;
   forget) shift; cmd_forget "$@" ;;
+  busy)   shift; cmd_busy "$@" ;;
   *)      usage ;;
 esac

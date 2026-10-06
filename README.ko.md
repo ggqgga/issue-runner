@@ -248,6 +248,7 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 |---|---|---|
 | `local-ci.sh` | PostToolUse · `git push` | 그 HEAD 의 `bin/ci` 를 **박스 전역 FIFO**(`scripts/ci-queue.sh`)에 넣고, 결과 캐시·commit status 게시; 세션에는 백그라운드로 띄울 `wait` 명령을 알려 판정이 나면 깨어나게 한다 |
 | `ci-gate-before-pr-merge.sh` | PreToolUse · `gh pr merge` | 해당 HEAD 의 캐시된 CI 가 통과가 아니면 머지 차단 (fail-closed); 결과가 없으면 *실행 중 / 대기열 N번째 / 없음* 으로 구분해 안내 |
+| `guard-ci-root.sh` | PreToolUse · Bash | 어떤 워크트리에서 `bin/ci` 가 도는 동안 **그** 워크트리를 겨냥한 테스트(`rails test`·`bin/ci`)·HEAD 를 움직이는 git(commit·reset·checkout·rebase 등)·`git worktree remove` 를 막고(exit 2) `wait` 명령을 알린다 — 이 겹침이 실행 중에 테스트 DB 를 비우거나 HEAD 를 바꾸거나 ROOT 를 지운다(#586). `ci-queue.sh busy <DIR>` 로 판정하고, 그 밖의 실패는 통과시킨다. CI 보다 먼저 시작된 테스트와 사람 터미널은 막지 못한다 |
 | `codex-review-on-pr-create.sh` | PostToolUse · `gh pr create` | Claude 가 독립적인 `codex:codex-rescue` diff 리뷰를 백그라운드로 스폰하도록 지시 |
 | `warn-on-main-branch.sh` | PreToolUse · `Write`/`Edit` | `main`/`master` 에서 편집할 때 비차단 경고 — 먼저 브랜치 |
 | `require-issue-in-pr.sh` | PreToolUse · `gh pr create` | 본문에 전용 `Closes/Refs #N` 줄이 없는 PR 차단 (`(no-issue)` 로 우회) |
@@ -258,18 +259,19 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 
 > **Homebrew cask 의 Codex 0.153+:** cask 는 `codex-code-mode-host` 를 동봉하지만 `/opt/homebrew/bin` 엔 `codex` 만 링크한다. 호스트가 `PATH` 에 없으면 `codex exec review` 의 도구 호출마다 "code-mode host" 협상 타임아웃 ~45초가 붙는다(100줄 리뷰가 7분). 한 번만 링크: `ln -sf /opt/homebrew/Caskroom/codex/<ver>/bin/codex-code-mode-host /opt/homebrew/bin/`. `features.code_mode_host` 는 끄지 말 것 — 리뷰 모드에 실행 도구가 없어져 눈감은 CLEAN 을 낸다(게이트는 그 문구를 잡아 fail-closed).
 
-**`bin/ci` 는 머신 전체에서 한 번에 하나.** push 훅·루프의 `run-local-ci.sh`·세션 직접 호출 — 모든 진입점이 `scripts/ci-queue.sh` 를 거친다. 데몬 없는 티켓 락: 티켓은 `~/.claude/.local-ci/.queue/` 에, 가장 오래된 살아 있는 티켓이 `mkdir .running` 에 성공하면 실행, 죽은 PID 는 지나가는 대기자가 치운다. 워크트리 둘(또는 세션 둘)이 잇달아 push 해도 같은 테스트 DB 를 물거나 박스를 포화시키지 않는다 — 두 번째는 자기 차례를 기다린다. 차례가 왔을 때 레포 HEAD 가 이미 움직였으면 폐기(exit 2) — 새 push 가 자기 티켓을 쥐고 있다.
+**`bin/ci` 는 머신 전체에서 한 번에 하나.** push 훅·루프의 `run-local-ci.sh`·세션 직접 호출 — 모든 진입점이 `scripts/ci-queue.sh` 를 거친다. 데몬 없는 티켓 락: 티켓은 `~/.claude/.local-ci/.queue/` 에, 가장 오래된 살아 있는 티켓이 `mkdir .running` 에 성공하면 실행, 죽은 PID 는 지나가는 대기자가 치운다. 워크트리 둘(또는 세션 둘)이 잇달아 push 해도 같은 테스트 DB 를 물거나 박스를 포화시키지 않는다 — 두 번째는 자기 차례를 기다린다. 차례가 왔을 때 레포 HEAD 가 이미 움직였으면 폐기(exit 2) — 새 push 가 자기 티켓을 쥐고 있다. `bin/ci` 가 **도는 도중** ROOT 가 사라지면(워크트리 삭제) 판정을 남기지 않는다: 로그 끝에 `인프라: ROOT 소실`, commit status 는 `error`, `run` 은 exit 3 — fail 로 캐시하면 같은 SHA 의 재실행이 그 가짜 fail 을 물려받는다.
 
 ```bash
 scripts/ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo owner/repo]   # 등록 + 실행(블록; 0 pass · 1 fail · 2 폐기 · 3 ROOT 없음)
 scripts/ci-queue.sh status [<SHA>]                                          # running / queued N / none
 scripts/ci-queue.sh wait <SHA> [--timeout <sec>]                            # 판정까지 블록 — run_in_background 로 띄우면 끝날 때 세션이 깨어난다
 scripts/ci-queue.sh forget <SHA>                                            # 캐시된 판정 삭제(플레이크·인프라 실패) — 다음 run 이 다시 돈다
+scripts/ci-queue.sh busy <DIR>                                              # DIR 이 실행 중 bin/ci 의 ROOT 안이면 0 + SHA, 아니면 1 (guard-ci-root.sh)
 ```
 
 ```bash
 mkdir -p ~/.claude/hooks
-for h in local-ci ci-gate-before-pr-merge codex-review-on-pr-create warn-on-main-branch require-issue-in-pr; do
+for h in local-ci ci-gate-before-pr-merge guard-ci-root codex-review-on-pr-create warn-on-main-branch require-issue-in-pr; do
   ln -s ~/Projects/refs/issue-runner/hooks/$h.sh ~/.claude/hooks/
 done
 ```
@@ -285,7 +287,8 @@ done
         { "type": "command", "command": "~/.claude/hooks/ci-gate-before-pr-merge.sh",
           "if": "Bash(gh pr merge*)", "timeout": 30 },
         { "type": "command", "command": "~/.claude/hooks/require-issue-in-pr.sh",
-          "if": "Bash(gh pr create*)" }
+          "if": "Bash(gh pr create*)" },
+        { "type": "command", "command": "~/.claude/hooks/guard-ci-root.sh", "timeout": 10 }
       ]}
     ],
     "PostToolUse": [
