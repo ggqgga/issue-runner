@@ -53,9 +53,11 @@ log() {
 }
 # fail 로그 보관(#585) — 7일 prune 이 지울 <sha>.log 중 .result 첫 줄이 fail 인 것만
 # $CACHE/.fail-archive/<slug>/ 로 옮기고, 보관소에서 CI_FAIL_LOG_RETENTION_DAYS 일 지난 파일을 지운다.
-# 실패는 전부 무시(기존 prune 과 같다) — CI 실행을 막지 않는다. 보존 일수가 비면(constants 부재) 정리만 건너뛴다.
+# 실패는 전부 무시(기존 prune 과 같다) — CI 실행을 막지 않는다. 보존 일수가 비면(constants 부재) 보관 전체를 건너뛴다(log 한 줄).
 archive_fail_logs() {  # <out> <slug>
   local out="$1" arc="$CACHE/.fail-archive/$2" days="${CI_FAIL_LOG_RETENTION_DAYS:-}" logs f sha v n=0
+  # 보존 일수를 못 읽으면 이동도 하지 않는다 — 옮기기만 하고 정리를 못 하면 보관소가 끝없이 쌓인다
+  case "$days" in ''|*[!0-9]*) log "fail 로그 보관 생략 — CI_FAIL_LOG_RETENTION_DAYS 를 읽지 못함('$days', lib/constants.sh 부재?)"; return 0 ;; esac
   logs=$(find "$out" -maxdepth 1 -type f -name '*.log' -mtime +7 2>/dev/null)
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -67,7 +69,7 @@ archive_fail_logs() {  # <out> <slug>
 $logs
 EOF
   [ "$n" -gt 0 ] && log "fail 로그 ${n}개 보관 → $arc"
-  case "$days" in ''|*[!0-9]*) ;; *) find "$CACHE/.fail-archive" -type f -mtime +"$days" -delete 2>/dev/null ;; esac
+  find "$CACHE/.fail-archive" -type f -mtime +"$days" -delete 2>/dev/null
   return 0
 }
 
