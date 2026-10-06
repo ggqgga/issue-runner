@@ -135,6 +135,8 @@ no-op 로 통과한다). (근거: verify-runner-rationale §5)
 (`~/.claude/.local-ci/<slug>/<sha>.log`, slug=`repo-dir.sh` 경로의 `/`·공백→`_`)를
 읽어 **어느 step 이 죽었는지** 확인한다. 판별 기준은 한 가지다 — **그 실패가 PR diff
 와 인과로 닿는가.** (근거: verify-runner-rationale §8)
+7일 지난 fail 로그는 캐시 prune 직전 `~/.claude/.local-ci/.fail-archive/<slug>/<sha>.log` 로
+옮겨져 30일(`CI_FAIL_LOG_RETENTION_DAYS`) 보관된다 — 캐시에 없으면 거기서 읽는다(#585).
 
 인과로 안 닿는 대표 부류(**재디스패치 금지**):
 - **툴 자가체크** — 툴이 "내 버전이 최신인가"를 자기 자신에게 묻고 실패하는 것

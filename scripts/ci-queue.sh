@@ -19,6 +19,9 @@
 # 결과 = $HOME/.claude/.local-ci/<slug>/<sha>.{log,result} (기존 형식 그대로 — ci-gate·
 # closeout-ci-pass 호환). **조회 키는 SHA** — 어느 슬러그(워크트리·메인)에 떨어졌든
 # `result <SHA>` 가 찾는다. 실행 직전 HEAD==SHA 를 검사하므로 같은 SHA 의 결과는 같은 커밋의 결과다.
+# 캐시는 run 마다 7일 prune 된다 — 그 직전 fail 로그만 $CACHE/.fail-archive/<slug>/<sha>.log 로 옮겨
+# CI_FAIL_LOG_RETENTION_DAYS(기본 30, lib/constants.sh)일 보관한다(#585, 사후 원인 분석용). 판정 경로
+# (`"$CACHE"/*/` glob)는 점 디렉터리를 읽지 않고 .result 는 옮기지 않으므로 캐시된 fail 이 되살아나지 않는다.
 #
 # 종료 코드 — run: 0=pass · 1=fail · 2=폐기(실행 시점 HEAD ≠ SHA — 새 push 가 자기 티켓을
 # 냈으니 이 잡은 의미 없음) · 3=ROOT 부재/HEAD 못 읽음/큐 쓰기 불가 · 124=같은 SHA 의 다른 잡을
@@ -28,6 +31,10 @@
 #              `status <sha>` = "running" / "queued <n>" / "none".
 # macOS bash 3.2 대상 — 폴 루프 안은 서브프로세스 없이 파라미터 확장만 쓴다.
 set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/constants.sh
+. "$SCRIPT_DIR/lib/constants.sh" 2>/dev/null || true   # 상수는 한 자리 (#427) — 부재여도 큐 본연 동작 무손상
 
 CACHE="$HOME/.claude/.local-ci"
 QDIR="$CACHE/.queue"
@@ -44,6 +51,28 @@ log() {
   printf 'ci-queue: %s\n' "$*" >&2
   printf '%s pid=%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$$" "$*" >> "$CACHE/queue.log" 2>/dev/null
 }
+# fail 로그 보관(#585) — 7일 prune 이 지울 <sha>.log 중 .result 첫 줄이 fail 인 것만
+# $CACHE/.fail-archive/<slug>/ 로 옮기고, 보관소에서 CI_FAIL_LOG_RETENTION_DAYS 일 지난 파일을 지운다.
+# 실패는 전부 무시(기존 prune 과 같다) — CI 실행을 막지 않는다. 보존 일수가 비면(constants 부재) 보관 전체를 건너뛴다(log 한 줄).
+archive_fail_logs() {  # <out> <slug>
+  local out="$1" arc="$CACHE/.fail-archive/$2" days="${CI_FAIL_LOG_RETENTION_DAYS:-}" logs f sha v n=0
+  # 보존 일수를 못 읽으면 이동도 하지 않는다 — 옮기기만 하고 정리를 못 하면 보관소가 끝없이 쌓인다
+  case "$days" in ''|*[!0-9]*) log "fail 로그 보관 생략 — CI_FAIL_LOG_RETENTION_DAYS 를 읽지 못함('$days', lib/constants.sh 부재?)"; return 0 ;; esac
+  logs=$(find "$out" -maxdepth 1 -type f -name '*.log' -mtime +7 2>/dev/null)
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    sha="${f##*/}"; sha="${sha%.log}"
+    v=$(head -1 "$out/$sha.result" 2>/dev/null)
+    [ "$v" = fail ] || continue
+    mkdir -p "$arc" 2>/dev/null && mv -f "$f" "$arc/" 2>/dev/null && n=$((n + 1))
+  done <<EOF
+$logs
+EOF
+  [ "$n" -gt 0 ] && log "fail 로그 ${n}개 보관 → $arc"
+  find "$CACHE/.fail-archive" -type f -mtime +"$days" -delete 2>/dev/null
+  return 0
+}
+
 slug_of() { printf '%s' "$1" | sed 's#[/ ]#_#g; s#^_##'; }
 alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
 
@@ -215,6 +244,7 @@ cmd_run() {
   local out="$CACHE/$SLUG" short="${SHA:0:8}" rc res
   RESULT="$out/$SHA.result"
   mkdir -p "$out" "$QDIR" 2>/dev/null
+  archive_fail_logs "$out" "$SLUG"                      # prune 전에 fail 로그만 보관소로 (#585)
   find "$out" -type f -mtime +7 -delete 2>/dev/null   # 7일 지난 캐시 prune
 
   # mise toolchain — shim 을 PATH 앞에(시스템 ruby 로 Gemfile 파싱이 깨지는 것 방지). 부재 시 무해.

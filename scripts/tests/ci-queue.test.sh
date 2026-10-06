@@ -319,6 +319,27 @@ git -C "$WT" -c user.name=t -c user.email=t@t commit -q --allow-empty -m moved2 
 rc=0; "$SUT" run "$WT" "$NEW" --slug "$MSLUG" >/dev/null 2>&1 || rc=$?
 assert_eq "워크트리 HEAD 이동 → 폐기 2" "$rc" 2
 
+echo "[ci-queue] 11i) 7일 prune — fail 로그만 .fail-archive/<slug>/ 로 옮기고, 보관소는 CI_FAIL_LOG_RETENTION_DAYS(30)일 넘은 것을 지운다 (#585)"
+# days_ago <n> — touch -t 용 타임스탬프(BSD date 우선, GNU date 폴백)
+days_ago() { date -v-"$1"d +%Y%m%d%H%M 2>/dev/null || date -d "$1 days ago" +%Y%m%d%H%M; }
+P=$(make_repo prune1); PS=$(head_of "$P"); PSL=$(slug_of "$P")
+PC="$HOME/.claude/.local-ci/$PSL"; PA="$HOME/.claude/.local-ci/.fail-archive/$PSL"
+FSHA=$(fake_sha f); OSHA=$(fake_sha e); ASHA=$(fake_sha d)
+mkdir -p "$PC" "$PA"
+echo fail > "$PC/$FSHA.result"; echo "fail-boom" > "$PC/$FSHA.log"
+echo pass > "$PC/$OSHA.result"; echo "pass-ok" > "$PC/$OSHA.log"
+echo "old-archived" > "$PA/$ASHA.log"
+touch -t "$(days_ago 8)" "$PC/$FSHA.result" "$PC/$FSHA.log" "$PC/$OSHA.result" "$PC/$OSHA.log"
+touch -t "$(days_ago 31)" "$PA/$ASHA.log"
+"$SUT" run "$P" "$PS" >/dev/null 2>&1
+assert_eq "fail 로그 보관소로 이동" "$(cat "$PA/$FSHA.log" 2>/dev/null)" "fail-boom"
+assert_nofile "fail .result 는 prune" "$PC/$FSHA.result"
+assert_nofile "fail 로그는 캐시에서 빠짐" "$PC/$FSHA.log"
+assert_nofile "pass 로그 prune(보관 안 함)" "$PC/$OSHA.log"
+assert_nofile "pass .result prune" "$PC/$OSHA.result"
+assert_nofile "pass 로그는 보관소에 없음" "$PA/$OSHA.log"
+assert_nofile "31일 지난 보관 로그 정리" "$PA/$ASHA.log"
+
 echo "[ci-gate] 12) 게이트 — 다른 슬러그의 result 도 SHA 로 찾고, 결과 없음은 실행 중/대기열/없음으로 안내"
 GATE="$DIR/../hooks/ci-gate-before-pr-merge.sh"
 G=$(make_repo g1); GSHA=$(head_of "$G")
