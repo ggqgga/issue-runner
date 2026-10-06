@@ -28,7 +28,7 @@ push 훅(`hooks/local-ci.sh`)은 `bin/ci` 를 박스 전역 큐에 백그라운�
    `git worktree remove` 의 대상 디렉터리가 busy 면 exit 2 + `wait` 명령 안내. 대상 디렉터리는 cwd → 선두
    `cd X` → `git -C X`(삭제는 경로 인자). 그 밖의 실패는 통과(fail-open).
 3. 선두 `cd` 해석을 `scripts/lib/hook-cmd.sh` 로 빼서 `local-ci.sh` 와 가드가 같은 읽기를 쓴다.
-4. ROOT 소실 마커 — `bin/ci` 가 fail 로 끝났는데 ROOT 가 없으면 로그 끝에 `인프라: ROOT 소실`, status error,
+4. ROOT 소실 마커 — `bin/ci` 가 끝났을 때(pass·fail 무관) ROOT 가 없으면 로그 끝에 `인프라: ROOT 소실`, status error,
    **result 미기록**·exit 3(캐시하면 같은 SHA 재실행이 가짜 fail 을 dedup 으로 물려받는다). status 는 ROOT
    대신 살아남는 공용 git 디렉터리에서 게시한다.
 
@@ -37,6 +37,8 @@ push 훅(`hooks/local-ci.sh`)은 `bin/ci` 를 박스 전역 큐에 백그라운�
 - CI 보다 **먼저** 시작된 테스트(예: 백그라운드 `bin/rails test`)는 막지 못한다 — 실행 중 프로세스는 훅 밖이다.
 - 사람 터미널의 명령은 막지 못한다 — 훅은 Claude Code 세션 안에서만 뜬다.
 - Edit/Write 로 CI 도중 파일을 고치는 것은 막지 않는다(관측된 실패 패턴이 아니다).
+- 대기열에서 차례를 기다리는 CI 는 실행권을 쥐기 전이라 busy 가 아니다 — 그 사이 시작한 테스트는 CI 시작과 겹친다.
+- 셸 변수·명령 치환으로 쓴 경로(`git worktree remove "$WT"`)와 명령 안의 두 번째 `git -C` 는 풀지 않는다.
 
 ## Task 1: ci-queue busy · ROOT 기록 · ROOT 소실 마커
 

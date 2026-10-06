@@ -356,10 +356,12 @@ cmd_run() {
   if wait "$CHILD"; then verdict=pass; else verdict=fail; fi
   CHILD=""
   dur=$(( SECONDS - start ))
-  if [ "$verdict" = fail ] && [ ! -d "$ROOT" ]; then
-    # 실행 중 ROOT 삭제(#586) — 코드 판정이 아니다. 로그 파일은 캐시 쪽이라 남아 있다.
-    printf '\n인프라: ROOT 소실 — bin/ci 실행 중 %s 가 사라져 이 실패는 코드 판정이 아니다(결과 미기록)\n' "$ROOT" >> "$out/$SHA.log"
+  if [ ! -d "$ROOT" ]; then
+    # 실행 중 ROOT 삭제(#586) — pass 든 fail 이든 코드 판정이 아니다(마지막 파일 접근 뒤 삭제면 pass 로도 끝난다).
+    # 로그 파일은 캐시 쪽이라 남아 있다.
+    printf '\n인프라: ROOT 소실 — bin/ci 실행 중 %s 가 사라져 이 판정(%s)은 코드 판정이 아니다(결과 미기록)\n' "$ROOT" "$verdict" >> "$out/$SHA.log"
     log "$short ROOT 소실(실행 중 삭제, ${dur}s) — 결과 미기록: $ROOT"
+    [ -n "$REPO" ] || [ -n "$GITDIR" ] || log "$short ROOT 소실 — 원격을 풀 git 디렉터리가 없어 commit status 를 게시하지 못함(pending 이 남는다)"
     post_status error "로컬 CI 무효 — 실행 중 ROOT(워크트리) 소실"
     return 3
   fi

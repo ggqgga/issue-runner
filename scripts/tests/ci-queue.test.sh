@@ -405,6 +405,9 @@ rc=0; "$SUT" busy "$B1/bin" >/dev/null || rc=$?
 assert_eq "busy 하위 경로" "$rc" 0
 rc=0; "$SUT" busy "$B2" >/dev/null || rc=$?
 assert_eq "busy 다른 레포" "$rc" 1
+mkdir -p "${B1}x"
+rc=0; "$SUT" busy "${B1}x" >/dev/null || rc=$?
+assert_eq "busy 접두사만 같은 형제 디렉터리" "$rc" 1
 
 echo "[guard-ci-root.sh] 14) 실행 중 ROOT 에서 테스트·HEAD 이동·워크트리 삭제를 막고 wait 명령을 알린다 (#586)"
 GUARD="$DIR/../hooks/guard-ci-root.sh"
@@ -422,22 +425,31 @@ rc=0; guard "$TMP/elsewhere" "git worktree remove --force $B1" || rc=$?
 assert_eq "가드 워크트리 삭제 차단" "$rc" 2
 rc=0; guard "$B1" "git status && bin/rails routes" || rc=$?
 assert_eq "가드 무관 명령 통과" "$rc" 0
+rc=0; guard "$TMP/elsewhere" "git worktree remove --force '$B1'" || rc=$?
+assert_eq "가드 작은따옴표 경로 워크트리 삭제 차단" "$rc" 2
+rc=0; guard "$B1" "git -C $B2 status && git commit -qm x" || rc=$?
+assert_eq "가드 -C 는 그 구간의 git 에만 — 뒤 commit 은 cwd(ROOT) 기준 차단" "$rc" 2
+rc=0; guard "$B1" "./bin/ci" || rc=$?
+assert_eq "가드 같은 ROOT 에서 bin/ci 직접 실행 차단" "$rc" 2
 rc=0; guard "$B2" "bin/rails test" || rc=$?
 assert_eq "가드 다른 레포 테스트 통과" "$rc" 0
 wait $pb1
 rc=0; guard "$B1" "git commit -qm x" || rc=$?
 assert_eq "가드 CI 끝난 뒤 통과" "$rc" 0
+# 비정상 종료로 남은 .running(죽은 pid)은 실행 중이 아니다 — 가드가 세션을 영구히 막지 않는다
+mkdir -p "$QDIR/.running"; echo 999999 > "$QDIR/.running/pid"; (cd "$B1" && pwd -P) > "$QDIR/.running/root"
 rc=0; "$SUT" busy "$B1" >/dev/null || rc=$?
-assert_eq "busy CI 끝난 뒤" "$rc" 1
+assert_eq "busy 죽은 pid 의 .running" "$rc" 1
+rm -rf "$QDIR/.running"
 
-echo "[ci-queue] 15) 실행 중 ROOT 가 사라지면 'ROOT 소실' 마커 · exit 3 · result 없음 (#586)"
+echo "[ci-queue] 15) 실행 중 ROOT 가 사라지면 bin/ci 가 pass 로 끝나도 'ROOT 소실' 마커 · exit 3 · result 없음 (#586)"
 # 실제 사고 모양 — 세션이 CI 도중 워크트리를 `git worktree remove --force` (메인 .git 은 남는다)
 LM=$(make_repo l1); L1="$LM/.claude/worktrees/x"; mkdir -p "$LM/.claude/worktrees"
 git -C "$LM" worktree add -q "$L1" -b l1x >/dev/null 2>&1
 mkdir -p "$L1/bin" && cp "$LM/bin/ci" "$L1/bin/ci"        # 가짜 bin/ci 는 미추적이라 워크트리에 따로 둔다
 git -C "$L1" -c user.name=t -c user.email=t@t commit -q --allow-empty -m wt
 LS1=$(head_of "$L1"); LSL1=$(slug_of "$L1")
-CI_SLEEP=2 CI_RC=1 "$SUT" run "$L1" "$LS1" >/dev/null 2>&1 &
+CI_SLEEP=2 CI_RC=0 "$SUT" run "$L1" "$LS1" >/dev/null 2>&1 &
 pl1=$!
 wait_status "$LS1" running
 git -C "$LM" worktree remove --force "$L1"

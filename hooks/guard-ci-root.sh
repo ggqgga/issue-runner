@@ -9,12 +9,15 @@
 # 큐(scripts/ci-queue.sh)는 bin/ci 끼리만 줄 세운다. 이 훅이 그 밖의 세션 동작을 같은 ROOT 에서 막는다.
 #
 # 막는 것(대상 디렉터리가 실행 중 CI 의 ROOT 안일 때만 — `ci-queue.sh busy`):
-#   ⑴ 테스트 실행: `rails test…`(bin/rails·bundle exec 포함) · `bin/ci`
-#   ⑵ HEAD·워킹트리를 움직이는 git: commit·reset·checkout·switch·rebase·merge·pull·cherry-pick·revert·am
+#   ⑴ 테스트 실행: `rails test…`·`rails t`(bin/rails·bundle exec 포함) · `rake test` · `bin/ci`
+#   ⑵ HEAD·워킹트리를 움직이는 git(앞의 -C·-c·--옵션 허용): commit·reset·checkout·switch·rebase·merge·pull·
+#      cherry-pick·revert·am·stash·restore·clean
 #   ⑶ `git worktree remove <경로>` — 대상은 cwd 가 아니라 경로 인자
 # 대상 디렉터리 = 입력 cwd → 선두 `cd X &&|;`(scripts/lib/hook-cmd.sh, local-ci.sh 와 같은 해석) →
 # `git -C X`. 해석은 좁다: 서브셸·두 번째 cd 는 따라가지 않는다.
-# 못 막는 것: CI 보다 **먼저** 시작된 테스트(실행 중 프로세스는 훅 밖), 사람 터미널(훅은 세션 안에서만).
+# 못 막는 것: CI 보다 **먼저** 시작된 테스트(실행 중 프로세스는 훅 밖) · 대기열에서 차례를 기다리는 CI(실행권을
+# 쥐기 전엔 busy 가 아니다) · 사람 터미널(훅은 세션 안에서만) · 셸 변수·명령 치환으로 쓴 경로(`$WT` — 풀지 못하면
+# busy 가 아니라고 읽힌다) · 명령 안의 두 번째 `git -C`(첫 번째만 읽는다).
 #
 # 차단은 exit 2 + stderr(ci-gate-before-pr-merge.sh 와 같은 관례) — 세션이 사유와 wait 명령을 바로 본다.
 # 기다리지 않고 거부하는 이유: bin/ci 는 수 분이고 훅에는 타임아웃이 있다.
@@ -33,9 +36,9 @@ base=$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null)
 
 # 빠른 거름 — 관심 명령이 없으면 프로세스를 더 띄우지 않는다. 매칭은 bash 내장 [[ =~ ]](모든 Bash 호출마다
 # 도는 훅이라 grep 파이프를 피한다). 정규식은 변수로 넘겨야 bash 3.2 에서도 ERE 로 읽힌다(따옴표 금지).
-G='git([[:space:]]+-[Cc][[:space:]]+[^[:space:];|&]+)*[[:space:]]+'
-TEST_RE='(^|[[:space:];|&(/])rails[[:space:]]+test([:[:space:];|&)]|$)|(^|[[:space:];|&(])(\./)?bin/ci([[:space:];|&)]|$)'
-HEAD_RE="${G}(commit|reset|checkout|switch|rebase|merge|pull|cherry-pick|revert|am)([[:space:];|&)]|\$)"
+G='git([[:space:]]+(-[Cc][[:space:]]+[^[:space:];|&]+|--[a-z-]+(=[^[:space:];|&]+)?))*[[:space:]]+'
+TEST_RE='(^|[[:space:];|&(/])(rails[[:space:]]+(test|t)|rake[[:space:]]+test)([:[:space:];|&)]|$)|(^|[[:space:];|&(])(\./)?bin/ci([[:space:];|&)]|$)'
+HEAD_RE="${G}(commit|reset|checkout|switch|rebase|merge|pull|cherry-pick|revert|am|stash|restore|clean)([[:space:];|&)]|\$)"
 RM_RE="${G}worktree[[:space:]]+remove([[:space:]]|\$)"
 ANY_RE="$TEST_RE|$HEAD_RE|$RM_RE"
 [[ $cmd =~ $ANY_RE ]] || exit 0
@@ -59,9 +62,6 @@ done
 dir=$base
 lead=$(lead_cd_path "$cmd")
 [ -n "$lead" ] && dir=$(resolve_path "$lead" "$base")
-gitc=$(git_c_path "$cmd")
-gdir=$dir
-[ -n "$gitc" ] && gdir=$(resolve_path "$gitc" "$dir")
 
 block() {  # <대상> <무엇>
   local sha
@@ -71,10 +71,20 @@ block() {  # <대상> <무엇>
   exit 2
 }
 
-[[ $cmd =~ $TEST_RE ]] && block "$dir" "테스트 실행"
-[[ $cmd =~ $HEAD_RE ]] && block "$gdir" "커밋·HEAD 이동"
-if [[ $cmd =~ $RM_RE ]]; then
-  wt=$(worktree_rm_path "$cmd")
-  [ -n "$wt" ] && block "$(resolve_path "$wt" "$gdir")" "워크트리 삭제"
-fi
+# 구간(&&·||·;·|·줄바꿈)마다 판정한다 — `git -C X` 는 그 구간의 git 에만 붙는다
+# (`git -C 딴곳 status && git commit` 의 commit 은 cwd 쪽이다).
+# 루프는 파이프가 아니라 here-string 으로 받는다 — block 의 exit 2 가 서브셸이 아니라 훅을 끝내야 한다.
+segs=$(printf '%s\n' "$cmd" | awk '{ gsub(/&&|\|\||;|\|/, "\n"); print }')
+while IFS= read -r seg; do
+  [[ $seg =~ $ANY_RE ]] || continue
+  [[ $seg =~ $TEST_RE ]] && block "$dir" "테스트 실행"
+  gdir=$dir
+  gitc=$(git_c_path "$seg")
+  [ -n "$gitc" ] && gdir=$(resolve_path "$gitc" "$dir")
+  [[ $seg =~ $HEAD_RE ]] && block "$gdir" "커밋·HEAD 이동"
+  if [[ $seg =~ $RM_RE ]]; then
+    wt=$(worktree_rm_path "$seg")
+    [ -n "$wt" ] && block "$(resolve_path "$wt" "$gdir")" "워크트리 삭제"
+  fi
+done <<< "$segs"
 exit 0
