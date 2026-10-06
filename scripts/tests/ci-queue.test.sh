@@ -393,5 +393,73 @@ wait $pg2 $pg1
 rc=0; run_gate "$GSHA" || rc=$?
 assert_eq "게이트 완료 후 통과" "$rc" 0
 
+echo "[ci-queue] 13) busy <DIR> — 실행 중 bin/ci 의 ROOT(하위 경로 포함)면 0 + SHA, 아니면 1 (#586)"
+B1=$(make_repo b1); BS1=$(head_of "$B1"); B2=$(make_repo b2)
+CI_SLEEP=4 "$SUT" run "$B1" "$BS1" >/dev/null 2>&1 &
+pb1=$!
+wait_status "$BS1" running
+rc=0; out=$("$SUT" busy "$B1") || rc=$?
+assert_eq "busy ROOT exit" "$rc" 0
+assert_eq "busy ROOT 는 SHA 를 낸다" "$out" "$BS1"
+rc=0; "$SUT" busy "$B1/bin" >/dev/null || rc=$?
+assert_eq "busy 하위 경로" "$rc" 0
+rc=0; "$SUT" busy "$B2" >/dev/null || rc=$?
+assert_eq "busy 다른 레포" "$rc" 1
+mkdir -p "${B1}x"
+rc=0; "$SUT" busy "${B1}x" >/dev/null || rc=$?
+assert_eq "busy 접두사만 같은 형제 디렉터리" "$rc" 1
+
+echo "[guard-ci-root.sh] 14) 실행 중 ROOT 에서 테스트·HEAD 이동·워크트리 삭제를 막고 wait 명령을 알린다 (#586)"
+GUARD="$DIR/../hooks/guard-ci-root.sh"
+guard() {  # <cwd> <command> → rc, stderr 는 $TMP/guard.err
+  jq -nc --arg c "$1" --arg m "$2" '{cwd:$c, tool_input:{command:$m}}' | bash "$GUARD" >/dev/null 2>"$TMP/guard.err"
+}
+rc=0; guard "$B1" "bin/rails test test/models" || rc=$?
+assert_eq "가드 cwd ROOT 테스트 차단" "$rc" 2
+grep -q "ci-queue.sh wait $BS1" "$TMP/guard.err" && ok || bad "가드 차단 사유에 wait 명령 없음: $(cat "$TMP/guard.err")"
+rc=0; guard "$TMP/elsewhere" "cd $B1 && git commit -qm x" || rc=$?
+assert_eq "가드 선두 cd 커밋 차단" "$rc" 2
+rc=0; guard "$TMP/elsewhere" "git -C $B1 reset --hard HEAD~1" || rc=$?
+assert_eq "가드 git -C HEAD 이동 차단" "$rc" 2
+rc=0; guard "$TMP/elsewhere" "git worktree remove --force $B1" || rc=$?
+assert_eq "가드 워크트리 삭제 차단" "$rc" 2
+rc=0; guard "$B1" "git status && bin/rails routes" || rc=$?
+assert_eq "가드 무관 명령 통과" "$rc" 0
+rc=0; guard "$TMP/elsewhere" "git worktree remove --force '$B1'" || rc=$?
+assert_eq "가드 작은따옴표 경로 워크트리 삭제 차단" "$rc" 2
+rc=0; guard "$B1" "git -C $B2 status && git commit -qm x" || rc=$?
+assert_eq "가드 -C 는 그 구간의 git 에만 — 뒤 commit 은 cwd(ROOT) 기준 차단" "$rc" 2
+rc=0; guard "$B1" "printf 'git commit later'" || rc=$?
+assert_eq "가드 인자 속 'git commit' 문구는 통과" "$rc" 0
+rc=0; guard "$B1" "./bin/ci" || rc=$?
+assert_eq "가드 같은 ROOT 에서 bin/ci 직접 실행 차단" "$rc" 2
+rc=0; guard "$B2" "bin/rails test" || rc=$?
+assert_eq "가드 다른 레포 테스트 통과" "$rc" 0
+wait $pb1
+rc=0; guard "$B1" "git commit -qm x" || rc=$?
+assert_eq "가드 CI 끝난 뒤 통과" "$rc" 0
+# 비정상 종료로 남은 .running(죽은 pid)은 실행 중이 아니다 — 가드가 세션을 영구히 막지 않는다
+mkdir -p "$QDIR/.running"; echo 999999 > "$QDIR/.running/pid"; (cd "$B1" && pwd -P) > "$QDIR/.running/root"
+rc=0; "$SUT" busy "$B1" >/dev/null || rc=$?
+assert_eq "busy 죽은 pid 의 .running" "$rc" 1
+rm -rf "$QDIR/.running"
+
+echo "[ci-queue] 15) 실행 중 ROOT 가 사라지면 bin/ci 가 pass 로 끝나도 'ROOT 소실' 마커 · exit 3 · result 없음 (#586)"
+# 실제 사고 모양 — 세션이 CI 도중 워크트리를 `git worktree remove --force` (메인 .git 은 남는다)
+LM=$(make_repo l1); L1="$LM/.claude/worktrees/x"; mkdir -p "$LM/.claude/worktrees"
+git -C "$LM" worktree add -q "$L1" -b l1x >/dev/null 2>&1
+mkdir -p "$L1/bin" && cp "$LM/bin/ci" "$L1/bin/ci"        # 가짜 bin/ci 는 미추적이라 워크트리에 따로 둔다
+git -C "$L1" -c user.name=t -c user.email=t@t commit -q --allow-empty -m wt
+LS1=$(head_of "$L1"); LSL1=$(slug_of "$L1")
+CI_SLEEP=2 CI_RC=0 "$SUT" run "$L1" "$LS1" >/dev/null 2>&1 &
+pl1=$!
+wait_status "$LS1" running
+git -C "$LM" worktree remove --force "$L1"
+rc=0; wait $pl1 || rc=$?
+assert_eq "ROOT 소실 exit" "$rc" 3
+assert_nofile "ROOT 소실 result 없음" "$HOME/.claude/.local-ci/$LSL1/$LS1.result"
+grep -q "ROOT 소실" "$HOME/.claude/.local-ci/$LSL1/$LS1.log" && ok || bad "ROOT 소실 마커가 로그에 없음"
+assert_eq "ROOT 소실 status error" "$(grep -c "statuses/$LS1 .*state=error" "$GH_LOG")" 1
+
 echo "ci-queue: $pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -251,6 +251,7 @@ Eligibility: `open + agent-ready + ¬agent:claimed + all blockers CLOSED`. Sort:
 |---|---|---|
 | `local-ci.sh` | PostToolUse · `git push` | enqueues `bin/ci` for that HEAD on the **box-wide FIFO** (`scripts/ci-queue.sh`), caches the result, posts a commit status; tells the session which `wait` command to run in the background so it is woken when the verdict lands |
 | `ci-gate-before-pr-merge.sh` | PreToolUse · `gh pr merge` | blocks the merge unless the cached CI for that HEAD passed (fail-closed); a missing result is reported as *running / queued Nth / absent* |
+| `guard-ci-root.sh` | PreToolUse · Bash | while `bin/ci` runs for a worktree, blocks (exit 2) tests (`rails test`, `bin/ci`), HEAD-moving git (commit/reset/checkout/rebase/…) and `git worktree remove` aimed at **that** worktree, and prints the `wait` command — those overlaps clobber the test DB, change HEAD or delete ROOT mid-run (#586). Uses `ci-queue.sh busy <DIR>`; fails open otherwise. Can't stop a test that started before the CI, or a human terminal |
 | `codex-review-on-pr-create.sh` | PostToolUse · `gh pr create` | tells Claude to spawn an independent `codex:codex-rescue` diff review in the background |
 | `warn-on-main-branch.sh` | PreToolUse · `Write`/`Edit` | non-blocking warning when you edit on `main`/`master` — branch first |
 | `require-issue-in-pr.sh` | PreToolUse · `gh pr create` | blocks a PR whose body has no dedicated `Closes/Refs #N` line (bypass with `(no-issue)`) |
@@ -261,18 +262,19 @@ Eligibility: `open + agent-ready + ¬agent:claimed + all blockers CLOSED`. Sort:
 
 > **Codex 0.153+ via Homebrew cask:** the cask bundles `codex-code-mode-host` but links only `codex` into `/opt/homebrew/bin`. Without the host on `PATH`, every tool call in `codex exec review` waits ~45 s on a "code-mode host" negotiation timeout (a 100-line review took 7 min). Link it once: `ln -sf /opt/homebrew/Caskroom/codex/<ver>/bin/codex-code-mode-host /opt/homebrew/bin/`. Do not disable `features.code_mode_host` — review mode then has no execution tool and returns a blind CLEAN (the gate detects that wording and fails closed).
 
-**One `bin/ci` at a time, machine-wide.** Every entry point — the push hook, the loop's `run-local-ci.sh`, and a session calling it directly — goes through `scripts/ci-queue.sh`, a ticket lock with no daemon: tickets live in `~/.claude/.local-ci/.queue/`, the oldest live ticket that manages `mkdir .running` runs, dead PIDs are reaped by whoever passes by. Two worktrees (or two sessions) pushing back-to-back no longer race the same test database or saturate the box; the second one simply waits its turn. A job whose repo HEAD has moved by the time it reaches the front is dropped (exit 2) — the newer push holds its own ticket.
+**One `bin/ci` at a time, machine-wide.** Every entry point — the push hook, the loop's `run-local-ci.sh`, and a session calling it directly — goes through `scripts/ci-queue.sh`, a ticket lock with no daemon: tickets live in `~/.claude/.local-ci/.queue/`, the oldest live ticket that manages `mkdir .running` runs, dead PIDs are reaped by whoever passes by. Two worktrees (or two sessions) pushing back-to-back no longer race the same test database or saturate the box; the second one simply waits its turn. A job whose repo HEAD has moved by the time it reaches the front is dropped (exit 2) — the newer push holds its own ticket. A job whose ROOT disappears **while** `bin/ci` runs (worktree removed) records no verdict: the log ends with `인프라: ROOT 소실`, the commit status is `error`, and `run` exits 3 — a cached fail would be handed to every re-run of that SHA.
 
 ```bash
 scripts/ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo owner/repo]   # enqueue + run (blocks; 0 pass · 1 fail · 2 dropped · 3 no ROOT)
 scripts/ci-queue.sh status [<SHA>]                                          # running / queued N / none
 scripts/ci-queue.sh wait <SHA> [--timeout <sec>]                            # block until the verdict — run it with run_in_background so the session is woken
 scripts/ci-queue.sh forget <SHA>                                            # drop a cached verdict (flake / infra failure) so the next run re-executes
+scripts/ci-queue.sh busy <DIR>                                              # 0 + SHA if DIR is inside the ROOT of the running bin/ci, else 1 (guard-ci-root.sh)
 ```
 
 ```bash
 mkdir -p ~/.claude/hooks
-for h in local-ci ci-gate-before-pr-merge codex-review-on-pr-create warn-on-main-branch require-issue-in-pr; do
+for h in local-ci ci-gate-before-pr-merge guard-ci-root codex-review-on-pr-create warn-on-main-branch require-issue-in-pr; do
   ln -s ~/Projects/refs/issue-runner/hooks/$h.sh ~/.claude/hooks/
 done
 ```
@@ -288,7 +290,8 @@ done
         { "type": "command", "command": "~/.claude/hooks/ci-gate-before-pr-merge.sh",
           "if": "Bash(gh pr merge*)", "timeout": 30 },
         { "type": "command", "command": "~/.claude/hooks/require-issue-in-pr.sh",
-          "if": "Bash(gh pr create*)" }
+          "if": "Bash(gh pr create*)" },
+        { "type": "command", "command": "~/.claude/hooks/guard-ci-root.sh", "timeout": 10 }
       ]}
     ],
     "PostToolUse": [

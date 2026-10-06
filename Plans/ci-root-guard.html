@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CI 루트 가드</title>
+<style>
+  :root { --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --line:#d0d7de; --a:#0969da; --b:#1a7f37; --c:#9a6700; --x:#cf222e; }
+  body { margin:0; padding:24px 16px; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system, "Apple SD Gothic Neo", sans-serif; }
+  main { max-width:960px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:17px; margin:28px 0 8px; }
+  p.sub { color:var(--muted); margin:0 0 16px; }
+  svg { width:100%; height:auto; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  text { font-family:-apple-system, "Apple SD Gothic Neo", sans-serif; }
+  ul { padding-left:20px; }
+  code { background:#f6f8fa; padding:1px 4px; border-radius:4px; }
+</style>
+</head>
+<body><main>
+<h1>CI 실행 중 같은 워크트리 동작 가드 (#586)</h1>
+<p class="sub">결정: ⓑ 세션 쪽 가드 + ROOT 소실 마커 · SelfPaceTest 는 BoDAT #6171 로 분리</p>
+
+<h2>흐름</h2>
+<svg viewBox="0 0 900 330" role="img" aria-label="가드 흐름">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#59636e"/></marker></defs>
+  <rect x="20" y="30" width="170" height="54" rx="8" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="105" y="53" text-anchor="middle" font-size="14">git push</text>
+  <text x="105" y="72" text-anchor="middle" font-size="12" fill="#59636e">local-ci.sh (백그라운드)</text>
+  <rect x="250" y="30" width="200" height="54" rx="8" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="350" y="53" text-anchor="middle" font-size="14">ci-queue.sh run</text>
+  <text x="350" y="72" text-anchor="middle" font-size="12" fill="#59636e">.running/root 기록 (Task 1)</text>
+  <rect x="510" y="30" width="170" height="54" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="595" y="53" text-anchor="middle" font-size="14">bin/ci 실행</text>
+  <text x="595" y="72" text-anchor="middle" font-size="12" fill="#59636e">ROOT 안에서</text>
+  <rect x="730" y="30" width="150" height="54" rx="8" fill="#fff8c5" stroke="#9a6700"/>
+  <text x="805" y="53" text-anchor="middle" font-size="13">fail + ROOT 없음</text>
+  <text x="805" y="72" text-anchor="middle" font-size="12" fill="#59636e">ROOT 소실 마커 · exit 3</text>
+  <line x1="190" y1="57" x2="248" y2="57" stroke="#59636e" marker-end="url(#ar)"/>
+  <line x1="450" y1="57" x2="508" y2="57" stroke="#59636e" marker-end="url(#ar)"/>
+  <line x1="680" y1="57" x2="728" y2="57" stroke="#59636e" marker-end="url(#ar)"/>
+
+  <rect x="20" y="170" width="250" height="70" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="145" y="195" text-anchor="middle" font-size="14">세션 Bash 명령</text>
+  <text x="145" y="215" text-anchor="middle" font-size="12" fill="#59636e">rails test · bin/ci · git commit/reset…</text>
+  <text x="145" y="231" text-anchor="middle" font-size="12" fill="#59636e">git worktree remove</text>
+  <rect x="320" y="170" width="230" height="70" rx="8" fill="#ffebe9" stroke="#cf222e"/>
+  <text x="435" y="195" text-anchor="middle" font-size="14">guard-ci-root.sh (Task 2)</text>
+  <text x="435" y="215" text-anchor="middle" font-size="12" fill="#59636e">대상 = cwd → 선두 cd → git -C</text>
+  <text x="435" y="231" text-anchor="middle" font-size="12" fill="#59636e">hook-cmd.sh 공용 해석</text>
+  <rect x="600" y="160" width="130" height="40" rx="8" fill="#ffebe9" stroke="#cf222e"/>
+  <text x="665" y="185" text-anchor="middle" font-size="13">exit 2 + wait 안내</text>
+  <rect x="600" y="215" width="130" height="40" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="665" y="240" text-anchor="middle" font-size="13">통과</text>
+  <line x1="270" y1="205" x2="318" y2="205" stroke="#59636e" marker-end="url(#ar)"/>
+  <line x1="550" y1="195" x2="598" y2="182" stroke="#59636e" marker-end="url(#ar)"/>
+  <line x1="550" y1="220" x2="598" y2="234" stroke="#59636e" marker-end="url(#ar)"/>
+  <text x="575" y="172" text-anchor="middle" font-size="11" fill="#cf222e">busy</text>
+  <text x="575" y="252" text-anchor="middle" font-size="11" fill="#1a7f37">아님</text>
+  <line x1="435" y1="170" x2="350" y2="86" stroke="#9a6700" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+  <text x="372" y="135" font-size="12" fill="#9a6700">ci-queue.sh busy &lt;DIR&gt;</text>
+  <text x="20" y="300" font-size="12" fill="#59636e">한계: CI 보다 먼저 시작된 테스트 · 사람 터미널 · Edit/Write 는 막지 않는다</text>
+</svg>
+
+<h2>대상 파일</h2>
+<svg viewBox="0 0 900 200" role="img" aria-label="대상 파일">
+  <g font-size="13">
+    <rect x="20" y="20" width="270" height="160" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="35" y="45" font-weight="600">Task 1 · 큐</text>
+    <text x="35" y="70">scripts/ci-queue.sh</text>
+    <text x="35" y="92">scripts/tests/ci-queue.test.sh (13·15)</text>
+    <rect x="315" y="20" width="270" height="160" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="330" y="45" font-weight="600">Task 2 · 가드</text>
+    <text x="330" y="70">hooks/guard-ci-root.sh (신규)</text>
+    <text x="330" y="92">scripts/lib/hook-cmd.sh (신규)</text>
+    <text x="330" y="114">hooks/local-ci.sh</text>
+    <text x="330" y="136">ci-queue.test.sh (14)</text>
+    <rect x="610" y="20" width="270" height="160" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="625" y="45" font-weight="600">Task 3 · 문서·설치</text>
+    <text x="625" y="70">README.md · README.ko.md</text>
+    <text x="625" y="92">~/.claude/hooks 심링크 (레포 밖)</text>
+    <text x="625" y="114">~/.claude/settings.json 등록</text>
+    <text x="625" y="136">서브에이전트 차단 실측</text>
+  </g>
+</svg>
+</main></body>
+</html>
