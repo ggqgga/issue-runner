@@ -23,16 +23,22 @@
 set -u
 
 input=$(cat)
+# 0차 거름(포크 0) — 원문 JSON 에 키워드도 없으면 jq 도 띄우지 않는다. 정밀 판정은 아래 정규식.
+case $input in *rails*|*bin/ci*|*git*) ;; *) exit 0 ;; esac
+# 실행 중 CI 가 없으면 끝 — 실행권 디렉터리 존재만 본다(살아 있는지·ROOT 일치는 아래 `busy` 가 판정).
+[ -d "$HOME/.claude/.local-ci/.queue/.running" ] || exit 0
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
 base=$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null)
 [ -n "$cmd" ] || exit 0
 
-# 빠른 거름 — 관심 명령이 없으면 프로세스를 더 띄우지 않는다
+# 빠른 거름 — 관심 명령이 없으면 프로세스를 더 띄우지 않는다. 매칭은 bash 내장 [[ =~ ]](모든 Bash 호출마다
+# 도는 훅이라 grep 파이프를 피한다). 정규식은 변수로 넘겨야 bash 3.2 에서도 ERE 로 읽힌다(따옴표 금지).
 G='git([[:space:]]+-[Cc][[:space:]]+[^[:space:];|&]+)*[[:space:]]+'
 TEST_RE='(^|[[:space:];|&(/])rails[[:space:]]+test([:[:space:];|&)]|$)|(^|[[:space:];|&(])(\./)?bin/ci([[:space:];|&)]|$)'
 HEAD_RE="${G}(commit|reset|checkout|switch|rebase|merge|pull|cherry-pick|revert|am)([[:space:];|&)]|\$)"
 RM_RE="${G}worktree[[:space:]]+remove([[:space:]]|\$)"
-printf '%s' "$cmd" | grep -qE "$TEST_RE|$HEAD_RE|$RM_RE" || exit 0
+ANY_RE="$TEST_RE|$HEAD_RE|$RM_RE"
+[[ $cmd =~ $ANY_RE ]] || exit 0
 
 [ -n "$base" ] && [ -d "$base" ] || base=$PWD
 
@@ -53,7 +59,7 @@ done
 dir=$base
 lead=$(lead_cd_path "$cmd")
 [ -n "$lead" ] && dir=$(resolve_path "$lead" "$base")
-gitc=$(printf '%s' "$cmd" | sed -n -E 's/.*git[[:space:]]+-C[[:space:]]+("([^"]*)"|([^[:space:];|&]+)).*/\2\3/p' | head -1)
+gitc=$(git_c_path "$cmd")
 gdir=$dir
 [ -n "$gitc" ] && gdir=$(resolve_path "$gitc" "$dir")
 
@@ -65,10 +71,10 @@ block() {  # <대상> <무엇>
   exit 2
 }
 
-printf '%s' "$cmd" | grep -qE "$TEST_RE" && block "$dir" "테스트 실행"
-printf '%s' "$cmd" | grep -qE "$HEAD_RE" && block "$gdir" "커밋·HEAD 이동"
-if printf '%s' "$cmd" | grep -qE "$RM_RE"; then
-  wt=$(printf '%s' "$cmd" | sed -n -E 's/.*worktree[[:space:]]+remove([[:space:]]+-[^[:space:]]+)*[[:space:]]+("([^"]*)"|([^-[:space:];|&][^[:space:];|&]*)).*/\3\4/p' | head -1)
+[[ $cmd =~ $TEST_RE ]] && block "$dir" "테스트 실행"
+[[ $cmd =~ $HEAD_RE ]] && block "$gdir" "커밋·HEAD 이동"
+if [[ $cmd =~ $RM_RE ]]; then
+  wt=$(worktree_rm_path "$cmd")
   [ -n "$wt" ] && block "$(resolve_path "$wt" "$gdir")" "워크트리 삭제"
 fi
 exit 0

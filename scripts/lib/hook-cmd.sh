@@ -21,3 +21,15 @@ resolve_path() {
     *) printf '%s' "$2/$1" ;;
   esac
 }
+
+# git_c_path <cmd> — 첫 `git -C <경로>` 의 경로(따옴표 벗김, 전개 전). 없으면 빈 출력.
+git_c_path() {
+  printf '%s' "$1" | sed -n -E 's/.*git[[:space:]]+-C[[:space:]]+("([^"]*)"|([^[:space:];|&]+)).*/\2\3/p' | head -1
+}
+
+# worktree_rm_path <cmd> — `git worktree remove [-옵션…] <경로>` 의 경로. 없으면 빈 출력.
+worktree_rm_path() {
+  printf '%s' "$1" \
+    | sed -n -E 's/.*worktree[[:space:]]+remove([[:space:]]+-[^[:space:]]+)*[[:space:]]+("([^"]*)"|([^-[:space:];|&][^[:space:];|&]*)).*/\3\4/p' \
+    | head -1
+}
