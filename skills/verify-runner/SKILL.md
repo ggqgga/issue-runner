@@ -299,7 +299,7 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
    **그리고 N 을 올리지 않는다**(근거: verify-runner-rationale §2).
 2. 재디스패치: 실패 사유 코멘트(멱등 마커) —
    codex BLOCKER 면 `$SCRIPTS/bounce-comment.sh reverify-fail <repo> <pr> <issue> <N+1> "<사유>"`,
-   E2E·CI 실패면 같은 명령에 `<N>`(현재 값 그대로 — 마커의 attempt 번호는 codex 회차다).
+   E2E·m2 dev 실측·CI 실패면 같은 명령에 `<N>`(현재 값 그대로 — 마커의 attempt 번호는 codex 회차다).
    **N+1 = 2(마지막 codex 반송)면 `<사유>` 끝에 `최종 회차: 다음 검증은 codex 없이 자체 리뷰로
    완료된다` 를 붙인다** — 워커가 이 문구를 보면 9-b 사전 리뷰를 건너뛰지 않는다(worker-template).
    문구는 인자로만 간다(스크립트·마커 형식 무변경).
