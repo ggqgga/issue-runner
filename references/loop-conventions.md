@@ -187,7 +187,7 @@ $SCRIPTS/loop-status.sh --post <루프> --delta "<이 틱 한 줄 요약>"
 
 | 주체 | 올라가는 칸 | 상한에서 넘길 곳 |
 |---|---|---|
-| 워커(issue-runner 가 디스패치) | ① → ② → ③ | 셋 다 실패 + 인용 → `BLOCKED:` (→ `hold:ladder`) |
+| 워커(issue-runner 가 디스패치) | ①a → ② → ③ (**①b 제외** — 동시에 여러 개가 돌아 m2 잠금 하나를 두고 다툰다, 사용자 결정 2026-10-27) | 셋 다 실패 + 인용 → `BLOCKED:` (→ `hold:ladder`). ①b 로만 밟히는 줄은 실패가 아니다 — PR test plan 에 열린 채 두면 verify-runner 가 밟는다 |
 | verify-runner ③ Verify | ①a → ①b(BoDAT, PR 브랜치) → ② → ③ | 시도한 칸·명령·실패 출력을 인용하고 `verify-held --reason ladder`. ①b 가 **잠겨서** 못 밟은 `[dev]` 줄은 보류 사유가 아니다 — 인용만 남기고 closeout 으로 흘린다 |
 | closeout 4단계(`<LIVE_CHECKS>` 이관 전) | ①a → ①b(BoDAT, `main`) → ② **까지만** | 판정이 안 서면 `- [ ]` 로 배포 대기 이슈에 옮긴다. 표식 `- [ ] [칸 ③] <동작>` 은 **동작 자체가 칸 ③(TEST 워커 프로필 #18 드라이런)을 요구하는 줄에만**, `- [ ] [dev] <동작>` 은 **m2 dev 에 써야 밟히는 줄**(①b 를 못 밟아 넘기는 것)에만 붙인다 — ①② 를 시도했다 실패한 것은 표식의 근거가 아니다 |
 | closeout 5단계(크롬 스모크) | 브라우저로 밟히는 것만 | `[칸 ③]`·`[dev]` 표식 줄과 브라우저 밖 수단이 필요한 줄은 **보류**로 세고 이슈를 닫지 않는다(`smoke-tally.sh` 가 센다) |

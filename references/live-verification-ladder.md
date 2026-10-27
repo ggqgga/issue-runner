@@ -28,6 +28,11 @@
 에 있고, 거기서는 **쓰기까지** 테스트한 뒤 재덤프로 지운다(BoDAT `Plans/dev-isolation.md`
 E장·결정 12). 다른 레포에는 ①b 가 없다.
 
+**①b 에 올라오는 루프 주체는 verify-runner·closeout 둘뿐이다.** 구현 워커(issue-runner 가 디스패치)는
+①a 에서 멈추고 ①b 로만 밟히는 줄을 PR test plan 에 열린 채 둔다 — 워커는 동시에 여러 개가 돌아 m2 잠금
+하나를 두고 다투고, 직렬로 도는 verify-runner 가 같은 줄을 PR head 로 밟는다(사용자 결정 2026-10-27,
+`references/loop-conventions.md` §9). 그 줄은 사다리 실패가 아니므로 `BLOCKED:`·`hold:ladder` 근거가 아니다.
+
 **①b 절차 (BoDAT, 미니·맥북 어디서든 `ssh ggq-m2`).** m2 의 ruby 는 mise 라 원격 명령 앞에
 `export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:/opt/homebrew/bin:$PATH"; cd ~/Projects/BODA/BoDAT &&`
 를 붙인다.
@@ -41,8 +46,8 @@ E장·결정 12). 다른 레포에는 ①b 가 없다.
    **오래된 잠금** — `--status` 의 보유자·시각을 보고 같은 보유자가 **2시간 넘게** 쥐고 있으면 풀지 말고
    그 틱 Report 에 `BLOCKED: m2 dev 잠금 장기 보유 <보유자> <시각>` 한 줄을 올린다(죽은 주체가 남긴 잠금이면
    모든 ①b 가 "잠김"으로 조용히 넘어가 영영 안 밟힌다).
-2. **띄우기** — `script/dev-checkout <브랜치> --owner <주체>`(주체 = `verify-runner`·`closeout`·워커의
-   이슈 번호 등). 브랜치는 **origin 에 push 돼 있어야** 한다(`origin/<브랜치>` 를 체크아웃한다).
+2. **띄우기** — `script/dev-checkout <브랜치> --owner <주체>`(주체 = `verify-runner`·`closeout`·`e2e-test`
+   등 — 구현 워커는 ①b 에 오지 않는다). 브랜치는 **origin 에 push 돼 있어야** 한다(`origin/<브랜치>` 를 체크아웃한다).
    머지 뒤라면 `main`. 이 명령이 bundle·migrate·재기동·`/up` 확인까지 한다.
    **exit 0 이고 마지막 줄이 `ok  dev 서버가 <브랜치>(…)로 떴습니다` 일 때만 3단계로 간다.** 비0 이면 밟지 않는다:
    exit 2(그 사이 누가 잠금)는 1단계 "잠겨 있으면" 과 같게 인용하고 넘긴다. 전환 뒤 실패(`전환 뒤 실패 — 잠금을
@@ -127,7 +132,7 @@ Tailscale 주소 `100.65.53.51:3000` 과 루프백은 정상. 같은 크롬이 �
 - **무장 칸은 레시피 번호 `test_recipe_id` 다.** 옛 이름 칸 `test_behavior` 는 `ChannelConfig.sanitize`
   가 조용히 버려, 넣으면 이전에 남은 레시피가 돈다(2026-10-27 실측). 무장 뒤 그 칸을 다시 읽어 확인한다.
 - **dev 워커(`zdev_` 그룹)는 m2 dev 를 폴링한다** — 그 워커로 재현할 항목은 무장도 m2 dev DB 에
-  한다(①b 잠금 안에서). 운영 TEST 워커는 prod DB 에 무장한다.
+  한다(①b 잠금 안에서 — 그래서 구현 워커는 이 경로를 쓰지 않는다). 운영 TEST 워커는 prod DB 에 무장한다.
 - **무장했으면 복원은 필수다.** 테스트를 위해 켠 스위치(test_mode·레시피 배정·작전
   무장)는 판정이 끝나는 즉시 원상 복구한다.
 - **공개 쓰기(댓글·팔로우)는 우리 계정에만.** 도달 대상·고객 게시물에 검증 흔적을
