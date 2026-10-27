@@ -586,6 +586,25 @@ worktree(`agent/issue-<N>`)를 직접 정리한다. `--merged` 는 squash 머지
   루프가 이 티켓을 집는 레인 표식**이다 — 이 라벨 하나가 필수다. **closeout 은 `needs-human` 을 붙이지
   않는다 (#243, 플랜 2단계) — 되돌리지 마라.** 그 라벨을 붙이는 주체는 deploy-cycle 이다.
 
+**issue-runner 자기 레포는 머지 즉시 배포한다 (사용자 결정 2026-10-28).** `<repo>` 가 `ggqgga/issue-runner` 면
+위 발행으로 티켓이 생긴 직후(exit 0·2·3 — 번호가 있으면) **그 자리에서 배포하고 티켓을 닫는다.** 07:25 deploy-cycle 을
+기다리지 않는다 — release 가 없고 미니 체크아웃 pull 이 곧 배포다(dev 서버 분리·배포 창은 BoDAT 만의 일이다).
+티켓 자체는 그대로 발행한다(한 PR = 한 티켓, 2026-08-16).
+
+```bash
+D=~/Projects/refs/issue-runner   # closeout 은 미니에서 돈다 — 맥북 세션이면 같은 줄을 ssh bodat-mini '…' 로
+git -C $D pull -q --ff-only && git -C $D merge-base --is-ancestor <머지SHA> HEAD && git -C $D rev-parse --short HEAD
+```
+
+- **실패**(체크아웃이 더럽거나 non-ff · 조상 아님)면 닫지 않는다 — ④ Report 에 `BLOCKED: issue-runner 즉시 배포 실패
+  #<번호> — <stderr 한 줄>`. 티켓은 07:25 deploy-cycle 이 백스톱으로 다시 집는다.
+- **성공 + 항목 `없음`(또는 전부 `[x]`)** → `gh issue close <번호> --repo ggqgga/issue-runner --comment "배포 완료 — 미니
+  issue-runner <sha> (머지 즉시 배포)"`.
+- **성공 + `- [ ]` 남음** → 항목을 밟지 않는다. deploy-cycle ⑤(b) 형식 그대로 `테스트` 이슈를 발행하고 티켓을 닫는다
+  (형식 SSOT: BoDAT `.claude/skills/deploy-cycle/SKILL.md` ⑤(b) — 미니 경로 `~/Projects/BODA/BoDAT/.claude/skills/deploy-cycle/SKILL.md`).
+  `$NEW_TAG (release $TARGET)` 자리에는 `미니 issue-runner <sha>` 를 쓴다.
+- 5단계 스모크는 없다(검증 URL 해당 없음). 그 뒤 approval-required 로 종료한다.
+
 **단, `<LIVE_CHECKS>` 의 형태 규율은 그대로다** — 이슈 발행 여부를 가르지 않을 뿐, 5단계 스모크 여부는
 여전히 이 절이 가른다:
 

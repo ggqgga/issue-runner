@@ -669,6 +669,26 @@ merged means it entered the promotion scope, and that fact must be visible to a 
   **closeout does not attach `needs-human` (#243, plan stage 2) — do not revert this.** The actor that
   attaches it is deploy-cycle.
 
+**The issue-runner repo itself deploys on merge (user decision 2026-10-28).** If `<repo>` is `ggqgga/issue-runner`,
+right after the filing above creates the ticket (exit 0·2·3 — whenever there is a number) **deploy on the spot and close
+the ticket.** Do not wait for the 07:25 deploy-cycle — there is no release, and pulling the mini checkout is the deploy
+(the dev-server split and the deploy window are BoDAT's alone). The ticket is still filed (one PR = one ticket, 2026-08-16).
+
+```bash
+D=~/Projects/refs/issue-runner   # closeout runs on the mini — from a MacBook session wrap the same line in ssh bodat-mini '…'
+git -C $D pull -q --ff-only && git -C $D merge-base --is-ancestor <merge SHA> HEAD && git -C $D rev-parse --short HEAD
+```
+
+- **On failure** (dirty checkout or non-ff · not an ancestor) do not close — put `BLOCKED: issue-runner 즉시 배포 실패
+  #<number> — <one stderr line>` in ④ Report. The 07:25 deploy-cycle picks the ticket up again as a backstop.
+- **Success + items `없음` (or all `[x]`)** → `gh issue close <number> --repo ggqgga/issue-runner --comment "배포 완료 — 미니
+  issue-runner <sha> (머지 즉시 배포)"`.
+- **Success + `- [ ]` left** → do not step them. File a `테스트` issue in exactly deploy-cycle ⑤(b)'s shape and close the
+  ticket (shape SSOT: BoDAT `.claude/skills/deploy-cycle/SKILL.md` ⑤(b) — on the mini
+  `~/Projects/BODA/BoDAT/.claude/skills/deploy-cycle/SKILL.md`). Write `미니 issue-runner <sha>` where it says
+  `$NEW_TAG (release $TARGET)`.
+- There is no step-5 smoke (no verify URL). Then end as approval-required.
+
 **The `<LIVE_CHECKS>` shape discipline still stands** — it no longer decides whether the issue is filed, but
 it still decides whether step 5 smokes:
 
