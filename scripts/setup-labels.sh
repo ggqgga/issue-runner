@@ -90,7 +90,7 @@ gh label create "verify:반송" --repo "$repo" --color 7A9FE8 \
 # closeout 파생·배포 대기 표식 (#144) — 지금까지 산문으로만 구분하던 두 종류의 이슈를
 # 목록에서 바로 가른다. `deploy-wait` 는 **단독으로** 붙는다(#243) — needs-human 과 병행하던
 # 것을 멈췄다. 그 라벨을 배포 대기 이슈에서 읽는 소비자가 하나도 없었기 때문이다(디스패치
-# 게이트는 agent-ready 를 요구 · deploy-bodat 수집은 제목 정규식). 붙이는 주체는 deploy-cycle 뿐 —
+# 게이트는 agent-ready 를 요구 · hotfix 수집은 제목 정규식). 붙이는 주체는 deploy-cycle 뿐 —
 # 승격·배포 실패에(BoDAT #5197), 그래서 loop-status 버킷은 needs-human 이 deploy-wait 보다 앞이다.
 # 색은 B 티어(한색)로 옮겼다(#243 2회차) — 옛 색 BF3989 는 난색 고채도라 위 A/B 축 주석과
 # 모순이었다(설명은 "사람 정지 아님" 인데 색은 "사람 차례" 티어). 새 색 17A2B8 은 팔레트

@@ -7,9 +7,9 @@
 # 머지된 PR 하나당 **배포 대기 이슈 하나**를 발행한다 — closeout 4단계와 full-cycle §7 이
 # 같은 형식을 각자 산문으로 밟던 것을 한 자리로 접은 것이다 (#446 · 에픽 #443 2단계).
 #
-# ⚠️ **여기 있는 리터럴은 파싱 계약이다 — deploy-cycle · deploy-bodat 이 읽는다.**
+# ⚠️ **여기 있는 리터럴은 파싱 계약이다 — deploy-cycle · hotfix 이 읽는다.**
 #    바꾸면 그 두 스킬이 티켓을 **못 찾는다**. 하나라도 손대기 전에 그 소비자부터 고쳐라.
-#      · 제목 정규식 : `배포 대기: PR #<M>`  ← deploy-bodat 수집은 라벨이 아니라 **제목**이다
+#      · 제목 정규식 : `배포 대기: PR #<M>`  ← hotfix 수집은 라벨이 아니라 **제목**이다
 #      · 승격만 접미 : ` (승격만)`            ← 밟을 항목이 0인 티켓(5단계 스모크 건너뜀)
 #      · 절 이름     : `## 검증 URL` · `## 라이브/하드웨어 검증 항목`
 #                      (closeout 5단계가 이 두 절을 파싱해 스모크 프롬프트에 채운다)
@@ -40,7 +40,7 @@
 #    사람이 `gh issue edit <번호> --add-label needs:hardware` 한 번이면 끝). 종전의 `gh label list … 2>/dev/null | grep` 은 목록
 #    조회(GraphQL)가 일시 실패하면 빈 출력이 "없음" 으로 읽혀 라벨이 조용히 빠졌다(BoDAT
 #    #5341·#5344·#5360 — 사람이 손으로 붙였다). `needs-human` 은 붙이지 않는다(#243) —
-#    발행 시점엔 사람 몫이 없다(디스패치 게이트는 `agent-ready` 를 요구하고, deploy-bodat
+#    발행 시점엔 사람 몫이 없다(디스패치 게이트는 `agent-ready` 를 요구하고, hotfix
 #    수집은 제목 정규식이다). 그 라벨을 붙이는 주체는 deploy-cycle 이다.
 # ⑶ 라벨 부재 fail-closed — 티켓을 잃지 않는다: `gh issue create` 는 레포에 없는 라벨이
 #    하나라도 있으면 이슈 자체를 안 만들고 실패한다. `not found` 류면 `setup-labels.sh` 를
@@ -205,7 +205,7 @@ fi
 verify_note_file="$tmp/verify-note.md"
 if [ "$show_verify_note" = 1 ]; then
   cat > "$verify_note_file" <<'EOF'
- (production 베이스 URL. closeout 5단계가 이 URL 로 Chrome 스모크를 몰아 아래 검증 항목을 대조한다. **자동화 크롬이 실제로 여는 주소를 적어라** — BoDAT 은 `http://100.65.53.51:3000`(Tailscale)이고 `bodat.local`·LAN IP 는 크롬에서만 안 열린다: BoDAT `deploy-bodat` 5절.)
+ (production 베이스 URL. closeout 5단계가 이 URL 로 Chrome 스모크를 몰아 아래 검증 항목을 대조한다. **자동화 크롬이 실제로 여는 주소를 적어라** — BoDAT 은 `http://100.65.53.51:3000`(Tailscale)이고 `bodat.local`·LAN IP 는 크롬에서만 안 열린다: BoDAT `hotfix` 5절.)
 레포가 dev 스테이지를 두는 경우 상세 검증은 그쪽에서 먼저 수행될 수 있고, 이 URL 스모크는 배포 후 마지막 안전망이다.
 EOF
 else
