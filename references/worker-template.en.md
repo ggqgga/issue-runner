@@ -367,7 +367,9 @@ Procedure:
       its failure output (the
       command plus its last 20 lines) in the PR `## Test plan`** — "real hardware is
       needed" as prose is not enough to leave it `[ ]` (rungs ① and ② can be attempted
-      from the worktree as-is; your own ceiling is rung ③ — see the per-actor table in
+      from the worktree as-is. **Do not climb rung ①b (BoDAT m2 dev), though** — leave a line that only ①b
+      can step (a write round-trip or state transition over production data) open as `[ ] [dev] <action>`
+      without an attempt or citation, and verify-runner steps it; your own ceiling is rung ③ — see the per-actor table in
       `~/.claude/skills/issue-runner/references/loop-conventions.md` §9; the "Forbidden"
       list below still stands).
       **Do not regenerate the whole
