@@ -46,7 +46,7 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
   데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict 미산출로 간주한다(#96).
   **값은 `scripts/lib/constants.sh` 의 `CODEX_GATE_TIMEOUT`(초)을 분으로 환산한 것**이다.
 - 절대 금지: production 무인 배포(4단계는 **배포 레인(deploy-cycle) 인계** — closeout 자신은 실 배포를
-  하지 않는다) · 프로덕션 포인터 브랜치(release 등) 무인 승격(검증된 SHA 를 프로덕션/워커가 당기는
+  하지 않는다 — 단 issue-runner 자기 레포의 미니 pull 은 예외, 4단계) · 프로덕션 포인터 브랜치(release 등) 무인 승격(검증된 SHA 를 프로덕션/워커가 당기는
   브랜치로 미는 것도 배포와 동급으로 **배포 레인의 몫**이다) · main 직접 push(문서 reconcile 도 PR 브랜치
   경유) · `harvesting` 점유 없이 머지 · issue-runner 가 만든 워크트리/브랜치 조작 · issue-runner 의
   "절대 머지 안 함" 불변 훼손.
@@ -587,7 +587,8 @@ worktree(`agent/issue-<N>`)를 직접 정리한다. `--merged` 는 squash 머지
   않는다 (#243, 플랜 2단계) — 되돌리지 마라.** 그 라벨을 붙이는 주체는 deploy-cycle 이다.
 
 **issue-runner 자기 레포는 머지 즉시 배포한다 (사용자 결정 2026-10-28).** `<repo>` 가 `ggqgga/issue-runner` 면
-위 발행으로 티켓이 생긴 직후(exit 0·2·3 — 번호가 있으면) **그 자리에서 배포하고 티켓을 닫는다.** 07:25 deploy-cycle 을
+위 발행이 **exit 0 또는 3**(deploy-wait 라벨·마커 정상)이면 **그 자리에서 배포하고 티켓을 닫는다.** exit 2(라벨·마커
+어긋남)는 위 복구 절차 그대로 두고 배포하지 않는다 — 라벨이 없으면 백스톱도 못 집으니 사람 복구가 먼저다. 07:25 deploy-cycle 을
 기다리지 않는다 — release 가 없고 미니 체크아웃 pull 이 곧 배포다(dev 서버 분리·배포 창은 BoDAT 만의 일이다).
 티켓 자체는 그대로 발행한다(한 PR = 한 티켓, 2026-08-16).
 
@@ -602,7 +603,8 @@ git -C $D pull -q --ff-only && git -C $D merge-base --is-ancestor <머지SHA> HE
   issue-runner <sha> (머지 즉시 배포)"`.
 - **성공 + `- [ ]` 남음** → 항목을 밟지 않는다. deploy-cycle ⑤(b) 형식 그대로 `테스트` 이슈를 발행하고 티켓을 닫는다
   (형식 SSOT: BoDAT `.claude/skills/deploy-cycle/SKILL.md` ⑤(b) — 미니 경로 `~/Projects/BODA/BoDAT/.claude/skills/deploy-cycle/SKILL.md`).
-  `$NEW_TAG (release $TARGET)` 자리에는 `미니 issue-runner <sha>` 를 쓴다.
+  `$NEW_TAG (release $TARGET)` 자리에는 `미니 issue-runner <sha>` 를 쓴다. **`테스트` 이슈 번호를 받았을 때만 닫는다** —
+  발행이 실패하면 티켓을 열어 두고 ④ Report 에 `BLOCKED: 테스트 이슈 발행 실패 #<번호>`(항목이 사라지지 않게).
 - 5단계 스모크는 없다(검증 URL 해당 없음). 그 뒤 approval-required 로 종료한다.
 
 **단, `<LIVE_CHECKS>` 의 형태 규율은 그대로다** — 이슈 발행 여부를 가르지 않을 뿐, 5단계 스모크 여부는
@@ -616,7 +618,7 @@ git -C $D pull -q --ff-only && git -C $D merge-base --is-ancestor <머지SHA> HE
 **묶지 않는다.** 여러 배포 대기 이슈를 하나로 합치지 마라(사용자 결정, 2026-08-13). 개수가 늘어도
 **한 PR = 한 티켓 = 닫히는 시점이 명확한 그릇** 을 유지한다.
 
-**5단계 — 배포 후 처리 (Chrome 스모크).** **배포 완료가 보고된** 배포 이슈에 대해(누가 보고했는지는 묻지
+**5단계 — 배포 후 처리 (Chrome 스모크).** (issue-runner 자기 레포 티켓은 4단계에서 이미 닫혔다 — 이 단계 대상이 아니다.) **배포 완료가 보고된** 배포 이슈에 대해(누가 보고했는지는 묻지
 않는다 — 배포 보고는 deploy-cycle 레인이 남긴다) 새 감지 기구 없이(폴링/타이밍 미도입) 능동적으로
 Chrome 스모크를 돌려 판정한다. 배포 이슈 본문에서 `## 검증 URL`(`<VERIFY_URL>`)과
 `## 라이브/하드웨어 검증 항목`(`<LIVE_CHECKS>`)을 파싱해 `references/smoke-prompt.md` 의 placeholder 에

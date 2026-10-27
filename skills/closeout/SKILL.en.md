@@ -57,7 +57,7 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
   "no verdict" (#96). **The value is `scripts/lib/constants.sh`'s `CODEX_GATE_TIMEOUT` (seconds) converted
   to minutes.**
 - Absolutely forbidden: unattended production deploys (step 4 is a **handoff to the deploy lane
-  (deploy-cycle)** — closeout never deploys) · unattended promotion of a production pointer branch (release
+  (deploy-cycle)** — closeout never deploys — except the mini pull of the issue-runner repo itself, step 4) · unattended promotion of a production pointer branch (release
   etc.; pushing a verified SHA to a branch production/workers pull from ranks with deploying and belongs to
   the deploy lane) · direct pushes to main (doc reconcile also goes through the PR branch) · merging without
   `harvesting` occupation · touching worktrees/branches issue-runner created · breaking issue-runner's
@@ -670,8 +670,8 @@ merged means it entered the promotion scope, and that fact must be visible to a 
   attaches it is deploy-cycle.
 
 **The issue-runner repo itself deploys on merge (user decision 2026-10-28).** If `<repo>` is `ggqgga/issue-runner`,
-right after the filing above creates the ticket (exit 0·2·3 — whenever there is a number) **deploy on the spot and close
-the ticket.** Do not wait for the 07:25 deploy-cycle — there is no release, and pulling the mini checkout is the deploy
+if the filing above returns **exit 0 or 3** (deploy-wait label and marker intact) **deploy on the spot and close the ticket.**
+On exit 2 (label/marker off) follow the recovery above and do not deploy — without the label the backstop cannot pick it up either. Do not wait for the 07:25 deploy-cycle — there is no release, and pulling the mini checkout is the deploy
 (the dev-server split and the deploy window are BoDAT's alone). The ticket is still filed (one PR = one ticket, 2026-08-16).
 
 ```bash
@@ -686,7 +686,8 @@ git -C $D pull -q --ff-only && git -C $D merge-base --is-ancestor <merge SHA> HE
 - **Success + `- [ ]` left** → do not step them. File a `테스트` issue in exactly deploy-cycle ⑤(b)'s shape and close the
   ticket (shape SSOT: BoDAT `.claude/skills/deploy-cycle/SKILL.md` ⑤(b) — on the mini
   `~/Projects/BODA/BoDAT/.claude/skills/deploy-cycle/SKILL.md`). Write `미니 issue-runner <sha>` where it says
-  `$NEW_TAG (release $TARGET)`.
+  `$NEW_TAG (release $TARGET)`. **Close only once you have the `테스트` issue number** — if filing fails, leave the
+  ticket open and put `BLOCKED: 테스트 이슈 발행 실패 #<number>` in ④ Report (so the items are not lost).
 - There is no step-5 smoke (no verify URL). Then end as approval-required.
 
 **The `<LIVE_CHECKS>` shape discipline still stands** — it no longer decides whether the issue is filed, but
@@ -701,7 +702,7 @@ it still decides whether step 5 smokes:
 **Do not bundle.** Never merge several deploy-wait issues into one (user decision, 2026-08-13). However many
 there are, keep **one PR = one ticket = one vessel with a clear closing point**.
 
-**Step 5 — post-deploy handling (Chrome smoke).** For a deploy issue **whose deploy has been reported** (who
+**Step 5 — post-deploy handling (Chrome smoke).** (An issue-runner self-repo ticket was already closed in step 4 — it is not this step's target.) For a deploy issue **whose deploy has been reported** (who
 reported it is not asked — the deploy report is left by the deploy-cycle lane), actively run a Chrome smoke
 and judge, with no new detection machinery (no polling/timing). Parse `## 검증 URL` (`<VERIFY_URL>`) and
 `## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body into
