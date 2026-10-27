@@ -46,7 +46,7 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
   데드라인으로 폴링하고, 데드라인을 넘기면 `TaskStop` 으로 끊어 verdict 미산출로 간주한다(#96).
   **값은 `scripts/lib/constants.sh` 의 `CODEX_GATE_TIMEOUT`(초)을 분으로 환산한 것**이다.
 - 절대 금지: production 무인 배포(4단계는 **배포 레인(deploy-cycle) 인계** — closeout 자신은 실 배포를
-  하지 않는다) · 프로덕션 포인터 브랜치(release 등) 무인 승격(검증된 SHA 를 프로덕션/워커가 당기는
+  하지 않는다 — 단 issue-runner 자기 레포의 미니 pull 은 예외, 4단계) · 프로덕션 포인터 브랜치(release 등) 무인 승격(검증된 SHA 를 프로덕션/워커가 당기는
   브랜치로 미는 것도 배포와 동급으로 **배포 레인의 몫**이다) · main 직접 push(문서 reconcile 도 PR 브랜치
   경유) · `harvesting` 점유 없이 머지 · issue-runner 가 만든 워크트리/브랜치 조작 · issue-runner 의
   "절대 머지 안 함" 불변 훼손.
@@ -505,7 +505,7 @@ worktree(`agent/issue-<N>`)를 직접 정리한다. `--merged` 는 squash 머지
   skip 한다. 이슈 자체 체크박스만 reconcile 한다. 둘 다 없으면 이 단계는 no-op — **새 doc 커밋·push 가
   없으므로 위 캐시 보강도 건너뛴다**(채울 새 HEAD SHA 가 없다).
 
-**4단계 — 배포 레인 인계 (dry-run).** **closeout 은 실 배포를 하지 않고 배포 대기 이슈를 deploy-cycle
+**4단계 — 배포 레인 인계 (dry-run).** **closeout 은 실 배포를 하지 않고(issue-runner 자기 레포만 예외 — 아래 「머지 즉시 배포」) 배포 대기 이슈를 deploy-cycle
 루프에 넘긴다.** `references/deploy-check-issue.md` 를 채워(`<DEPLOY_CMD>`=레포 배포 엔트리포인트, 모르면
 "레포 배포 절차"; `<VERIFY_URL>`=production 베이스 URL — 5단계 스모크가 몰 주소, 모르면 빈 줄로 둬
 5단계가 URL 도달불가로 폴백; `<LIVE_CHECKS>`=PR test plan·이슈 본문에서 "배포 후 라이브 검증"·하드웨어/
@@ -586,6 +586,27 @@ worktree(`agent/issue-<N>`)를 직접 정리한다. `--merged` 는 squash 머지
   루프가 이 티켓을 집는 레인 표식**이다 — 이 라벨 하나가 필수다. **closeout 은 `needs-human` 을 붙이지
   않는다 (#243, 플랜 2단계) — 되돌리지 마라.** 그 라벨을 붙이는 주체는 deploy-cycle 이다.
 
+**issue-runner 자기 레포는 머지 즉시 배포한다 (사용자 결정 2026-10-28).** `<repo>` 가 `ggqgga/issue-runner` 면
+위 발행이 **exit 0 또는 3**(deploy-wait 라벨·마커 정상)이면 **그 자리에서 배포하고 티켓을 닫는다.** exit 2(라벨·마커
+어긋남)는 위 복구 절차 그대로 두고 배포하지 않는다 — 라벨이 없으면 백스톱도 못 집으니 사람 복구가 먼저다. 07:25 deploy-cycle 을
+기다리지 않는다 — release 가 없고 미니 체크아웃 pull 이 곧 배포다(dev 서버 분리·배포 창은 BoDAT 만의 일이다).
+티켓 자체는 그대로 발행한다(한 PR = 한 티켓, 2026-08-16).
+
+```bash
+D=~/Projects/refs/issue-runner   # closeout 은 미니에서 돈다 — 맥북 세션이면 같은 줄을 ssh bodat-mini '…' 로
+git -C $D pull -q --ff-only && git -C $D merge-base --is-ancestor <머지SHA> HEAD && git -C $D rev-parse --short HEAD
+```
+
+- **실패**(체크아웃이 더럽거나 non-ff · 조상 아님)면 닫지 않는다 — ④ Report 에 `BLOCKED: issue-runner 즉시 배포 실패
+  #<번호> — <stderr 한 줄>`. 티켓은 07:25 deploy-cycle 이 백스톱으로 다시 집는다.
+- **성공 + 항목 `없음`(또는 전부 `[x]`)** → `gh issue close <번호> --repo ggqgga/issue-runner --comment "배포 완료 — 미니
+  issue-runner <sha> (머지 즉시 배포)"`.
+- **성공 + `- [ ]` 남음** → 항목을 밟지 않는다. deploy-cycle ⑤(b) 형식 그대로 `테스트` 이슈를 발행하고 티켓을 닫는다
+  (형식 SSOT: BoDAT `.claude/skills/deploy-cycle/SKILL.md` ⑤(b) — 미니 경로 `~/Projects/BODA/BoDAT/.claude/skills/deploy-cycle/SKILL.md`).
+  `$NEW_TAG (release $TARGET)` 자리에는 `미니 issue-runner <sha>` 를 쓴다. **`테스트` 이슈 번호를 받았을 때만 닫는다** —
+  발행이 실패하면 티켓을 열어 두고 ④ Report 에 `BLOCKED: 테스트 이슈 발행 실패 #<번호>`(항목이 사라지지 않게).
+- 5단계 스모크는 없다(검증 URL 해당 없음). 그 뒤 approval-required 로 종료한다.
+
 **단, `<LIVE_CHECKS>` 의 형태 규율은 그대로다** — 이슈 발행 여부를 가르지 않을 뿐, 5단계 스모크 여부는
 여전히 이 절이 가른다:
 
@@ -597,7 +618,7 @@ worktree(`agent/issue-<N>`)를 직접 정리한다. `--merged` 는 squash 머지
 **묶지 않는다.** 여러 배포 대기 이슈를 하나로 합치지 마라(사용자 결정, 2026-08-13). 개수가 늘어도
 **한 PR = 한 티켓 = 닫히는 시점이 명확한 그릇** 을 유지한다.
 
-**5단계 — 배포 후 처리 (Chrome 스모크).** **배포 완료가 보고된** 배포 이슈에 대해(누가 보고했는지는 묻지
+**5단계 — 배포 후 처리 (Chrome 스모크).** (issue-runner 자기 레포 티켓은 4단계에서 이미 닫혔다 — 이 단계 대상이 아니다.) **배포 완료가 보고된** 배포 이슈에 대해(누가 보고했는지는 묻지
 않는다 — 배포 보고는 deploy-cycle 레인이 남긴다) 새 감지 기구 없이(폴링/타이밍 미도입) 능동적으로
 Chrome 스모크를 돌려 판정한다. 배포 이슈 본문에서 `## 검증 URL`(`<VERIFY_URL>`)과
 `## 라이브/하드웨어 검증 항목`(`<LIVE_CHECKS>`)을 파싱해 `references/smoke-prompt.md` 의 placeholder 에
@@ -796,7 +817,8 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
   독점). 두 루프는 `harvesting` 라벨 점유로 충돌을 막는다.
 - 배포 레인(deploy-cycle): production 배포·release 승격은 closeout 이 하지 않는다 — 4단계가 dry-run 배포
   대기 이슈를 발행해 deploy-cycle 루프에 넘기고, 배포·승격·실테스트(칸 ③ TEST 워커)·종료는 그 레인의
-  ⑦ 이 소유한다. 나머지 머지·문서반영·후속발행은 closeout 이 무인으로 한다.
+  ⑦ 이 소유한다. 예외는 issue-runner 자기 레포 하나 — 4단계가 미니 pull 로 즉시 배포하고 닫는다(2026-10-28).
+  나머지 머지·문서반영·후속발행은 closeout 이 무인으로 한다.
 - 운용: closeout 은 issue-runner 와 별도의 `/loop` 세션으로 돌린다 (예 `/loop 20m /closeout`) — 서로의
   점유를 라벨로만 조율한다.
 - 의존: 결정적 헬퍼(`closeout-reconcile.sh`·`closeout-eligible.sh`·`closeout-ci-pass.sh`·

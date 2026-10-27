@@ -57,7 +57,7 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
   "no verdict" (#96). **The value is `scripts/lib/constants.sh`'s `CODEX_GATE_TIMEOUT` (seconds) converted
   to minutes.**
 - Absolutely forbidden: unattended production deploys (step 4 is a **handoff to the deploy lane
-  (deploy-cycle)** — closeout never deploys) · unattended promotion of a production pointer branch (release
+  (deploy-cycle)** — closeout never deploys — except the mini pull of the issue-runner repo itself, step 4) · unattended promotion of a production pointer branch (release
   etc.; pushing a verified SHA to a branch production/workers pull from ranks with deploying and belongs to
   the deploy lane) · direct pushes to main (doc reconcile also goes through the PR branch) · merging without
   `harvesting` occupation · touching worktrees/branches issue-runner created · breaking issue-runner's
@@ -577,7 +577,7 @@ includes it (never push to main directly). If there is an epic, leave a progress
   skip the roll-up. Reconcile only the issue's own checkboxes. With neither, this step is a no-op — **and since
   there is no new doc commit or push, skip the cache top-up too** (there is no new HEAD SHA to fill).
 
-**Step 4 — deploy-lane handoff (dry run).** **closeout does not deploy; it hands a deploy-wait issue to the
+**Step 4 — deploy-lane handoff (dry run).** **closeout does not deploy (the issue-runner repo itself is the one exception — "deploys on merge" below); it hands a deploy-wait issue to the
 deploy-cycle loop.** Fill `references/deploy-check-issue.md` (`<DEPLOY_CMD>` = the repo's deploy entry point,
 or "repo deploy procedure" if unknown; `<VERIFY_URL>` = the production base URL — the address the step-5 smoke
 drives, or leave blank so step 5 falls back to URL-unreachable; `<LIVE_CHECKS>` = items from the PR test plan
@@ -669,6 +669,27 @@ merged means it entered the promotion scope, and that fact must be visible to a 
   **closeout does not attach `needs-human` (#243, plan stage 2) — do not revert this.** The actor that
   attaches it is deploy-cycle.
 
+**The issue-runner repo itself deploys on merge (user decision 2026-10-28).** If `<repo>` is `ggqgga/issue-runner`,
+if the filing above returns **exit 0 or 3** (deploy-wait label and marker intact) **deploy on the spot and close the ticket.**
+On exit 2 (label/marker off) follow the recovery above and do not deploy — without the label the backstop cannot pick it up either. Do not wait for the 07:25 deploy-cycle — there is no release, and pulling the mini checkout is the deploy
+(the dev-server split and the deploy window are BoDAT's alone). The ticket is still filed (one PR = one ticket, 2026-08-16).
+
+```bash
+D=~/Projects/refs/issue-runner   # closeout runs on the mini — from a MacBook session wrap the same line in ssh bodat-mini '…'
+git -C $D pull -q --ff-only && git -C $D merge-base --is-ancestor <merge SHA> HEAD && git -C $D rev-parse --short HEAD
+```
+
+- **On failure** (dirty checkout or non-ff · not an ancestor) do not close — put `BLOCKED: issue-runner 즉시 배포 실패
+  #<number> — <one stderr line>` in ④ Report. The 07:25 deploy-cycle picks the ticket up again as a backstop.
+- **Success + items `없음` (or all `[x]`)** → `gh issue close <number> --repo ggqgga/issue-runner --comment "배포 완료 — 미니
+  issue-runner <sha> (머지 즉시 배포)"`.
+- **Success + `- [ ]` left** → do not step them. File a `테스트` issue in exactly deploy-cycle ⑤(b)'s shape and close the
+  ticket (shape SSOT: BoDAT `.claude/skills/deploy-cycle/SKILL.md` ⑤(b) — on the mini
+  `~/Projects/BODA/BoDAT/.claude/skills/deploy-cycle/SKILL.md`). Write `미니 issue-runner <sha>` where it says
+  `$NEW_TAG (release $TARGET)`. **Close only once you have the `테스트` issue number** — if filing fails, leave the
+  ticket open and put `BLOCKED: 테스트 이슈 발행 실패 #<number>` in ④ Report (so the items are not lost).
+- There is no step-5 smoke (no verify URL). Then end as approval-required.
+
 **The `<LIVE_CHECKS>` shape discipline still stands** — it no longer decides whether the issue is filed, but
 it still decides whether step 5 smokes:
 
@@ -681,7 +702,7 @@ it still decides whether step 5 smokes:
 **Do not bundle.** Never merge several deploy-wait issues into one (user decision, 2026-08-13). However many
 there are, keep **one PR = one ticket = one vessel with a clear closing point**.
 
-**Step 5 — post-deploy handling (Chrome smoke).** For a deploy issue **whose deploy has been reported** (who
+**Step 5 — post-deploy handling (Chrome smoke).** (An issue-runner self-repo ticket was already closed in step 4 — it is not this step's target.) For a deploy issue **whose deploy has been reported** (who
 reported it is not asked — the deploy report is left by the deploy-cycle lane), actively run a Chrome smoke
 and judge, with no new detection machinery (no polling/timing). Parse `## 검증 URL` (`<VERIFY_URL>`) and
 `## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body into
@@ -912,7 +933,8 @@ Non-operational notes — they do not affect tick execution.
 - Role split: issue-runner = the factory that opens work (never merges, preserves
   invariants), closeout = the closing dock (monopolizes merging). The two loops
   prevent conflict via `harvesting` label occupation.
-- Deploy lane (deploy-cycle): closeout does not deploy to production or promote
+- Deploy lane (deploy-cycle): closeout does not deploy to production or promote (sole exception: the issue-runner
+  repo itself, pulled on the mini and closed in step 4, 2026-10-28)
   release — step 4 files a dry-run deploy-wait issue and hands it to the deploy-cycle
   loop, whose ⑦ owns deploying, promoting, real-device testing (rung ③, the TEST worker)
   and closing. The rest — merge, doc reconcile, follow-up issuance — closeout does
