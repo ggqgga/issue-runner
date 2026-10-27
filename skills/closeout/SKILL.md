@@ -505,7 +505,7 @@ worktree(`agent/issue-<N>`)를 직접 정리한다. `--merged` 는 squash 머지
   skip 한다. 이슈 자체 체크박스만 reconcile 한다. 둘 다 없으면 이 단계는 no-op — **새 doc 커밋·push 가
   없으므로 위 캐시 보강도 건너뛴다**(채울 새 HEAD SHA 가 없다).
 
-**4단계 — 배포 레인 인계 (dry-run).** **closeout 은 실 배포를 하지 않고 배포 대기 이슈를 deploy-cycle
+**4단계 — 배포 레인 인계 (dry-run).** **closeout 은 실 배포를 하지 않고(issue-runner 자기 레포만 예외 — 아래 「머지 즉시 배포」) 배포 대기 이슈를 deploy-cycle
 루프에 넘긴다.** `references/deploy-check-issue.md` 를 채워(`<DEPLOY_CMD>`=레포 배포 엔트리포인트, 모르면
 "레포 배포 절차"; `<VERIFY_URL>`=production 베이스 URL — 5단계 스모크가 몰 주소, 모르면 빈 줄로 둬
 5단계가 URL 도달불가로 폴백; `<LIVE_CHECKS>`=PR test plan·이슈 본문에서 "배포 후 라이브 검증"·하드웨어/
@@ -817,7 +817,8 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
   독점). 두 루프는 `harvesting` 라벨 점유로 충돌을 막는다.
 - 배포 레인(deploy-cycle): production 배포·release 승격은 closeout 이 하지 않는다 — 4단계가 dry-run 배포
   대기 이슈를 발행해 deploy-cycle 루프에 넘기고, 배포·승격·실테스트(칸 ③ TEST 워커)·종료는 그 레인의
-  ⑦ 이 소유한다. 나머지 머지·문서반영·후속발행은 closeout 이 무인으로 한다.
+  ⑦ 이 소유한다. 예외는 issue-runner 자기 레포 하나 — 4단계가 미니 pull 로 즉시 배포하고 닫는다(2026-10-28).
+  나머지 머지·문서반영·후속발행은 closeout 이 무인으로 한다.
 - 운용: closeout 은 issue-runner 와 별도의 `/loop` 세션으로 돌린다 (예 `/loop 20m /closeout`) — 서로의
   점유를 라벨로만 조율한다.
 - 의존: 결정적 헬퍼(`closeout-reconcile.sh`·`closeout-eligible.sh`·`closeout-ci-pass.sh`·

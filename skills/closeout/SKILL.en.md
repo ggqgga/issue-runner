@@ -577,7 +577,7 @@ includes it (never push to main directly). If there is an epic, leave a progress
   skip the roll-up. Reconcile only the issue's own checkboxes. With neither, this step is a no-op — **and since
   there is no new doc commit or push, skip the cache top-up too** (there is no new HEAD SHA to fill).
 
-**Step 4 — deploy-lane handoff (dry run).** **closeout does not deploy; it hands a deploy-wait issue to the
+**Step 4 — deploy-lane handoff (dry run).** **closeout does not deploy (the issue-runner repo itself is the one exception — "deploys on merge" below); it hands a deploy-wait issue to the
 deploy-cycle loop.** Fill `references/deploy-check-issue.md` (`<DEPLOY_CMD>` = the repo's deploy entry point,
 or "repo deploy procedure" if unknown; `<VERIFY_URL>` = the production base URL — the address the step-5 smoke
 drives, or leave blank so step 5 falls back to URL-unreachable; `<LIVE_CHECKS>` = items from the PR test plan
@@ -933,7 +933,8 @@ Non-operational notes — they do not affect tick execution.
 - Role split: issue-runner = the factory that opens work (never merges, preserves
   invariants), closeout = the closing dock (monopolizes merging). The two loops
   prevent conflict via `harvesting` label occupation.
-- Deploy lane (deploy-cycle): closeout does not deploy to production or promote
+- Deploy lane (deploy-cycle): closeout does not deploy to production or promote (sole exception: the issue-runner
+  repo itself, pulled on the mini and closed in step 4, 2026-10-28)
   release — step 4 files a dry-run deploy-wait issue and hands it to the deploy-cycle
   loop, whose ⑦ owns deploying, promoting, real-device testing (rung ③, the TEST worker)
   and closing. The rest — merge, doc reconcile, follow-up issuance — closeout does
