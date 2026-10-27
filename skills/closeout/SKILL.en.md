@@ -597,7 +597,8 @@ merge gate).
 - **A line that must be stepped by writing to the m2 dev server takes the prefix mark `[dev]`** —
   `- [ ] [dev] <action>` (BoDAT only, #596). Attach it only to lines carried over because rung ①b below could not
   be stepped (locked · time cap). The Chrome smoke counts such a line as held; BoDAT `e2e-test` pre-deploy
-  verification closes it on m2 dev.
+  verification closes it on m2 dev — if the user did not run e2e-test before the deploy, deploy-cycle ⑤ carries it
+  into a `테스트` issue (it slips to after the deploy).
 - **A line without the mark must be steppable by Chrome.** If a line is not rung ③ but needs a means outside
   the browser, write that means on the line so ⑦ can step it straight away.
 
@@ -611,7 +612,9 @@ same rung.
 **For BoDAT, rung ① does not stop at ①a (empty DB)** — a line whose evidence is a write round trip or state
 transition on production data (including `[dev]`-marked lines) is stepped on rung ①b (the m2 dump dev) on
 **`main`** (already merged, so `script/dev-checkout main --owner closeout`; the procedure, the lock pitfall and the
-re-dump are owned by the ladder document's ①b). If it is locked, do not step it — attach the `[dev]` mark and carry it over.
+re-dump are owned by the ladder document's ①b, including the failure branches — cap 15 minutes). If it is locked or the cap
+is hit, attach the `[dev]` mark to the unstepped lines and carry them over. A switch or re-dump failure is a `BLOCKED:`
+line in the Report, as ①b says.
 - If rungs ①② **produce a verdict**, **remove** that item from `<LIVE_CHECKS>`. Record the basis in a PR
   comment.
 - **On failure**, move the item as `- [ ]` but **cite the rung attempted and the failure output (the command
@@ -714,9 +717,10 @@ pass/fail (mark structure/empty-state checks distinctly from real-data render ch
     tick where the smoke never ran at all, do not make this call** — degradation is owned by the degrade
     section below.
 - **If real-device items remain, do not close even on green (Chrome cannot step rung ③).** The test is the
-  prefix mark `[칸 ③]` **and nothing else** — do not invent a new detection predicate here. If `held` is
+  prefix marks `[칸 ③]`·`[dev]` **and nothing else** — do not invent a new detection predicate here. If `held` is
   non-zero, do not close the deploy issue even when everything else passed; end with the comment
-  `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` (`<n>` = `held`) — rung ③ belongs
+  `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` (`<n>` = `held`; `smoke-tally.sh` counts
+  `[dev]`-marked lines into the same `held` — the wording is a contract, keep it) — rung ③ belongs
   to `e2e-test` after the deploy (`references/loop-conventions.md` §9's per-actor cap table), and closing here
   would end a ticket holding real-device items without the TEST worker ever seeing it.
   - **A hold on an unmarked line is an observation, not an interpretation.** The prompt **actually steps**
