@@ -217,7 +217,9 @@ lie. **The counting is not your job**: dropping held lines from the denominator 
 summing them is done by `scripts/smoke-tally.sh`, the consumer of the output contract
 below (there is exactly one calculator).
 - **A line carrying the `[칸 ③]` prefix marker** — a real-hardware item (a TEST-worker
-  profile #18 dry run) that Chrome cannot step. **Do not even try.** Decide **by the
+  profile #18 dry run) that Chrome cannot step. **Do not even try.** **A line carrying the
+  `[dev]` prefix marker** is the same — it is stepped by writing to the m2 dev server, so trying it
+  on production would change production data. Write both out as `보류`. Decide **by the
   marker only** — never read a sentence's meaning to promote an unmarked line to real
   hardware, or to demote a marked one to an ordinary item.
 - **An unmarked line whose means of stepping lives outside the browser, so you could not
