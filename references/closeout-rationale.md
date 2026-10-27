@@ -654,7 +654,7 @@ issue-runner Maintain 에서 closeout 으로 이관됨). 보수 에이전트의 
 
 이번 사고의 8/8 누락은 발행 명령이 산문 한가운데 있었기 때문이다. 제목 정규식
 (`배포 대기: PR #<M>`) · 절 이름(`## 검증 URL`·`## 라이브/하드웨어 검증 항목`) · `없음` ·
-`(승격만)` 은 deploy-cycle·deploy-bodat 이 읽는 파싱 계약이고, 그 SSOT 는 이제
+`(승격만)` 은 deploy-cycle·hotfix 이 읽는 파싱 계약이고, 그 SSOT 는 이제
 `deploy-wait-issue.sh` 의 머리 주석이다(SKILL 산문이 아니다 — 리터럴을 바꾸려면 그 소비자부터
 고쳐라).
 
@@ -673,7 +673,7 @@ exit 65 로 4단계를 끝내지 않는 이유: "머지했으면 무조건 승�
 ### `needs-human` 을 붙이지 않는 이유 (#243 · #190, 플랜 2단계)
 
 발행 시점엔 사람 몫이 없다: ⑴ 디스패치 게이트는 `label:agent-ready` 를 **요구**하는데
-(`scripts/eligible-issues.sh`) 배포 대기 이슈엔 그게 없어 애초에 후보가 아니고, ⑵ deploy-bodat 수집은
+(`scripts/eligible-issues.sh`) 배포 대기 이슈엔 그게 없어 애초에 후보가 아니고, ⑵ hotfix 수집은
 라벨이 아니라 **제목 정규식**이다. 붙이면 `needs-human` 의 뜻(=사람 몫이 남음)을 흐리는 중복
 표식이 된다. 그 라벨을 **붙이는 주체는 deploy-cycle** 이다 — 승격·배포·스모크 실패에 사유
 코멘트와 함께(BoDAT #5197, 숨은 정지 파일 폐지). 그래서 loop-status 버킷은 needs-human 이

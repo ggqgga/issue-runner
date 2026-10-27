@@ -594,6 +594,10 @@ merge gate).
   **shape enforcement of the same grade** as `없음` and `- [ ]` (#309). Even when a line moved here after
   failed rung-①② attempts says nothing about "TEST worker", **attach the mark if the rung it is stepped on is
   ③** — the basis for the test is the mark, not the sentence's meaning.
+- **A line that must be stepped by writing to the m2 dev server takes the prefix mark `[dev]`** —
+  `- [ ] [dev] <action>` (BoDAT only, #596). Attach it only to lines carried over because rung ①b below could not
+  be stepped (locked · time cap). The Chrome smoke counts such a line as held; BoDAT `e2e-test` pre-deploy
+  verification closes it on m2 dev.
 - **A line without the mark must be steppable by Chrome.** If a line is not rung ③ but needs a means outside
   the browser, write that means on the line so ⑦ can step it straight away.
 
@@ -604,6 +608,10 @@ closeout first tries **rung ① (dev server) and rung ② (`bin/dry-run` · AdsP
 per-actor cap table is `references/loop-conventions.md` §9 — this loop's cap is rung ②). **Rung ③ (the TEST
 worker) belongs to `e2e-test` after the deploy.** Leave the rung-①② results alongside so ⑦ does not repeat the
 same rung.
+**For BoDAT, rung ① does not stop at ①a (empty DB)** — a line whose evidence is a write round trip or state
+transition on production data (including `[dev]`-marked lines) is stepped on rung ①b (the m2 dump dev) on
+**`main`** (already merged, so `script/dev-checkout main --owner closeout`; the procedure, the lock pitfall and the
+re-dump are owned by the ladder document's ①b). If it is locked, do not step it — attach the `[dev]` mark and carry it over.
 - If rungs ①② **produce a verdict**, **remove** that item from `<LIVE_CHECKS>`. Record the basis in a PR
   comment.
 - **On failure**, move the item as `- [ ]` but **cite the rung attempted and the failure output (the command
@@ -628,7 +636,7 @@ merged means it entered the promotion scope, and that fact must be visible to a 
   ```
 
   **The title regex (`배포 대기: PR #<M>`) · the section names (`## 검증 URL`·`## 라이브/하드웨어 검증 항목`) ·
-  `없음` · `(승격만)` are the parsing contract deploy-cycle and deploy-bodat read**, and their SSOT is that
+  `없음` · `(승격만)` are the parsing contract deploy-cycle and hotfix read**, and their SSOT is that
   script's header comment (not this prose — to change a literal, fix its consumers first). What it does: it
   enforces the item shape (either the single line `없음` or **every line** a `- [ ] ` checkbox — one prose
   line and it exits 65 **before issuing**) → appends ` (승격만)` to the title when there are 0 checkboxes →

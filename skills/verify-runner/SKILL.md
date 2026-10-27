@@ -185,6 +185,20 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
   (플레이크 소진)로 코멘트에 `E2E: pass (자기포화 플레이크 n건 단독 재확인)` 명시.
   ⓑ 단독도 실패 → **진짜 E2E 실패** → ④ 재디스패치(`E2E 실패: <파일::테스트>`).
 
+**2-b. m2 dev 실측 — BoDAT 의 `[dev]` 줄 (#596).** 레포가 `ggqgga/BodaT` 이고 PR test plan·연결 이슈의
+열린 줄 가운데 **`[dev]` 표식이 있거나 운영 데이터 위의 쓰기 왕복·상태 전이가 증거인 줄**이 있으면, 사다리
+칸 ①b(`~/.claude/skills/issue-runner/references/live-verification-ladder.md` — 절차의 SSOT)를 **PR head
+브랜치**로 밟는다. 해당 줄이 없거나 다른 레포면 skip(코멘트에 `m2 dev: 해당 없음`).
+- 잠금 주체는 `--owner verify-runner`. **한 틱에 잠금 한 번** — 그 안에서 해당 줄을 모두 밟고 재덤프는
+  마지막에 한 번. `--status` 출력이 `잠금 없음` 이 아니거나 07:05~08:00 이면 **밟지 않는다** — 이것은
+  보류 사유가 아니다: 코멘트에 `m2 dev: 잠김 <보유자>` 를 남기고 그 줄을 열린 채 둔다(closeout 4단계가
+  `main` 으로 다시 시도하고, 못 밟으면 `[dev]` 표식으로 배포 대기 이슈에 넘긴다).
+- 밟은 줄은 PR 본문에서 `[x]` + 근거 한 줄(`[m2 dev] <시각> <명령 요지> → <값>`). 값이 기대와 다르면
+  **진짜 실패** → ④ 재디스패치(`m2 dev 실측 실패: <줄 요지>` + 명령 한 줄·마지막 20줄).
+- **풀고 재덤프는 생략 금지**(사다리 ①b 4단계) — 재덤프가 실패해도 그 사실을 코멘트에 남기고 틱을 이어간다
+  (m2 dev 가 더럽혀진 채라는 정보가 다음 주체에게 가야 한다).
+- 상한: 이 단계 전체 **15분**. 넘기면 밟은 데까지만 체크하고 풀고 재덤프한 뒤 나머지는 열린 채 둔다.
+
 **3. codex correctness 리뷰 — 내장 리뷰어. 먼저 회차를 읽는다:
 `N=$($SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt)`(마커 없으면 `0`,
 **exit 2 = 조회 실패 → codex 를 부르지 말고 이 PR 을 이번 틱에 놓아둔다** — 0 으로 읽으면
@@ -382,5 +396,5 @@ warn(flake_retry·동봉 실패·전이 실패 등)이 있으면 경로·사유�
   보조 리뷰어는 `pr-review-toolkit@claude-plugins-official` 플러그인(미설치면 3-b 는 자동 skip).
 - 실측이 필요한 항목의 시도 순서·통로·인용 규칙은
   `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-  (칸 ①dev → ②워커 런타임 → ③TEST 워커 → ④사람. `--reason ladder` 의 전제).
+  (칸 ①dev(①a 빈 DB · ①b m2 덤프 — BoDAT) → ②워커 런타임 → ③TEST 워커 → ④사람. `--reason ladder` 의 전제).
   주체별 상한(이 루프는 ③ 까지)은 `references/loop-conventions.md` §9 표.

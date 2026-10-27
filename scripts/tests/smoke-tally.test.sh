@@ -193,6 +193,13 @@ want "⑰ 혼합 절" '- [ ] /pcs 렌더
 - [x] 이미 밟음
 ' - steppable=1 held_marked=1 skipped=1 open=2
 
+# ⑰-b `[dev]` 표식(m2 dev 쓰기 실측 몫, #596)도 프로덕션 크롬이 못 밟는다 — pass 라고 적혀도 보류.
+want "⑰-b [dev] 표식 → 보류" '- [ ] /pcs 렌더
+- [ ] [dev] 저장 → 화면 반영 → 되돌리기 왕복
+' 'pass - [ ] /pcs 렌더 — 확인
+pass - [ ] [dev] 저장 → 화면 반영 → 되돌리기 왕복 — 운영에서 눌러 봄
+' pass=1 held_marked=1 denominator=1 verdict=held
+
 echo "── 계약(usage·실행비트) ────────────────────────────────────────"
 
 # ⑱ 인자 없음 → usage exit 64
