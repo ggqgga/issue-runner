@@ -73,6 +73,13 @@ want "① 표식 항목은 pass 로 적혀도 보류" "$CHECKS_2" \
 pass - [ ] [칸 ③] TEST 워커 프로필 #18 드라이런 — 통과라고 우김
 ' pass=1 held=1 held_marked=1 denominator=1 verdict=held
 
+# ①-dev `[dev]` 표식(m2 dev 쓰기 실측 줄, #596)도 `[칸 ③]` 과 같이 판정을 이긴다.
+want "①-dev [dev] 표식도 pass 로 적혀도 보류" '- [ ] /pcs 렌더
+- [ ] [dev] 인큐 계획 저장 왕복
+' 'pass - [ ] /pcs 렌더
+pass - [ ] [dev] 인큐 계획 저장 왕복 — 통과라고 우김
+' pass=1 held=1 held_marked=1 denominator=1 verdict=held
+
 # ② 표식 + 표식 없는 미밟음(보류) 합산
 want "② 표식 + 미밟음 합산" '- [ ] /pcs 렌더
 - [ ] [칸 ③] 실장비 드라이런

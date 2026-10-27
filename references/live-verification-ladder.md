@@ -2,21 +2,22 @@
 
 루프(issue-runner · verify-runner · closeout · deploy-cycle)가 "라이브 검증이 필요하다"
 는 이유로 **시도 없이 멈추는 것을 금지**하는 문서다. 실측 필요는 멈출 이유가 아니라 다음
-할 일이다. 아래 네 칸을 ①→②→③ 순으로 올라가고, **시도한 칸과 실패 출력을 인용**해야만
+할 일이다. 아래 칸을 ①a→①b→②→③ 순으로 올라가고(①b 는 BoDAT 에만 있다), **시도한 칸과 실패 출력을 인용**해야만
 ④(사람)로 넘길 수 있다.
 
 ## 칸 표
 
 | 칸 | 어느 박스에서 | 명령 | 판정 대상 | 실패 출력 인용법 |
 |---|---|---|---|---|
-| ① dev 서버 | 루프가 도는 박스(미니) 또는 맥북 | `bin/rails runner '<식>'` · `script/dev start` 후 `localhost:3000` 을 chrome 으로 | 서버 로직·화면·DB 상태 | 명령 한 줄 + stdout/stderr **마지막 20줄** |
+| ①a dev 서버(빈 dev) | 루프가 도는 박스(미니) 또는 맥북 | `bin/rails runner '<식>'` · `script/dev start` 후 `localhost:3000` 을 chrome 으로 · 워크트리 test DB | 서버 로직·화면·DB 상태(데이터가 없어도 되는 것) | 명령 한 줄 + stdout/stderr **마지막 20줄** |
+| ①b m2 dev(덤프·쓰기) — **BoDAT 전용** | m2(`ssh ggq-m2`) — **dev 잠금 필수** | `script/dev-checkout <브랜치> --owner <주체>` → 밟기 → `--release` → 썼으면 재덤프 | 쓰기 경로 왕복·운영 데이터를 바꿔야 보이는 화면·상태 전이 | 명령 한 줄 + 출력 **마지막 20줄** · 잠겨 있으면 `잠김: <보유자>` |
 | ② 워커 런타임(맥북/미니 직접) | 맥북 또는 미니 — 워커 PC 없이 | BoDAT 레포 `bin/dry-run <레시피|블록>`(claim 무관) · AdsPower Local API 는 **미니 경유 릴레이 포트 50325** | 워커 런타임 스텝·블록 동작·AdsPower 호출 | 명령 한 줄 + `dry_run.log` 마지막 20줄(로그는 완주 시점에 일괄 flush) |
 | ③ TEST 워커(실장비) | 미니에서 `ssh test '<cmd>'` **직결** · 맥북에서는 `ssh bodat-mini 'ssh test <cmd>'` **중첩** | `aging_recipes` 행을 `test_claim` 으로 지정 워커/프로필에서 실행 · 막히면 `bin/dry-run` 우회 · 프로필 **#18** 기본 | 실 워커 행동·실제 화면 | 명령 한 줄(중첩이면 중첩 형태 그대로) + 워커 콘솔/서버 `[aging]` claim 원장 마지막 20줄 |
-| ④ 사람 | — | 없음 | ①②③ 이 **전부** 실패해 남은 것만 | 위 세 칸의 인용을 모두 붙인 뒤 `needs-human` + `hold:ladder` |
+| ④ 사람 | — | 없음 | ①②③ 이 **전부** 실패해 남은 것만(①b 는 `잠김` 도 실패가 아니라 다음 틱 몫) | 위 세 칸의 인용을 모두 붙인 뒤 `needs-human` + `hold:ladder` |
 
 ## 칸별 상세
 
-### ① dev 서버
+### ①a dev 서버 — 빈 dev
 
 서버 로직·화면·DB 상태처럼 워커 없이 판정 가능한 것은 전부 여기서 끝난다. 실장비가
 필요하다고 적힌 항목도 절반은 여기서 재현된다 — 먼저 시도하라.
@@ -44,13 +45,44 @@ Tailscale 주소 `100.65.53.51:3000` 과 루프백은 정상. 같은 크롬이 �
 `<호스트별칭>`·`<원격포트>` 는 그 레포 배포 문서에서 찾고, 못 찾으면 지어내지 말고 그 사실을
 적는다. 배경·실측 표(그 맥북의 Chrome 기준)는 BoDAT `deploy-bodat` 5절.
 
+### ①b m2 dev — 쓰기까지 (BoDAT 전용)
+
+BoDAT 은 운영 DB 덤프 위에서 도는 상주 dev 서버가 있다 — ggq-m2 `:3000`(LAN `http://192.168.0.11:3000`,
+미니에서 `ssh ggq-m2` 직결). 미니의 빈 dev(①a)로는 못 보는 **쓰기 경로 왕복**과 **운영 데이터를 바꿔야
+확인되는 화면·상태 전이**를 여기서 밟는다. 이 칸이 없을 때는 그런 항목이 전부 배포 뒤로 밀렸다
+(BoDAT `Plans/dev-isolation.md` E장). AdsPower 쓰기는 `zdev_` 그룹 안에서만 나간다 — 그 밖은 서버 가드가
+거부한다.
+
+**누가 올라오나** — verify-runner(PR 브랜치)와 closeout 4단계(머지 뒤라 `main`)뿐이다. 구현 워커는
+①a 에서 멈춘다(§9 — 동시에 여러 개가 돌아 잠금 하나를 두고 다투게 된다).
+
+```bash
+ssh ggq-m2 'cd ~/Projects/BODA/BoDAT && script/dev-checkout --status'      # "잠금 없음" 이 아니면 ①b 를 건너뛴다
+ssh ggq-m2 'cd ~/Projects/BODA/BoDAT && script/dev-checkout <브랜치> --owner <주체>'   # exit 2 = 그 사이 남이 잠금
+#   밟기 — 서버 값: ssh ggq-m2 'cd ~/Projects/BODA/BoDAT && bin/rails runner "<식>"'
+#          화면:    미니 크롬으로 http://192.168.0.11:3000
+ssh ggq-m2 'cd ~/Projects/BODA/BoDAT && script/dev-checkout --release --owner <주체>'  # main 복귀 → 잠금 해제
+# 쓰기를 했거나 브랜치에 마이그레이션이 있었으면 재덤프(쓰기 흔적·브랜치 마이그레이션 초기화)까지가 테스트다:
+ssh ggq-m2 'cd ~/Projects/BODA/BoDAT && script/dev stop && script/dev-sync-db && git checkout -- db/schema.rb && BIND=0.0.0.0 script/dev start'
+```
+
+- **잠금은 dev 를 쓰는 모든 주체가 같이 쓴다**(루프·deploy-cycle·e2e-test·hotfix·사람). 잠금 없이 쓰지 않고,
+  남의 잠금을 풀지 않는다. **07:05~08:00 은 잡지 않는다** — deploy-cycle ② 가 그 창에서 덤프·승격 기준을 만든다.
+- **`잠김: <보유자>` 는 칸 실패가 아니다.** 시도한 것이 아니라 차례를 못 받은 것이다. verify-runner 는 다음 틱에
+  다시 오고, closeout 은 그 줄을 `- [ ] [dev] <동작>` 으로 배포 대기 이슈에 옮긴다(배포 전 e2e-test 사전 검증 몫).
+- `dev-checkout` 이 `/up` 실패 등으로 죽으면 잠금이 남는다(스크립트 정책). 풀지 말고 `BLOCKED: m2 dev 잠금 잔존 —
+  <출력 한 줄>` 로 보고한다 — 어중간한 서버를 사람이 보고 푼다.
+- `dev-sync-db` 가 exit 3 이면 그 사이 남이 잠갔다 — 재덤프를 다음 주체에게 넘기고 그 사실을 인용에 적는다.
+- Instagram·Threads 공개 쓰기(게시·댓글·좋아요·팔로우)는 여기서도 하지 않는다 — 그건 칸 ③ 의 우리 계정 규칙 몫이다.
+  `.env`·토큰·덤프 데이터를 코멘트·로그에 옮기지 않는다.
+
 ### ② 워커 런타임 — 실장비 없이
 
 `bin/dry-run` 은 claim 과 무관하게 레시피/블록을 직접 실행한다. 서버의 claim 게이트·
 인플라이트 상태를 타지 않으므로 워커 큐가 막혀 있어도 돈다. AdsPower Local API 호출이
 필요하면 미니 경유 릴레이(포트 50325)로 닿는다.
 
-한계: dev 에서는 "AdsPower 에 실제로 도달했는가" 를 판정할 수 없다. 도달 자체가 판정
+한계: dev 에서는(①a·①b 모두) "AdsPower 에 실제로 도달했는가" 를 판정할 수 없다 — 도달은 워커 PC 쪽 일이다. 도달 자체가 판정
 대상이면 ③ 으로 올라간다.
 
 ### ③ TEST 워커 — 실장비
@@ -87,7 +119,7 @@ Tailscale 주소 `100.65.53.51:3000` 과 루프백은 정상. 같은 크롬이 �
   `$SCRIPTS/transition.sh <전이> <repo> <issue|-> <pr> --reason ladder`.
   `--reason ladder` 는 **칸을 실제로 올라가 인용을 남긴 경우에만** 쓴다. conflict 도
   아니고 인용도 없으면 그건 `policy` 다.
-- 칸 ①②③ 중 어디서든 판정이 서면 사다리는 거기서 끝난다. 위 칸을 "혹시 몰라" 더
+- 칸 ①a·①b·②·③ 중 어디서든 판정이 서면 사다리는 거기서 끝난다. 위 칸을 "혹시 몰라" 더
   올라가지 마라.
 
 ## 스킬이 없어도 명령은 그대로

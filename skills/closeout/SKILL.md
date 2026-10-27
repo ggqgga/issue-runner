@@ -524,11 +524,16 @@ worktree(`agent/issue-<N>`)를 직접 정리한다. `--merged` 는 squash 머지
 
 **옮기기 전에 closeout 이 사다리를 한 번 올라간다 (시도 없는 `[ ]` 는 그대로 옮기지 않는다).** 워커가
 남긴 미완 항목 중 **사다리 시도·인용 없이 `[ ]` 로만 남은 것**은 그대로 옮기지 마라 — closeout 이
-`~/.claude/skills/issue-runner/references/live-verification-ladder.md` 의 **칸 ①(dev 서버)와
-칸 ②(`bin/dry-run`·AdsPower 릴레이)** 를 **한 번씩** 시도한 뒤에 옮긴다(주체별 상한 표는
+`~/.claude/skills/issue-runner/references/live-verification-ladder.md` 의 **칸 ①a(빈 dev)·①b(BoDAT m2 dev —
+쓰기 왕복 줄만)·칸 ②(`bin/dry-run`·AdsPower 릴레이)** 를 **한 번씩** 시도한 뒤에 옮긴다(주체별 상한 표는
 `references/loop-conventions.md` §9 — 이 루프의 상한은 칸 ② 다). **칸 ③(TEST 워커)은 배포 뒤
 `e2e-test` 의 몫이다.** ①② 시도 결과를 함께 남겨 ⑦ 이 같은 칸을 반복하지 않게 한다.
 - 칸 ①② 에서 **판정이 서면** 그 항목은 `<LIVE_CHECKS>` 에서 **뺀다.** 판정 근거는 PR 코멘트에 남긴다.
+- **①b(m2 dev)** 는 머지 뒤라 `script/dev-checkout main --owner closeout` 으로 띄우고, 머지 SHA 가 m2 HEAD 의 조상인지
+  (`git merge-base --is-ancestor`) 확인한 뒤 밟는다. 끝나면 `--release`, 썼으면 재덤프(절차는 사다리 ①b). 쓰기 왕복 줄이
+  여럿이면 잠금 한 번 안에서 함께 밟고 재덤프는 마지막에 한 번.
+- **①b 로 밟는 줄은 못 밟았든(`잠김`·배포 창 07:05~08:00·조상 아님) 밟다 실패했든 `- [ ] [dev] <동작>` 으로 옮긴다** —
+  BoDAT e2e-test 가 배포 **전** 사전 검증으로 이 표식 줄을 수집한다. 표식이 빠지면 그 줄은 배포 뒤 `테스트` 이슈로 밀린다.
 - **실패하면** 항목을 `- [ ]` 로 옮기되, **시도한 칸과 실패 출력(명령 한 줄 + 마지막 20줄)을 인용**한다.
   인용은 `## 변경 요약` 절에 적는다.
 - 시도가 불가능한 환경이면(레포에 해당 진입점 없음 등) 그 사실을 `## 변경 요약` 에 한 줄로 적는다.
@@ -620,7 +625,7 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
     **스모크가 아예 못 돈 저하(degrade) 틱에서는 이 호출을 하지 마라** — 저하는 아래 degrade 절이
     소유한다.
 - **실장비 항목이 남아 있으면 green 이어도 닫지 않는다 (칸 ③ 은 크롬이 못 밟는다).** 판별은 접두 표식
-  `[칸 ③]` **하나로만** 한다 — 판별 술어를 여기서 새로 만들지 마라. `held` 가 0이 아니면 나머지가 전부
+  `[칸 ③]`·`[dev]`(m2 dev 쓰기 줄 — 칸 ①b, 배포 전 e2e-test 몫) **로만** 한다 — 판별 술어를 여기서 새로 만들지 마라. `held` 가 0이 아니면 나머지가 전부
   통과해도 배포 이슈를 닫지 말고 `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다`
   (`<n>`=`held`) 코멘트로 끝낸다 — 칸 ③ 은 배포 뒤 `e2e-test` 의 몫이라
   (`references/loop-conventions.md` §9 주체별 상한 표), 여기서 닫으면 실장비 항목이 든 티켓이 TEST 워커를

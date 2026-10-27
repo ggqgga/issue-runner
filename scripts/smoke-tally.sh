@@ -36,6 +36,8 @@
 #    적혔든 **표식이 이긴다** — 실장비(사다리 칸 ③ TEST 워커 프로필 #18 드라이런)는 크롬이
 #    못 밟으므로 pass/fail 로 적힌 것 자체가 거짓이다(#309). 표식은 **항목 줄의 접두**에서만
 #    본다 — 근거 문장에 `[칸 ③]` 을 언급했다고 정상 pass 가 뒤집히면 안 된다(#467 P2-2).
+#    `[dev]`(m2 dev 쓰기 실측 줄 — 사다리 칸 ①b, #596)도 같은 갈래다: 프로덕션 크롬 스모크로는
+#    못 밟고 배포 전 e2e-test 사전 검증이 m2 dev 에서 닫는다.
 # ⑶ 그 밖의 열린 항목 → 붙은 판정대로 `pass`·`fail`·`held_unstepped`(보류 = 브라우저 밖
 #    수단이 필요해 **시도조차 못 한** 줄. 밟았는데 값이 달랐으면 그건 `fail` 이다 — 그 판정은
 #    크롬을 쥔 프롬프트의 몫이고 여기서 뒤집지 않는다).
@@ -118,7 +120,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     *) continue ;;                       # 체크박스 아닌 줄(주석·`없음`·산문)은 항목이 아니다
   esac
   body=$(strip_box "$t")
-  case "$body" in '[칸 ③]'*) marked=1 ;; *) marked=0 ;; esac
+  case "$body" in '[칸 ③]'*|'[dev]'*) marked=1 ;; *) marked=0 ;; esac
   it_text[$n]=$t
   it_state[$n]=$state
   it_marked[$n]=$marked

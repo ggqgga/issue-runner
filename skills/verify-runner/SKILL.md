@@ -175,7 +175,7 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
 - **`해당 없음` 은 "스위트가 없다" 일 때만이다.** PR 이 실장비·라이브 동작을 건드려
   스위트로 덮이지 않는 항목이 있으면 `해당 없음` 으로 뭉개지 말고
   `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-  의 칸 ②③ 을 시도한 뒤 그 결과(시도한 칸·명령·실패 출력 마지막 20줄)를 코멘트에
+  의 칸 ①b(BoDAT — 아래 2-b)·②·③ 을 시도한 뒤 그 결과(시도한 칸·명령·실패 출력 마지막 20줄)를 코멘트에
   인용한다.
 - **실패 시 플레이크 판별 (자기포화 방어, #981 — 근거 §9).** 스위트 실패 시 **곧바로
   진짜 실패로 판정하지 말고**: 실패한 테스트 **파일만 단독 재실행**한다(`bin/rails test
@@ -184,6 +184,21 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
   최대 3회**까지만 돌린다(무한 금지). 3회 내 모든 실패가 매번 단독-통과면 E2E=pass
   (플레이크 소진)로 코멘트에 `E2E: pass (자기포화 플레이크 n건 단독 재확인)` 명시.
   ⓑ 단독도 실패 → **진짜 E2E 실패** → ④ 재디스패치(`E2E 실패: <파일::테스트>`).
+
+**2-b. m2 dev 쓰기 실측 (BoDAT 전용 — 사다리 칸 ①b).** 대상 레포가 BoDAT 이고 PR test plan·연결 이슈
+본문에 **쓰기 왕복**(저장 → 화면·DB 반영 → 되돌림/다음 상태)이나 운영 데이터를 바꿔야 보이는 화면·상태 전이가
+`- [ ]` 로 남아 있으면, codex 를 부르기 **전에** m2 dev 에서 밟는다. 절차·금지는
+`~/.claude/skills/issue-runner/references/live-verification-ladder.md` ①b 그대로다 — 브랜치 = PR head,
+`--owner verify-runner`, 끝나면 `--release`, 썼거나 PR 에 마이그레이션이 있으면 재덤프까지. 그런 줄이 없거나
+BoDAT 이 아니면 skip 하고 코멘트에 `m2 dev: 해당 없음`.
+- **판정이 서면** 그 줄을 PR 본문에서 `[x]` 로 바꾸고 근거(명령 한 줄 + 관측값)를 검증 코멘트에 `[m2 dev]` 로 적는다.
+  값이 기대와 다르면 그건 **fail** 이다 — ④ 의 fail 갈래(재디스패치)로 간다.
+- **`잠김: <보유자>` 또는 배포 창(07:05~08:00)** 이면 판정이 아니다 → flake_retry 처럼 `verify-unpick` 으로 되돌려
+  다음 틱에 다시 집는다(④ Report warn `m2 dev 잠김 PR #<pr> — <보유자>`). 같은 PR 에 이 warn 코멘트가 이미
+  **2번** 있으면 더 미루지 않는다 — ①b 없이 검증을 이어 가고 그 줄은 `- [ ]` 로 둔다(closeout 4단계가 머지 뒤
+  다시 ①b 를 시도하고, 못 하면 `[dev]` 표식으로 배포 전 e2e-test 에 넘긴다).
+- `dev-checkout` 이 잠금을 남기고 죽으면(`/up` 실패 등) 풀지 말고 `BLOCKED: m2 dev 잠금 잔존 PR #<pr> — <출력 한 줄>`.
+  이 PR 은 flake_retry 로 되돌린다.
 
 **3. codex correctness 리뷰 — 내장 리뷰어. 먼저 회차를 읽는다:
 `N=$($SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt)`(마커 없으면 `0`,
@@ -324,7 +339,7 @@ held 사유가 아니다** — N = 2 는 ③-3′ 가 완료로 흡수한다):
 - **연결 이슈 부재** → `policy`. 어느 이슈에 붙일지가 사람 결정이다.
 - **E2E 가 실장비를 요구해 못 돈 경우** → 곧바로 held 로 가지 마라. 먼저
   `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-  의 **칸 ②(`bin/dry-run`·AdsPower 릴레이)와
+  의 **칸 ①b(BoDAT m2 dev — ③-2-b)·칸 ②(`bin/dry-run`·AdsPower 릴레이)와
   칸 ③(미니 `ssh test '<cmd>'` 직결 · `test_claim`/`bin/dry-run` · 프로필 #18)** 을
   시도한다. 어느 칸에서든 판정이 서면 그 결과로 ④ Classify 를 진행하고(held 아님),
   **전부 실패했을 때만** `--reason ladder` 로 held 한다. 이때 위 `검증 보류:` 코멘트에
@@ -382,5 +397,5 @@ warn(flake_retry·동봉 실패·전이 실패 등)이 있으면 경로·사유�
   보조 리뷰어는 `pr-review-toolkit@claude-plugins-official` 플러그인(미설치면 3-b 는 자동 skip).
 - 실측이 필요한 항목의 시도 순서·통로·인용 규칙은
   `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-  (칸 ①dev → ②워커 런타임 → ③TEST 워커 → ④사람. `--reason ladder` 의 전제).
+  (칸 ①a 빈 dev → ①b m2 dev(BoDAT) → ②워커 런타임 → ③TEST 워커 → ④사람. `--reason ladder` 의 전제).
   주체별 상한(이 루프는 ③ 까지)은 `references/loop-conventions.md` §9 표.
