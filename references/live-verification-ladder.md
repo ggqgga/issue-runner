@@ -28,8 +28,8 @@
 에 있고, 거기서는 **쓰기까지** 테스트한 뒤 재덤프로 지운다(BoDAT `Plans/dev-isolation.md`
 E장·결정 12). 다른 레포에는 ①b 가 없다.
 
-**①b 에 올라오는 루프 주체는 verify-runner·closeout 둘뿐이다.** 구현 워커(issue-runner 가 디스패치)는
-①a 에서 멈추고 ①b 로만 밟히는 줄을 PR test plan 에 열린 채 둔다 — 워커는 동시에 여러 개가 돌아 m2 잠금
+**①b 에 올라오는 루프 주체는 verify-runner·closeout 둘뿐이다**(루프 밖에서는 배포 전 e2e-test·사람도 쓴다). 구현 워커(issue-runner 가 디스패치)는
+①a 에서 멈추고 ①b 로만 밟히는 줄을 PR test plan 에 `[ ] [dev]` 로 열린 채 둔다 — 워커는 동시에 여러 개가 돌아 m2 잠금
 하나를 두고 다투고, 직렬로 도는 verify-runner 가 같은 줄을 PR head 로 밟는다(사용자 결정 2026-10-27,
 `references/loop-conventions.md` §9). 그 줄은 사다리 실패가 아니므로 `BLOCKED:`·`hold:ladder` 근거가 아니다.
 

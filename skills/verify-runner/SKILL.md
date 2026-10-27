@@ -258,7 +258,7 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
 
 ## ④ Classify — 판정과 인계
 
-**passed** — E2E pass(또는 해당 없음) + (codex BLOCKER 0 **또는** ③-3′ 자체 리뷰 완료):
+**passed** — E2E pass(또는 해당 없음) + ③-2-b m2 dev 실측 실패 0 + (codex BLOCKER 0 **또는** ③-3′ 자체 리뷰 완료):
 1. (③-3 / 3′ 에서 `검증자 리뷰:` 코멘트 이미 남김)
 2. **사람 코멘트 확인(✅ 를 찍기 전 필수, #379).** `$SCRIPTS/pr-comments.sh <repo> <pr>` 로
    코멘트 전량을 읽고 **그 자리에서 배열 길이(= 전체 코멘트 수)를 적어 둔다** — 다음
@@ -291,11 +291,11 @@ CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을
      `BLOCKED: 전이 실패 verify-pass PR #<pr>(<repo_short>) — <stderr 한 줄>` 로 올린다
      (규칙은 여기서 다시 적지 않는다).
 
-**redispatched** — E2E 진짜 실패 / codex BLOCKER(검증자 데드라인 초과 포함) / 결정적 CI 실패:
+**redispatched** — E2E 진짜 실패 / ③-2-b m2 dev 실측 실패 / codex BLOCKER(검증자 데드라인 초과 포함) / 결정적 CI 실패:
 1. `N=$($SCRIPTS/attempt-counter.sh <repo> <pr> verify-attempt)`(마커 없으면 `0` · exit 2 면
    이 PR 을 놓아두고 ④ Report warn 한 줄, #444). **N 은 codex BLOCKER 반송 수만 센다.**
    codex BLOCKER 반송은 N+1 ≤ `CODEX_REVIEW_LIMIT` 에서만 일어난다(N = 2 면 ③-3′ 가 codex 를 부르지
-   않았으니 codex BLOCKER 자체가 없다). E2E·결정적 CI 실패는 회차와 무관하게 반송한다 — 그건 게이트다 —
+   않았으니 codex BLOCKER 자체가 없다). E2E·m2 dev 실측·결정적 CI 실패는 회차와 무관하게 반송한다 — 그건 게이트다 —
    **그리고 N 을 올리지 않는다**(근거: verify-runner-rationale §2).
 2. 재디스패치: 실패 사유 코멘트(멱등 마커) —
    codex BLOCKER 면 `$SCRIPTS/bounce-comment.sh reverify-fail <repo> <pr> <issue> <N+1> "<사유>"`,

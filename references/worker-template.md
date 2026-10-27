@@ -316,7 +316,9 @@ Agent(subagent_type: "general-purpose", model: "opus", run_in_background: true,
       의 칸을 올라 시도하고, 시도한 칸·실패 출력(명령 한 줄 + 마지막 20줄)을
       PR `## Test plan` 에 인용한 뒤에만 `[ ]` 로
       남긴다** — "실장비가 필요하다" 는 서술만으로는 `[ ]` 로 둘 수 없다(칸 ①②는
-      워크트리에서 그대로 시도할 수 있다. 네가 올라가는 상한은 칸 ③ 이다 —
+      워크트리에서 그대로 시도할 수 있다. **단 칸 ①b(BoDAT m2 dev)는 오르지 않는다** — ①b 로만 밟히는
+      줄(운영 데이터 위의 쓰기 왕복·상태 전이)은 시도·인용 없이 `[ ] [dev] <동작>` 으로 열어 두면
+      verify-runner 가 밟는다. 네가 올라가는 상한은 칸 ③ 이다 —
       `~/.claude/skills/issue-runner/references/loop-conventions.md` §9 주체별 상한 표.
       아래 "금지" 는 그대로 지킨다).
       **본문 전체 재생성 금지** — 체크박스 마크만 보수적으로
