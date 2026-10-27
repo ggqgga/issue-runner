@@ -62,8 +62,9 @@ ssh ggq-m2 'cd ~/Projects/BODA/BoDAT && script/dev-checkout <브랜치> --owner 
 #   밟기 — 서버 값: ssh ggq-m2 'cd ~/Projects/BODA/BoDAT && bin/rails runner "<식>"'
 #          화면:    미니 크롬으로 http://192.168.0.11:3000
 ssh ggq-m2 'cd ~/Projects/BODA/BoDAT && script/dev-checkout --release --owner <주체>'  # main 복귀 → 잠금 해제
-# 쓰기를 했거나 브랜치에 마이그레이션이 있었으면 재덤프(쓰기 흔적·브랜치 마이그레이션 초기화)까지가 테스트다:
-ssh ggq-m2 'cd ~/Projects/BODA/BoDAT && script/dev stop && script/dev-sync-db && git checkout -- db/schema.rb && BIND=0.0.0.0 script/dev start'
+# 쓰기를 했거나 브랜치에 마이그레이션이 있었으면 재덤프(쓰기 흔적·브랜치 마이그레이션 초기화)까지가 테스트다.
+# 한 ssh 안에서 잠금이 비었는지 다시 보고 곧바로 내린다 — 그 사이 남이 잡았으면 남의 서버를 내리지 않고 물러난다:
+ssh ggq-m2 'cd ~/Projects/BODA/BoDAT && script/dev-checkout --status | grep -q "잠금 없음" && script/dev stop && script/dev-sync-db && git checkout -- db/schema.rb && BIND=0.0.0.0 script/dev start'
 ```
 
 - **잠금은 dev 를 쓰는 모든 주체가 같이 쓴다**(루프·deploy-cycle·e2e-test·hotfix·사람). 잠금 없이 쓰지 않고,
@@ -72,7 +73,9 @@ ssh ggq-m2 'cd ~/Projects/BODA/BoDAT && script/dev stop && script/dev-sync-db &&
   다시 오고, closeout 은 그 줄을 `- [ ] [dev] <동작>` 으로 배포 대기 이슈에 옮긴다(배포 전 e2e-test 사전 검증 몫).
 - `dev-checkout` 이 `/up` 실패 등으로 죽으면 잠금이 남는다(스크립트 정책). 풀지 말고 `BLOCKED: m2 dev 잠금 잔존 —
   <출력 한 줄>` 로 보고한다 — 어중간한 서버를 사람이 보고 푼다.
-- `dev-sync-db` 가 exit 3 이면 그 사이 남이 잠갔다 — 재덤프를 다음 주체에게 넘기고 그 사실을 인용에 적는다.
+- `dev-sync-db` 가 exit 3 이거나 `--status` 확인에서 물러났으면 그 사이 남이 잠갔다 — 재덤프를 다음 주체에게
+  넘기고 그 사실을 인용에 적는다. `--release` 와 재덤프 사이의 틈은 BoDAT 스크립트 쪽 알려진 틈이다(BoDAT #6772 —
+  재덤프를 잠금 안으로 옮기는 후속). 위 한 줄은 그 틈을 좁힐 뿐 닫지 못한다.
 - Instagram·Threads 공개 쓰기(게시·댓글·좋아요·팔로우)는 여기서도 하지 않는다 — 그건 칸 ③ 의 우리 계정 규칙 몫이다.
   `.env`·토큰·덤프 데이터를 코멘트·로그에 옮기지 않는다.
 

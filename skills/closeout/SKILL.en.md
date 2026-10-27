@@ -582,8 +582,9 @@ deploy-cycle loop.** Fill `references/deploy-check-issue.md` (`<DEPLOY_CMD>` = t
 or "repo deploy procedure" if unknown; `<VERIFY_URL>` = the production base URL — the address the step-5 smoke
 drives, or leave blank so step 5 falls back to URL-unreachable; `<LIVE_CHECKS>` = items from the PR test plan
 and the issue body marked as **performable only after the merge** — "post-deploy live verification", hardware
-/ real-device checks — the sole handoff destination for verification items step 1's verifier excluded from the
-merge gate).
+/ real-device checks — plus the write round-trip lines stepped on rung ①b below (`[dev]` — the share of
+BoDAT e2e-test's **pre**-deploy check); the sole handoff destination for verification items step 1's verifier
+excluded from the merge gate).
 
 **`<LIVE_CHECKS>` must be one of two shapes — no prose.**
 - If there is **nothing at all** to step through after the deploy, exactly the single word `없음`. Add no
@@ -599,13 +600,19 @@ merge gate).
 
 **Before moving them, closeout climbs the ladder once (never move an untried `[ ]` as-is).** Among the
 worker's unfinished items, do not move ones **left as bare `[ ]` with no ladder attempt or citation** —
-closeout first tries **rung ① (dev server) and rung ② (`bin/dry-run` · AdsPower relay)** from
+closeout first tries **rung ①a (empty dev) · ①b (BoDAT m2 dev — write round-trip lines only) · rung ② (`bin/dry-run` · AdsPower relay)** from
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md` **once each** and then moves them (the
 per-actor cap table is `references/loop-conventions.md` §9 — this loop's cap is rung ②). **Rung ③ (the TEST
 worker) belongs to `e2e-test` after the deploy.** Leave the rung-①② results alongside so ⑦ does not repeat the
 same rung.
 - If rungs ①② **produce a verdict**, **remove** that item from `<LIVE_CHECKS>`. Record the basis in a PR
   comment.
+- **①b (m2 dev)** runs after the merge, so bring it up with `script/dev-checkout main --owner closeout`, confirm
+  the merge SHA is an ancestor of m2 HEAD (`git merge-base --is-ancestor`), then step. Afterwards `--release`, and
+  re-dump if you wrote (procedure: ladder ①b). Step several write lines inside one lock and re-dump once at the end.
+- **A line stepped on ①b — whether it could not be stepped (`잠김` · deploy window 07:05~08:00 · not an ancestor)
+  or failed — moves as `- [ ] [dev] <action>`.** BoDAT e2e-test collects these marked lines in its **pre**-deploy
+  check. Without the mark the line slides to a post-deploy `테스트` issue.
 - **On failure**, move the item as `- [ ]` but **cite the rung attempted and the failure output (the command
   line + the last 20 lines)**. Put the citation in the `## 변경 요약` section.
 - If the environment makes the attempt impossible (no such entry point in the repo, etc.), state that in one
@@ -706,7 +713,8 @@ pass/fail (mark structure/empty-state checks distinctly from real-data render ch
     tick where the smoke never ran at all, do not make this call** — degradation is owned by the degrade
     section below.
 - **If real-device items remain, do not close even on green (Chrome cannot step rung ③).** The test is the
-  prefix mark `[칸 ③]` **and nothing else** — do not invent a new detection predicate here. If `held` is
+  prefix marks `[칸 ③]` · `[dev]` (m2 dev write line — rung ①b, pre-deploy e2e-test's share) **and nothing
+  else** — do not invent a new detection predicate here. If `held` is
   non-zero, do not close the deploy issue even when everything else passed; end with the comment
   `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` (`<n>` = `held`) — rung ③ belongs
   to `e2e-test` after the deploy (`references/loop-conventions.md` §9's per-actor cap table), and closing here
