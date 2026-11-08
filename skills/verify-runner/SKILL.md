@@ -253,7 +253,8 @@ Codex 가 BLOCKER 로 재디스패치할 때도 이 줄은 붙인다 — 워커�
 CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을 더 붙인다:
 `🔒 보안 경계 변경: <파일들> — 배포 전 사람 세션에서 /claude-security scan changes 권고`.
 게이트 아님. `claude-security` 스킬은 `disable-model-invocation` 이라 이 루프가 대신 돌릴 수
-없다 — deploy-* 스킬 2절이 이 표식을 읽어 사용자에게 제안한다. CLAUDE.md 에 그 절이 없는
+없다 — BoDAT `hotfix`(핫픽스 범위 PR) 와 `deploy-cycle` ⑥ 보고(정기 배포 — BoDAT #7253)가 이
+표식을 읽어 사람 세션에 스캔을 권고한다. CLAUDE.md 에 그 절이 없는
 레포는 표식을 생략한다.
 
 ## ④ Classify — 판정과 인계
