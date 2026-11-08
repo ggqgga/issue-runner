@@ -137,7 +137,7 @@ printf '%s\n' "$BODY" | grep -qF '``custom deploy``' \
 # ⑱ --verify-url 없음 → BoDAT 안내 산문 없이 값만 남는다
 run "$tmp/items.md" --verify-url "없음"
 printf '%s\n' "$BODY" | grep -qx '없음' && ok || bad "⑱ verify-url 값(없음)이 본문에 없다"
-printf '%s\n' "$BODY" | grep -qF 'production 베이스 URL' \
+printf '%s\n' "$BODY" | grep -qF 'prod 베이스 URL' \
   && bad "⑱ verify-url 없음인데 안내 산문이 남았다" || ok
 
 echo "── 라벨 ─────────────────────────────────────────────────────────"

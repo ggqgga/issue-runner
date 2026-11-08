@@ -62,6 +62,7 @@
 #     green  — 전부 통과 + 보류 0 (`✅ 스모크: <n>/<n> 통과` → 이슈 close)
 # 체크 모드:
 #   {"mode":"checks","steppable":N,"held_marked":N,"skipped":N,"open":N}
+#   (`steppable`·`held_marked` 아래 두 줄은 옛 스모크 단계 기준 — 지금 소비자는 `open` 만 읽는다)
 #   `steppable` = 크롬이 밟을 열린 줄. **0이면 스모크를 돌리지 마라**(`없음` 절도, 표식
 #   줄만 남은 절도 여기서 0이 된다 — 대조할 항목 0인 스모크는 거짓 초록이다).
 #   **`steppable`=0 이어도 `held_marked`>0 이면 "밟을 항목 0" 이 아니다** — 소비자는
