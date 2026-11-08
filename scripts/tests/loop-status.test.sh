@@ -815,6 +815,8 @@ echo '[]' > "$tmp/fx/ggqgga_Blockers.issues_closed.json"
 #   #700  full-cycle + `레인 사유:` 줄                  warn 없음 (#609)
 #   #701  full-cycle + 산문 속 "레인 사유"(줄 시작 아님) warn `레인 사유 없는 풀사이클 1건 — #701`
 #   #702  full-cycle + deploy-wait(구현 이슈 아님)      warn 에서 뺀다
+#   #703  full-cycle + 테스트 + needs-human            warn 에서 뺀다(버킷이 human_wait 여도 라벨로)
+#   #704  full-cycle + `레인 사유: 그냥`(기호 없음)     warn 에 든다
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Epics.issues.json" <<'FX'
 [
  {"number":100,"title":"에픽 A","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
@@ -831,7 +833,9 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Epics.issues.json" <<'FX'
  {"number":601,"title":"파생 + 에픽 없음","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"spinoff"}]},
  {"number":700,"title":"풀사이클 — 레인 사유 있음","createdAt":"@NOW@","body":"Epic #999\n레인 사유: ⓐ 설계 선택지","labels":[{"name":"full-cycle"}]},
  {"number":701,"title":"풀사이클 — 레인 사유 없음","createdAt":"@NOW@","body":"레인 사유는 산문 속에만 있다","labels":[{"name":"full-cycle"}]},
- {"number":702,"title":"배포 대기: PR #9 — 풀사이클(구현 이슈 아님)","createdAt":"@NOW@","body":"","labels":[{"name":"full-cycle"},{"name":"deploy-wait"}]}
+ {"number":702,"title":"배포 대기: PR #9 — 풀사이클(구현 이슈 아님)","createdAt":"@NOW@","body":"","labels":[{"name":"full-cycle"},{"name":"deploy-wait"}]},
+ {"number":703,"title":"테스트: PR #8 — 사람 정지까지 붙음","createdAt":"@NOW@","body":"","labels":[{"name":"full-cycle"},{"name":"테스트"},{"name":"needs-human"}]},
+ {"number":704,"title":"풀사이클 — 사유 기호 없음","createdAt":"@NOW@","body":"Epic #999\n  레인 사유: 그냥","labels":[{"name":"full-cycle"}]}
 ]
 FX
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Epics.issues_closed.json" <<'FX'
@@ -1763,8 +1767,8 @@ has_sub "HOLD_NOTE_MAX=3: 횟수 후보 탈락은 warn 으로" "$tmp/out" \
 
 run --repo ggqgga/Epics --since 24h
 ck "epics: exit 0" "$RC" 0
-has_line "epics 헤더 — 열림 8(에픽 이슈 자신은 루프 밖 · #700·#701 풀사이클은 밖 · #702 배포 대기 1)" "$tmp/out" \
-  "파이프라인 epics — 열림 8 · 스코프 epics · 창 24h"
+has_line "epics 헤더 — 열림 9(에픽 이슈 자신은 루프 밖 · 풀사이클 구현 이슈는 밖 · #702 배포 대기 · #703 사람대기)" "$tmp/out" \
+  "파이프라인 epics — 열림 9 · 스코프 epics · 창 24h"
 has_line "epics 대기 6(파생건도 대기엔 남는다)" "$tmp/out" \
   "  대기           6  #601 #600 #304 #302 #301 #102"
 has_line "epics issue-runner 1" "$tmp/out" "  issue-runner   1  #101"
@@ -1785,8 +1789,8 @@ has_sub "④ #400 — leaf 0 → leaf 없음(Epic 줄 미부착), 비율 없음"
 no_sub "⑤ 산문 속 언급이 leaf 로 잡히면 #100 총합이 1/4 가 된다(반증)" "$tmp/out" "#100 1/4"
 no_sub "⑤ #500 자신도 에픽 절 어디에도 안 나온다" "$tmp/out" "#500"
 has_line "warn 3건(전부 종료·P 혼재·레인 사유 없음)" "$tmp/out" "  warn           3"
-has_sub "⑥ warn 레인 사유 없는 풀사이클(산문 속 언급은 줄이 아니다 · 배포 대기 #702 는 뺀다 · #700 은 사유 있음) (#609)" "$tmp/out" \
-  "    - 레인 사유 없는 풀사이클 1건(epics) — #701 — 루프로 넘기거나(loop-issues 마감) \`레인 사유:\` 줄을 단다"
+has_sub "⑥ warn 레인 사유 없는 풀사이클(산문 속 언급·기호 없는 사유는 든다 · 배포 대기·테스트(+needs-human)는 뺀다 · #700 은 사유 있음) (#609)" "$tmp/out" \
+  "    - 레인 사유 없는 풀사이클 2건(epics) — #701 #704 — 루프로 넘기거나(loop-issues 마감) \`레인 사유:\` 줄을 단다"
 has_sub "② warn 에픽 leaf 전부 종료" "$tmp/out" \
   "    - 에픽 leaf 전부 종료 #200(epics) — 닫아라(에픽 스윕 대상)"
 has_sub "③ warn 에픽 내 P 혼재(닫힌 leaf 의 P0 는 안 낀다)" "$tmp/out" \
