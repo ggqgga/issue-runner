@@ -146,13 +146,24 @@ chmod +x "$tmp/bin/gh"
 # 쓰는 곳은 둘: 라벨 파싱(`# epic-labels`)과 leaf 번호 목록(`# leaf-list`)의 **도구 실패**가
 # fail-closed 인지. 둘 다 입력이 이미 유효 JSON 이라 데이터(픽스처)로는 못 닿는다 — 유일한
 # 도달 경로가 도구 실패라, 인자에 표식이 있는 **그 한 호출만** 실패시킨다.
-REAL_JQ=$(command -v jq)
+# (#610) 진짜 jq 는 mise shim 이 아닌 첫 후보다 — shim 은 비활성일 때 PATH 에서 다음 `jq` 를
+# 찾아 넘기는데, 그게 PATH 맨 앞의 이 스텁이라 스텁↔shim 이 끝없이 돈다(m2 실측).
+REAL_JQ=""
+for c in $(type -ap jq); do
+  case "$c" in */mise/shims/*) ;; *) REAL_JQ="$c"; break ;; esac
+done
+[ -n "$REAL_JQ" ] || { echo "FAIL: shim 아닌 jq 실행 파일이 PATH 에 없다" >&2; exit 1; }
 export REAL_JQ
 cat > "$tmp/bin/jq" <<'STUB'
 #!/usr/bin/env bash
 if [ -n "${STUB_JQ_FAIL_PAT:-}" ]; then
   case "$*" in *"$STUB_JQ_FAIL_PAT"*) echo "jq: stubbed failure" >&2; exit 5 ;; esac
 fi
+# (#610) 재귀 가드 — REAL_JQ 가 어떤 경로로든 이 스텁으로 되돌아오면 멈추지 말고 끝낸다.
+if [ -n "${STUB_JQ_ENTERED:-}" ]; then
+  echo "jq 스텁: 재귀 감지 — REAL_JQ($REAL_JQ) 가 스텁으로 되돌아왔다" >&2; exit 99
+fi
+export STUB_JQ_ENTERED=1
 exec "$REAL_JQ" "$@"
 STUB
 chmod +x "$tmp/bin/jq"
