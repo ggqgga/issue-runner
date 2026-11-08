@@ -102,7 +102,7 @@ for ph in '<PR>' '<SHA>' '<SUMMARY>' '<DEPLOY_CMD>' '<LIVE_CHECKS>' '<VERIFY_URL
 done
 printf '%s\n' "$BODY" | grep -qF 'PR #5300 머지됨 (HEAD abc1234)' && ok || bad "② PR·SHA 치환 실패"
 printf '%s\n' "$BODY" | grep -qF -- '- [ ] [칸 ③] TEST 워커 프로필 #18 드라이런' && ok \
-  || bad "② 항목이 본문에 그대로 실리지 않았다(표식 유실 = 5단계 판별 붕괴)"
+  || bad "② 항목이 본문에 그대로 실리지 않았다(표식 유실 = 표식 판별 붕괴)"
 printf '%s\n' "$BODY" | grep -qF '주석 한 줄 고침' && ok || bad "② 요약이 본문에 없다"
 
 # ③ 항목 `없음` → `(승격만)` 접미 + 본문 절에 `없음`
