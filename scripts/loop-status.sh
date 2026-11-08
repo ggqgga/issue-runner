@@ -163,6 +163,9 @@
 #                      맨몸 `needs-human` 만 남은 PR 은 대상 밖. 짝이 되는 열린 PR 을 **전부**
 #                      대조한다. 교정: `resume-sweep.sh` 의 정지 미러 정리 갈래(근거 §8).
 #   · 좌초형(#117)   — 이슈에 사다리 라벨은 있는데 `agent-ready` 가 없음(디스패치 자격 상실).
+#   · 레인 사유 없는 풀사이클 (#609) — 열린 `full-cycle` 이슈의 본문에 줄 시작 `레인 사유:` 가 없음. 배포 대기·
+#                      `테스트`·에픽은 뺀다. 레포마다 한 줄(번호 나열). 교정: 루프로 넘기거나(loop-issues 마감 —
+#                      `full-cycle` 떼고 `agent-ready`) 사유 줄을 단다(loop-issues "레인 결정").
 #   · 목록 절단      — 열린 이슈·열린 PR·닫힌 PR 중 어느 목록이 `--limit 200` 상한에 닿음,
 #                      **또는** 에픽 닫힌 leaf 조회가 `EPIC_CLOSED_LIMIT` 에 닿음 (#292).
 #                      창 안의 실패·파생이 조용히 잘렸을 수 있다는 신호(수를 믿지 말 것).
@@ -749,7 +752,8 @@ def prio_of($l):
     ln: [.labels[].name],
     blk: blockers_of(.body; [.labels[].name]),
     epic: epic_of(.body),
-    prio: prio_of([.labels[].name])
+    prio: prio_of([.labels[].name]),
+    lanereason: ((.body // "") | test("(^|\n)레인 사유:"))
   })
   | map(. + {ladder: ladder_of(.ln), holds: holds_of(.ln)})
   | map(. + {stage: (if (.ladder | length) == 0 then "none" else key_of(.ladder[-1]) end)})
@@ -1187,6 +1191,14 @@ def loop_lane: (.headRefName | test("^agent/issue-")) and (has(.ln; "full-cycle"
                       + (["P0","P1"]
                          | map(select(($e.priorities[.] // 0) > 0) | "\(.) \($e.priorities[.])")
                          | join(" · ")))}))
+      # 레인 사유 없는 풀사이클 (#609) — 기본 레인은 루프고, `full-cycle` 은 본문 전용 줄 `레인 사유: <ⓐ~ⓓ> …` 이
+      # 있을 때만 붙는다(loop-issues "레인 결정"). 배포 대기·`테스트`·에픽은 구현 이슈가 아니라 뺀다. 레포마다 한 줄.
+      + ($iss | map(select(has(.ln; "full-cycle") and (.lanereason | not) and (has(.ln; "epic") | not)
+                           and .bucket != "deploy_wait" and .bucket != "test_wait"))
+        | if length == 0 then [] else
+            [{kind: "fullcycle_no_lane_reason", repo_short: $rs, issue: null,
+              text: ("레인 사유 없는 풀사이클 \(length)건(\($rs)) — " + (map("#\(.number)") | join(" "))
+                     + " — 루프로 넘기거나(loop-issues 마감) `레인 사유:` 줄을 단다")}] end)
       # 목록 상한 도달 — 창 안의 실패·파생이 잘렸을 수 있다.
       # `닫힌 이슈`(최근 200건)는 여기서 **뺐다** (#292): 그 목록의 유일한 소비자였던 에픽
       # leaf 카운트가 검색 스코프 조회로 옮겨 갔고, 남은 쓰임(색인 지연 보완·조용한 실패

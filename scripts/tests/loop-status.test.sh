@@ -301,7 +301,7 @@ sed "s/@NOW@/$NOW/g; s/@OLD@/$OLD/g" > "$tmp/fx/ggqgga_BodaT.issues.json" <<'FX'
  {"number":4900,"title":"루프 밖 이슈","createdAt":"@NOW@","labels":[{"name":"enhancement"}]},
  {"number":4963,"title":"사람 세션이 직접 붙인 이슈","createdAt":"@NOW@","labels":[]},
  {"number":4964,"title":"무소속 회귀 대조 — agent 헤드는 종전대로 warn","createdAt":"@NOW@","labels":[]},
- {"number":4965,"title":"사람 세션 사이클 구현 이슈(full-cycle 부착)","createdAt":"@NOW@","labels":[{"name":"full-cycle"}]},
+ {"number":4965,"title":"사람 세션 사이클 구현 이슈(full-cycle 부착)","createdAt":"@NOW@","body":"레인 사유: ⓐ 사람 세션","labels":[{"name":"full-cycle"}]},
  {"number":4966,"title":"사람 세션 사이클 구현 이슈(이슈엔 라벨 없음)","createdAt":"@NOW@","labels":[]}
 ]
 FX
@@ -531,7 +531,7 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Holds.issues.json" <<'FX'
  {"number":36,"title":"충돌 — 코멘트 100건 상한","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"}]},
  {"number":35,"title":"충돌 + 정책 동존 — 스윕이 재개 안 함","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"},{"name":"hold:policy"}]},
  {"number":37,"title":"충돌 + 사람이 세운 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"},{"name":"needs-human"}]},
- {"number":49,"title":"충돌 — 사람이 full-cycle 로 인수","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"hold:conflict"},{"name":"full-cycle"}]},
+ {"number":49,"title":"충돌 — 사람이 full-cycle 로 인수","createdAt":"@NOW@","body":"레인 사유: ⓐ 충돌 인수","labels":[{"name":"agent-ready"},{"name":"hold:conflict"},{"name":"full-cycle"}]},
  {"number":44,"title":"사람이 직접 세운 정지","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"needs-human"}]},
  {"number":45,"title":"집을 수 있는 이슈","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"}]},
  {"number":46,"title":"단계 라벨보다 보류가 앞","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"flow:verify"},{"name":"hold:ladder"}]},
@@ -812,6 +812,9 @@ echo '[]' > "$tmp/fx/ggqgga_Blockers.issues_closed.json"
 #   #500  산문 속 `epic #100`(줄 시작 아님)             leaf 아님 — #100 총합에 안 낀다
 #   #600  파생 + `Epic #999`(에픽 목록에 없어도 병기)  파생 줄 `(Epic #999)`
 #   #601  파생 + 에픽 줄 없음                           파생 줄 `(에픽 없음)`
+#   #700  full-cycle + `레인 사유:` 줄                  warn 없음 (#609)
+#   #701  full-cycle + 산문 속 "레인 사유"(줄 시작 아님) warn `레인 사유 없는 풀사이클 1건 — #701`
+#   #702  full-cycle + deploy-wait(구현 이슈 아님)      warn 에서 뺀다
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Epics.issues.json" <<'FX'
 [
  {"number":100,"title":"에픽 A","createdAt":"@NOW@","body":"","labels":[{"name":"epic"}]},
@@ -825,7 +828,10 @@ sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Epics.issues.json" <<'FX'
  {"number":304,"title":"leaf P2(과도기 — P1 칸으로 접힌다)","createdAt":"@NOW@","body":"Epic #300","labels":[{"name":"agent-ready"},{"name":"P2"}]},
  {"number":500,"title":"산문 속 언급 — leaf 아님","createdAt":"@NOW@","body":"본문 첫 줄\n이 문서는 epic #100 이야기를 지나가며 한다","labels":[]},
  {"number":600,"title":"파생 + 에픽 있음","createdAt":"@NOW@","body":"Epic #999","labels":[{"name":"agent-ready"},{"name":"spinoff"}]},
- {"number":601,"title":"파생 + 에픽 없음","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"spinoff"}]}
+ {"number":601,"title":"파생 + 에픽 없음","createdAt":"@NOW@","body":"","labels":[{"name":"agent-ready"},{"name":"spinoff"}]},
+ {"number":700,"title":"풀사이클 — 레인 사유 있음","createdAt":"@NOW@","body":"Epic #999\n레인 사유: ⓐ 설계 선택지","labels":[{"name":"full-cycle"}]},
+ {"number":701,"title":"풀사이클 — 레인 사유 없음","createdAt":"@NOW@","body":"레인 사유는 산문 속에만 있다","labels":[{"name":"full-cycle"}]},
+ {"number":702,"title":"배포 대기: PR #9 — 풀사이클(구현 이슈 아님)","createdAt":"@NOW@","body":"","labels":[{"name":"full-cycle"},{"name":"deploy-wait"}]}
 ]
 FX
 sed "s/@NOW@/$NOW/g" > "$tmp/fx/ggqgga_Epics.issues_closed.json" <<'FX'
@@ -1757,8 +1763,8 @@ has_sub "HOLD_NOTE_MAX=3: 횟수 후보 탈락은 warn 으로" "$tmp/out" \
 
 run --repo ggqgga/Epics --since 24h
 ck "epics: exit 0" "$RC" 0
-has_line "epics 헤더 — 열림 7(에픽 이슈 자신은 루프 밖이라 안 낀다)" "$tmp/out" \
-  "파이프라인 epics — 열림 7 · 스코프 epics · 창 24h"
+has_line "epics 헤더 — 열림 8(에픽 이슈 자신은 루프 밖 · #700·#701 풀사이클은 밖 · #702 배포 대기 1)" "$tmp/out" \
+  "파이프라인 epics — 열림 8 · 스코프 epics · 창 24h"
 has_line "epics 대기 6(파생건도 대기엔 남는다)" "$tmp/out" \
   "  대기           6  #601 #600 #304 #302 #301 #102"
 has_line "epics issue-runner 1" "$tmp/out" "  issue-runner   1  #101"
@@ -1778,7 +1784,9 @@ has_sub "④ #400 — leaf 0 → leaf 없음(Epic 줄 미부착), 비율 없음"
 # ⑤ 산문 속 `epic #100`(줄 시작 아님)은 leaf 가 아니다 — #500 이 잡혔다면 #100 이 1/4 로 나온다
 no_sub "⑤ 산문 속 언급이 leaf 로 잡히면 #100 총합이 1/4 가 된다(반증)" "$tmp/out" "#100 1/4"
 no_sub "⑤ #500 자신도 에픽 절 어디에도 안 나온다" "$tmp/out" "#500"
-has_line "warn 2건(전부 종료·P 혼재)" "$tmp/out" "  warn           2"
+has_line "warn 3건(전부 종료·P 혼재·레인 사유 없음)" "$tmp/out" "  warn           3"
+has_sub "⑥ warn 레인 사유 없는 풀사이클(산문 속 언급은 줄이 아니다 · 배포 대기 #702 는 뺀다 · #700 은 사유 있음) (#609)" "$tmp/out" \
+  "    - 레인 사유 없는 풀사이클 1건(epics) — #701 — 루프로 넘기거나(loop-issues 마감) \`레인 사유:\` 줄을 단다"
 has_sub "② warn 에픽 leaf 전부 종료" "$tmp/out" \
   "    - 에픽 leaf 전부 종료 #200(epics) — 닫아라(에픽 스윕 대상)"
 has_sub "③ warn 에픽 내 P 혼재(닫힌 leaf 의 P0 는 안 낀다)" "$tmp/out" \

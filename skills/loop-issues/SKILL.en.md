@@ -174,7 +174,19 @@ no issue exists, **create it first**, then run the closing checklist.
    label; `agent-ready` goes on leaves only. **Every** leaf split out of an epic
    carries an `Epic #N` line pointing at the parent and gets the **same P**
    (checklist item 6's inheritance).
-5. **Create + close out**: `gh issue create --repo <owner/repo> --title ... --body ...`
+5. **Lane decision — the loop is the default** (user decision 2026-11-08, #609). Issues you
+   create go to the loop by default (`agent-ready` after the checklist above). **To create one
+   for a human session (`full-cycle`)**, the body needs a dedicated line
+   `레인 사유: <ⓐ|ⓑ|ⓒ|ⓓ> <one line>` (line start · one line · one of four — after the `Epic`/
+   `Blocked by` lines): ⓐ needs conversation with the human mid-implementation (design options the
+   acceptance criteria don't close) · ⓑ a P0 needed today · ⓒ hands-on hardware work by a person ·
+   ⓓ changing the loop / verification / deploy pipeline itself. If none applies, don't create it as
+   `full-cycle` — "it was born in a conversation" is not a reason. Rationale: of BoDAT's 131
+   full-cycle implementation issues from 10-09 to 11-08, 86% (easy 30 · medium 83) were loop-sized,
+   while `agent-ready` stood at 0 (the loop idled while 21 waited for human sessions).
+   `loop-status.sh` counts open full-cycle issues without the line as a warn. Lane labels are
+   exclusive — never attach both.
+6. **Create + close out**: `gh issue create --repo <owner/repo> --title ... --body ...`
    (create blockers first to get their numbers; when splitting an epic, create **the
    epic first** so you have the number for `Epic #N` — the epic itself gets only the
    `epic` label and no P), then run each issue through the
@@ -209,7 +221,9 @@ label them").
    - **FIXABLE** — name the missing items (e.g. no Test plan, vague acceptance
      criteria, missing `Blocked by`, **an unnecessary `Blocked by` (not a real
      dependency)**, **chain depth exceeded**, **missing `Epic #N`**, **mixed P inside
-     one epic**) and propose a body amendment.
+     one epic**, **`full-cycle` without a lane reason** — move to the loop or add the line)
+     and propose a body amendment. Include open `full-cycle` issues in this analysis and check
+     for the `레인 사유:` line (creation mode step 5).
    - **UNFIT** — an epic (split first), needs a human decision, or requires a spec
      rewrite. State the reason.
 3. **Report**: present the results as a table —
