@@ -41,4 +41,4 @@ case "$rc" in
   2) echo "run-local-ci: 폐기 ($short) — 실행 시점 HEAD 가 달라 결과 없음. 현재 HEAD 로 다시 호출하라" >&2 ;;
   *) echo "run-local-ci: 큐 실행 실패 (exit $rc, $short)" >&2 ;;
 esac
-exit "$rc"   # 큐의 계약을 그대로 전달(0 pass · 1 fail · 2 폐기 · 3 부재 · 124) — 2 를 1 로 뭉개면 호출자가 재시도 정책을 오판한다
+exit "$rc"   # 큐의 계약을 그대로 전달(0 pass · 1 fail · 2 폐기 · 3 부재 · 4 시간 초과 · 124) — 2 를 1 로 뭉개면 호출자가 재시도 정책을 오판한다
