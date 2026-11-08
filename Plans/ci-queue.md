@@ -34,6 +34,11 @@ ci-queue.sh status [<SHA>]
 - **박스 전역.** 슬러그·레포 무관하게 한 번에 하나 — 워크트리 간 동시 실행이 사라진다.
 - **실행 직전 HEAD 검사.** `git -C ROOT rev-parse HEAD` ≠ 티켓 SHA 면 폐기(exit 2). 큐가 push↔실행
   간격을 늘리므로 "워킹트리 ≠ SHA" 오판(BoDAT #4481)을 여기서 닫는다. ROOT 가 사라졌으면 exit 3.
+- **실행 상한(#611).** `bin/ci` 는 `CI_RUN_TIMEOUT`(`scripts/lib/constants.sh`, 기본 1800초) 안에서만 기다린다.
+  넘으면 자식 프로세스 그룹 전체를 TERM(10초 유예 뒤 남으면 KILL)으로 끝내고, 로그 끝 `인프라: 실행 시간 초과`
+  마커 · status `error` · `queue.log` 한 줄 · **결과 미기록** · exit 4 — ROOT 소실(#586)과 같은 "코드 판정 아님" 처리다.
+  실행권은 기존 trap 정리로 풀려 다음 티켓이 바로 돈다. 근거: 실행권이 박스에 하나라 멈춘 잡 하나가 박스의 모든
+  CI 를 막는다(2026-11-08 m2 32분 정지 · 뒤 잡 10건). 미니 큐 47일 1,422건 평균 188초 · 최대 833초의 2배 남짓.
 - **dedup.** 결과 파일이 이미 있으면 즉시 exit 0. 같은 SHA 의 살아 있는 티켓이 있으면 중복 발급 안 함.
 - **status 게시 3단.** 발급 시 `pending "로컬 CI 대기열 N번째"`, 시작 시 `pending "bin/ci 실행 중"`,
   종료 시 `success`/`failure`. `pending` 이 이제 진짜 "대기·실행 중"이다.

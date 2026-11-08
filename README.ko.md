@@ -262,7 +262,7 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 **`bin/ci` 는 머신 전체에서 한 번에 하나.** push 훅·루프의 `run-local-ci.sh`·세션 직접 호출 — 모든 진입점이 `scripts/ci-queue.sh` 를 거친다. 데몬 없는 티켓 락: 티켓은 `~/.claude/.local-ci/.queue/` 에, 가장 오래된 살아 있는 티켓이 `mkdir .running` 에 성공하면 실행, 죽은 PID 는 지나가는 대기자가 치운다. 워크트리 둘(또는 세션 둘)이 잇달아 push 해도 같은 테스트 DB 를 물거나 박스를 포화시키지 않는다 — 두 번째는 자기 차례를 기다린다. 차례가 왔을 때 레포 HEAD 가 이미 움직였으면 폐기(exit 2) — 새 push 가 자기 티켓을 쥐고 있다. `bin/ci` 가 **도는 도중** ROOT 가 사라지면(워크트리 삭제) 판정을 남기지 않는다: 로그 끝에 `인프라: ROOT 소실`, commit status 는 `error`, `run` 은 exit 3 — fail 로 캐시하면 같은 SHA 의 재실행이 그 가짜 fail 을 물려받는다.
 
 ```bash
-scripts/ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo owner/repo]   # 등록 + 실행(블록; 0 pass · 1 fail · 2 폐기 · 3 ROOT 없음)
+scripts/ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo owner/repo]   # 등록 + 실행(블록; 0 pass · 1 fail · 2 폐기 · 3 ROOT 없음 · 4 실행 시간 초과)
 scripts/ci-queue.sh status [<SHA>]                                          # running / queued N / none
 scripts/ci-queue.sh wait <SHA> [--timeout <sec>]                            # 판정까지 블록 — run_in_background 로 띄우면 끝날 때 세션이 깨어난다
 scripts/ci-queue.sh forget <SHA>                                            # 캐시된 판정 삭제(플레이크·인프라 실패) — 다음 run 이 다시 돈다

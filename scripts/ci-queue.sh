@@ -26,9 +26,12 @@
 # (`"$CACHE"/*/` glob)는 점 디렉터리를 읽지 않고 .result 는 옮기지 않으므로 캐시된 fail 이 되살아나지 않는다.
 #
 # 종료 코드 — run: 0=pass · 1=fail · 2=폐기(실행 시점 HEAD ≠ SHA — 새 push 가 자기 티켓을
-# 냈으니 이 잡은 의미 없음) · 3=ROOT 부재/HEAD 못 읽음/큐 쓰기 불가 · 124=같은 SHA 의 다른 잡을
+# 냈으니 이 잡은 의미 없음) · 3=ROOT 부재/HEAD 못 읽음/큐 쓰기 불가 · 4=실행 시간 초과(아래) · 124=같은 SHA 의 다른 잡을
 # CI_QUEUE_WAIT_TIMEOUT(기본 7200s) 동안 기다리다 포기. wait: 0=pass · 1=fail · 2=큐에 없고 결과도 없음 ·
 # 124=타임아웃. result: 0=있음(`pass|fail <path>` 출력) · 1=없음(`none`). busy: 0=실행 중(SHA 출력) · 1=아님.
+# run 4=실행 시간 초과 — `bin/ci` 가 CI_RUN_TIMEOUT(lib/constants.sh, 기본 1800s)을 넘기면 자식 프로세스 그룹 전체를
+# TERM(10초 유예 뒤 남으면 KILL)으로 끝내고, 로그 끝 `인프라: 실행 시간 초과` 마커 · status error · result 없이 exit 4 (#611).
+# 근거: 실행권은 박스에 하나라 멈춘 잡 하나가 모든 CI 를 막는다(m2 실측 32분 정지 · 뒤 잡 10건). 정상 잡은 최대 833s.
 # 실행 **도중** ROOT 가 사라지면(워크트리 삭제 — #586) 판정을 버린다: 로그 끝에 `인프라: ROOT 소실` 마커,
 # status error, result 없이 exit 3. 코드 실패로 캐시하면 같은 SHA 의 재실행이 그 가짜 fail 을 dedup 으로 물려받는다.
 # status 출력: `status` = 줄마다 "running <sha> <slug>" / "queued <n> <sha> <slug>",
@@ -288,11 +291,12 @@ cmd_run() {
   if ! printf 'slug=%s\n' "$SLUG" > "$QDIR/$TICKET" 2>/dev/null; then
     log "$short 티켓을 쓸 수 없음($QDIR — 권한/디스크?)"; return 3
   fi
-  CHILD=""
+  CHILD=""; WATCHDOG=""
   cleanup() {
     # INT/TERM: bin/ci 자식(서브셸과 그 손자)을 먼저 죽인다 — 부모만 죽고 실행권이 풀리면 다음 잡이
     # 고아 bin/ci 와 겹쳐 돈다(큐가 막으려던 바로 그 동시 실행).
     if [ -n "$CHILD" ] && alive "$CHILD"; then kill -TERM -- "-$CHILD" 2>/dev/null || kill -TERM "$CHILD" 2>/dev/null; fi
+    [ -n "${WATCHDOG:-}" ] && kill -TERM -- "-$WATCHDOG" 2>/dev/null
     rm -f "$QDIR/$TICKET"
     [ "$(cat "$RUNNING/pid" 2>/dev/null)" = "$$" ] && rm -rf "$RUNNING"
   }
@@ -354,10 +358,39 @@ cmd_run() {
   set -m
   (cd "$ROOT" && exec bin/ci) >"$out/$SHA.log" 2>&1 &
   CHILD=$!
+  # 실행 상한(#611) — 멈춘 잡 하나가 박스 실행권을 무기한 쥐지 않게. 감시자도 자기 그룹이라 정상 종료 시
+  # 그룹째 걷어 그 sleep 까지 지운다. 상한을 못 읽으면(constants 부재) 상한 없이 돈다(종전 동작).
+  local limit="${CI_RUN_TIMEOUT:-}" tmark="$RUNNING/timeout.$$"   # pid 붙임 — 부모가 SIGKILL 로 죽어 살아남은 감시자가 다음 잡의 .running 에 표식을 써도 그 잡은 자기 이름만 본다
+  WATCHDOG=""
+  case "$limit" in
+    ''|0|*[!0-9]*) log "$short 실행 상한 없음 — CI_RUN_TIMEOUT 을 읽지 못함('$limit', lib/constants.sh 부재?)" ;;
+    *)
+      ( sleep "$limit"
+        : > "$tmark"
+        kill -TERM -- "-$CHILD" 2>/dev/null
+        i=0
+        while [ "$i" -lt 10 ] && kill -0 -- "-$CHILD" 2>/dev/null; do sleep 1; i=$((i + 1)); done
+        kill -KILL -- "-$CHILD" 2>/dev/null
+      ) >/dev/null 2>&1 &
+      WATCHDOG=$! ;;
+  esac
   set +m
   if wait "$CHILD"; then verdict=pass; else verdict=fail; fi
   CHILD=""
+  if [ -n "$WATCHDOG" ]; then
+    # 초과였으면 감시자가 유예·KILL 을 마칠 때까지(≤10초) 기다려 손자까지 정리되게, 아니면 감시자를 걷는다
+    if [ -f "$tmark" ]; then wait "$WATCHDOG" 2>/dev/null; else kill -TERM -- "-$WATCHDOG" 2>/dev/null; fi
+    WATCHDOG=""
+  fi
   dur=$(( SECONDS - start ))
+  if [ -f "$tmark" ]; then
+    # 시간 초과 — 원인(무한 재귀·교착 등)과 무관하게 코드 판정이 아니다. ROOT 소실과 같게 결과를 남기지 않는다
+    # (같은 SHA 의 재실행이 가짜 fail 을 dedup 으로 물려받지 않게).
+    printf '\n인프라: 실행 시간 초과 — %ss 상한(CI_RUN_TIMEOUT) 을 넘겨 종료, 이 판정은 코드 판정이 아니다(결과 미기록)\n' "$limit" >> "$out/$SHA.log"
+    log "$short 실행 시간 초과(${dur}s, 상한 ${limit}s CI_RUN_TIMEOUT) — 프로세스 그룹 종료, 결과 미기록"
+    post_status error "로컬 CI 무효 — 실행 시간 초과"
+    return 4
+  fi
   if [ ! -d "$ROOT" ]; then
     # 실행 중 ROOT 삭제(#586) — pass 든 fail 이든 코드 판정이 아니다(마지막 파일 접근 뒤 삭제면 pass 로도 끝난다).
     # 로그 파일은 캐시 쪽이라 남아 있다.

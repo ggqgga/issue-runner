@@ -265,7 +265,7 @@ Eligibility: `open + agent-ready + ¬agent:claimed + all blockers CLOSED`. Sort:
 **One `bin/ci` at a time, machine-wide.** Every entry point — the push hook, the loop's `run-local-ci.sh`, and a session calling it directly — goes through `scripts/ci-queue.sh`, a ticket lock with no daemon: tickets live in `~/.claude/.local-ci/.queue/`, the oldest live ticket that manages `mkdir .running` runs, dead PIDs are reaped by whoever passes by. Two worktrees (or two sessions) pushing back-to-back no longer race the same test database or saturate the box; the second one simply waits its turn. A job whose repo HEAD has moved by the time it reaches the front is dropped (exit 2) — the newer push holds its own ticket. A job whose ROOT disappears **while** `bin/ci` runs (worktree removed) records no verdict: the log ends with `인프라: ROOT 소실`, the commit status is `error`, and `run` exits 3 — a cached fail would be handed to every re-run of that SHA.
 
 ```bash
-scripts/ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo owner/repo]   # enqueue + run (blocks; 0 pass · 1 fail · 2 dropped · 3 no ROOT)
+scripts/ci-queue.sh run <ROOT> <SHA> [--slug <slug>] [--repo owner/repo]   # enqueue + run (blocks; 0 pass · 1 fail · 2 dropped · 3 no ROOT · 4 run timeout)
 scripts/ci-queue.sh status [<SHA>]                                          # running / queued N / none
 scripts/ci-queue.sh wait <SHA> [--timeout <sec>]                            # block until the verdict — run it with run_in_background so the session is woken
 scripts/ci-queue.sh forget <SHA>                                            # drop a cached verdict (flake / infra failure) so the next run re-executes

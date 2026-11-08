@@ -461,5 +461,26 @@ assert_nofile "ROOT 소실 result 없음" "$HOME/.claude/.local-ci/$LSL1/$LS1.re
 grep -q "ROOT 소실" "$HOME/.claude/.local-ci/$LSL1/$LS1.log" && ok || bad "ROOT 소실 마커가 로그에 없음"
 assert_eq "ROOT 소실 status error" "$(grep -c "statuses/$LS1 .*state=error" "$GH_LOG")" 1
 
+echo "[ci-queue] 16) 실행 시간 초과 — CI_RUN_TIMEOUT 을 넘긴 bin/ci 는 손자까지 종료 · exit 4 · result 없음 · 뒤 티켓이 이어 돈다 (#611)"
+R17=$(make_repo r17); S17=$(head_of "$R17"); SL17=$(slug_of "$R17")
+R18=$(make_repo r18); S18=$(head_of "$R18"); SL18=$(slug_of "$R18")
+# 멈춘 잡 모양 — bin/ci 가 손자 프로세스를 띄우고 자기도 잠든다
+printf '#!/bin/sh\nsleep 30.71 &\nsleep 30.72\n' > "$R17/bin/ci"
+CI_RUN_TIMEOUT=2 "$SUT" run "$R17" "$S17" >/dev/null 2>&1 &
+p17=$!
+wait_status "$S17" running
+"$SUT" run "$R18" "$S18" >/dev/null 2>&1 &
+p18=$!
+rc=0; wait $p17 || rc=$?
+assert_eq "시간 초과 exit" "$rc" 4
+assert_nofile "시간 초과 result 없음" "$HOME/.claude/.local-ci/$SL17/$S17.result"
+grep -q "인프라: 실행 시간 초과" "$HOME/.claude/.local-ci/$SL17/$S17.log" && ok || bad "시간 초과 마커가 로그에 없음"
+[ -z "$(pgrep -f "sleep 30.7" 2>/dev/null)" ] && ok || bad "시간 초과 뒤 bin/ci 손자(sleep 30.7x)가 살아 있다"
+assert_eq "시간 초과 status error" "$(grep -c "statuses/$S17 .*state=error" "$GH_LOG")" 1
+grep -q "${S17:0:8} 실행 시간 초과" "$HOME/.claude/.local-ci/queue.log" && ok || bad "queue.log 에 시간 초과 줄이 없음"
+rc=0; wait $p18 || rc=$?
+assert_eq "시간 초과 뒤 다음 티켓 pass" "$rc" 0
+assert_file "다음 티켓 result" "$HOME/.claude/.local-ci/$SL18/$S18.result"
+
 echo "ci-queue: $pass passed, $fail failed"
 [ "$fail" = 0 ]
