@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # smoke-tally.sh 픽스처 테스트 — 네트워크 무접속(PATH 에 gh 스텁을 깔아 호출을 드러낸다).
 #
-# #448: closeout 5단계 스모크의 집계 규칙(표식 판별 · 분모 제외 · 보류 합산)이 SKILL 산문과
-# smoke-prompt 양쪽에 있던 "계산기 둘" 을 하나로 접은 스크립트의 SSOT 테스트다. 무는 것:
+# #448: 배포 대기 검증 항목의 집계 규칙(표식 판별 · 분모 제외 · 보류 합산)이 closeout SKILL 산문과
+# 스모크 프롬프트 양쪽에 있던 "계산기 둘" 을 하나로 접은 스크립트의 SSOT 테스트다. 무는 것:
 #   ⑴ `[칸 ③]`·`[dev]` 표식 항목은 **판정 토큰이 무엇이든** 보류 — 분모에서 빠진다(#309 · #596)
 #   ⑵ 표식 없는 미밟음(`보류`)도 분모에서 빠지고 표식과 **합산**된다
 #   ⑶ 분모 0 → `skip`(0/0 은 통과가 아니라 아무것도 안 본 것 — 거짓 초록)
@@ -103,7 +103,7 @@ want "⑤ 분모 0 → skip" '- [ ] [칸 ③] 실장비 하나뿐
 ' '보류 - [ ] [칸 ③] 실장비 하나뿐
 ' pass=0 fail=0 held=1 denominator=0 verdict=skip
 
-# ⑥ 이미 밟힌 `- [x]` 항목은 보류에도 분모에도 안 들어간다(smoke-prompt 와 같은 범위).
+# ⑥ 이미 밟힌 `- [x]` 항목은 보류에도 분모에도 안 들어간다(옛 스모크 프롬프트와 같은 범위).
 want "⑥ - [x] 는 skipped" '- [x] 이미 밟은 줄
 - [x] [칸 ③] 이미 밟은 표식 줄
 - [ ] 남은 줄
@@ -219,7 +219,7 @@ PATH="$tmp/stub:$PATH" bash "$SUT" --checks >/dev/null 2>&1; rc=$?
 out=$(PATH="$tmp/stub:$PATH" bash "$SUT" --checks "$tmp/nope.txt" 2>/dev/null); rc=$?
 { [ "$rc" = 66 ] && [ -z "$out" ]; } && ok || bad "㉑ 파일 없음 rc=$rc out=[$out] (기대 66·무출력)"
 
-# ㉒ 실행 비트 — SKILL 5단계가 `$SCRIPTS/smoke-tally.sh` 로 직접 exec 한다(PR#173 함정).
+# ㉒ 실행 비트 — `deploy-wait-issue.sh` 가 `"$here/smoke-tally.sh" --checks` 로 직접 exec 한다(PR#173 함정).
 [ -x "$SUT" ] && ok || bad "㉒ smoke-tally.sh 실행 비트 없음"
 
 echo "smoke-tally.test: pass=$pass fail=$fail"

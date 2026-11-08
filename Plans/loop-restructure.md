@@ -82,7 +82,7 @@ closeout 하나가 1,185줄이다. #379(사람 코멘트 필터가 ✅ 이전 �
 | `deploy-wait-issue.sh` | closeout 4단계 발행·라벨 확인·3단 복구 (843–886) | full-cycle §7 과 같은 형식 — 공유 |
 | `spinoff-issue.sh` | 6단계 발행 + `Epic` 줄 확인 + 라벨 보강 (1037–1084) | `spinoff-inherit.sh` 흡수 |
 | `lessons-trim.sh append` 를 issue-runner 도 사용 | SKILL.md:116–119 프로즈 append | 잠금 밖 append 유실 경로 제거 |
-| `smoke-tally.sh` | `[칸 ③]` 표식 판별·분모 제외·보류 합산 (926–974) — `smoke-prompt.md` 와 계산기 둘 | |
+| `smoke-tally.sh` | `[칸 ③]` 표식 판별·분모 제외·보류 합산 (926–974) — 스모크 프롬프트(폐지 #606)와 계산기 둘 | |
 | `resume-sweep.sh --count-ladder` | SKILL.md:425 의 200자 jq 복붙 | |
 | `pr-state.sh <repo> <pr>` | 규칙0 "마지막 판정 코멘트 → flow:* 목표 라벨" (302–314) | 0단계 표를 기계가 읽는 진입점 |
 | 탈락 사유 채널 `skip: <repo>#<pr> <사유>` (eligible 3종 공통) | closeout-eligible 의 `continue` 12곳 중 #379 가 소리를 내게 한 1곳만 — 나머지 11곳도 같은 원칙(#206 조용한 큐 사망 금지) | PR #384 simplify 깊이 리뷰 메모 |

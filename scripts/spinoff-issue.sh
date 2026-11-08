@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # spinoff-issue.sh <owner/repo> <부모 이슈#|-> <부모 PR#> --title <제목> --body-file <파일> [--label <추가라벨>]...
 #
-# closeout 6단계(파생 이슈)와 5단계 fail 갈래의 **발행 절차 한 자리** (#447 · 에픽 #443 2단계).
+# closeout 6단계(파생 이슈)의 **발행 절차 한 자리** (#447 · 에픽 #443 2단계).
 # 종전엔 SKILL 산문이 `spinoff-inherit.sh` 호출 → `gh issue create` → 라벨 부재 재시도 →
 # 발행 직후 readback(라벨·`Epic #N` 첫 줄) → 부모 PR 마커를 다섯 문단에 걸쳐 지시했다.
 # 산문뿐인 단계는 샌다(실증 2026-08-13: 6단계가 규약 라벨만 달고 `agent-ready` 를 빠뜨려

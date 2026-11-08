@@ -28,11 +28,9 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 ## 상수
 
 - `MAX_CLOSEOUT = 1` — **동시성 1**(한 번에 1 PR 만 끝까지 직렬 마감). 틱당 상한이 아니다 —
-  한 PR 이 종료 상태(success·approval-required·blocked·dup·exhausted)에 닿으면 **다음 틱을 기다리지 말고**
+  한 PR 이 종료 상태(success·approval-required·blocked·dup)에 닿으면 **다음 틱을 기다리지 말고**
   ①①-b② 로 되돌아 다음 후보를 집어 이어간다(⑤ Drain). 큐가 빌 때(② Pick 후보 0)만 틱을 끝내고
   `/loop` 주기로 쉰다. `/loop` 주기는 **빈 큐일 때의 재스캔 간격**만 조절한다.
-- `REPAIR_RECUR_LIMIT = 2` — 같은 배포 후 실패가 N회 재발하면 agent-ready 재발행 대신
-  `needs-human` 으로 승격한다 (5단계 서킷 브레이커).
 - `QUIET_TICKS = 3` — N틱 연속 후보·이벤트가 없으면 stagnated 로 보고한다. **① Reconcile·①-b 스윕·
   ② Pick 은 이후에도 매 틱 그대로 수행**한다 — stagnated 는 순수 보고 라벨이라 어떤 단계도 건너뛰지 않는다.
 - `SCRIPTS = ~/.claude/skills/issue-runner/scripts`
@@ -77,7 +75,6 @@ description: issue-runner 가 연 초록불 PR을 머지·문서반영·배포�
 | 2 머지 | PR `MERGED` | MERGED 면 머지 끝 (머지 직후 worktree 정리 포함) |
 | 3 reconcile | 계획문서 diff(머지 커밋) + epic 코멘트 | 머지에 포함이면 끝 |
 | 4 배포 | `배포 대기:` 코멘트 / `deployed:<sha>` | 있으면 재요청 안 함 |
-| 5 후처리 | `✅ 스모크` 코멘트 / 배포 이슈 CLOSED + 검증·배포 완료 코멘트 | 있으면 재스모크 안 함 (배포 레인(deploy-cycle)이 검증까지 마치고 닫은 경우 포함) |
 | 6 파생 | `파생 판정:` 코멘트(#411 — 갈래 조치가 전부 끝난 뒤 마지막에 남긴다) · 생성 이슈 번호(`파생:`) 코멘트 | `파생 판정:` 이 있으면 6단계 끝(ⓔ 0건 포함) · `파생:` 만 있으면 그 이슈는 재발행 안 함 |
 
 **1단계 마커 판정은 `closeout-step1-marker.sh` 한 자리다** — ⒜ 가장 늦은 `마감 검증:` 이 `⚠ 보류` 인가
@@ -326,7 +323,7 @@ issue-runner ② Maintain·verify-runner 가 이 PR 을 건드리지 않고(veri
 
 ## ③ 파이프라인 — 1~6단계
 
-집은 PR 에 대해 아래 6단계를 순서대로 수행한다. 각 단계 끝에 마커 명령을 박아 (① Reconcile 마커표)
+집은 PR 에 대해 아래 단계(1~4·6 — 5단계는 폐지)를 순서대로 수행한다. 각 단계 끝에 마커 명령을 박아 (① Reconcile 마커표)
 다음 틱이 멱등 재개할 수 있게 한다. (근거: closeout-rationale §10~§15)
 
 **1단계 — 계획 부합 검증 — `general-purpose` 한 번, codex 없음(#375).** `<issue>` 는 PR 본문의
@@ -507,8 +504,8 @@ worktree(`agent/issue-<N>`)를 직접 정리한다. `--merged` 는 squash 머지
 
 **4단계 — 배포 레인 인계 (dry-run).** **closeout 은 실 배포를 하지 않고(issue-runner 자기 레포만 예외 — 아래 「머지 즉시 배포」) 배포 대기 이슈를 deploy-cycle
 루프에 넘긴다.** `references/deploy-check-issue.md` 를 채워(`<DEPLOY_CMD>`=레포 배포 엔트리포인트, 모르면
-"레포 배포 절차"; `<VERIFY_URL>`=production 베이스 URL — 5단계 스모크가 몰 주소, 모르면 빈 줄로 둬
-5단계가 URL 도달불가로 폴백; `<LIVE_CHECKS>`=PR test plan·이슈 본문에서 "배포 후 라이브 검증"·하드웨어/
+"레포 배포 절차"; `<VERIFY_URL>`=prod 베이스 URL(담당자·e2e-test 참고용), 모르면 빈 줄로
+둔다; `<LIVE_CHECKS>`=PR test plan·이슈 본문에서 "배포 후 라이브 검증"·하드웨어/
 실장비 검증 등 **머지 후에만 수행 가능하다고 표기된 항목** — 1단계 검증자가 머지 게이트에서 제외한 범위
 밖 검증 항목의 유일한 이관 목적지다).
 
@@ -520,18 +517,18 @@ worktree(`agent/issue-<N>`)를 직접 정리한다. `--merged` 는 squash 머지
   **같은 등급의 형태 강제**다(#309). 칸 ①② 를 시도했다 실패해 옮겨진 줄에 "TEST 워커" 라는 말이 없더라도
   **밟는 칸이 ③ 이면 표식을 붙인다** — 판별의 근거는 문장 뜻이 아니라 표식이다.
 - **m2 dev 에 써야 밟히는 줄은 접두 표식 `[dev]`** — `- [ ] [dev] <동작>`(BoDAT 만, #596). 아래 사다리 칸 ①b 를
-  밟지 못해(잠김·시간 상한) 넘기는 줄에만 붙인다. 크롬 스모크는 이 줄을 보류로 세고, BoDAT `e2e-test` 사전
+  밟지 못해(잠김·시간 상한) 넘기는 줄에만 붙인다. BoDAT `e2e-test` 사전
   검증이 m2 dev 에서 닫는다 — 사용자가 e2e-test 를 부르지 않아 배포 전에 안 닫혔으면 deploy-cycle ⑤ 가
   `테스트` 이슈로 옮긴다(배포 뒤로 밀린다).
-- **표식 없는 줄은 크롬이 밟을 수 있어야 한다.** 칸 ③ 이 아닌데 브라우저 밖 수단이 필요한 줄이면 그
-  수단을 줄에 적어 ⑦ 이 바로 밟게 하라.
+- **표식 없는 줄은 밟을 수단이 줄에 드러나야 한다.** 칸 ③ 이 아닌데 브라우저 밖 수단이 필요한 줄이면 그
+  수단을 줄에 적어 `e2e-test` 가 바로 밟게 하라.
 
 **옮기기 전에 closeout 이 사다리를 한 번 올라간다 (시도 없는 `[ ]` 는 그대로 옮기지 않는다).** 워커가
 남긴 미완 항목 중 **사다리 시도·인용 없이 `[ ]` 로만 남은 것**은 그대로 옮기지 마라 — closeout 이
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md` 의 **칸 ①(dev 서버)와
 칸 ②(`bin/dry-run`·AdsPower 릴레이)** 를 **한 번씩** 시도한 뒤에 옮긴다(주체별 상한 표는
 `references/loop-conventions.md` §9 — 이 루프의 상한은 칸 ② 다). **칸 ③(TEST 워커)은 배포 뒤
-`e2e-test` 의 몫이다.** ①② 시도 결과를 함께 남겨 ⑦ 이 같은 칸을 반복하지 않게 한다.
+`e2e-test` 의 몫이다.** ①② 시도 결과를 함께 남겨 `e2e-test` 가 같은 칸을 반복하지 않게 한다.
 **BoDAT 이면 칸 ① 은 ①a(빈 DB)에서 그치지 않는다** — 운영 데이터 위의 쓰기 왕복·상태 전이가 증거인 줄(`[dev]`
 표식 줄 포함)은 칸 ①b(m2 덤프 dev)를 **`main`** 으로 밟는다(이미 머지됐으므로 `script/dev-checkout main --owner closeout`,
 절차·잠금 함정·실패 갈래·재덤프는 사다리 문서 ①b 가 SSOT — 상한 15분). 잠겨 있거나 상한을 넘기면 밟지 않은 줄에
@@ -565,7 +562,7 @@ worktree(`agent/issue-<N>`)를 직접 정리한다. `--merged` 는 squash 머지
   이고 **레포에 정의가 있을 때만** `needs:hardware`)로 발행하고 → 라벨 부재면 `setup-labels.sh` 1회 +
   재시도 1회 → 그래도 안 되면 **`--label` 을 하나도 주지 않고 발행**해 티켓 유실을 막고 → 라벨을
   readback 해 보강하고 → PR 에 `배포 대기: #<번호>` 마커를 남긴다. stdout 은 이슈 번호 한 줄이다.
-  `<VERIFY_URL>` 을 모르면 `--verify-url` 을 생략한다(5단계가 URL 도달불가로 폴백).
+  `<VERIFY_URL>` 을 모르면 `--verify-url` 을 생략한다.
   - **exit 0** → 마커까지 남았으므로 **approval-required 로 종료**한다.
   - **exit 65 (발행 전 형태 위반 — 이슈는 아직 없다)** — `<LIVE_CHECKS>` 가 산문이라는 뜻이다. 배경·근거는
     `## 변경 요약` 으로 옮기고 항목 자리엔 `없음` 이나 `- [ ]` 만 남겨 **다시 부른다**. **exit 65 로
@@ -605,96 +602,22 @@ git -C $D pull -q --ff-only && git -C $D merge-base --is-ancestor <머지SHA> HE
   (형식 SSOT: BoDAT `.claude/skills/deploy-cycle/SKILL.md` ⑤(b) — 미니 경로 `~/Projects/BODA/BoDAT/.claude/skills/deploy-cycle/SKILL.md`).
   `$NEW_TAG (release $TARGET)` 자리에는 `미니 issue-runner <sha>` 를 쓴다. **`테스트` 이슈 번호를 받았을 때만 닫는다** —
   발행이 실패하면 티켓을 열어 두고 ④ Report 에 `BLOCKED: 테스트 이슈 발행 실패 #<번호>`(항목이 사라지지 않게).
-- 5단계 스모크는 없다(검증 URL 해당 없음). 그 뒤 approval-required 로 종료한다.
+- 그 뒤 approval-required 로 종료한다.
 
-**단, `<LIVE_CHECKS>` 의 형태 규율은 그대로다** — 이슈 발행 여부를 가르지 않을 뿐, 5단계 스모크 여부는
+**단, `<LIVE_CHECKS>` 의 형태 규율은 그대로다** — 이슈 발행 여부를 가르지 않을 뿐, 배포 뒤 무엇이 남는지는
 여전히 이 절이 가른다:
 
-- **체크박스가 하나라도 있으면** 그 목록이 이슈가 닫히는 조건이고, 5단계가 그것을 Chrome 스모크로
-  대조한다.
+- **체크박스가 하나라도 있으면** 그 목록이 이슈가 닫히는 조건이다 — deploy-cycle ⑤ 가 배포 뒤 남은 줄을
+  `테스트` 이슈로 옮기고 BoDAT `e2e-test` 가 밟는다.
 - **`없음` 이면** 이슈 제목에 `(승격만)` 을 붙이고 본문 `## 라이브/하드웨어 검증 항목` 에 `없음` 을 그대로
-  둔다. **5단계 스모크는 건너뛴다.** 이 이슈는 deploy-cycle 레인이 승격을 마치면 닫는다.
+  둔다. 이 이슈는 deploy-cycle 레인이 승격을 마치면 닫는다.
 
 **묶지 않는다.** 여러 배포 대기 이슈를 하나로 합치지 마라(사용자 결정, 2026-08-13). 개수가 늘어도
 **한 PR = 한 티켓 = 닫히는 시점이 명확한 그릇** 을 유지한다.
 
-**5단계 — 배포 후 처리 (Chrome 스모크).** (issue-runner 자기 레포 티켓은 4단계에서 이미 닫혔다 — 이 단계 대상이 아니다.) **배포 완료가 보고된** 배포 이슈에 대해(누가 보고했는지는 묻지
-않는다 — 배포 보고는 deploy-cycle 레인이 남긴다) 새 감지 기구 없이(폴링/타이밍 미도입) 능동적으로
-Chrome 스모크를 돌려 판정한다. 배포 이슈 본문에서 `## 검증 URL`(`<VERIFY_URL>`)과
-`## 라이브/하드웨어 검증 항목`(`<LIVE_CHECKS>`)을 파싱해 `references/smoke-prompt.md` 의 placeholder 에
-채우고 (**그 절을 손대지 말고 그대로 치환한다 — 표식 줄을 미리 걸러 내지 마라.** 프롬프트가 `[칸 ③]`
-표식 줄을 밟지 않고 `보류` 로 적어 내고, **세는 일은 `$SCRIPTS/smoke-tally.sh` 하나가 한다**, #448),
-chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱등 — 크래시 재개 방어): `list_pages` 로
-이전 틱이 정리 전에 죽어 남긴 스모크 페이지가 있으면 `close_page` 로 먼저 닫는다.** 이어 `navigate_page`
-로 `<VERIFY_URL>` 에 진입한 뒤 각 항목을 `evaluate_script`/`take_snapshot` 으로 대조해 항목별 pass/fail 을
-산출한다 (구조/빈 상태 확인과 실 데이터 렌더 확인을 결과에 구분 표기).
-- **집계는 `$SCRIPTS/smoke-tally.sh` 한 자리다 (#448).** 표식 판별·분모 제외·보류 합산의 산술은 그
-  스크립트의 머리 주석이 SSOT 다. 여기서 손으로 세지 마라.
-  - **스모크 전 — 밟을 게 있는가.** 배포 이슈의 `## 라이브/하드웨어 검증 항목` 절을 파일로 써서
-    `$SCRIPTS/smoke-tally.sh --checks <절 파일>` 를 부른다(체크 모드 JSON: `open` · `steppable` ·
-    `held_marked` · `skipped`). `steppable` 이 0이면 **Chrome 을 띄우지 마라.** 다만 **끝내는 방식은
-    둘로 갈린다**:
-    - **`open` 이 0 (`없음` 절)** → 코멘트 `스모크 생략: 밟을 항목 0` 을 남기고 **완료**로 넘긴다.
-    - **`steppable` 은 0인데 `held_marked` 가 0이 아니다 (표식 줄만 남았다)** → Chrome 은 띄우지 않되
-      **완료가 아니다.** `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다`
-      (`<n>`=`held_marked`) + `보류 내역: 표식 <a>건 · 표식 없는 미밟음 0건`(`<a>`=`held_marked`) 코멘트를
-      남기고 **이슈를 닫지 않는다** — 칸 ③ 은 배포 뒤 `e2e-test`(deploy-cycle ⑦)의 몫이다.
-  - **스모크 후 — 무엇을 봤는가.** 프롬프트가 낸 **판정 줄만**(`<판정> <원본 항목 줄>` — 어휘는
-    `pass`·`fail`·`보류` 셋뿐, 문법은 스크립트 머리 주석) 파일로 모아
-    `$SCRIPTS/smoke-tally.sh --checks <절 파일> <결과 파일>` 를 부르고(원본 체크리스트가 **분모의
-    진실**이다, #467) 아래 갈래를 그 JSON 으로 가른다: `verdict`(`green`|`fail`|`held`|`skip`) · 분모
-    `denominator` · 보류 `held`(내역 `held_marked`·`held_unstepped`). **`verdict` 만 보지 마라** — fail 과
-    보류는 동시에 참일 수 있어 fail 갈래에서도 `held` 가 남으면 이슈를 닫지 않는다. `unparsed`·`duplicate`
-    가 0이 아니면 그 항목이 보류로 세어져 그 틱은 green 이 될 수 없다 — ④ Report 에 한 줄로 올린다.
-    **스모크가 아예 못 돈 저하(degrade) 틱에서는 이 호출을 하지 마라** — 저하는 아래 degrade 절이
-    소유한다.
-- **실장비 항목이 남아 있으면 green 이어도 닫지 않는다 (칸 ③ 은 크롬이 못 밟는다).** 판별은 접두 표식
-  `[칸 ③]`·`[dev]` **로만** 한다 — 판별 술어를 여기서 새로 만들지 마라. `held` 가 0이 아니면 나머지가 전부
-  통과해도 배포 이슈를 닫지 말고 `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다`
-  (`<n>`=`held`) 코멘트로 끝낸다(`[dev]` 표식 줄도 `smoke-tally.sh` 가 같은 `held` 에 센다 — 문구는 계약이라
-  그대로 둔다) — 칸 ③ 은 배포 뒤 `e2e-test` 의 몫이라
-  (`references/loop-conventions.md` §9 주체별 상한 표), 여기서 닫으면 실장비 항목이 든 티켓이 TEST 워커를
-  한 번도 안 거치고 종결된다.
-  - **표식 없는 줄의 보류는 관측이지 해석이 아니다.** 표식 없는 줄은 프롬프트가 **일단 밟아 본다** —
-    밟았는데 기대와 다른 값이 나왔으면 `fail`(→ 아래 fail 갈래), 밟을 수단이 브라우저 밖(워커 박스·`ssh`·
-    AdsPower 클라이언트 조작 · 서버 셸 `bin/rails runner` · `log/*.out` grep)이라 **시도조차 못 했으면**
-    `보류`(=`held_unstepped`). 줄의 뜻을 읽어 실장비로 승격하지 마라. **그 보류에 후속 이슈를 발행하지
-    마라**(#309) — 결함이 아니라 밟는 레인이 다를 뿐이다.
-  - **표식을 대신 붙이지 마라.** 마커 문구는 하나로 두되, 내역은 스크립트가 낸 수로 한 줄 남긴다:
-    `보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건 — 재고 · 4단계 표식 누락 · 또는 4단계가 수단을 적어 보낸 비-칸③ 줄`
-    (`<a>`=`held_marked` · `<b>`=`held_unstepped`).
-- **이미 닫힌 배포 이슈 — 스모크 생략.** 배포 이슈가 이미 CLOSED 이고 검증/배포 완료 코멘트가 있으면
-  5단계 완료로 간주한다 — 재스모크하지 않고 다음 단계로 진행한다(남은 검증 항목은 그때 `테스트` 이슈로
-  옮겨져 있다).
-- **저하(degrade) — 조용한 skip 금지.** chrome-devtools MCP 가 세션에 없거나 `<VERIFY_URL>` 이 비었거나
-  도달 불가면, 스모크를 건너뛰고 배포 레인(deploy-cycle)의 사람 보고 경로로 폴백하되 배포 이슈에
-  `스모크 skip: <사유>` 코멘트를 남긴다(누락 은폐 금지). 단 **"도달 불가" 는 마지막에만 쓴다** (#153):
-  `<VERIFY_URL>` 이 안 열리면 skip 을 적기 전에 smoke-prompt 의 재시도 사다리를 먼저 밟는다 — ① 그 레포의
-  원격 접근용 주소 ② SSH 터널. **둘 다 실패했을 때만** 도달 불가다. **브라우저를 아예 기동하지 않았으므로
-  정리 대상도 없다 — 아래 브라우저 정리는 no-op(누수 아님).**
-- **green (`verdict=green` — 전부 통과 + 보류 0)** → 배포 이슈 + 원본 PR 에
-  `✅ 스모크: <n>/<n> 통과`(`<n>/<n>` = `pass`/`denominator`) 코멘트(이 코멘트가 5단계 완료 마커 — 재개
-  틱이 재스모크하지 않는다). 이어 배포 이슈에서 `needs-human` 라벨을 제거하고 배포 이슈를 close 한다.
-  **`held` 가 0이 아니면 애초에 이 갈래가 아니다** — 그때는 `verdict` 가 `held` 로 나오고, 위 실장비 절이
-  소유한다: 라벨 정리까지만 하고 이슈는 열어 둔 채 `종결 보류: …` 코멘트로 끝낸다.
-- **fail (`verdict=fail` — `fail` 이 한 건이라도)** — **크롬이 밟은 줄만 여기 온다.** 위 fail-closed 로
-  보류한 미밟음 줄은 fail 이 아니므로 아래 발행 대상에서 뺀다(#309). → 직접 고치지 않고 기존 발행 경로:
-  자동수정 가능하면 `references/spinoff-issue.md` 로 agent-ready 이슈(**6단계와 같은 한 호출**
-  `$SCRIPTS/spinoff-issue.sh <repo> <부모 이슈#> <부모 PR#> --title "<제목>" --body-file <본문파일>` —
-  상속·라벨·readback·마커가 그 안에 있다. 여기도 산문으로 대신하지 마라), 라이브 검증이 필요하면
-  `--label needs-human` 이슈. 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복되면 `needs-human` 으로 승격한다
-  (**exhausted 종료**). 배포 이슈는 닫지 않는다. 라벨명은 `needs-human`(하이픈)이다 — `needs:human` 은
-  존재하지 않는 라벨이라 `gh issue create` 가 통째로 실패한다(콜론형은 `needs:hardware` 뿐).
-  - **코드무관 스모크 실패 기록 (lessons).** 그 스모크 실패가 코드 무관(인프라 장애·플레이크·검증 URL
-    일시 오류 등)으로 판명되면, 위 발행 경로와 별개로 `$SCRIPTS/repo-dir.sh <repo>` 해석 경로 밑
-    **`.loop/lessons-verifier.md`** 에 `- [YYYY-MM-DD PR#<pr>] <스모크 오판 패턴 → 재발 방지 행동>` 1줄을,
-    위 1단계와 같은 호출로 append·정리한다 — `$SCRIPTS/lessons-trim.sh append <파일> 20 "<1줄>"`.
-    코드 결함으로 판명된 실패는 여기 기록하지 않는다 — 발행 경로가 담당.
-- **브라우저 정리 — 누수 방지 (공통 종료, green·fail·degrade 모두).** 위 스모크 판정 코멘트를 남긴 **뒤**,
-  이 틱이 연 chrome-devtools 페이지를 `list_pages`→`close_page` 로 반드시 닫는다 — 세 종료 경로 어느
-  쪽으로 빠졌든 예외 없이(정리 전에 return 하지 마라). degrade 로 브라우저를 안 열었으면 정리 대상이 없어
-  no-op 이고(단 URL 도달 불가를 판정하느라 `navigate_page` 를 시도해 에러 탭이 열렸으면 그 탭도
-  `close_page` 한다), 스모크 대상이 없는 정상 no-op 틱도 브라우저를 열지 않는다.
+**5단계 — 폐지 (2026-11-08, #606).** 배포 후 Chrome 스모크 단계는 없다 — 4단계 다음은 6단계다. 배포 뒤 확인은
+deploy-cycle ④(서버 생존) · ⑤(남은 검증 항목을 `테스트` 이슈로 이관) · BoDAT 배포 뒤 회차 `[기계]`(prod 데이터) ·
+담당자 슬랙 #3-확인요청(prod 화면)이 맡는다. 번호는 비워 둔다(6단계 마커·문구가 번호를 쓴다). (근거: closeout-rationale §18)
 
 **6단계 — 파생 이슈.** 입력은 워커 PR 본문의 `follow-up:` 항목 + 1단계 diff 리뷰가 짚은 인접 작업이다.
 **입력을 이슈로 옮겨 적지 않는다 — 항목마다 먼저 판정하고, 이슈는 다섯 갈래 중 마지막 ⓔ 뿐이다**
@@ -754,7 +677,7 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
 
 ## ⑤ Drain — 다음 후보로 즉시 이어가기
 
-③ 파이프라인이 집은 PR 을 종료 상태(success·approval-required·blocked·dup·exhausted)에 닿게 한 **직후**,
+③ 파이프라인이 집은 PR 을 종료 상태(success·approval-required·blocked·dup)에 닿게 한 **직후**,
 그 PR 의 결과를 ④ Report 용으로 누적해 두고 **다음 틱을 기다리지 말고 ①①-b② 로 되돌아간다**:
 
 - ① Reconcile + ①-b 정체 스윕 + ② Pick 을 다시 수행한다. ② Pick 이 **새 후보를 집으면** 그 PR 로
@@ -794,14 +717,13 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
   (warn 아님) — verify-runner 가 재검증해 새 ✅ 를 찍기 전까진 매 틱 반복되는 것이 정상이다
   (사람 답글은 풀지 않는다 — ② Pick 참조).
 
-종료 상태 7종 — 처리한 PR **각각**에 대해 명시한다(드레인으로 여러 개면 PR 별로):
-- **success** — 1~6단계를 다 돌아 PR 을 머지하고 후속까지 발행함(입양·rebase 회수분 포함).
+종료 상태 6종 — 처리한 PR **각각**에 대해 명시한다(드레인으로 여러 개면 PR 별로):
+- **success** — 1~4·6단계를 다 돌아 PR 을 머지하고 후속까지 발행함(입양·rebase 회수분 포함).
 - **clean no-op** — ② Pick 후보가 0이라 마감할 PR 이 없음(①-b 재디스패치만 있었어도 no-op 아님 — `재디스패치 N` 보고).
 - **blocked** — 1단계 검증이 BLOCKER 이거나 2단계 rebase 통합 실패라 보류(머지 안 함).
 - **dup** — 1단계 검증이 "이미 `origin/main` 에 있다·중복" 으로 판정해 `closeout-dup` 으로 PR·이슈를 머지
   없이 닫음(`needs-human` 없음 — 루프가 끝낸 것이다). `중복종료 N` 으로 집계.
 - **approval-required** — 4단계에서 배포 이슈를 발행하고 deploy-cycle 레인에 인계.
-- **exhausted** — 5단계 같은 실패가 `REPAIR_RECUR_LIMIT` 회 반복돼 needs-human 승격.
 - **stagnated** — `QUIET_TICKS` 연속 조용함(①-b 스윕은 stagnated 여도 매 틱 돈다).
 
 `QUIET_TICKS` 연속으로 조용해도 ①②는 다음 틱에도 그대로 수행한다 — stagnated 는 보고에만 반영되고 어떤
@@ -811,13 +733,13 @@ chrome-devtools MCP 도구를 ToolSearch 로 로드하고, **진입 정리(멱�
 
 비운영 참고 — 틱 수행에는 영향 없다.
 
-- 사고 이력·설계 근거: `references/closeout-rationale.md`(§1~§16, 한글 전용). 각 절 끝의
+- 사고 이력·설계 근거: `references/closeout-rationale.md`(§1~§18, 한글 전용). 각 절 끝의
   `(근거: closeout-rationale §N)` 이 그 절을 가리킨다.
 - 역할 분담: issue-runner = 벌리는 공장 (절대 머지하지 않고 불변을 보존), closeout = 마감 도크 (머지를
   독점). 두 루프는 `harvesting` 라벨 점유로 충돌을 막는다.
 - 배포 레인(deploy-cycle): production 배포·release 승격은 closeout 이 하지 않는다 — 4단계가 dry-run 배포
-  대기 이슈를 발행해 deploy-cycle 루프에 넘기고, 배포·승격·실테스트(칸 ③ TEST 워커)·종료는 그 레인의
-  ⑦ 이 소유한다. 예외는 issue-runner 자기 레포 하나 — 4단계가 미니 pull 로 즉시 배포하고 닫는다(2026-10-28).
+  대기 이슈를 발행해 deploy-cycle 루프에 넘기고, 배포·승격·종료는 그 레인이 소유하고, 남은 검증 항목(칸 ③ TEST 워커 포함)은
+  ⑤ 가 `테스트` 이슈로 옮겨 `e2e-test` 가 밟는다. 예외는 issue-runner 자기 레포 하나 — 4단계가 미니 pull 로 즉시 배포하고 닫는다(2026-10-28).
   나머지 머지·문서반영·후속발행은 closeout 이 무인으로 한다.
 - 운용: closeout 은 issue-runner 와 별도의 `/loop` 세션으로 돌린다 (예 `/loop 20m /closeout`) — 서로의
   점유를 라벨로만 조율한다.

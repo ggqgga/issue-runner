@@ -159,7 +159,7 @@ The handoff is an issue. When closeout merges a green PR to `main`, it doesn't d
 2. **Verify on dev/staging** — the deploy-cycle lane checks the batch against a dev server, exercising the behavior the loops can't fully prove on their own.
 3. **Promote** — passing SHAs are promoted to `release` and tagged with a version. A failure halts promotion; production stays on the previous `release`.
 4. **Ship** — production (or a worker) pulls `release`, deploys, and smoke-tests.
-5. **Close** — deploy-cycle ⑦ closes the shipped deploy-pending issues in a batch. Anything judged broken becomes a fix issue that re-enters the loop at the top.
+5. **Close** — deploy-cycle ⑤ closes the shipped deploy-pending issues in a batch. Verification items left after the deploy move into a `테스트` issue for the e2e-test lane.
 
 ```mermaid
 flowchart TD

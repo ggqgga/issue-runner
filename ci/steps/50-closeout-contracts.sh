@@ -14,10 +14,9 @@
 #   • [#411] closeout 6단계 판정 표·파생 판정 코멘트·출처 줄 (표 신규 행 · #411)
 #   • [closeout] ③-1 네이티브↔폴백 프롬프트 동기화        (행 29 · #207 attempt8)
 #   • [closeout·verify-runner] codex 호출 상한 불변       (행 31 · #375)
-#   • [closeout] smoke-prompt 한/영 placeholder           (행 32 · #69)
 #   • [closeout] verifier-prompt lessons 주입 placeholder (행 38 · #80)
 #
-# 만료 조건 — 치환 슬롯 축(26·27-b·32·38): 프롬프트 조립이 산문이 아니라 스크립트
+# 만료 조건 — 치환 슬롯 축(26·27-b·38): 프롬프트 조립이 산문이 아니라 스크립트
 # 인자로 옮겨질 때. 센티널(24): 주입이 코멘트 게시 스크립트로 갈 때. 배타성(29): 두
 # 프롬프트가 한 템플릿+인자로 합쳐질 때. 상한(31): CODEX_REVIEW_LIMIT 값이
 # scripts/lib/constants.sh 로 이사하면 ⓑ. #411: 6단계 판정 표가 스크립트로 갈 때.
@@ -149,19 +148,6 @@ if grep -qE 'codex-review-gate\.sh --' skills/closeout/SKILL.md skills/closeout/
 fi
 grep -qF 'CODEX_REVIEW_LIMIT = 2' skills/verify-runner/SKILL.md \
   || { echo "  ✗ verify-runner SKILL.md 에 'CODEX_REVIEW_LIMIT = 2' 가 없다 — PR 당 codex 2회 상한(#375)"; exit 1; }
-
-echo "[closeout] smoke-prompt 한/영 placeholder 검사 (#69)"
-# 5단계 Chrome 스모크 동봉형 프롬프트(verifier-prompt.md 미러) — 한/영 양쪽이
-# 존재하고 두 placeholder 를 다 담아야 한다. <VERIFY_URL>=production 베이스 URL,
-# <LIVE_CHECKS>=배포 이슈 본문의 검증 항목 — 5단계가 런타임에 치환하는 계약.
-# 지우면 동봉형 프롬프트가 깨져 스모크가 빈 컨텍스트로 도는 회귀.
-for f in skills/closeout/references/smoke-prompt.md \
-         skills/closeout/references/smoke-prompt.en.md; do
-  [ -f "$f" ] || { echo "  ✗ 누락: $f"; exit 1; }
-  for ph in '<VERIFY_URL>' '<LIVE_CHECKS>'; do
-    grep -qF "$ph" "$f" || { echo "  ✗ $f 에 $ph 없음"; exit 1; }
-  done
-done
 
 echo "[closeout] verifier-prompt lessons 주입 placeholder 검사 (#80 변경 4)"
 # 1단계 검증자가 과거 오판 패턴(인용 오판·base 맹점 등)을 반복하지 않도록 lessons 를
