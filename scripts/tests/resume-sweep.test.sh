@@ -352,13 +352,24 @@ chmod +x "$tmp/bin/gh"
 # 그 실패는 픽스처(데이터)로는 못 만든다 — 어댑터가 라벨 콤마목록에서 row-json 을 **스스로**
 # 만들어 넣기 때문에 어떤 라벨이 와도 JSON 은 항상 정상이다. 즉 유일한 도달 경로가 도구
 # 실패라, 인자에 표식(`deploy-wait-adapter`)이 있는 **그 한 호출만** 실패시킨다.
-REAL_JQ=$(command -v jq)
+# (#610) 진짜 jq 는 mise shim 이 아닌 첫 후보다 — shim 은 비활성일 때 PATH 에서 다음 `jq` 를
+# 찾아 넘기는데, 그게 PATH 맨 앞의 이 스텁이라 스텁↔shim 이 끝없이 돈다(m2 실측).
+REAL_JQ=""
+for c in $(type -ap jq); do
+  case "$c" in */mise/shims/*) ;; *) REAL_JQ="$c"; break ;; esac
+done
+[ -n "$REAL_JQ" ] || { echo "FAIL: shim 아닌 jq 실행 파일이 PATH 에 없다" >&2; exit 1; }
 export REAL_JQ
 cat > "$tmp/bin/jq" <<'STUB'
 #!/usr/bin/env bash
 if [ -n "${STUB_JQ_FAIL_PAT:-}" ]; then
   case "$*" in *"$STUB_JQ_FAIL_PAT"*) echo "jq: stubbed failure" >&2; exit 5 ;; esac
 fi
+# (#610) 재귀 가드 — REAL_JQ 가 어떤 경로로든 이 스텁으로 되돌아오면 멈추지 말고 끝낸다.
+if [ -n "${STUB_JQ_ENTERED:-}" ]; then
+  echo "jq 스텁: 재귀 감지 — REAL_JQ($REAL_JQ) 가 스텁으로 되돌아왔다" >&2; exit 99
+fi
+export STUB_JQ_ENTERED=1
 exec "$REAL_JQ" "$@"
 STUB
 chmod +x "$tmp/bin/jq"
@@ -2758,6 +2769,20 @@ pr_comments "$pc_note"
 run_sut "$mut"
 check "PR축 conflict ⓗ: PR 축이 없으면 PR 단독 hold:conflict 가 무기한 남는다" \
   "$([ "$(no_ev escalated)" = ok ] && [ "$(haspr hold:conflict)" = ok ] && [ "$(counts 'pr edit')" = 0 ] && echo ok || echo no)"
+
+# ── (#610) jq 스텁 재귀 가드 — 스텁이 자기 자신으로 되돌아오면 멈추지 않고 99 ──
+# m2 의 mise shim 이 PATH 를 다시 뒤져 이 스텁으로 넘기던 순환(박스 CI 큐 32분 정지)을
+# 경로와 무관하게 끊는지 본다. 가드가 빠지면 무한 exec 라 5초 감시로 끊고 실패로 센다.
+( REAL_JQ="$tmp/bin/jq" exec "$tmp/bin/jq" -n 1 ) >/dev/null 2>"$tmp/jq-recursion.err" &
+jpid=$!
+i=0
+while kill -0 "$jpid" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+if kill -0 "$jpid" 2>/dev/null; then
+  kill -9 "$jpid" 2>/dev/null; wait "$jpid" 2>/dev/null; rc=hang
+else
+  rc=0; wait "$jpid" || rc=$?
+fi
+check "jq 스텁 재귀는 즉시 exit 99 (rc=$rc)" "$([ "$rc" = 99 ] && echo ok || echo no)"
 
 # ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
 # 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는
