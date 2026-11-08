@@ -352,13 +352,10 @@ chmod +x "$tmp/bin/gh"
 # 그 실패는 픽스처(데이터)로는 못 만든다 — 어댑터가 라벨 콤마목록에서 row-json 을 **스스로**
 # 만들어 넣기 때문에 어떤 라벨이 와도 JSON 은 항상 정상이다. 즉 유일한 도달 경로가 도구
 # 실패라, 인자에 표식(`deploy-wait-adapter`)이 있는 **그 한 호출만** 실패시킨다.
-# (#610) 진짜 jq 는 mise shim 이 아닌 첫 후보다 — shim 은 비활성일 때 PATH 에서 다음 `jq` 를
-# 찾아 넘기는데, 그게 PATH 맨 앞의 이 스텁이라 스텁↔shim 이 끝없이 돈다(m2 실측).
-REAL_JQ=""
-for c in $(type -ap jq); do
-  case "$c" in */mise/shims/*) ;; *) REAL_JQ="$c"; break ;; esac
-done
-[ -n "$REAL_JQ" ] || { echo "FAIL: shim 아닌 jq 실행 파일이 PATH 에 없다" >&2; exit 1; }
+# (#610·#614) 진짜 jq 고르기는 real-jq.sh — shim 은 그대로 쓰지 않고 mise 로 풀어 본다.
+# shellcheck source=real-jq.sh
+. "$DIR/tests/real-jq.sh"
+REAL_JQ=$(pick_real_jq) || { echo "FAIL: shim 아닌 jq 실행 파일이 PATH 에 없다" >&2; exit 1; }
 export REAL_JQ
 cat > "$tmp/bin/jq" <<'STUB'
 #!/usr/bin/env bash
@@ -2783,6 +2780,16 @@ else
   rc=0; wait "$jpid" || rc=$?
 fi
 check "jq 스텁 재귀는 즉시 exit 99 (rc=$rc)" "$([ "$rc" = 99 ] && echo ok || echo no)"
+
+# ── (#614) mise 로만 깐 jq — PATH 의 jq 가 shim 하나뿐이면 `mise which jq` 로 실바이너리를 푼다 ──
+# 가짜 shim(그대로 부르면 실패)과 실 jq 경로를 내는 `mise` 스텁만 PATH 에 둔다.
+mo="$tmp/mise-only"; mkdir -p "$mo/mise/shims" "$mo/mbin"
+printf '#!/bin/sh\nexit 3\n' > "$mo/mise/shims/jq"
+printf '#!/bin/sh\n[ "$1 $2" = "which jq" ] && echo "%s"\n' "$REAL_JQ" > "$mo/mbin/mise"
+chmod +x "$mo/mise/shims/jq" "$mo/mbin/mise"
+mo_jq=$(PATH="$mo/mise/shims:$mo/mbin" /bin/bash -c '. "$1"; pick_real_jq' _ "$DIR/tests/real-jq.sh")
+check "mise 전용 박스: shim 을 mise which 로 풀어 실 jq 를 쓴다 (got=$mo_jq)" \
+  "$([ "$mo_jq" = "$REAL_JQ" ] && [ "$("$mo_jq" -n 1 2>/dev/null)" = 1 ] && echo ok || echo no)"
 
 # ── (#197) 프롬프트와 스크립트가 같은 수를 센다 — jq 인용 제거 정의 동기화 ──
 # 디스패처(SKILL.md ③-4d)도 같은 jq 로 재개 횟수를 센다. 정의가 갈라지면 사람 눈에 안 보이는

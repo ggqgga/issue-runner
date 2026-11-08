@@ -146,13 +146,10 @@ chmod +x "$tmp/bin/gh"
 # 쓰는 곳은 둘: 라벨 파싱(`# epic-labels`)과 leaf 번호 목록(`# leaf-list`)의 **도구 실패**가
 # fail-closed 인지. 둘 다 입력이 이미 유효 JSON 이라 데이터(픽스처)로는 못 닿는다 — 유일한
 # 도달 경로가 도구 실패라, 인자에 표식이 있는 **그 한 호출만** 실패시킨다.
-# (#610) 진짜 jq 는 mise shim 이 아닌 첫 후보다 — shim 은 비활성일 때 PATH 에서 다음 `jq` 를
-# 찾아 넘기는데, 그게 PATH 맨 앞의 이 스텁이라 스텁↔shim 이 끝없이 돈다(m2 실측).
-REAL_JQ=""
-for c in $(type -ap jq); do
-  case "$c" in */mise/shims/*) ;; *) REAL_JQ="$c"; break ;; esac
-done
-[ -n "$REAL_JQ" ] || { echo "FAIL: shim 아닌 jq 실행 파일이 PATH 에 없다" >&2; exit 1; }
+# (#610·#614) 진짜 jq 고르기는 real-jq.sh — shim 은 그대로 쓰지 않고 mise 로 풀어 본다.
+# shellcheck source=real-jq.sh
+. "$DIR/tests/real-jq.sh"
+REAL_JQ=$(pick_real_jq) || { echo "FAIL: shim 아닌 jq 실행 파일이 PATH 에 없다" >&2; exit 1; }
 export REAL_JQ
 cat > "$tmp/bin/jq" <<'STUB'
 #!/usr/bin/env bash
