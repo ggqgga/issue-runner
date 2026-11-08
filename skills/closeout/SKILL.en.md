@@ -35,12 +35,10 @@ occupation (issue-runner ② Maintain does not touch `harvesting` PRs).
 ## Constants
 
 - `MAX_CLOSEOUT = 1` — **concurrency 1** (close out exactly 1 PR end to end at a time). It is not a per-tick
-  cap — the moment a PR reaches a terminal state (success·approval-required·blocked·dup·exhausted),
+  cap — the moment a PR reaches a terminal state (success·approval-required·blocked·dup),
   **do not wait for the next tick**: go back to ①①-b② and pick the next candidate (⑤ Drain). Only when the
   queue is empty (② Pick returns 0 candidates) does the tick end and rest for the `/loop` interval. The
   `/loop` interval only tunes **the rescan gap while the queue is empty**.
-- `REPAIR_RECUR_LIMIT = 2` — when the same post-deploy failure recurs N times, escalate to `needs-human`
-  instead of re-issuing agent-ready (the step-5 circuit breaker).
 - `QUIET_TICKS = 3` — after N consecutive ticks with no candidate or event, report stagnated. **① Reconcile,
   the ①-b sweep and ② Pick still run on every tick afterwards** — stagnated is a pure reporting label and
   skips no step.
@@ -92,7 +90,6 @@ Idempotency marker table (for re-judging finished steps — prevents duplicate w
 | 2 merge | PR `MERGED` | if MERGED the merge is done (worktree cleanup right after the merge included) |
 | 3 reconcile | plan-doc diff (merge commit) + epic comment | if included in the merge, done |
 | 4 deploy | `배포 대기:` comment / `deployed:<sha>` | if present, do not re-request |
-| 5 post | `✅ 스모크` comment / deploy issue CLOSED + verification·deploy-complete comment | if present, do not re-smoke (including when the deploy lane (deploy-cycle) finished verification and closed it) |
 | 6 spinoffs | the `파생 판정:` comment (#411 — posted last, after every branch action) · the created issue-number (`파생:`) comment | `파생 판정:` present → step 6 done (including ⓔ = 0) · only `파생:` present → do not re-file that issue |
 
 **The step-1 marker judgment is one place, `closeout-step1-marker.sh`** — it ANDs ⒜ is the latest
@@ -363,7 +360,7 @@ is normal. It is a `막힘` item rather than a `warn` per the channel boundary i
 
 ## ③ Pipeline — steps 1–6
 
-Perform the 6 steps below in order on the picked PR. Plant the marker command at the end of each step
+Perform the steps below (1–4 · 6 — step 5 is retired) in order on the picked PR. Plant the marker command at the end of each step
 (① Reconcile's marker table) so the next tick can resume idempotently.
 (rationale: closeout-rationale §10–§15)
 
@@ -579,8 +576,8 @@ includes it (never push to main directly). If there is an epic, leave a progress
 
 **Step 4 — deploy-lane handoff (dry run).** **closeout does not deploy (the issue-runner repo itself is the one exception — "deploys on merge" below); it hands a deploy-wait issue to the
 deploy-cycle loop.** Fill `references/deploy-check-issue.md` (`<DEPLOY_CMD>` = the repo's deploy entry point,
-or "repo deploy procedure" if unknown; `<VERIFY_URL>` = the production base URL — the address the step-5 smoke
-drives, or leave blank so step 5 falls back to URL-unreachable; `<LIVE_CHECKS>` = items from the PR test plan
+or "repo deploy procedure" if unknown; `<VERIFY_URL>` = the prod base URL (reference for operators and
+e2e-test), or leave it blank if unknown; `<LIVE_CHECKS>` = items from the PR test plan
 and the issue body marked as **performable only after the merge** — "post-deploy live verification", hardware
 / real-device checks — the sole handoff destination for verification items step 1's verifier excluded from the
 merge gate).
@@ -596,18 +593,18 @@ merge gate).
   ③** — the basis for the test is the mark, not the sentence's meaning.
 - **A line that must be stepped by writing to the m2 dev server takes the prefix mark `[dev]`** —
   `- [ ] [dev] <action>` (BoDAT only, #596). Attach it only to lines carried over because rung ①b below could not
-  be stepped (locked · time cap). The Chrome smoke counts such a line as held; BoDAT `e2e-test` pre-deploy
+  be stepped (locked · time cap). BoDAT `e2e-test` pre-deploy
   verification closes it on m2 dev — if the user did not run e2e-test before the deploy, deploy-cycle ⑤ carries it
   into a `테스트` issue (it slips to after the deploy).
-- **A line without the mark must be steppable by Chrome.** If a line is not rung ③ but needs a means outside
-  the browser, write that means on the line so ⑦ can step it straight away.
+- **A line without the mark must show how it is stepped.** If a line is not rung ③ but needs a means outside
+  the browser, write that means on the line so `e2e-test` can step it straight away.
 
 **Before moving them, closeout climbs the ladder once (never move an untried `[ ]` as-is).** Among the
 worker's unfinished items, do not move ones **left as bare `[ ]` with no ladder attempt or citation** —
 closeout first tries **rung ① (dev server) and rung ② (`bin/dry-run` · AdsPower relay)** from
 `~/.claude/skills/issue-runner/references/live-verification-ladder.md` **once each** and then moves them (the
 per-actor cap table is `references/loop-conventions.md` §9 — this loop's cap is rung ②). **Rung ③ (the TEST
-worker) belongs to `e2e-test` after the deploy.** Leave the rung-①② results alongside so ⑦ does not repeat the
+worker) belongs to `e2e-test` after the deploy.** Leave the rung-①② results alongside so `e2e-test` does not repeat the
 same rung.
 **For BoDAT, rung ① does not stop at ①a (empty DB)** — a line whose evidence is a write round trip or state
 transition on production data (including `[dev]`-marked lines) is stepped on rung ①b (the m2 dump dev) on
@@ -647,7 +644,7 @@ merged means it entered the promotion scope, and that fact must be visible to a 
   `--hardware` **and the repo defines it**) → on a missing label, `setup-labels.sh` once + one retry → and
   failing that, **issues with no `--label` at all** to prevent ticket loss → reads the labels back and tops
   them up → leaves the marker `배포 대기: #<number>` on the PR. stdout is the issue number, one line. Omit
-  `--verify-url` when `<VERIFY_URL>` is unknown (step 5 falls back to URL-unreachable).
+  `--verify-url` when `<VERIFY_URL>` is unknown.
   - **exit 0** → the marker landed too, so **end as approval-required**.
   - **exit 65 (shape violation before issuance — the issue does not exist yet)** — it means `<LIVE_CHECKS>` is
     prose. Move background and rationale into `## 변경 요약`, leave only `없음` or `- [ ]` in the items slot,
@@ -688,110 +685,23 @@ git -C $D pull -q --ff-only && git -C $D merge-base --is-ancestor <merge SHA> HE
   `~/Projects/BODA/BoDAT/.claude/skills/deploy-cycle/SKILL.md`). Write `미니 issue-runner <sha>` where it says
   `$NEW_TAG (release $TARGET)`. **Close only once you have the `테스트` issue number** — if filing fails, leave the
   ticket open and put `BLOCKED: 테스트 이슈 발행 실패 #<number>` in ④ Report (so the items are not lost).
-- There is no step-5 smoke (no verify URL). Then end as approval-required.
+- Then end as approval-required.
 
 **The `<LIVE_CHECKS>` shape discipline still stands** — it no longer decides whether the issue is filed, but
-it still decides whether step 5 smokes:
+it still decides what is left after the deploy:
 
-- **If there is at least one checkbox**, that list is the condition for closing the issue, and step 5 checks it
-  against a Chrome smoke.
+- **If there is at least one checkbox**, that list is the condition for closing the issue — after the deploy
+  deploy-cycle ⑤ carries the leftover lines into a `테스트` issue and BoDAT `e2e-test` steps them.
 - **If it is `없음`**, append `(승격만)` to the issue title and leave `없음` as-is under
-  `## 라이브/하드웨어 검증 항목`. **Skip the step-5 smoke.** The deploy-cycle lane closes this issue once
-  promotion is done.
+  `## 라이브/하드웨어 검증 항목`. The deploy-cycle lane closes this issue once promotion is done.
 
 **Do not bundle.** Never merge several deploy-wait issues into one (user decision, 2026-08-13). However many
 there are, keep **one PR = one ticket = one vessel with a clear closing point**.
 
-**Step 5 — post-deploy handling (Chrome smoke).** (An issue-runner self-repo ticket was already closed in step 4 — it is not this step's target.) For a deploy issue **whose deploy has been reported** (who
-reported it is not asked — the deploy report is left by the deploy-cycle lane), actively run a Chrome smoke
-and judge, with no new detection machinery (no polling/timing). Parse `## 검증 URL` (`<VERIFY_URL>`) and
-`## 라이브/하드웨어 검증 항목` (`<LIVE_CHECKS>`) from the deploy issue body into
-`references/smoke-prompt.en.md`'s placeholders (**substitute that section untouched — do not pre-filter the
-marked lines.** The prompt does not step `[칸 ③]`-marked lines and writes them out as `보류`, and **the
-counting is done by `$SCRIPTS/smoke-tally.sh` alone**, #448), load the chrome-devtools MCP tools via
-ToolSearch, and do the **entry cleanup (idempotent — crash-resume defense): with `list_pages`, close any
-smoke page a previous tick left behind before cleanup with `close_page` first.** Then enter `<VERIFY_URL>`
-with `navigate_page` and check each item with `evaluate_script`/`take_snapshot` to produce a per-item
-pass/fail (mark structure/empty-state checks distinctly from real-data render checks in the result).
-- **Tallying is one place, `$SCRIPTS/smoke-tally.sh` (#448).** The arithmetic of mark detection, denominator
-  exclusion and hold summation is owned by that script's header comment. Do not count by hand here.
-  - **Before the smoke — is there anything to step?** Write the deploy issue's
-    `## 라이브/하드웨어 검증 항목` section to a file and call
-    `$SCRIPTS/smoke-tally.sh --checks <section file>` (check-mode JSON: `open` · `steppable` · `held_marked` ·
-    `skipped`). If `steppable` is 0, **do not launch Chrome.** But **how you end splits in two**:
-    - **`open` is 0 (a `없음` section)** → leave the comment `스모크 생략: 밟을 항목 0` and pass it to
-      **complete**.
-    - **`steppable` is 0 but `held_marked` is not (only marked lines remain)** → do not launch Chrome, but
-      **this is not complete.** Leave the comments
-      `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` (`<n>` = `held_marked`) and
-      `보류 내역: 표식 <a>건 · 표식 없는 미밟음 0건` (`<a>` = `held_marked`) and **do not close the issue** —
-      rung ③ belongs to `e2e-test` (deploy-cycle ⑦) after the deploy.
-  - **After the smoke — what did you see?** Collect **only the verdict lines** the prompt produced
-    (`<verdict> <original item line>` — the vocabulary is only `pass`·`fail`·`보류`, the grammar is in the
-    script's header comment) into a file, call
-    `$SCRIPTS/smoke-tally.sh --checks <section file> <result file>` (the original checklist is **the truth of
-    the denominator**, #467), and split the branches below on that JSON: `verdict`
-    (`green`|`fail`|`held`|`skip`) · denominator `denominator` · holds `held` (breakdown `held_marked` ·
-    `held_unstepped`). **Do not look at `verdict` alone** — fail and hold can both be true, so even on the
-    fail branch a remaining `held` means the issue is not closed. If `unparsed` or `duplicate` is non-zero,
-    that item is counted as a hold and the tick cannot be green — put one line in ④ Report. **On a degraded
-    tick where the smoke never ran at all, do not make this call** — degradation is owned by the degrade
-    section below.
-- **If real-device items remain, do not close even on green (Chrome cannot step rung ③).** The test is the
-  prefix marks `[칸 ③]`·`[dev]` **and nothing else** — do not invent a new detection predicate here. If `held` is
-  non-zero, do not close the deploy issue even when everything else passed; end with the comment
-  `종결 보류: 실장비 항목 <n>건 — deploy-cycle ⑤ 가 테스트 이슈로 옮긴다` (`<n>` = `held`; `smoke-tally.sh` counts
-  `[dev]`-marked lines into the same `held` — the wording is a contract, keep it) — rung ③ belongs
-  to `e2e-test` after the deploy (`references/loop-conventions.md` §9's per-actor cap table), and closing here
-  would end a ticket holding real-device items without the TEST worker ever seeing it.
-  - **A hold on an unmarked line is an observation, not an interpretation.** The prompt **actually steps**
-    unmarked lines — if it stepped and got something other than expected, `fail` (→ the fail branch below); if
-    the means to step it is outside the browser (worker box · `ssh` · driving the AdsPower client · the server
-    shell `bin/rails runner` · grepping `log/*.out`) so it **could not even be attempted**, `보류`
-    (= `held_unstepped`). Do not read a line's meaning and promote it to real-device. **Do not file a
-    follow-up issue for that hold** (#309) — it is not a defect, only a different stepping lane.
-  - **Do not attach the mark on their behalf.** Keep the marker wording single, but leave the breakdown as one
-    line using the numbers the script produced:
-    `보류 내역: 표식 <a>건 · 표식 없는 미밟음 <b>건 — 재고 · 4단계 표식 누락 · 또는 4단계가 수단을 적어 보낸 비-칸③ 줄`
-    (`<a>` = `held_marked` · `<b>` = `held_unstepped`).
-- **An already-closed deploy issue — skip the smoke.** If the deploy issue is already CLOSED and has a
-  verification/deploy-complete comment, treat step 5 as done — do not re-smoke, proceed to the next step (the
-  remaining verification items were moved into a `테스트` issue at that time).
-- **Degrade — no silent skip.** If the chrome-devtools MCP is absent from the session, or `<VERIFY_URL>` is
-  empty or unreachable, skip the smoke and fall back to the deploy lane's (deploy-cycle) human reporting path,
-  but leave a `스모크 skip: <reason>` comment on the deploy issue (no hiding omissions). But **"unreachable" is
-  used only as a last resort** (#153): if `<VERIFY_URL>` does not open, climb smoke-prompt's retry ladder
-  before writing the skip — ① that repo's remote-access address ② an SSH tunnel. **Only when both fail** is it
-  unreachable. **Since the browser was never launched there is nothing to clean up — the browser cleanup below
-  is a no-op (not a leak).**
-- **green (`verdict=green` — all passed + 0 holds)** → comment `✅ 스모크: <n>/<n> 통과`
-  (`<n>/<n>` = `pass`/`denominator`) on the deploy issue and the original PR (this comment is the step-5
-  completion marker — a resuming tick does not re-smoke). Then remove the `needs-human` label from the deploy
-  issue and close it. **If `held` is non-zero this branch does not apply** — `verdict` comes out `held` and
-  the real-device section above owns it: tidy the labels only, leave the issue open, and end with the
-  `종결 보류: …` comment.
-- **fail (`verdict=fail` — at least one `fail`)** — **only lines Chrome actually stepped arrive here.** The
-  unstepped lines held fail-closed above are not fails, so exclude them from what is filed below (#309). → Do
-  not fix it directly; use the existing issuance path: if auto-fixable, an agent-ready issue via
-  `references/spinoff-issue.md` (**the same single call as step 6**,
-  `$SCRIPTS/spinoff-issue.sh <repo> <parent-issue#> <parent-pr#> --title "<title>" --body-file <body-file>` —
-  inheritance, labels, readback and the marker are inside it. Do not substitute prose here either); if live
-  verification is required, a `--label needs-human` issue. If the same failure recurs `REPAIR_RECUR_LIMIT`
-  times, escalate to `needs-human` (**exhausted exit**). Do not close the deploy issue. The label name is
-  `needs-human` (hyphen) — `needs:human` does not exist as a label and would make `gh issue create` fail
-  outright (the colon form is only `needs:hardware`).
-  - **Recording a code-unrelated smoke failure (lessons).** If that smoke failure turns out to be unrelated to
-    the code (infra outage, flake, a transient verification-URL error), then separately from the issuance path
-    above, append one line, `- [YYYY-MM-DD PR#<pr>] <smoke misjudgment pattern → preventive action>`, to
-    **`.loop/lessons-verifier.md`** under the path `$SCRIPTS/repo-dir.sh <repo>` resolves to, with the same
-    call as step 1 — `$SCRIPTS/lessons-trim.sh append <file> 20 "<line>"`. Failures that turn out to be
-    code defects are not recorded here — the issuance path owns those.
-- **Browser cleanup — leak prevention (common exit; green, fail and degrade alike).** **After** leaving the
-  smoke verdict comment above, close the chrome-devtools pages this tick opened with `list_pages`→`close_page`
-  without exception, whichever of the three exits you took (never return before the cleanup). If degrade meant
-  the browser was never opened there is nothing to clean up, a no-op (but if an error tab opened because you
-  attempted `navigate_page` while judging unreachability, `close_page` that tab too), and a normal no-op tick
-  with no smoke target never opens the browser either.
+**Step 5 — retired (2026-11-08, #606).** There is no post-deploy Chrome smoke step — step 4 is followed by step 6.
+Post-deploy checks belong to deploy-cycle ④ (server liveness) · ⑤ (carrying leftover verification items into a
+`테스트` issue) · BoDAT's post-deploy `[기계]` round (prod data) · the operators' Slack #3-확인요청 (prod screens).
+The number is left empty (step 6's markers and wording use its number). (rationale: closeout-rationale §18)
 
 **Step 6 — spinoff issues.** The input is the worker PR body's `follow-up:` items plus the adjacent work
 step 1's diff review flagged. **Do not transcribe the input into issues — judge every item first; an issue is
@@ -858,7 +768,7 @@ assemble `gh issue create` by hand here.
 ## ⑤ Drain — continue to the next candidate immediately
 
 **Immediately after** the ③ pipeline drives the picked PR to a terminal state
-(success·approval-required·blocked·dup·exhausted), accumulate that PR's result for ④ Report and **go back to
+(success·approval-required·blocked·dup), accumulate that PR's result for ④ Report and **go back to
 ①①-b② without waiting for the next tick**:
 
 - Run ① Reconcile + the ①-b stuck sweep + ② Pick again. If ② Pick **takes a new candidate**, continue
@@ -909,16 +819,14 @@ handling are per `references/loop-conventions.md` §7.
   (blocked) item, one line — not as a warn. It is normal for it to repeat every tick until
   verify-runner re-verifies and stamps a new ✅ (a human reply does not clear it — see ② Pick).
 
-State the 7 exit states — for **each** PR processed (per-PR when the drain handled several):
-- **success** — ran steps 1–6, merged the PR, and issued follow-ups (including adopt/rebase recoveries).
+State the 6 exit states — for **each** PR processed (per-PR when the drain handled several):
+- **success** — ran steps 1–4 · 6, merged the PR, and issued follow-ups (including adopt/rebase recoveries).
 - **clean no-op** — ② Pick had 0 candidates, so there was no PR to close (but if there were ①-b re-dispatches it is not a no-op — report `re-dispatched N`).
 - **blocked** — step-1 verification was a BLOCKER, or step-2 rebase integration failed, so it is on hold (no merge).
 - **dup** — step-1 verification judged it "already on `origin/main`·duplicate", so
   `closeout-dup` closed the PR and the issue without merging (no `needs-human` — the loop
   finished it). Counted as `dup-closed N` (`중복종료 N` in the Korean report line).
 - **approval-required** — step 4 issued a deploy issue and handed it to the deploy-cycle lane.
-- **exhausted** — the same step-5 failure recurred `REPAIR_RECUR_LIMIT` times,
-  escalated to needs-human.
 - **stagnated** — quiet for `QUIET_TICKS` consecutive ticks (the ①-b sweep runs every tick even then).
 
 Even after `QUIET_TICKS` consecutive quiet ticks, ①② still run on every tick —
@@ -928,7 +836,7 @@ stagnated only affects reporting; no step is ever skipped. (rationale: closeout-
 
 Non-operational notes — they do not affect tick execution.
 
-- Incident history and design rationale: `references/closeout-rationale.md` (§1–§16, **Korean only**). The
+- Incident history and design rationale: `references/closeout-rationale.md` (§1–§18, **Korean only**). The
   `(rationale: closeout-rationale §N)` line at the end of each section points at that section.
 - Role split: issue-runner = the factory that opens work (never merges, preserves
   invariants), closeout = the closing dock (monopolizes merging). The two loops
@@ -936,8 +844,8 @@ Non-operational notes — they do not affect tick execution.
 - Deploy lane (deploy-cycle): closeout does not deploy to production or promote (sole exception: the issue-runner
   repo itself, pulled on the mini and closed in step 4, 2026-10-28)
   release — step 4 files a dry-run deploy-wait issue and hands it to the deploy-cycle
-  loop, whose ⑦ owns deploying, promoting, real-device testing (rung ③, the TEST worker)
-  and closing. The rest — merge, doc reconcile, follow-up issuance — closeout does
+  loop, which owns deploying, promoting and closing; its ⑤ carries leftover verification items
+  (rung ③, the TEST worker, included) into a `테스트` issue for `e2e-test`. The rest — merge, doc reconcile, follow-up issuance — closeout does
   unattended.
 - Operation: run closeout as a `/loop` session separate from issue-runner
   (e.g. `/loop 20m /closeout`) — the two coordinate occupation purely by label.
