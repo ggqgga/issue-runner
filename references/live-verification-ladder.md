@@ -2,18 +2,19 @@
 
 루프(issue-runner · verify-runner · closeout · deploy-cycle)가 "라이브 검증이 필요하다"
 는 이유로 **시도 없이 멈추는 것을 금지**하는 문서다. 실측 필요는 멈출 이유가 아니라 다음
-할 일이다. 아래 네 칸을 ①→②→③ 순으로 올라가고, **시도한 칸과 실패 출력을 인용**해야만
+할 일이다. 아래 칸을 ①→②→③ 순으로 올라가고, **시도한 칸과 실패 출력을 인용**해야만
 ④(사람)로 넘길 수 있다.
 
 ## 칸 표
 
 | 칸 | 어느 박스에서 | 명령 | 판정 대상 | 실패 출력 인용법 |
 |---|---|---|---|---|
-| ①a dev — 빈 DB | 루프가 도는 박스(미니)의 워크트리 또는 맥북 | `bin/rails test <파일>` · `bin/rails runner '<식>'`(픽스처·시드 수준 DB) | 서버 로직·분기·렌더 — 운영 데이터가 없어도 판정되는 것 | 명령 한 줄 + stdout/stderr **마지막 20줄** |
+| ①a dev — 빈 DB | 루프가 도는 박스(m2 `ggq-m2`)의 워크트리 또는 맥북 | `bin/rails test <파일>` · `bin/rails runner '<식>'`(픽스처·시드 수준 DB) | 서버 로직·분기·렌더 — 운영 데이터가 없어도 판정되는 것 | 명령 한 줄 + stdout/stderr **마지막 20줄** |
 | ①b dev — m2 덤프(쓰기 가능) | **BoDAT 만** — m2(`ssh ggq-m2`, 체크아웃 `~/Projects/BODA/BoDAT`, 주소 `http://192.168.0.11:3000`) | dev 잠금 → `script/dev-checkout <브랜치> --owner <주체>` → `bin/rails runner`·`curl` 로 쓰기 왕복 → `--release` → 재덤프(아래 상세) | 운영 데이터 위의 화면·필터·상태 전이 · 쓰기 경로 왕복 · `[dev]` 표식 줄 · dev 워커(`zdev_` 그룹)로 재현되는 claim→outcome | 명령 한 줄 + 마지막 20줄 · 잠겨 있었으면 `--status` 출력 그대로 |
-| ② 워커 런타임(맥북/미니 직접) | 맥북 또는 미니 — 워커 PC 없이 | BoDAT 레포 `bin/dry-run <레시피|블록>`(claim 무관) · AdsPower Local API 는 **미니 경유 릴레이 포트 50325** | 워커 런타임 스텝·블록 동작·AdsPower 호출 | 명령 한 줄 + `dry_run.log` 마지막 20줄(로그는 완주 시점에 일괄 flush) |
-| ③ TEST 워커(실장비) | 미니에서 `ssh test '<cmd>'` **직결** · 맥북에서는 `ssh bodat-mini 'ssh test <cmd>'` **중첩** | `aging_recipes` 행을 `test_claim` 으로 지정 워커/프로필에서 실행 · 막히면 `bin/dry-run` 우회 · 프로필 **#18** 기본 | 실 워커 행동·실제 화면 | 명령 한 줄(중첩이면 중첩 형태 그대로) + 워커 콘솔/서버 `[aging]` claim 원장 마지막 20줄 |
-| ④ 사람 | — | 없음 | ①②③ 이 **전부** 실패해 남은 것만 | 위 세 칸의 인용을 모두 붙인 뒤 `needs-human` + `hold:ladder` |
+| ② 워커 런타임(워커 PC 없이) | 루프 박스(m2) 또는 맥북 — 워커 PC 없이 | BoDAT 레포 `bin/dry-run <레시피|블록>`(claim 무관 · **`zdev_` 프로필만** — AdsPower 는 운영과 같은 계정이다) · AdsPower Local API 는 **미니 경유 릴레이 포트 50325** | 워커 런타임 스텝·블록 동작·AdsPower 호출 | 명령 한 줄 + `dry_run.log` 마지막 20줄(로그는 완주 시점에 일괄 flush) |
+| ③-dev dev 워커(실장비, **배포 전**) | **BoDAT 만** — m2(또는 맥북)에서 `ssh bodat-mini 'ssh zdev_pc_<…> "<cmd>"'` **미니 경유** | `aging_recipes` 행을 `test_claim` 으로 dev 워커(`zdev_` 그룹)·`zdev_` 프로필에서 실행 — **무장은 m2 dev DB 에, ①b 잠금 안에서** · 막히면 `bin/dry-run` 우회 | 실 워커 행동·실제 화면(배포 전 판정) | 명령 한 줄(중첩 형태 그대로) + 워커 콘솔/m2 dev `[aging]` claim 원장 마지막 20줄 |
+| ③-prod 운영 TEST 워커(실장비, **배포 뒤 전용**) | m2(또는 맥북)에서 `ssh bodat-mini 'ssh test "<cmd>"'` **미니 경유** | prod DB 에 무장 · `test_claim`/`bin/dry-run` · 프로필 **#18** 기본 — **배포 전에는 쓰지 않는다**(BoDAT `Plans/dev-isolation.md` 결정 6) | 배포된 코드의 실 워커 행동·실제 화면 | 명령 한 줄(중첩 형태 그대로) + 워커 콘솔/서버 `[aging]` claim 원장 마지막 20줄 |
+| ④ 사람 | — | 없음 | 그 주체가 오를 수 있는 칸(①②③)이 **전부** 실패해 남은 것만 | 위 세 칸의 인용을 모두 붙인 뒤 `needs-human` + `hold:ladder` |
 
 ## 칸별 상세
 
@@ -22,18 +23,19 @@
 서버 로직·화면·DB 상태처럼 워커 없이 판정 가능한 것은 전부 여기서 끝난다. 실장비가
 필요하다고 적힌 항목도 절반은 여기서 재현된다 — 먼저 시도하라.
 
-**①a 와 ①b 는 DB 가 다르다.** 미니(루프 박스)의 워크트리는 픽스처·시드 수준의 빈 DB 라
+**①a 와 ①b 는 DB 가 다르다.** 루프 박스(m2)의 워크트리는 픽스처·시드 수준의 빈 DB 라
 운영 데이터가 있어야 보이는 화면·상태 전이와 쓰기 왕복을 판정하지 못한다. 그런 항목은
 "dev 에서 못 밟음"으로 넘기지 말고 ①b 로 간다 — BoDAT 은 운영 DB 덤프를 띄운 dev 서버가 m2
 에 있고, 거기서는 **쓰기까지** 테스트한 뒤 재덤프로 지운다(BoDAT `Plans/dev-isolation.md`
 E장·결정 12). 다른 레포에는 ①b 가 없다.
 
-**①b 에 올라오는 루프 주체는 verify-runner·closeout 둘뿐이다**(루프 밖에서는 배포 전 e2e-test·사람도 쓴다). 구현 워커(issue-runner 가 디스패치)는
-①a 에서 멈추고 ①b 로만 밟히는 줄을 PR test plan 에 `[ ] [dev]` 로 열린 채 둔다 — 워커는 동시에 여러 개가 돌아 m2 잠금
-하나를 두고 다투고, 직렬로 도는 verify-runner 가 같은 줄을 PR head 로 밟는다(사용자 결정 2026-10-27,
-`references/loop-conventions.md` §9). 그 줄은 사다리 실패가 아니므로 `BLOCKED:`·`hold:ladder` 근거가 아니다.
+**①b 에 올라오는 루프 주체는 verify-runner 하나다**(PR 브랜치. 머지된 `main` 은 BoDAT dev 회차가, 루프 밖에서는 BoDAT
+풀사이클·e2e-test·사람이 쓴다). 구현 워커(issue-runner 가 디스패치)는 ①a 에서 멈추고 나머지 실측 줄을 PR test plan 에
+`[ ] [dev]` 로 열린 채 둔다 — 워커는 동시에 여러 개가 돌아 m2 잠금 하나를 두고 다투고, 직렬로 도는 verify-runner 가 같은
+줄을 PR head 로 밟는다(사용자 결정 2026-10-27 · 2026-11-08, `references/loop-conventions.md` §9). closeout 4단계는 사다리를
+오르지 않고 분류만 한다. 그 줄은 사다리 실패가 아니므로 `BLOCKED:`·`hold:ladder` 근거가 아니다.
 
-**①b 절차 (BoDAT, 미니·맥북 어디서든 `ssh ggq-m2`).** m2 의 ruby 는 mise 라 원격 명령 앞에
+**①b 절차 (BoDAT — 루프 박스 m2 에서는 로컬, 맥북에서는 `ssh ggq-m2`).** m2 의 ruby 는 mise 라 원격 명령 앞에
 `export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:/opt/homebrew/bin:$PATH"; cd ~/Projects/BODA/BoDAT &&`
 를 붙인다.
 
@@ -46,8 +48,8 @@ E장·결정 12). 다른 레포에는 ①b 가 없다.
    **오래된 잠금** — `--status` 의 보유자·시각을 보고 같은 보유자가 **2시간 넘게** 쥐고 있으면 풀지 말고
    그 틱 Report 에 `BLOCKED: m2 dev 잠금 장기 보유 <보유자> <시각>` 한 줄을 올린다(죽은 주체가 남긴 잠금이면
    모든 ①b 가 "잠김"으로 조용히 넘어가 영영 안 밟힌다).
-2. **띄우기** — `script/dev-checkout <브랜치> --owner <주체>`(주체 = `verify-runner`·`closeout`·`e2e-test`
-   등 — 구현 워커는 ①b 에 오지 않는다). 브랜치는 **origin 에 push 돼 있어야** 한다(`origin/<브랜치>` 를 체크아웃한다).
+2. **띄우기** — `script/dev-checkout <브랜치> --owner <주체>`(주체 = `verify-runner`·`full-cycle`·`e2e-test`
+   등 — 구현 워커·closeout 은 ①b 에 오지 않는다). 브랜치는 **origin 에 push 돼 있어야** 한다(`origin/<브랜치>` 를 체크아웃한다).
    머지 뒤라면 `main`. 이 명령이 bundle·migrate·재기동·`/up` 확인까지 한다. 출력의 `잠금 토큰: <토큰>` 을 4단계까지
    들고 간다(BoDAT #6772 — 같은 이름의 다른 실행과 이 실행을 가른다. `--status` 에는 안 보인다).
    **exit 0 이고 마지막 줄이 `ok  dev 서버가 <브랜치>(…)로 떴습니다` 일 때만 3단계로 간다.** 비0 이면 밟지 않는다:
@@ -58,7 +60,7 @@ E장·결정 12). 다른 레포에는 ①b 가 없다.
    실패하면 Report 에 `BLOCKED: m2 dev 전환 실패 — 잠금 <주체> 유지` 를 올린다(잠금을 쥔 채 두는 것이 남의 쓰기를
    막는 안전한 쪽이다).
 3. **밟기** — 서버 값·쓰기는 `bin/rails runner`, 화면·요청은 `curl http://192.168.0.11:3000/…`
-   (미니·m2 LAN). 쓰기는 왕복(쓰기 → DB·화면 반영 → 되돌리기 또는 다음 상태)까지. AdsPower 쓰기는
+   (m2 LAN — m2 안에서는 `127.0.0.1:3000` 도 같다). 쓰기는 왕복(쓰기 → DB·화면 반영 → 되돌리기 또는 다음 상태)까지. AdsPower 쓰기는
    `zdev_` 그룹 안에서만 나간다(dev 서버 가드가 밖을 거부한다). **Instagram·Threads 공개 쓰기는
    ①b 에서도 하지 않는다**(③ 의 공개 쓰기 규칙 그대로). `.env`·토큰·덤프 데이터를 코멘트·로그에
    옮기지 않는다.
@@ -264,26 +266,28 @@ fi
 한계: dev 에서는 "AdsPower 에 실제로 도달했는가" 를 판정할 수 없다. 도달 자체가 판정
 대상이면 ③ 으로 올라간다.
 
-### ③ TEST 워커 — 실장비
+### ③ 실장비 워커 — ③-dev(배포 전) · ③-prod(배포 뒤)
 
-- **루프 세션은 미니(Mac mini, 호스트 `bodat-mini`)에서 돈다.** 미니에서 TEST 워커는
-  `ssh test '<cmd>'` 로 **직결**된다(호스트명 `DESKTOP-O3BOREC`). 맥북 세션에서는
-  `ssh bodat-mini 'ssh test <cmd>'` 중첩으로 같은 곳에 닿는다.
-- 한글이 섞이거나 인용이 중첩되는 PowerShell 은 미니 헬퍼 `~/bin/wexec` 로 넘긴다
-  (셸 인용 깨짐을 피한다).
+- **칸 ③ 은 둘이다.** 배포 **전**에는 ③-dev — BoDAT dev 워커 7대(`zdev_pc_*`, `zdev_` 그룹 — m2 dev 를 폴링한다).
+  배포 **뒤**에는 ③-prod — 운영 TEST 워커(호스트명 `DESKTOP-O3BOREC`, 프로필 #18). **운영 TEST 워커는 배포 전에 쓰지
+  않는다**(BoDAT `Plans/dev-isolation.md` 결정 6) — PR 브랜치·머지 전 코드를 운영 워커에 태우지 않는다.
+- **루프 세션은 m2(`ggq-m2`)에서 돈다**(2026-11-07 미니에서 옮겨 옴). m2 에는 `test` 호스트 별칭도 `~/bin/wexec` 도
+  없다 — 모든 워커(운영·dev)는 미니를 경유한다: `ssh bodat-mini 'ssh <별칭> "<cmd>"'`(③-dev 는 `zdev_pc_<…>`, ③-prod 는
+  `test`). 맥북 세션도 같은 중첩이다. 한글이 섞이거나 인용이 세 겹이 되는 PowerShell 은 미니에 있는 헬퍼 `~/bin/wexec` 를
+  그 중첩 안에서 부른다(셸 인용 깨짐을 피한다).
 - **워커는 Windows 이고 SSH 로 들어간 콘솔은 세션 0 이라 창을 못 본다.** 화면 판정이
   필요하면 워커 데스크톱 캡처를 쓴다 — `BoDAT-Worker` 작업의 principal 을 복제한
   `schtasks /xml` 작업으로 콘솔 세션에서 실행해야 창이 보인다.
 - 레시피 테스트런: `aging_recipes` 행을 `test_claim` 으로 지정 워커/프로필에서 돌린다.
-  프로필은 **#18** 이 기본이다 — **#20 은 맥 드라이런 에이전트 몫이라 워커에서 열면
+  ③-dev 는 `zdev_` 프로필, ③-prod 는 프로필 **#18** 이 기본이다 — **#20 은 맥 드라이런 에이전트 몫이라 워커에서 열면
   AdsPower 계정이 잠긴다.**
+- **③-dev 의 무장은 m2 dev DB 에 한다 — ①b 잠금 안에서**(그래서 구현 워커는 이 칸을 쓰지 않는다). ③-prod 는 prod DB 에
+  무장한다.
 - `test_claim` 의 게이트는 **대상 집합만** 센다(옛 전역 인플라이트 라이브락 #2640 은 고쳐졌다 —
   프로필 지정이면 그 프로필이 진행 중일 때만 안 열린다). 그래도 안 걸리면 그것으로 칸 ③ 이 실패한
   게 아니다 — **`bin/dry-run` 으로 우회**해 같은 워커에서 다시 시도한다.
 - **무장 칸은 레시피 번호 `test_recipe_id` 다.** 옛 이름 칸 `test_behavior` 는 `ChannelConfig.sanitize`
   가 조용히 버려, 넣으면 이전에 남은 레시피가 돈다(2026-10-27 실측). 무장 뒤 그 칸을 다시 읽어 확인한다.
-- **dev 워커(`zdev_` 그룹)는 m2 dev 를 폴링한다** — 그 워커로 재현할 항목은 무장도 m2 dev DB 에
-  한다(①b 잠금 안에서 — 그래서 구현 워커는 이 경로를 쓰지 않는다). 운영 TEST 워커는 prod DB 에 무장한다.
 - **무장했으면 복원은 필수다.** 테스트를 위해 켠 스위치(test_mode·레시피 배정·작전
   무장)는 판정이 끝나는 즉시 원상 복구한다.
 - **공개 쓰기(댓글·팔로우)는 우리 계정에만.** 도달 대상·고객 게시물에 검증 흔적을
@@ -291,7 +295,16 @@ fi
 
 ### ④ 사람
 
-①②③ 을 전부 시도해 전부 실패했을 때만 도달한다.
+그 주체가 오를 수 있는 칸을 전부 시도해 전부 실패했을 때만 도달한다.
+
+### dev 에 없어서 못 밟은 줄 — prod 로 미루지 않는다
+
+배포 전 주체(verify-runner·BoDAT dev 회차·풀사이클)가 dev 에 **없어서**(dev 워커에 그 앱이 없다 · `zdev_` 에 그 상태의
+프로필이 없다 등) 못 밟은 줄은 ③-prod·배포 뒤로 미루지 않는다. "dev 에 무엇이 없는가" 를 BoDAT **dev 미비 이슈**로 남긴다
+(BoDAT `Plans/dev-isolation.md` 결정 31 을 파이프라인 전체로, 2026-11-08 건님 결정): 제목 `dev — <없던 것> 준비` ·
+라벨 `full-cycle`·`P1`(같은 사유의 열린 이슈가 있으면 새로 만들지 않고 거기 덧붙인다) · 그 줄 끝에 `(dev 미비 #N)`.
+이것은 사다리 실패가 아니라 dev 의 결함 보고다 — `hold:ladder` 사유가 아니다. 잠김·시간 상한처럼 dev 가 **있는데** 못 밟은
+것은 dev 미비가 아니다(그 줄은 열린 채 다음 주체에게 간다).
 
 ## 규칙 — 미루는 방법
 
@@ -303,11 +316,11 @@ fi
   `$SCRIPTS/transition.sh <전이> <repo> <issue|-> <pr> --reason ladder`.
   `--reason ladder` 는 **칸을 실제로 올라가 인용을 남긴 경우에만** 쓴다. conflict 도
   아니고 인용도 없으면 그건 `policy` 다.
-- 칸 ①②③ 중 어디서든 판정이 서면 사다리는 거기서 끝난다. 위 칸을 "혹시 몰라" 더
+- 칸 ①②③(③-dev·③-prod) 중 어디서든 판정이 서면 사다리는 거기서 끝난다. 위 칸을 "혹시 몰라" 더
   올라가지 마라.
 
 ## 스킬이 없어도 명령은 그대로
 
 `worker-ssh` · `worker-recipe-test` 스킬은 개인 디렉터리(`~/.claude/skills/`, 레포 밖)에
-있어 **미니의 루프 세션엔 없을 수 있다**(복사 설치 — README 설치 절 참조). 스킬이
-없어도 이 문서의 명령은 그대로 친다 — 통로는 `ssh test` 직결이지 스킬이 아니다.
+있어 **m2 의 루프 세션엔 없을 수 있다**(복사 설치 — README 설치 절 참조). 스킬이
+없어도 이 문서의 명령은 그대로 친다 — 통로는 미니 경유 `ssh bodat-mini 'ssh <별칭> …'` 이지 스킬이 아니다.

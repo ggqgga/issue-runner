@@ -360,18 +360,17 @@ Procedure:
       `gh issue view <NUM> --repo <REPO> --json body`, set each issue
       acceptance-criteria/Test-plan line corresponding to an item you marked `[x]` in
       the PR `## Test plan` to `[x]`, and **leave** unfinished items `[ ]`, then write
-      it back with `gh issue edit <NUM> --repo <REPO> --body`. **For live checks, first
-      climb the rungs in
-      `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-      and try them; leave an item `[ ]` only after citing the rung you attempted and
-      its failure output (the
-      command plus its last 20 lines) in the PR `## Test plan`** — "real hardware is
-      needed" as prose is not enough to leave it `[ ]` (rungs ① and ② can be attempted
-      from the worktree as-is. **Do not climb rung ①b (BoDAT m2 dev), though** — leave a line that only ①b
-      can step (a write round-trip or state transition over production data) open as `[ ] [dev] <action>`
-      without an attempt or citation, and verify-runner steps it; your own ceiling is rung ③ — see the per-actor table in
-      `~/.claude/skills/issue-runner/references/loop-conventions.md` §9; the "Forbidden"
-      list below still stands).
+      it back with `gh issue edit <NUM> --repo <REPO> --body`. **Your ladder ceiling is rung ①a
+      (the worktree's `bin/rails test` · `bin/rails runner` — empty DB)**
+      (`~/.claude/skills/issue-runner/references/live-verification-ladder.md` rung table,
+      `~/.claude/skills/issue-runner/references/loop-conventions.md` §9 per-actor table). Judge the lines ①a can
+      judge there. **Leave every other live line (①b m2 dev · ② `bin/dry-run` · ③ real hardware) open without an
+      attempt** — in BoDAT, a line whose verdict stands before the deploy (on the production dump or a dev worker) as
+      `[ ] [dev] <action>`; a line that only means something on production, and any line in a repo other than BoDAT, as
+      `[ ] <action>` with no mark (closeout step 4 picks the mark). That is not a failure and not grounds for `BLOCKED:`. Pre-deploy live
+      checks are stepped on the PR head by verify-runner, which runs serially (implementation workers run several at
+      once and would fight over the m2 lock and the dev workers). Do not use the production TEST worker (profile #18)
+      or `ssh test` — it is post-deploy only. The "Forbidden" list below still stands.
       **Do not regenerate the whole
       body** — conservatively replace only the mark in checkbox lines, leave every
       other character unchanged (the global hook does not reach subagents, so do it yourself).

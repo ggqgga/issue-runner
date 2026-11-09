@@ -577,47 +577,43 @@ includes it (never push to main directly). If there is an epic, leave a progress
 **Step 4 — deploy-lane handoff (dry run).** **closeout does not deploy (the issue-runner repo itself is the one exception — "deploys on merge" below); it hands a deploy-wait issue to the
 deploy-cycle loop.** Fill `references/deploy-check-issue.md` (`<DEPLOY_CMD>` = the repo's deploy entry point,
 or "repo deploy procedure" if unknown; `<VERIFY_URL>` = the prod base URL (reference for operators and
-e2e-test), or leave it blank if unknown; `<LIVE_CHECKS>` = items from the PR test plan
-and the issue body marked as **performable only after the merge** — "post-deploy live verification", hardware
-/ real-device checks — the sole handoff destination for verification items step 1's verifier excluded from the
-merge gate).
+e2e-test), or leave it blank if unknown; `<LIVE_CHECKS>` = **every live line in the PR test plan
+and the issue body that has no verdict yet** — `[dev]` lines the BoDAT dev round steps before the deploy (including
+ones verify-runner could not step because of the lock or the time cap) · lines carrying a verify-runner verdict tag ·
+"post-deploy live verification" · hardware / real-device lines. It is the sole handoff destination for verification
+items step 1's verifier excluded from the merge gate — a line dropped here is never stepped again).
 
 **`<LIVE_CHECKS>` must be one of two shapes — no prose.**
-- If there is **nothing at all** to step through after the deploy, exactly the single word `없음`. Add no
-  explanation after it.
-- Otherwise, a **`- [ ]` checkbox list**. One line = one action `e2e-test` steps through once after the
-  deploy. Background, rationale and caveats go in `## 변경 요약`; leave only what is to be stepped here.
-- **A real-device line requires the prefix mark `[칸 ③]`** — write it as `- [ ] [칸 ③] <action>`. The mark is
-  **shape enforcement of the same grade** as `없음` and `- [ ]` (#309). Even when a line moved here after
-  failed rung-①② attempts says nothing about "TEST worker", **attach the mark if the rung it is stepped on is
-  ③** — the basis for the test is the mark, not the sentence's meaning.
-- **A line that must be stepped by writing to the m2 dev server takes the prefix mark `[dev]`** —
-  `- [ ] [dev] <action>` (BoDAT only, #596). Attach it only to lines carried over because rung ①b below could not
-  be stepped (locked · time cap). BoDAT `e2e-test` pre-deploy
-  verification closes it on m2 dev — if the user did not run e2e-test before the deploy, deploy-cycle ⑤ carries it
-  into a `테스트` issue (it slips to after the deploy).
-- **A line without the mark must show how it is stepped.** If a line is not rung ③ but needs a means outside
-  the browser, write that means on the line so `e2e-test` can step it straight away.
-
-**Before moving them, closeout climbs the ladder once (never move an untried `[ ]` as-is).** Among the
-worker's unfinished items, do not move ones **left as bare `[ ]` with no ladder attempt or citation** —
-closeout first tries **rung ① (dev server) and rung ② (`bin/dry-run` · AdsPower relay)** from
-`~/.claude/skills/issue-runner/references/live-verification-ladder.md` **once each** and then moves them (the
-per-actor cap table is `references/loop-conventions.md` §9 — this loop's cap is rung ②). **Rung ③ (the TEST
-worker) belongs to `e2e-test` after the deploy.** Leave the rung-①② results alongside so `e2e-test` does not repeat the
-same rung.
-**For BoDAT, rung ① does not stop at ①a (empty DB)** — a line whose evidence is a write round trip or state
-transition on production data (including `[dev]`-marked lines) is stepped on rung ①b (the m2 dump dev) on
-**`main`** (already merged, so `script/dev-checkout main --owner closeout`; the procedure, the lock pitfall and the
-re-dump are owned by the ladder document's ①b, including the failure branches — cap 15 minutes). If it is locked or the cap
-is hit, attach the `[dev]` mark to the unstepped lines and carry them over. A switch or re-dump failure is a `BLOCKED:`
-line in the Report, as ①b says.
-- If rungs ①② **produce a verdict**, **remove** that item from `<LIVE_CHECKS>`. Record the basis in a PR
-  comment.
-- **On failure**, move the item as `- [ ]` but **cite the rung attempted and the failure output (the command
-  line + the last 20 lines)**. Put the citation in the `## 변경 요약` section.
-- If the environment makes the attempt impossible (no such entry point in the repo, etc.), state that in one
-  line in `## 변경 요약`. Never skip the attempt on the strength of "needs real hardware" alone.
+- If there is **nothing at all** to step through (no `[dev]` line for the pre-deploy dev round and nothing for after
+  the deploy), exactly the single word `없음`. Add no explanation after it. Only `[dev]` lines left is still not `없음` —
+  carry them as a list.
+- Otherwise, a **`- [ ]` checkbox list**. One line = one action one actor (the pre-deploy dev round · the post-deploy
+  round · `e2e-test`) steps through once. Background, rationale and caveats go in `## 변경 요약`; leave only what is to be stepped here.
+- **closeout does not climb the ladder — it only classifies** (Gun's decisions 13·15 of 2026-11-08; the per-actor cap
+  table is `references/loop-conventions.md` §9). The actors that step lines before the deploy are verify-runner on the
+  PR branch and the BoDAT dev round on the merged `main`; after the deploy it is e2e-test. closeout writes **one prefix
+  mark** per carried line to record its nature — the mark is **shape enforcement of the same grade** as `없음` and
+  `- [ ]` (#309). The basis for the test is the mark, not the sentence's meaning:
+  - **`[dev]` — the default.** A line whose verdict stands on the production dump (m2 dev) — screens · filters · state
+    transitions · write round trips · claim→outcome reproducible with dev workers (`zdev_`). `- [ ] [dev] <action>`
+    (BoDAT only, #596). The BoDAT dev round steps it before the deploy.
+  - **`[기계]`** — a check no human eye can see that only means something on prod (e.g. rows the old code wrote between
+    the migration and the new code booting). The post-deploy round steps it.
+  - **`[칸 ③-prod]`** — a real-device line that must be stepped on the deployed code with the production TEST worker
+    (profile #18) — only what a dev worker cannot reproduce. The old mark `[칸 ③]` keeps being read with the same
+    meaning (`smoke-tally.sh` · `deploy-wait-issue.sh` · BoDAT deploy-cycle ⑤) — do not write it anew.
+  - **No mark** — any other line. It must show how it is stepped — if it needs a means outside the browser, write
+    that means on the line so `e2e-test` can step it straight away.
+  - Repos other than BoDAT have no `[dev]`·`[기계]` — classify with no mark or with `[칸 ③-prod]` only.
+- **Carry lines verify-runner judged on the PR branch together with their tag.** If a PR test plan or linked-issue line
+  ends with a BoDAT verdict tag `{판정 통과|실패|dev미비 #N · PR#<M> <SHA> · <시각>}` (verify-runner 2-b) — even if it
+  was `[x]` in the PR — carry it as `- [ ] [dev] <action> … {판정 …}` with the tag and evidence **unchanged to the
+  letter** (never as `[x]` — promotion reads the tag, and an `[x]` line is not carried by deploy-cycle ⑤ and vanishes).
+  The tag grammar SSOT is BoDAT `script/dev-verdicts`.
+- **Not trying is not failing.** Classification is not a verdict, so it needs no attempt or failure citation — a line
+  that only says "needs real hardware" is still marked by its nature and carried. Never attach a mark by default —
+  `[칸 ③-prod]` goes only on lines a dev worker cannot reproduce (the moment it is attached, a line that would close
+  before the deploy slips to after it).
 
 **Branch — if you merged, always create a promotion ticket (user decision, 2026-08-16). A merged PR files
 exactly one deploy-wait issue, without exception.** Do not judge — test-only or a one-line comment, being
@@ -845,7 +841,7 @@ Non-operational notes — they do not affect tick execution.
   repo itself, pulled on the mini and closed in step 4, 2026-10-28)
   release — step 4 files a dry-run deploy-wait issue and hands it to the deploy-cycle
   loop, which owns deploying, promoting and closing; its ⑤ carries leftover verification items
-  (rung ③, the TEST worker, included) into a `테스트` issue for `e2e-test`. The rest — merge, doc reconcile, follow-up issuance — closeout does
+  (rung ③-prod, the production TEST worker, included) into a `테스트` issue for `e2e-test`. The rest — merge, doc reconcile, follow-up issuance — closeout does
   unattended.
 - Operation: run closeout as a `/loop` session separate from issue-runner
   (e.g. `/loop 20m /closeout`) — the two coordinate occupation purely by label.
@@ -858,5 +854,6 @@ Non-operational notes — they do not affect tick execution.
   `skills/closeout/references/`.
 - The attempt order, transports and citation rules for anything needing live measurement
   are in `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-  (rung ①dev → ②worker runtime → ③TEST worker → ④human; the basis for the step-4 `<LIVE_CHECKS>` rung-①② attempt and the
-  precondition for `--reason ladder`).
+  (rung ①dev → ②worker runtime → ③-dev dev worker / ③-prod production TEST worker → ④human. Step 4 does not climb
+  these rungs; it only picks each `<LIVE_CHECKS>` line's mark (`[dev]`·`[기계]`·`[칸 ③-prod]`) — the precondition for
+  `--reason ladder` lives on the verify-runner side).
