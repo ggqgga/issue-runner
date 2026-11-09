@@ -577,10 +577,11 @@ includes it (never push to main directly). If there is an epic, leave a progress
 **Step 4 — deploy-lane handoff (dry run).** **closeout does not deploy (the issue-runner repo itself is the one exception — "deploys on merge" below); it hands a deploy-wait issue to the
 deploy-cycle loop.** Fill `references/deploy-check-issue.md` (`<DEPLOY_CMD>` = the repo's deploy entry point,
 or "repo deploy procedure" if unknown; `<VERIFY_URL>` = the prod base URL (reference for operators and
-e2e-test), or leave it blank if unknown; `<LIVE_CHECKS>` = items from the PR test plan
-and the issue body marked as **performable only after the merge** — "post-deploy live verification", hardware
-/ real-device checks — the sole handoff destination for verification items step 1's verifier excluded from the
-merge gate).
+e2e-test), or leave it blank if unknown; `<LIVE_CHECKS>` = **every live line in the PR test plan
+and the issue body that has no verdict yet** — `[dev]` lines the BoDAT dev round steps before the deploy (including
+ones verify-runner could not step because of the lock or the time cap) · lines carrying a verify-runner verdict tag ·
+"post-deploy live verification" · hardware / real-device lines. It is the sole handoff destination for verification
+items step 1's verifier excluded from the merge gate — a line dropped here is never stepped again).
 
 **`<LIVE_CHECKS>` must be one of two shapes — no prose.**
 - If there is **nothing at all** to step through after the deploy, exactly the single word `없음`. Add no

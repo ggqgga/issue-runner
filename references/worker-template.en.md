@@ -364,8 +364,10 @@ Procedure:
       (the worktree's `bin/rails test` · `bin/rails runner` — empty DB)**
       (`~/.claude/skills/issue-runner/references/live-verification-ladder.md` rung table,
       `~/.claude/skills/issue-runner/references/loop-conventions.md` §9 per-actor table). Judge the lines ①a can
-      judge there. **Leave every other live line (①b m2 dev · ② `bin/dry-run` · ③ real hardware) open as
-      `[ ] [dev] <action>` without an attempt** — that is not a failure and not grounds for `BLOCKED:`. Pre-deploy live
+      judge there. **Leave every other live line (①b m2 dev · ② `bin/dry-run` · ③ real hardware) open without an
+      attempt** — in BoDAT, a line whose verdict stands before the deploy (on the production dump or a dev worker) as
+      `[ ] [dev] <action>`; a line that only means something on production, and any line in a repo other than BoDAT, as
+      `[ ] <action>` with no mark (closeout step 4 picks the mark). That is not a failure and not grounds for `BLOCKED:`. Pre-deploy live
       checks are stepped on the PR head by verify-runner, which runs serially (implementation workers run several at
       once and would fight over the m2 lock and the dev workers). Do not use the production TEST worker (profile #18)
       or `ssh test` — it is post-deploy only. The "Forbidden" list below still stands.

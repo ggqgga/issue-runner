@@ -315,8 +315,9 @@ Agent(subagent_type: "general-purpose", model: "opus", run_in_background: true,
       `bin/rails test`·`bin/rails runner` — 빈 DB)까지다**
       (`~/.claude/skills/issue-runner/references/live-verification-ladder.md` 칸 표,
       `~/.claude/skills/issue-runner/references/loop-conventions.md` §9 주체별 상한 표). ①a 로 판정이 서는 줄은
-      거기서 판정한다. **나머지 실측 줄(①b m2 dev · ② `bin/dry-run` · ③ 실장비)은 시도 없이 `[ ] [dev] <동작>` 으로 열어
-      둔다** — 실패가 아니고 `BLOCKED:` 근거도 아니다. 배포 전 실측은 직렬로 도는 verify-runner 가 PR head 로
+      거기서 판정한다. **나머지 실측 줄(①b m2 dev · ② `bin/dry-run` · ③ 실장비)은 시도 없이 열어 둔다** — BoDAT 에서
+      배포 전에 판정이 서는 줄(운영 덤프·dev 워커로 재현되는 것)은 `[ ] [dev] <동작>`, 배포 뒤 운영에서만 의미가 있는 줄과
+      BoDAT 밖 레포의 줄은 표식 없이 `[ ] <동작>`(표식은 closeout 4단계가 정한다). 실패가 아니고 `BLOCKED:` 근거도 아니다. 배포 전 실측은 직렬로 도는 verify-runner 가 PR head 로
       밟는다(구현 워커는 동시에 여러 개가 돌아 m2 잠금·dev 워커를 두고 다툰다). 운영 TEST 워커(프로필 #18)·`ssh test`
       는 쓰지 않는다 — 배포 뒤 전용이다. 아래 "금지" 는 그대로 지킨다.
       **본문 전체 재생성 금지** — 체크박스 마크만 보수적으로
