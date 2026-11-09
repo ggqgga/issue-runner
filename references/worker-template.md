@@ -311,16 +311,14 @@ Agent(subagent_type: "general-purpose", model: "opus", run_in_background: true,
    a. **참조 이슈(`#<NUM>`) 체크박스 reconcile.** `gh issue view <NUM> --repo <REPO>
       --json body` 로 본문을 읽어, PR `## Test plan` 에서 `[x]` 로 표시한 항목에 대응하는
       이슈 수용기준·Test plan 줄을 `[x]` 로, 미완은 `[ ]` 로 **유지**한 뒤 `gh issue edit
-      <NUM> --repo <REPO> --body` 로 되쓴다. **라이브 항목은 먼저
-      `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-      의 칸을 올라 시도하고, 시도한 칸·실패 출력(명령 한 줄 + 마지막 20줄)을
-      PR `## Test plan` 에 인용한 뒤에만 `[ ]` 로
-      남긴다** — "실장비가 필요하다" 는 서술만으로는 `[ ]` 로 둘 수 없다(칸 ①②는
-      워크트리에서 그대로 시도할 수 있다. **단 칸 ①b(BoDAT m2 dev)는 오르지 않는다** — ①b 로만 밟히는
-      줄(운영 데이터 위의 쓰기 왕복·상태 전이)은 시도·인용 없이 `[ ] [dev] <동작>` 으로 열어 두면
-      verify-runner 가 밟는다. 네가 올라가는 상한은 칸 ③ 이다 —
-      `~/.claude/skills/issue-runner/references/loop-conventions.md` §9 주체별 상한 표.
-      아래 "금지" 는 그대로 지킨다).
+      <NUM> --repo <REPO> --body` 로 되쓴다. **네가 올라가는 사다리 상한은 칸 ①a(워크트리의
+      `bin/rails test`·`bin/rails runner` — 빈 DB)까지다**
+      (`~/.claude/skills/issue-runner/references/live-verification-ladder.md` 칸 표,
+      `~/.claude/skills/issue-runner/references/loop-conventions.md` §9 주체별 상한 표). ①a 로 판정이 서는 줄은
+      거기서 판정한다. **나머지 실측 줄(①b m2 dev · ② `bin/dry-run` · ③ 실장비)은 시도 없이 `[ ] [dev] <동작>` 으로 열어
+      둔다** — 실패가 아니고 `BLOCKED:` 근거도 아니다. 배포 전 실측은 직렬로 도는 verify-runner 가 PR head 로
+      밟는다(구현 워커는 동시에 여러 개가 돌아 m2 잠금·dev 워커를 두고 다툰다). 운영 TEST 워커(프로필 #18)·`ssh test`
+      는 쓰지 않는다 — 배포 뒤 전용이다. 아래 "금지" 는 그대로 지킨다.
       **본문 전체 재생성 금지** — 체크박스 마크만 보수적으로
       치환하고 나머지 텍스트는 한 글자도 바꾸지 마라(글로벌 훅이 서브에이전트엔 안 닿아
       직접 한다).

@@ -175,7 +175,7 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
 - **`해당 없음` 은 "스위트가 없다" 일 때만이다.** PR 이 실장비·라이브 동작을 건드려
   스위트로 덮이지 않는 항목이 있으면 `해당 없음` 으로 뭉개지 말고
   `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-  의 칸 ②③ 을 시도한 뒤 그 결과(시도한 칸·명령·실패 출력 마지막 20줄)를 코멘트에
+  의 칸 ②(`zdev_` 프로필)·③-dev 를 시도한 뒤 그 결과(시도한 칸·명령·실패 출력 마지막 20줄)를 코멘트에
   인용한다.
 - **실패 시 플레이크 판별 (자기포화 방어, #981 — 근거 §9).** 스위트 실패 시 **곧바로
   진짜 실패로 판정하지 말고**: 실패한 테스트 **파일만 단독 재실행**한다(`bin/rails test
@@ -191,10 +191,20 @@ E2E=pass 로 간주(코멘트에 `E2E: 해당 없음` 명시).
 브랜치**로 밟는다. 해당 줄이 없거나 다른 레포면 skip(코멘트에 `m2 dev: 해당 없음`).
 - 잠금 주체는 `--owner verify-runner`. **한 틱에 잠금 한 번** — 그 안에서 해당 줄을 모두 밟고 재덤프는
   마지막에 한 번. `--status` 출력이 `잠금 없음` 이 아니거나 07:05~08:00 이면 **밟지 않는다** — 이것은
-  보류 사유가 아니다: 코멘트에 `m2 dev: 잠김 <보유자>` 를 남기고 그 줄을 열린 채 둔다(closeout 4단계가
-  `main` 으로 다시 시도하고, 못 밟으면 `[dev]` 표식으로 배포 대기 이슈에 넘긴다).
+  보류 사유가 아니다: 코멘트에 `m2 dev: 잠김 <보유자>` 를 남기고 그 줄을 열린 채 둔다(closeout 4단계가 `[dev]`
+  표식으로 배포 대기 이슈에 옮기고, BoDAT dev 회차가 `main` 으로 밟는다).
 - **통과한** 줄은 **그 줄이 있던 곳**(PR test plan 이면 PR 본문, 연결 이슈에만 있으면 그 이슈 본문)에서 `[x]` + 근거 한 줄(`[m2 dev] <시각> <명령 요지> → <값>`). 값이 기대와 다르면
   **진짜 실패** — 그 줄은 **`[ ]` 그대로 둔다**(고친 PR 을 다음 검증이 다시 밟아야 한다) → ④ 재디스패치(`m2 dev 실측 실패: <줄 요지>` + 명령 한 줄·마지막 20줄).
+- **판정 꼬리표를 같은 줄 끝에 직접 단다**(BoDAT #7254 의 승격 계약 — 문법 SSOT 는 BoDAT `script/dev-verdicts` 머리 주석):
+  통과면 `{판정 통과 · PR#<M> <PR head SHA> · <MM-DD HH:MM>}`, 진짜 실패면 `{판정 실패 · PR#<M> <PR head SHA> · <MM-DD HH:MM>}`.
+  다시 밟으면 덧붙이지 말고 바꾼다(한 줄에 하나). 이 줄은 closeout 4단계가 배포 대기 이슈로 **꼬리표째** 옮기므로, BoDAT
+  dev 회차가 돌지 않아도 결과가 승격에 닿는다(종전에는 dev 회차가 PR 코멘트에서 옮겨 왔다 — dev 회차가 멈추면 결과가 버려졌다).
+- **실장비가 필요한 줄은 ③-dev 로 밟는다**(dev 워커 `zdev_pc_*` — 무장은 m2 dev DB 에, 이 ①b 잠금 안에서. 절차는 사다리 칸 ③).
+  **운영 TEST 워커(프로필 #18)·`ssh … test` 는 쓰지 않는다** — 배포 뒤 ③-prod 전용이다(BoDAT dev-isolation 결정 6).
+- **dev 에 없어서 못 밟은 줄**(dev 워커·`zdev_` 프로필에 그 앱·상태가 없다 등 — 잠김·시간 상한이 아닌 것)은 보류 사유가 아니다.
+  BoDAT 에 dev 미비 이슈를 만든다 — 제목 `dev — <없던 것> 준비` · 라벨 `full-cycle`·`P1` · 같은 사유의 열린 이슈가 있으면 새로
+  만들지 않고 거기 코멘트로 덧붙인다 — 그리고 그 줄 끝에 `(dev 미비 #N)` 과 꼬리표 `{판정 dev미비 #N · PR#<M> <PR head SHA> · <시각>}`
+  를 단다(줄은 `[ ]` 그대로). `hold:ladder` 로 가지 않는다.
 - **풀고 재덤프는 생략 금지**(사다리 ①b 4단계). 띄우기(2단계)나 재덤프가 실패하면 PR 코멘트로 끝내지 않고 ④ Report 에
   사다리 ①b 의 `BLOCKED:` 한 줄을 올린 뒤 틱을 이어간다 — m2 dev 가 더러운 채라는 정보가 사람 눈에 닿아야 한다.
 - 상한: 이 단계 전체 **15분**. 넘기면 밟은 데까지만 체크하고 풀고 재덤프한 뒤 나머지는 열린 채 둔다.
@@ -339,10 +349,11 @@ held 사유가 아니다** — N = 2 는 ③-3′ 가 완료로 흡수한다):
 - **연결 이슈 부재** → `policy`. 어느 이슈에 붙일지가 사람 결정이다.
 - **E2E 가 실장비를 요구해 못 돈 경우** → 곧바로 held 로 가지 마라. 먼저
   `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-  의 **칸 ②(`bin/dry-run`·AdsPower 릴레이)와
-  칸 ③(미니 `ssh test '<cmd>'` 직결 · `test_claim`/`bin/dry-run` · 프로필 #18)** 을
-  시도한다. 어느 칸에서든 판정이 서면 그 결과로 ④ Classify 를 진행하고(held 아님),
-  **전부 실패했을 때만** `--reason ladder` 로 held 한다. 이때 위 `검증 보류:` 코멘트에
+  의 **칸 ②(`bin/dry-run` — `zdev_` 프로필만 · AdsPower 릴레이)와
+  칸 ③-dev(BoDAT dev 워커 — `ssh bodat-mini 'ssh zdev_pc_<…> "<cmd>"'` · 무장은 m2 dev DB · 2-b 의 ①b 잠금 안)** 를
+  시도한다. **운영 TEST 워커(#18)는 배포 전에 쓰지 않는다**(③-prod — 배포 뒤 e2e-test 몫). 어느 칸에서든 판정이 서면
+  그 결과로 ④ Classify 를 진행하고(held 아님), dev 에 **없어서** 못 밟았으면 2-b 의 dev 미비 이슈 경로로 간다(held 아님).
+  시도한 칸이 **전부 실패했을 때만** `--reason ladder` 로 held 한다. 이때 위 `검증 보류:` 코멘트에
   **시도한 칸과 실패 출력(명령 한 줄 + 마지막 20줄)을 인용**한다 — 인용이 없으면
   `ladder` 가 아니라 `policy` 다.
 **전이가 비0이면** `references/state-machine.md` 「전이 실패의 공통 규칙」 대로 ④ Report 에
@@ -397,5 +408,5 @@ warn(flake_retry·동봉 실패·전이 실패 등)이 있으면 경로·사유�
   보조 리뷰어는 `pr-review-toolkit@claude-plugins-official` 플러그인(미설치면 3-b 는 자동 skip).
 - 실측이 필요한 항목의 시도 순서·통로·인용 규칙은
   `~/.claude/skills/issue-runner/references/live-verification-ladder.md`
-  (칸 ①dev(①a 빈 DB · ①b m2 덤프 — BoDAT) → ②워커 런타임 → ③TEST 워커 → ④사람. `--reason ladder` 의 전제).
-  주체별 상한(이 루프는 ③ 까지)은 `references/loop-conventions.md` §9 표.
+  (칸 ①dev(①a 빈 DB · ①b m2 덤프 — BoDAT) → ②워커 런타임 → ③-dev dev 워커(배포 전) / ③-prod 운영 TEST 워커(배포 뒤) → ④사람.
+  `--reason ladder` 의 전제). 주체별 상한(이 루프는 ③-dev 까지)은 `references/loop-conventions.md` §9 표.
