@@ -40,6 +40,7 @@
 #    못 밟으므로 pass/fail 로 적힌 것 자체가 거짓이다(#309). 표식은 **항목 줄의 접두**에서만
 #    본다 — 근거 문장에 `[칸 ③]` 을 언급했다고 정상 pass 가 뒤집히면 안 된다(#467 P2-2).
 #    `[칸 ③-prod]`(#608 — 칸 ③ 을 ③-dev/③-prod 로 나눈 뒤의 이름, 배포 뒤 운영 TEST 워커)는 `[칸 ③]` 과 같게 센다.
+#    `[기계]`(#608 — 사람 눈으로 못 보는 prod 확인, 배포 뒤 회차 몫)도 크롬이 밟지 않으므로 같은 자리에서 같게 센다.
 #    `[dev]` 표식(`- [ ] [dev] …` — m2 dev 서버에 써서 밟는 줄, #596)도 같은 자리에서 같게 센다:
 #    스모크는 프로덕션을 보기만 하므로 쓰기 왕복을 밟을 수 없다. 그 줄은 e2e-test 사전 검증 몫이다.
 # ⑶ 그 밖의 열린 항목 → 붙은 판정대로 `pass`·`fail`·`held_unstepped`(보류 = 브라우저 밖
@@ -125,7 +126,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     *) continue ;;                       # 체크박스 아닌 줄(주석·`없음`·산문)은 항목이 아니다
   esac
   body=$(strip_box "$t")
-  case "$body" in '[칸 ③]'*|'[칸 ③-prod]'*|'[dev]'*) marked=1 ;; *) marked=0 ;; esac
+  case "$body" in '[칸 ③]'*|'[칸 ③-prod]'*|'[dev]'*|'[기계]'*) marked=1 ;; *) marked=0 ;; esac
   it_text[$n]=$t
   it_state[$n]=$state
   it_marked[$n]=$marked

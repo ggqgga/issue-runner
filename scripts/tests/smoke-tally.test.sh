@@ -185,7 +185,8 @@ want "⑮ 없음 절 → steppable 0" '<!-- 형태 고정: `- [ ]` 체크박스 
 # ⑯ 표식 줄만 있는 절도 steppable 0 — 크롬을 띄우면 안 된다. 새 표식 `[칸 ③-prod]` 와 옛 `[칸 ③]` 은 같은 동치류다(#608).
 want "⑯ 표식만 → steppable 0" '- [ ] [칸 ③] 실장비 드라이런
 - [ ] [칸 ③-prod] 또 하나
-' - steppable=0 held_marked=2 open=2
+- [ ] [기계] 배포 뒤 회차 몫
+' - steppable=0 held_marked=3 open=3
 
 # ⑰ 혼합 절 — 열린 일반 줄만 센다(`- [x]` 는 skipped).
 want "⑰ 혼합 절" '- [ ] /pcs 렌더
