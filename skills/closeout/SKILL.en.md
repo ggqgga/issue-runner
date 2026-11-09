@@ -584,10 +584,11 @@ ones verify-runner could not step because of the lock or the time cap) · lines 
 items step 1's verifier excluded from the merge gate — a line dropped here is never stepped again).
 
 **`<LIVE_CHECKS>` must be one of two shapes — no prose.**
-- If there is **nothing at all** to step through after the deploy, exactly the single word `없음`. Add no
-  explanation after it.
-- Otherwise, a **`- [ ]` checkbox list**. One line = one action `e2e-test` steps through once after the
-  deploy. Background, rationale and caveats go in `## 변경 요약`; leave only what is to be stepped here.
+- If there is **nothing at all** to step through (no `[dev]` line for the pre-deploy dev round and nothing for after
+  the deploy), exactly the single word `없음`. Add no explanation after it. Only `[dev]` lines left is still not `없음` —
+  carry them as a list.
+- Otherwise, a **`- [ ]` checkbox list**. One line = one action one actor (the pre-deploy dev round · the post-deploy
+  round · `e2e-test`) steps through once. Background, rationale and caveats go in `## 변경 요약`; leave only what is to be stepped here.
 - **closeout does not climb the ladder — it only classifies** (Gun's decisions 13·15 of 2026-11-08; the per-actor cap
   table is `references/loop-conventions.md` §9). The actors that step lines before the deploy are verify-runner on the
   PR branch and the BoDAT dev round on the merged `main`; after the deploy it is e2e-test. closeout writes **one prefix
