@@ -579,7 +579,7 @@ deploy-cycle loop.** Fill `references/deploy-check-issue.md` (`<DEPLOY_CMD>` = t
 or "repo deploy procedure" if unknown; `<VERIFY_URL>` = the prod base URL (reference for operators and
 e2e-test), or leave it blank if unknown; `<LIVE_CHECKS>` = **every live line in the PR test plan
 and the issue body that has no verdict yet** — `[dev]` lines the BoDAT dev round steps before the deploy (including
-ones verify-runner could not step because of the lock or the time cap) · lines carrying a verify-runner verdict tag ·
+ones verify-runner could not step because of the time cap — a PR it could not step because dev was locked gets no greenlight and never reaches here, BoDAT #7489) · lines carrying a verify-runner verdict tag ·
 "post-deploy live verification" · hardware / real-device lines. It is the sole handoff destination for verification
 items step 1's verifier excluded from the merge gate — a line dropped here is never stepped again).
 
