@@ -506,7 +506,7 @@ worktree(`agent/issue-<N>`)를 직접 정리한다. `--merged` 는 squash 머지
 루프에 넘긴다.** `references/deploy-check-issue.md` 를 채워(`<DEPLOY_CMD>`=레포 배포 엔트리포인트, 모르면
 "레포 배포 절차"; `<VERIFY_URL>`=prod 베이스 URL(담당자·e2e-test 참고용), 모르면 빈 줄로
 둔다; `<LIVE_CHECKS>`=PR test plan·이슈 본문에서 **아직 판정이 서지 않은 실측 줄 전부** — 배포 전 BoDAT dev 회차가
-밟을 `[dev]` 줄(verify-runner 가 잠김·시간 상한으로 못 밟은 줄 포함)·verify-runner 판정 꼬리표가 붙은 줄·"배포 후 라이브 검증"·
+밟을 `[dev]` 줄(verify-runner 가 시간 상한으로 못 밟은 줄 포함 — 잠김으로 못 밟은 PR 은 그린라이트가 안 나 여기 오지 않는다, BoDAT #7489)·verify-runner 판정 꼬리표가 붙은 줄·"배포 후 라이브 검증"·
 하드웨어/실장비 줄. 1단계 검증자가 머지 게이트에서 제외한 범위 밖 검증 항목의 유일한 이관 목적지다 — 여기서 빠진 줄은
 아무도 다시 밟지 않는다).
 
