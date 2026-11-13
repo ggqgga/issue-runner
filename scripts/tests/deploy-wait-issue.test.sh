@@ -66,7 +66,7 @@ ok() { pass=$((pass + 1)); }
 bad() { fail=$((fail + 1)); echo "  ✗ $1"; }
 
 printf '주석 한 줄 고침. 관찰 가능한 변화 없음.\n' > "$tmp/summary.md"
-printf -- '- [ ] [dev] /pcs 에 워커 카드가 렌더된다\n- [ ] [칸 ③] TEST 워커 프로필 #18 드라이런\n' > "$tmp/items.md"
+printf -- '- [ ] [dev] /pcs 에 워커 카드가 렌더된다\n- [ ] [칸 ③] TEST 워커 프로필 #18 드라이런 (dev 불가: 실장비)\n' > "$tmp/items.md"
 printf '없음\n' > "$tmp/none.md"
 printf '없음. 주석 13줄이 전부다 — 관찰 가능한 변화가 없다.\n' > "$tmp/prose.md"
 printf '{"body":"Epic #4962","labels":[{"name":"P0"}]}\n' > "$tmp/parent.json"
@@ -101,7 +101,7 @@ for ph in '<PR>' '<SHA>' '<SUMMARY>' '<DEPLOY_CMD>' '<LIVE_CHECKS>' '<VERIFY_URL
   printf '%s\n' "$BODY" | grep -qF "$ph" && bad "② placeholder 미치환: $ph" || ok
 done
 printf '%s\n' "$BODY" | grep -qF 'PR #5300 머지됨 (HEAD abc1234)' && ok || bad "② PR·SHA 치환 실패"
-printf '%s\n' "$BODY" | grep -qF -- '- [ ] [칸 ③] TEST 워커 프로필 #18 드라이런' && ok \
+printf '%s\n' "$BODY" | grep -qF -- '- [ ] [칸 ③] TEST 워커 프로필 #18 드라이런 (dev 불가: 실장비)' && ok \
   || bad "② 항목이 본문에 그대로 실리지 않았다(표식 유실 = 표식 판별 붕괴)"
 printf '%s\n' "$BODY" | grep -qF '주석 한 줄 고침' && ok || bad "② 요약이 본문에 없다"
 
@@ -123,6 +123,17 @@ run "$tmp/unmarked.md"
   || bad "④b BoDAT 표식 없음 rc=$RC out=[$OUT] calls=[$CALLS] (기대 65·무출력·gh 0회)"
 printf '%s\n' "$ERR" | grep -qF '표식 없는 줄' && printf '%s\n' "$ERR" | grep -qF '[지혜]' && ok \
   || bad "④b stderr 에 첫 위반 줄·허용 표식이 없다: [$ERR]"
+# ④c BoDAT + `[기계]` 이유 없음 → 발행 전 exit 65, gh 0회 (결정 18 — dev 불가 이유)
+printf -- '- [ ] [dev] 정상\n- [ ] [기계] 운영 DB 줄 수 확인\n' > "$tmp/noreason.md"
+run "$tmp/noreason.md"
+{ [ "$RC" = 65 ] && [ -z "$OUT" ] && [ -z "$CALLS" ]; } && ok \
+  || bad "④c [기계] 이유 없음 rc=$RC out=[$OUT] calls=[$CALLS] (기대 65·무출력·gh 0회)"
+printf '%s\n' "$ERR" | grep -qF '운영 DB 줄 수 확인' && printf '%s\n' "$ERR" | grep -qF 'dev 불가' && ok \
+  || bad "④c stderr 에 첫 위반 줄·규칙이 없다: [$ERR]"
+# 이유 있는 [기계] · 이유 없는 [상원] · [칸 ③] [dev] 는 통과
+printf -- '- [ ] [기계] 운영 DB 줄 수 (dev 불가: 운영 DB 줄 수)\n- [ ] [상원] 화면 확인\n- [ ] [칸 ③] [dev] 복합\n' > "$tmp/reason-ok.md"
+run "$tmp/reason-ok.md"
+[ "$RC" = 0 ] && ok || bad "④c 이유 있는 [기계]/[상원] rc=$RC err=[$ERR]"
 # 다른 표식이 앞에 와도 통과(`[칸 ③] [dev]`) · BoDAT 아닌 레포는 표식 없어도 통과
 printf -- '- [ ] [칸 ③] [dev] 복합 표식\n- [x] [상원] 밟힌 줄\n' > "$tmp/multi.md"
 run "$tmp/multi.md"
@@ -235,7 +246,7 @@ run "$tmp/mixed.md"
 printf '%s\n' "$ERR" | grep -q '첫 위반 줄' && ok || bad "⑫ 위반 줄이 stderr 에 없다"
 
 # ⑬ 전부 유효한 체크박스면 통과한다(위 검사가 정상 항목을 막지 않는다).
-printf -- '- [ ] [dev] a\n- [x] [기계] 이미 밟음\n- [ ] [칸 ③] 실장비\n' > "$tmp/allbox.md"
+printf -- '- [ ] [dev] a\n- [x] [기계] 이미 밟음 (dev 불가: prod 줄 수)\n- [ ] [칸 ③] 실장비 (dev 불가: 실장비)\n' > "$tmp/allbox.md"
 run "$tmp/allbox.md"
 [ "$RC" = 0 ] && ok || bad "⑬ 정상 체크박스 목록 rc=$RC err=[$ERR]"
 

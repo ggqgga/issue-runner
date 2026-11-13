@@ -67,7 +67,8 @@
 #            `gh issue edit <번호> --repo <repo> --add-label needs:hardware` 로 붙인다. 둘 다면 2 가 이긴다.
 #   exit 64: usage · 65: 항목 형태 위반(발행 전 — 고쳐서 **다시 부르면 된다**, 잃은 것 없음)
 #            BoDAT 레포(`<owner>/BodaT`, 대소문자 무시)는 줄마다 담당 표식(`[dev]` `[기계]`
-#            `[칸 …]` `[건님]` `[상원]` `[지혜]`)도 필수 — 없으면 같은 65(결정 18)
+#            `[칸 …]` `[건님]` `[상원]` `[지혜]`)도 필수 — 없으면 같은 65(결정 18). `[기계]` `[칸 …]` `[건님]`
+#            줄은 `(dev 불가: <이유>)` 도 필수(`[dev]`·`[상원]`·`[지혜]` 줄은 면제) — 없으면 같은 65
 #
 # macOS bash 3.2 대상(연관배열·mapfile·${var^^} 금지).
 set -uo pipefail
@@ -166,6 +167,22 @@ if [ "$only_none" = 0 ]; then
       echo "deploy-wait-issue: 표식 없음 — BoDAT 배포 대기 항목은 줄마다 담당 표식이 필수다." >&2
       echo "  첫 위반 줄: $unmarked" >&2
       echo "  허용 표식: [dev] [기계] [칸 ③…] [건님] [상원] [지혜] (체크박스 바로 뒤, 예: - [ ] [dev] …). 표식을 붙여 **다시 부르라**." >&2
+      exit 65
+    fi
+    # 결정 18(2026-11-14) — 배포 뒤 표식 `[기계]` `[칸 …]` `[건님]` 은 `(dev 불가: <이유>)` 가 줄 안에 있어야 한다.
+    # 면제: 표식 묶음에 `[dev]`(dev 에서 밟는다) · `[상원]`/`[지혜]`(사람 눈이 곧 이유). `[칸 ③] [dev]` 는 통과.
+    noreason=$(grep -E '^[[:space:]]*- \[( |x|X)\] ' "$items" | awk '
+      { line=$0; sub(/^[[:space:]]*- \[( |x|X)\] /, "", line)
+        if (!match(line, /^(\[[^]]*\] *)*/)) next
+        marks=substr(line, 1, RLENGTH)
+        if (marks ~ /\[(dev|상원|지혜)\]/) next
+        if (marks !~ /\[(기계|칸 [^]]*|건님)\]/) next
+        if (line ~ /\(dev 불가: *[^) ][^)]*\)/) next
+        print $0; exit }')
+    if [ -n "$noreason" ]; then
+      echo "deploy-wait-issue: 이유 없음 — BoDAT 배포 뒤 표식 [기계]·[칸 …]·[건님] 줄은 (dev 불가: <이유>) 가 필수다(결정 18)." >&2
+      echo "  첫 위반 줄: $noreason" >&2
+      echo "  구체적 이유를 줄에 적거나(예: (dev 불가: 운영 DB 줄 수)) 표식을 [dev](기본)로 바꿔 **다시 부르라**. 항목을 빼지 마라." >&2
       exit 65
     fi
   fi
