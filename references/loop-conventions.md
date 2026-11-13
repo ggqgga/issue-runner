@@ -188,8 +188,8 @@ $SCRIPTS/loop-status.sh --post <루프> --delta "<이 틱 한 줄 요약>"
 | 주체 | 올라가는 칸 | 상한에서 넘길 곳 |
 |---|---|---|
 | 구현 워커(issue-runner 가 디스패치) | **①a 까지** | 나머지 실측 줄은 시도 없이 PR test plan 에 `[ ] [dev] <동작>` 으로 열어 둔다 — 실패가 아니므로 `BLOCKED:` 근거가 아니다. verify-runner 가 밟는다 |
-| verify-runner ③ Verify | ①a → ①b(BoDAT, PR 브랜치) → ②(`zdev_` 프로필) → ③-dev | 시도한 칸·명령·실패 출력을 인용하고 `verify-held --reason ladder`. ①b 가 **잠겨서** 못 밟은 `[dev]` 줄은 hold 사유가 아니지만 **그린라이트도 내지 않는다** — `wait:dev-lock` 라벨 + flake_retry 로 다음 틱 재시도(BoDAT #7489). dev 에 **없어서** 못 밟은 줄은 dev 미비 이슈 + `(dev 미비 #N)` — 이것도 보류 사유가 아니다 |
-| BoDAT 풀사이클(사람 세션, PR 브랜치) | ①a → ①b → ②(`zdev_`) → ③-dev — **verify-runner 와 같은 상한** | 같다(dev 미비 이슈 · 잠김은 `wait:dev-lock` 라벨을 붙이고 머지하지 않고 기다린다) |
+| verify-runner ③ Verify | ①a → ①b(BoDAT, PR 브랜치) → ②(`zdev_` 프로필) → ③-dev | 시도한 칸·명령·실패 출력을 인용하고 `verify-held --reason ladder`. ①b 가 **잠겨서** 못 밟은 `[dev]` 줄은 hold 사유가 아니지만 **그린라이트도 내지 않는다** — `wait:dev-lock` 라벨 + BoDAT-ops `script/dev-queue --timeout 1200` 로 줄 서기, 상한이면 flake_retry 로 다음 틱(BoDAT #7489·#7565). dev 에 **없어서** 못 밟은 줄은 dev 미비 이슈 + `(dev 미비 #N)` — 이것도 보류 사유가 아니다 |
+| BoDAT 풀사이클(사람 세션, PR 브랜치) | ①a → ①b → ②(`zdev_`) → ③-dev — **verify-runner 와 같은 상한** | 같다(dev 미비 이슈 · 잠김은 `wait:dev-lock` 라벨 + `dev-queue --not-ready` 로 PR 때 줄 서고 CI 초록에 `--ready`, 차례가 오면 최종 HEAD 로 밟는다 — BoDAT #7565) |
 | closeout 4단계(`<LIVE_CHECKS>` 이관 전) | **밟지 않는다 — 분류만** | 운영 덤프에서 판정 가능한 줄은 `[dev]` · 사람 눈으로 못 보는 prod 확인은 `[기계]` · 배포 뒤 실장비는 `[칸 ③-prod]` · 나머지는 표식 없이 배포 대기 이슈로 옮긴다 |
 | BoDAT dev 회차(m2 15분, `main`) | ①b(`main`) → ②(`zdev_`) → ③-dev | 배포 대기 이슈의 그 줄 끝에 판정 꼬리표(`{판정 …}`) · dev 미비 이슈 — 승격(B안)이 이 꼬리표를 읽는다 |
 | deploy-cycle ⑤(배포 뒤) | — 밟지 않고 `테스트` 이슈로 이관 | 남는 항목은 `테스트` 라벨 이슈 → e2e-test 레인 |
