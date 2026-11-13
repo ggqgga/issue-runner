@@ -605,6 +605,9 @@ items step 1's verifier excluded from the merge gate — a line dropped here is 
   - **BoDAT requires a mark on every line** (decision 18) — `[건님]`·`[상원]`·`[지혜]` when a person owns it, `[dev]` when
     unsure. A line with no mark is rejected by `deploy-wait-issue.sh` (exit 65). It must show how it is stepped — if it
     needs a means outside the browser, write that means on the line so `e2e-test` can step it straight away.
+  - **Post-deploy marks `[기계]`·`[칸 …]`·`[건님]` require `(dev 불가: <reason>)` inside the line** (decision 18, 2026-11-14) — state the
+    concrete reason it cannot be stepped on dev (e.g. `(dev 불가: 운영 DB 줄 수)`). `[dev]` lines and `[상원]`·`[지혜]` screen lines are exempt
+    (`[칸 ③] [dev]` passes too). A missing reason is the same exit 65.
   - Repos other than BoDAT have no `[dev]`·`[기계]` — classify with no mark (normal for those repos) or with `[칸 ③-prod]` only.
 - **Carry lines verify-runner judged on the PR branch together with their tag.** If a PR test plan or linked-issue line
   ends with a BoDAT verdict tag `{판정 통과|실패|dev미비 · <missing thing> · PR#<M> <SHA> · <시각>}` (the old `dev미비 #N` still parses) (verify-runner 2-b) — even if it
@@ -644,9 +647,9 @@ merged means it entered the promotion scope, and that fact must be visible to a 
   `--verify-url` when `<VERIFY_URL>` is unknown.
   - **exit 0** → the marker landed too, so **end as approval-required**.
   - **exit 65 (shape violation before issuance — the issue does not exist yet)** — it means `<LIVE_CHECKS>` is
-    prose, or (BoDAT) a line has no owner mark (stderr names the first one). Move background and rationale into `## 변경 요약`, leave only `없음` or `- [ ]` in the items slot,
+    prose, or (BoDAT) a line has no owner mark, or a `[기계]`·`[칸 …]`·`[건님]` line lacks `(dev 불가: <reason>)` (stderr names the first one). Move background and rationale into `## 변경 요약`, leave only `없음` or `- [ ]` in the items slot,
     and **call it again**. **Do not end step 4 on exit 65** — if it is still 65 after one more call: for a **mark violation (BoDAT)** prefix the unmarked lines with `[dev]` and
-    call again (never fall back to `--items-file 없음` — that silently drops verification items). Only for a **prose
+    call again (for a **reason violation**, either add a concrete `(dev 불가: <reason>)` or switch the line to `[dev]` (default) and call again — never drop the item) (never fall back to `--items-file 없음` — that silently drops verification items). Only for a **prose
     violation** move the prose to `## 변경 요약` and **issue** with `--items-file 없음` (a `(승격만)` ticket). In that case also
     report `BLOCKED: 배포 대기 항목 형태 위반 — PR #<pr>` in ④ Report.
   - **exit 1 (no issue created)** — report `BLOCKED: 배포 대기 이슈 발행 실패 — PR #<pr>` in ④ Report.
