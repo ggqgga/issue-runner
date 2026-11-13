@@ -602,11 +602,12 @@ items step 1's verifier excluded from the merge gate — a line dropped here is 
   - **`[칸 ③-prod]`** — a real-device line that must be stepped on the deployed code with the production TEST worker
     (profile #18) — only what a dev worker cannot reproduce. The old mark `[칸 ③]` keeps being read with the same
     meaning (`smoke-tally.sh` · `deploy-wait-issue.sh` · BoDAT deploy-cycle ⑤) — do not write it anew.
-  - **No mark** — any other line. It must show how it is stepped — if it needs a means outside the browser, write
-    that means on the line so `e2e-test` can step it straight away.
-  - Repos other than BoDAT have no `[dev]`·`[기계]` — classify with no mark or with `[칸 ③-prod]` only.
+  - **BoDAT requires a mark on every line** (decision 18) — `[건님]`·`[상원]`·`[지혜]` when a person owns it, `[dev]` when
+    unsure. A line with no mark is rejected by `deploy-wait-issue.sh` (exit 65). It must show how it is stepped — if it
+    needs a means outside the browser, write that means on the line so `e2e-test` can step it straight away.
+  - Repos other than BoDAT have no `[dev]`·`[기계]` — classify with no mark (normal for those repos) or with `[칸 ③-prod]` only.
 - **Carry lines verify-runner judged on the PR branch together with their tag.** If a PR test plan or linked-issue line
-  ends with a BoDAT verdict tag `{판정 통과|실패|dev미비 #N · PR#<M> <SHA> · <시각>}` (verify-runner 2-b) — even if it
+  ends with a BoDAT verdict tag `{판정 통과|실패|dev미비 · <missing thing> · PR#<M> <SHA> · <시각>}` (the old `dev미비 #N` still parses) (verify-runner 2-b) — even if it
   was `[x]` in the PR — carry it as `- [ ] [dev] <action> … {판정 …}` with the tag and evidence **unchanged to the
   letter** (never as `[x]` — promotion reads the tag, and an `[x]` line is not carried by deploy-cycle ⑤ and vanishes).
   The tag grammar SSOT is BoDAT `script/dev-verdicts`.
@@ -643,9 +644,10 @@ merged means it entered the promotion scope, and that fact must be visible to a 
   `--verify-url` when `<VERIFY_URL>` is unknown.
   - **exit 0** → the marker landed too, so **end as approval-required**.
   - **exit 65 (shape violation before issuance — the issue does not exist yet)** — it means `<LIVE_CHECKS>` is
-    prose. Move background and rationale into `## 변경 요약`, leave only `없음` or `- [ ]` in the items slot,
-    and **call it again**. **Do not end step 4 on exit 65** — if it is still 65 after one more call, move the
-    prose to `## 변경 요약` and **issue** with `--items-file 없음` (a `(승격만)` ticket). In that case also
+    prose, or (BoDAT) a line has no owner mark (stderr names the first one). Move background and rationale into `## 변경 요약`, leave only `없음` or `- [ ]` in the items slot,
+    and **call it again**. **Do not end step 4 on exit 65** — if it is still 65 after one more call: for a **mark violation (BoDAT)** prefix the unmarked lines with `[dev]` and
+    call again (never fall back to `--items-file 없음` — that silently drops verification items). Only for a **prose
+    violation** move the prose to `## 변경 요약` and **issue** with `--items-file 없음` (a `(승격만)` ticket). In that case also
     report `BLOCKED: 배포 대기 항목 형태 위반 — PR #<pr>` in ④ Report.
   - **exit 1 (no issue created)** — report `BLOCKED: 배포 대기 이슈 발행 실패 — PR #<pr>` in ④ Report.
   - **exit 2 (the issue was created — number on stdout)** — labels/marker are off. Report
