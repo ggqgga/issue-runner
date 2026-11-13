@@ -190,7 +190,7 @@ $SCRIPTS/loop-status.sh --post <루프> --delta "<이 틱 한 줄 요약>"
 | 구현 워커(issue-runner 가 디스패치) | **①a 까지** | 나머지 실측 줄은 시도 없이 PR test plan 에 `[ ] [dev] <동작>` 으로 열어 둔다 — 실패가 아니므로 `BLOCKED:` 근거가 아니다. verify-runner 가 밟는다 |
 | verify-runner ③ Verify | ①a → ①b(BoDAT, PR 브랜치) → ②(`zdev_` 프로필) → ③-dev | 시도한 칸·명령·실패 출력을 인용하고 `verify-held --reason ladder`. ①b 가 **잠겨서** 못 밟은 `[dev]` 줄은 hold 사유가 아니지만 **그린라이트도 내지 않는다** — `wait:dev-lock` 라벨 + BoDAT-ops `script/dev-queue --timeout 1200` 로 줄 서기, 상한이면 flake_retry 로 다음 틱(BoDAT #7489·#7565). dev 에 **없어서** 못 밟은 줄은 dev 미비 이슈 + `(dev 미비 #N)` — 이것도 보류 사유가 아니다 |
 | BoDAT 풀사이클(사람 세션, PR 브랜치) | ①a → ①b → ②(`zdev_`) → ③-dev — **verify-runner 와 같은 상한** | 같다(dev 미비 이슈 · 잠김은 `wait:dev-lock` 라벨 + `dev-queue --not-ready` 로 PR 때 줄 서고 CI 초록에 `--ready`, 차례가 오면 최종 HEAD 로 밟는다 — BoDAT #7565) |
-| closeout 4단계(`<LIVE_CHECKS>` 이관 전) | **밟지 않는다 — 분류만** | 운영 덤프에서 판정 가능한 줄은 `[dev]` · 사람 눈으로 못 보는 prod 확인은 `[기계]` · 배포 뒤 실장비는 `[칸 ③-prod]` · 나머지는 표식 없이 배포 대기 이슈로 옮긴다 |
+| closeout 4단계(`<LIVE_CHECKS>` 이관 전) | **밟지 않는다 — 분류만** | 운영 덤프에서 판정 가능한 줄은 `[dev]` · 사람 눈으로 못 보는 prod 확인은 `[기계]` · 배포 뒤 실장비는 `[칸 ③-prod]` · 나머지는 표식 없이 배포 대기 이슈로 옮긴다. BoDAT 화면이 바뀐 PR 인데 담당자 줄이 없으면 하나 더한다(아래 「담당자 줄」) |
 | BoDAT dev 회차(m2 15분, `main`) | ①b(`main`) → ②(`zdev_`) → ③-dev | 배포 대기 이슈의 그 줄 끝에 판정 꼬리표(`{판정 …}`) · dev 미비 이슈 — 승격(B안)이 이 꼬리표를 읽는다 |
 | deploy-cycle ⑤(배포 뒤) | — 밟지 않고 `테스트` 이슈로 이관 | 남는 항목은 `테스트` 라벨 이슈 → e2e-test 레인 |
 | BoDAT e2e-test 사후(사용자 호출 · 배포 뒤 회차) | 프로덕션 보기 · ③-prod | 사람(#3-확인요청) |
@@ -212,6 +212,11 @@ $SCRIPTS/loop-status.sh --post <루프> --delta "<이 틱 한 줄 요약>"
   `[칸 ③-prod]` 와 같게 읽는다**(`smoke-tally.sh`·`deploy-wait-issue.sh`·BoDAT deploy-cycle ⑤ 호환) — 새로 쓰지 않는다.
   표식 없는 줄은 밟을 수단이 줄에 드러나야 한다. 표식을 대신 붙이지 마라 — 붙이는 순간 더 이른 칸으로 밟을 수 있던
   항목이 그 칸 몫으로 미뤄진다.
+- **담당자 줄 — BoDAT 화면이 바뀐 변경은 배포 뒤 운영 화면 확인 줄을 하나 둔다**(BoDAT `Plans/verification-lanes.md` 결정 15, 2026-11-13
+  건님). `[dev]` 줄만 있으면 dev 회차가 닫아 담당자(#3-확인요청)에게 갈 일이 남지 않는다 — 11-13 실측 열린 `테스트` 이슈 35개의
+  미체크 줄 중 담당자 줄 4개. 꼴: `- [ ] [지혜] 배포 뒤 운영 <화면>(<경로>)에서 … (왜: … · 이전에는 … · 이렇게 보이면 문제 …)`.
+  담당: 인큐베이션·프로필(`/profiles` 와 그 탭) = `[지혜]`, 그 밖 = `[상원]`(결정 14). 쓰는 곳은 구현 워커의 PR test plan, 빠졌으면 closeout 4단계.
+  이 줄은 위 「표식을 대신 붙이지 마라」의 예외다 — 더 이른 칸의 `[dev]` 줄을 대신하지 않고 그 옆에 하나 더 두는 줄이다.
 - BoDAT 밖 레포에는 ①b·③-dev·`[dev]` 가 없다 — 그 레포의 줄은 표식 없이 또는 `[칸 ③-prod]` 로만 분류한다.
 
 **종전 표기.** 2026-10-27 표는 구현 워커 ①a→②→③ · closeout 4단계 ①a→①b(`main`)→② 였다. 2026-11-08 결정으로 배포 전
