@@ -66,6 +66,8 @@
 #            `BLOCKED: 배포 대기 이슈 needs:hardware 누락 — #<번호>` 로 보고하고 사람이
 #            `gh issue edit <번호> --repo <repo> --add-label needs:hardware` 로 붙인다. 둘 다면 2 가 이긴다.
 #   exit 64: usage · 65: 항목 형태 위반(발행 전 — 고쳐서 **다시 부르면 된다**, 잃은 것 없음)
+#            BoDAT 레포(`<owner>/BodaT`, 대소문자 무시)는 줄마다 담당 표식(`[dev]` `[기계]`
+#            `[칸 …]` `[건님]` `[상원]` `[지혜]`)도 필수 — 없으면 같은 65(결정 18)
 #
 # macOS bash 3.2 대상(연관배열·mapfile·${var^^} 금지).
 set -uo pipefail
@@ -151,6 +153,21 @@ if [ "$only_none" = 0 ]; then
     echo "  첫 위반 줄: $badline" >&2
     echo "  배경·근거·주의는 --summary-file 로 보내고, 항목 자리엔 밟을 것만 남겨 **다시 부르라**." >&2
     exit 65
+  fi
+  # BoDAT 만 — 줄마다 담당 표식이 필수다(BoDAT `Plans/verification-lanes.md` 결정 18, 2026-11-13).
+  # 표식이 없으면 deploy-cycle ⑤ 가 그 줄을 누가 밟을지 못 정한다. 체크박스 바로 뒤 대괄호 묶음
+  # 안에 `[dev]` `[기계]` `[칸 …]` `[건님]` `[상원]` `[지혜]` 중 하나가 있어야 한다(다른 표식이
+  # 앞에 와도 된다: `- [ ] [칸 ③] [dev] …`). 다른 레포(BoDAC·issue-runner)는 그대로다.
+  repo_name=$(printf '%s' "${repo##*/}" | tr '[:upper:]' '[:lower:]')
+  if [ "$repo_name" = bodat ]; then
+    unmarked=$(grep -E '^[[:space:]]*- \[( |x|X)\] ' "$items" \
+      | grep -vE '^[[:space:]]*- \[( |x|X)\] (\[[^]]*\] *)*\[(dev|기계|칸 [^]]*|건님|상원|지혜)\]' | head -1)
+    if [ -n "$unmarked" ]; then
+      echo "deploy-wait-issue: 표식 없음 — BoDAT 배포 대기 항목은 줄마다 담당 표식이 필수다." >&2
+      echo "  첫 위반 줄: $unmarked" >&2
+      echo "  허용 표식: [dev] [기계] [칸 ③…] [건님] [상원] [지혜] (체크박스 바로 뒤, 예: - [ ] [dev] …). 표식을 붙여 **다시 부르라**." >&2
+      exit 65
+    fi
   fi
 fi
 

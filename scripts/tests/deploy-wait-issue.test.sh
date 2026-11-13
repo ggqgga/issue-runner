@@ -66,7 +66,7 @@ ok() { pass=$((pass + 1)); }
 bad() { fail=$((fail + 1)); echo "  ✗ $1"; }
 
 printf '주석 한 줄 고침. 관찰 가능한 변화 없음.\n' > "$tmp/summary.md"
-printf -- '- [ ] /pcs 에 워커 카드가 렌더된다\n- [ ] [칸 ③] TEST 워커 프로필 #18 드라이런\n' > "$tmp/items.md"
+printf -- '- [ ] [dev] /pcs 에 워커 카드가 렌더된다\n- [ ] [칸 ③] TEST 워커 프로필 #18 드라이런\n' > "$tmp/items.md"
 printf '없음\n' > "$tmp/none.md"
 printf '없음. 주석 13줄이 전부다 — 관찰 가능한 변화가 없다.\n' > "$tmp/prose.md"
 printf '{"body":"Epic #4962","labels":[{"name":"P0"}]}\n' > "$tmp/parent.json"
@@ -115,6 +115,23 @@ printf '%s\n' "$BODY" | grep -qx '없음' && ok || bad "③ 본문 항목 절이
 run "$tmp/prose.md"
 { [ "$RC" = 65 ] && [ -z "$OUT" ] && [ -z "$CALLS" ]; } && ok \
   || bad "④ 산문 항목 rc=$RC out=[$OUT] calls=[$CALLS] (기대 65·무출력·gh 0회)"
+
+# ④b BoDAT 레포 + 표식 없는 줄 → 발행 전 exit 65, gh 호출 0회, stderr 에 첫 위반 줄·허용 표식 (결정 18)
+printf -- '- [ ] [dev] 표식 있는 줄\n- [ ] 표식 없는 줄\n' > "$tmp/unmarked.md"
+run "$tmp/unmarked.md"
+{ [ "$RC" = 65 ] && [ -z "$OUT" ] && [ -z "$CALLS" ]; } && ok \
+  || bad "④b BoDAT 표식 없음 rc=$RC out=[$OUT] calls=[$CALLS] (기대 65·무출력·gh 0회)"
+printf '%s\n' "$ERR" | grep -qF '표식 없는 줄' && printf '%s\n' "$ERR" | grep -qF '[지혜]' && ok \
+  || bad "④b stderr 에 첫 위반 줄·허용 표식이 없다: [$ERR]"
+# 다른 표식이 앞에 와도 통과(`[칸 ③] [dev]`) · BoDAT 아닌 레포는 표식 없어도 통과
+printf -- '- [ ] [칸 ③] [dev] 복합 표식\n- [x] [상원] 밟힌 줄\n' > "$tmp/multi.md"
+run "$tmp/multi.md"
+[ "$RC" = 0 ] && ok || bad "④b 복합 표식 rc=$RC err=[$ERR]"
+: > "$tmp/calls.log"
+OUT=$(DW_CALLS="$tmp/calls.log" DW_BODY="$tmp/body.out" DW_TITLE="$tmp/title.out" DW_PARENT="$tmp/parent.json" \
+      PATH="$tmp/stub:$PATH" bash "$SUT" ggqgga/BoDAC 5300 --sha abc1234 --title "x" \
+      --summary-file "$tmp/summary.md" --items-file "$tmp/unmarked.md" 2>/dev/null); RC=$?
+[ "$RC" = 0 ] && ok || bad "④b BoDAC 는 표식 없어도 통과해야 한다 rc=$RC"
 
 echo "── 템플릿 치환(#484) ────────────────────────────────────────────"
 
@@ -218,7 +235,7 @@ run "$tmp/mixed.md"
 printf '%s\n' "$ERR" | grep -q '첫 위반 줄' && ok || bad "⑫ 위반 줄이 stderr 에 없다"
 
 # ⑬ 전부 유효한 체크박스면 통과한다(위 검사가 정상 항목을 막지 않는다).
-printf -- '- [ ] a\n- [x] 이미 밟음\n- [ ] [칸 ③] 실장비\n' > "$tmp/allbox.md"
+printf -- '- [ ] [dev] a\n- [x] [기계] 이미 밟음\n- [ ] [칸 ③] 실장비\n' > "$tmp/allbox.md"
 run "$tmp/allbox.md"
 [ "$RC" = 0 ] && ok || bad "⑬ 정상 체크박스 목록 rc=$RC err=[$ERR]"
 
