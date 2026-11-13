@@ -277,12 +277,12 @@ diff·이슈 본문으로 `AUX_REVIEWERS` 두 타입을 각각 `run_in_backgroun
 `보조 리뷰(pr-review-toolkit): 조용한 실패 n건 · 테스트 갭 n건` + 발견 한 줄씩(CLEAN 이면 0건).
 Codex 가 BLOCKER 로 재디스패치할 때도 이 줄은 붙인다 — 워커가 함께 읽고 고친다.
 
-**3-c. 보안 경계 표식 (`claude-security` 는 사람 전용).** 동봉 diff 의 파일 목록이 대상 레포
+**3-c. 보안 경계 표식.** 동봉 diff 의 파일 목록이 대상 레포
 CLAUDE.md "보안 경계 경로" 절과 겹치면 같은 코멘트에 한 줄을 더 붙인다:
-`🔒 보안 경계 변경: <파일들> — 배포 전 사람 세션에서 /claude-security scan changes 권고`.
-게이트 아님. `claude-security` 스킬은 `disable-model-invocation` 이라 이 루프가 대신 돌릴 수
-없다 — BoDAT `hotfix`(핫픽스 범위 PR) 와 `deploy-cycle` ⑥ 보고(정기 배포 — BoDAT #7253)가 이
-표식을 읽어 사람 세션에 스캔을 권고한다. CLAUDE.md 에 그 절이 없는
+`🔒 보안 경계 변경: <파일들> — 배포 전 security-review 검토 대상`.
+게이트 아님 — 이 루프는 스캔을 돌리지 않는다. BoDAT `deploy-cycle` ③-S(정기 배포)와 `hotfix` 2절(핫픽스)이
+이 표식(`🔒 보안 경계 변경:` 접두 — 콜론까지가 계약)을 읽어 승격 범위 전체를 내장 `/security-review` 로 배포 전에
+한 번 무인 검토한다(2026-11-13 — `claude-security` 는 자동화에 쓰지 않는다). CLAUDE.md 에 그 절이 없는
 레포는 표식을 생략한다.
 
 ## ④ Classify — 판정과 인계
