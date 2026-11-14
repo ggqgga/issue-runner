@@ -68,6 +68,47 @@ ROOT=$(git -C "$base" rev-parse --show-toplevel 2>/dev/null) || exit 0
 [ -n "$ROOT" ] && [ -x "$ROOT/bin/ci" ] || exit 0
 SHA=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null) || exit 0
 
+# HEAD 를 올리는 push 가 명령에 하나도 없으면 no-op — 배포용 체크아웃(main 고정)·dev 서버 체크아웃에서 돌린 승격 명령
+# (`git push origin <SHA>:refs/heads/release` · 태그 · `git push mini origin/main:refs/heads/main …`)이 그 체크아웃의
+# HEAD 로 bin/ci 를 큐에 넣었다(2026-11-14 BoDAT 배포 실측). 올린다고 보는 것: 인자 없는 push · 원본이 HEAD/현재 브랜치인
+# refspec · 콜론 없는 이름 중 태그가 아닌 것(브랜치 — 예전 동작 유지). 안 올린다고 보는 것: 원본이 그 밖인 `src:dst`
+# (SHA·원격 브랜치·변수) · 태그 이름 · `--tags` 만 · `--delete`. 해석이 애매하면 올린다 쪽이다(CI 를 빼먹지 않게).
+BRANCH=$(git -C "$ROOT" symbolic-ref --short -q HEAD 2>/dev/null || true)
+perl -e '
+  my ($cmd, $root, $br) = @ARGV;
+  for my $seg (split /&&|\|\||[;|\n]/, $cmd) {
+    next unless $seg =~ /(?:^|\s)git\s+push(?:\s+(.*))?$/s;
+    my (@pos, $tags, $del);
+    my @t = grep { length } split /\s+/, ($1 // "");
+    for (my $i = 0; $i < @t; $i++) {
+      (my $x = $t[$i]) =~ s/^["\x27]+|["\x27]+$//g;
+      next if $t[$i] =~ /^\d*[<>]/;                                   # 2>&1 · >/dev/null
+      if ($x =~ /^-/) {
+        $tags = 1 if $x eq "--tags";
+        $del = 1 if $x eq "--delete" || $x eq "-d";
+        $i++ if $x eq "-o" || $x eq "--push-option" || $x eq "--repo";
+        next;
+      }
+      push @pos, $x;
+    }
+    next if $del;
+    shift @pos;                                                       # 원격
+    exit 0 if !@pos && !$tags;                                        # 기본 push = 현재 브랜치
+    for my $r (@pos) {
+      $r =~ s/^\+//;
+      if ($r =~ /^([^:]*):/) {
+        my $src = $1;
+        exit 0 if $src eq "HEAD" || ($br ne "" && ($src eq $br || $src eq "refs/heads/$br"));
+        next;
+      }
+      exit 0 if $r eq "HEAD";
+      next if system("git", "-C", $root, "rev-parse", "-q", "--verify", "refs/tags/$r") == 0;
+      exit 0;                                                         # 브랜치 이름(현재 브랜치가 아니어도 — 예전 동작)
+    }
+  }
+  exit 3;
+' "$cmd" "$ROOT" "$BRANCH" >/dev/null 2>&1; [ $? -eq 3 ] && exit 0   # 3 만 "안 올림" — perl 이 깨지면(다른 코드) 큐에 넣는 쪽
+
 Q=""; [ -n "$S" ] && Q="$S/ci-queue.sh"
 if [ -z "$Q" ]; then
   # exit 0 의 stderr 는 세션에 안 보인다 — 실패도 additionalContext 로 알린다(머지 게이트에서야 아는 일 방지)

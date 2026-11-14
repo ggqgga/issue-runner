@@ -183,6 +183,12 @@ assert_eq "훅(d) 비레포 no-op" "$(ls "$HOME/.claude/.local-ci" | wc -l | tr 
 # (e) git push 가 아닌 명령 → no-op
 printf '{"cwd":"%s","tool_input":{"command":"git status"}}' "$H1" | bash "$HOOK" >/dev/null 2>&1
 assert_eq "훅(e) 비-push no-op" "$(ls -A "$QDIR" 2>/dev/null | wc -l | tr -d ' ')" 0
+# (f) HEAD 를 올리지 않는 push 만 있으면 no-op — SHA·원격 브랜치 refspec · 태그 · 미러(배포용 체크아웃의 승격 명령 꼴)
+HF=$(make_repo hf); HSLF=$(slug_of "$HF"); git -C "$HF" tag v1
+printf '{"cwd":"%s","tool_input":{"command":"git push origin \\"${T}:refs/heads/release\\" && git push origin v1 && git push mini origin/main:refs/heads/main v1 2>&1 | tail -3"}}' "$HF" \
+  | bash "$HOOK" >/dev/null 2>&1
+sleep 1
+assert_eq "훅(f) HEAD 아닌 push no-op" "$(ls -A "$QDIR" 2>/dev/null | wc -l | tr -d ' ')$(ls -d "$HOME/.claude/.local-ci/$HSLF" 2>/dev/null | wc -l | tr -d ' ')" 00
 
 echo "[ci-queue] 11) wait — 결과 있으면 즉시(pass=0·fail=1), 실행 중이면 끝날 때 깨어남, 큐에 없으면 grace 뒤 2, 타임아웃 124"
 rc=0; out=$("$SUT" wait "$S1" 2>&1) || rc=$?
