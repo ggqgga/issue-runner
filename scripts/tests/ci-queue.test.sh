@@ -185,7 +185,7 @@ printf '{"cwd":"%s","tool_input":{"command":"git status"}}' "$H1" | bash "$HOOK"
 assert_eq "훅(e) 비-push no-op" "$(ls -A "$QDIR" 2>/dev/null | wc -l | tr -d ' ')" 0
 # (f) HEAD 를 올리지 않는 push 만 있으면 no-op — SHA·원격 브랜치 refspec · 태그 · 미러(배포용 체크아웃의 승격 명령 꼴)
 HF=$(make_repo hf); HSLF=$(slug_of "$HF"); git -C "$HF" tag v1
-printf '{"cwd":"%s","tool_input":{"command":"git push origin \\"${T}:refs/heads/release\\" && git push origin v1 && git push mini origin/main:refs/heads/main v1 2>&1 | tail -3"}}' "$HF" \
+printf '{"cwd":"%s","tool_input":{"command":"git push origin \\"${T}:refs/heads/release\\" && git push origin v1 && git push mini origin/main:refs/heads/main v1 2>&1 | tail -3 && git push origin tag v1 refs/tags/v1 > /tmp/push.log && git push --repo origin \\"${T}:release\\""}}' "$HF" \
   | bash "$HOOK" >/dev/null 2>&1
 sleep 1
 assert_eq "훅(f) HEAD 아닌 push no-op" "$(ls -A "$QDIR" 2>/dev/null | wc -l | tr -d ' ')$(ls -d "$HOME/.claude/.local-ci/$HSLF" 2>/dev/null | wc -l | tr -d ' ')" 00

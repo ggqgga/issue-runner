@@ -78,30 +78,37 @@ perl -e '
   my ($cmd, $root, $br) = @ARGV;
   for my $seg (split /&&|\|\||[;|\n]/, $cmd) {
     next unless $seg =~ /(?:^|\s)git\s+push(?:\s+(.*))?$/s;
-    my (@pos, $tags, $del);
+    my (@pos, $tags, $del, $repo);
     my @t = grep { length } split /\s+/, ($1 // "");
     for (my $i = 0; $i < @t; $i++) {
       (my $x = $t[$i]) =~ s/^["\x27]+|["\x27]+$//g;
-      next if $t[$i] =~ /^\d*[<>]/;                                   # 2>&1 · >/dev/null
+      if ($t[$i] =~ /^\d*[<>]/) {                                     # 2>&1 · >/dev/null · "> 파일"(띄운 대상도 넘긴다)
+        $i++ if $t[$i] =~ /^\d*[<>]+$/;
+        next;
+      }
       if ($x =~ /^-/) {
         $tags = 1 if $x eq "--tags";
         $del = 1 if $x eq "--delete" || $x eq "-d";
+        $repo = 1 if $x =~ /^--repo(=|$)/;                           # --repo 가 원격을 주면 첫 위치 인자도 refspec 이다
         $i++ if $x eq "-o" || $x eq "--push-option" || $x eq "--repo";
         next;
       }
       push @pos, $x;
     }
     next if $del;
-    shift @pos;                                                       # 원격
+    shift @pos unless $repo;                                          # 원격
     exit 0 if !@pos && !$tags;                                        # 기본 push = 현재 브랜치
-    for my $r (@pos) {
+    for (my $j = 0; $j < @pos; $j++) {
+      my $r = $pos[$j];
       $r =~ s/^\+//;
+      if ($r eq "tag") { $j++; next }                                 # `git push origin tag v1`
+      next if $r =~ m{^refs/tags/};
       if ($r =~ /^([^:]*):/) {
         my $src = $1;
-        exit 0 if $src eq "HEAD" || ($br ne "" && ($src eq $br || $src eq "refs/heads/$br"));
+        exit 0 if $src eq "HEAD" || $src eq "@" || ($br ne "" && ($src eq $br || $src eq "refs/heads/$br"));
         next;
       }
-      exit 0 if $r eq "HEAD";
+      exit 0 if $r eq "HEAD" || $r eq "@";
       next if system("git", "-C", $root, "rev-parse", "-q", "--verify", "refs/tags/$r") == 0;
       exit 0;                                                         # 브랜치 이름(현재 브랜치가 아니어도 — 예전 동작)
     }
