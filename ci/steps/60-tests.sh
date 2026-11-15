@@ -13,7 +13,7 @@
 #   transition(#144·#147·#281) · claim-issue(#281) · resume-sweep(#147) · loop-status(#144) ·
 #   epic-sweep(#258) · dependency-sweep(#581) · progress-evidence·claim-at·pr-head-at·closeout-ci-pass·
 #   closeout-reconcile(#428) · smoke-tally(#448) · deploy-wait-issue(#446) ·
-#   make-worktree(#445) · ci-gate(#47·#60) · cleanup-worktree(#62) · repo-flag(#109) ·
+#   make-worktree(#445) · ci-gate(#47·#60·#637) · cleanup-worktree(#62) · repo-flag(#109) ·
 #   setup-labels(#346)
 #
 # 동승한 가드 블록 둘 — 원 bin/ci 의 실행 순서가 러너 사이에 끼워 둔 자리라 순서를
@@ -160,7 +160,7 @@ bash scripts/tests/deploy-wait-issue.test.sh
 echo "[test] make-worktree.sh --sync 격자 — 원격 head 강제 동기화·더티 거부·untracked 무해·원격 부재 (#445)"
 bash scripts/tests/make-worktree.test.sh
 
-echo "[test] ci-gate 훅 — 대상 파싱 fail-closed·--repo 캐시 판정·rollup SUCCESS-only allowlist (#47 · #60)"
+echo "[test] ci-gate 훅 — 대상 파싱 fail-closed·--repo 캐시 판정·rollup SUCCESS-only allowlist·코드 (no-issue) 거부·머지 뒤 발행 요구 (#47 · #60 · #637)"
 bash scripts/tests/ci-gate.test.sh
 
 echo "[test] cleanup-worktree.sh worktree 처분 — clean+--merged 제거·더티/미push 보류(warn JSON)·멱등 (#62)"

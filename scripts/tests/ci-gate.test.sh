@@ -127,5 +127,83 @@ gate_rollup '[{"status":"COMPLETED","conclusion":"UNKNOWN_STATE"}]'
 gate_rollup '[]'
 [ "$RC" = 2 ] && ok || bad "⑶⑥ 빈 rollup → exit $RC (기대 2)"
 
+echo "── ⑷ 코드 변경 + (no-issue) 머지 거부 — 배포 대기 이슈 누락 방지 (#637) ──"
+
+# deploy-cycle 수집 레포(deploy-wait 라벨 실재)를 흉내 낸다. CI 쪽은 rollup 전부 SUCCESS 라
+# 새 규칙이 아니면 exit 0 이다 — 그래서 exit 2 는 이 규칙의 거부이고, 문구로 한 번 더 가른다.
+# PR_JSON(본문·파일)은 스텁이 env 로 받는다. 본문의 줄바꿈은 JSON \n 이스케이프.
+cat > "$tmp/stub/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *"api repos/o/r/labels/deploy-wait"*) echo '{"name":"deploy-wait"}' ;;
+  *"pr view"*statusCheckRollup*) echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
+  *"pr view"*files*)             printf '%s\n' "$PR_JSON" ;;
+  *) echo '' ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+noissue_gate() {  # noissue_gate <PR JSON> [추가 머지 플래그]
+  RC=0
+  printf '{"tool_input":{"command":"gh pr merge 5 --repo o/r --squash%s"}}' "${2:-}" \
+    | (cd "$tmp/cwd" && HOME="$tmp/home" ISSUE_RUNNER_SCRIPTS="$DIR" PR_JSON="$1" \
+        ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" PATH="$tmp/stub:$PATH" \
+        bash "$GATE") >/dev/null 2>"$tmp/err" || RC=$?
+  ERR=$(cat "$tmp/err")
+}
+URL='"url":"https://github.com/o/r/pull/5"'
+
+noissue_gate "{\"body\":\"고침\\r\\n(no-issue)\",\"files\":[{\"path\":\"README.md\"},{\"path\":\"script/x.rb\"}],$URL}"
+[ "$RC" = 2 ] && ok || bad "⑷ 코드+(no-issue) → exit $RC (기대 2 — 배포 대기 이슈 없이 머지된다)"
+case "$ERR" in *"배포 대기 이슈가 필요"*deploy-wait-issue.sh*--title*) ok ;; *) bad "⑷ 거부 안내 문구 없음 err=[$ERR]" ;; esac
+
+noissue_gate "{\"body\":\"(no-issue)\",\"files\":[{\"path\":\"README.md\"},{\"path\":\"Plans/x.html\"}],$URL}"
+[ "$RC" = 0 ] && ok || bad "⑷ 문서만(.md·.html)+(no-issue) → exit $RC (기대 0 — 문서 레인은 지금처럼 통과) err=[$ERR]"
+
+noissue_gate "{\"body\":\"(no-issue)\\r\\n배포 대기: 머지 뒤 발행\\r\\n\",\"files\":[{\"path\":\"script/x.rb\"}],$URL}"
+[ "$RC" = 0 ] && ok || bad "⑷ 코드+(no-issue)+'배포 대기: 머지 뒤 발행' 줄 → exit $RC (기대 0 — 명시 통로) err=[$ERR]"
+
+# 머지 뒤 훅은 MERGED 만 보므로 --auto(아직 미머지)로는 통로의 약속(발행 요구)이 끊긴다.
+noissue_gate "{\"body\":\"(no-issue)\\n배포 대기: 머지 뒤 발행\",\"files\":[{\"path\":\"script/x.rb\"}],$URL}" " --auto"
+[ "$RC" = 2 ] && ok || bad "⑷ 통로 줄 + --auto → exit $RC (기대 2 — 머지 뒤 발행 요구가 안 뜬다)"
+
+noissue_gate "{\"body\":\"(no-issue)\",\"files\":[],$URL}"
+[ "$RC" = 2 ] && ok || bad "⑷ 파일 목록 비어 판정 불가 → exit $RC (기대 2 — fail-closed)"
+
+echo "── ⑸ 머지 뒤 훅 — '배포 대기: 머지 뒤 발행' PR 에 마커가 없으면 발행 명령을 요구 (#637) ──"
+
+POST="$(cd "$DIR/.." && pwd)/hooks/deploy-wait-after-merge.sh"
+cat > "$tmp/stub/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *"pr view"*) printf '%s\n' '{"number":5,"state":"MERGED","url":"https://github.com/o/r/pull/5","mergeCommit":{"oid":"c0ffee1234"},"body":"(no-issue)\r\n배포 대기: 머지 뒤 발행","comments":[{"body":"머지 판정: ✅"}]}' ;;
+  *) echo '' ;;
+esac
+STUB
+chmod +x "$tmp/stub/gh"
+out=$(printf '{"tool_input":{"command":"gh pr merge 5 --repo o/r --squash"}}' \
+  | (cd "$tmp/cwd" && HOME="$tmp/home" ISSUE_RUNNER_SCRIPTS="$DIR" PATH="$tmp/stub:$PATH" bash "$POST") 2>"$tmp/err")
+ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)
+case "$ctx" in
+  *deploy-wait-issue.sh*"o/r 5 --sha c0ffee1234"*--title*) ok ;;
+  *) bad "⑸ 마커 없는 머지 뒤 발행 요구 없음(또는 필수 --title 누락) out=[$out] err=[$(cat "$tmp/err")]" ;;
+esac
+
+# merge queue 는 `--auto` 없이도 PR 을 OPEN 으로 남긴다 — 그 뒤 머지를 볼 PostToolUse 가 없으니
+# 지금 말하지 않으면 발행 요구가 영영 사라진다.
+cat > "$tmp/stub/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *"pr view"*) printf '%s\n' '{"number":5,"state":"OPEN","url":"https://github.com/o/r/pull/5","mergeCommit":null,"body":"(no-issue)\n배포 대기: 머지 뒤 발행","comments":[]}' ;;
+  *) echo '' ;;
+esac
+STUB
+out=$(printf '{"tool_input":{"command":"gh pr merge 5 --repo o/r --squash"}}' \
+  | (cd "$tmp/cwd" && HOME="$tmp/home" ISSUE_RUNNER_SCRIPTS="$DIR" PATH="$tmp/stub:$PATH" bash "$POST") 2>"$tmp/err")
+ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)
+case "$ctx" in
+  *deploy-wait-issue.sh*"o/r 5"*) ok ;;
+  *) bad "⑸ 머지 큐 대기(OPEN)로 남은 통로 PR 에 발행 요구 없음 out=[$out]" ;;
+esac
+
 echo "ci-gate.test: pass=$pass fail=$fail"
 [ "$fail" = 0 ]

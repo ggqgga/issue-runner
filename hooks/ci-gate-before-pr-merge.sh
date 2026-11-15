@@ -57,10 +57,58 @@ fi
 
 # ── 문서 전용 PR 면제 (docs-only) ────────────────────────────────────
 # 변경 파일이 전부 문서(Plans/·Docs/·*.md)면 CI 게이트를 건너뛴다 — 코드 변경 0 이라
-# 테스트 영향이 없다(문서는 복잡한 CI 절차 없이 머지·배포). 파일 목록 조회 실패나
-# 빈 목록은 면제하지 않고(fail-safe) 아래 정상 게이트로 떨어진다. 코드 파일이 하나라도
+# 테스트 영향이 없다(문서는 복잡한 CI 절차 없이 머지·배포). 조회 실패는 바로 아래에서
+# 차단되고(#637), 빈 목록은 면제하지 않고(fail-safe) 아래 정상 게이트로 떨어진다. 코드 파일이 하나라도
 # 섞이면 nondoc 이 잡혀 게이트가 그대로 적용된다.
-files=$(gh_pr_view "$pr_num" --json files 2>/dev/null | jq -r '.files[].path // empty')
+pr_json=$(gh_pr_view "$pr_num" --json body,files,url 2>/dev/null)
+# 본문·파일 조회 자체가 실패하면 아래 (no-issue) 규칙을 판정할 수 없다 — 차단(fail-closed, #637).
+if ! printf '%s' "$pr_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+  printf 'PR #%s 의 본문·변경 파일을 조회할 수 없어 게이트 판정 불가 — 차단합니다(gh pr view 실패). 네트워크/인증을 확인하세요.\n' "$pr_num" >&2
+  exit 2
+fi
+files=$(printf '%s' "$pr_json" | jq -r '.files[].path // empty' 2>/dev/null)
+
+# ── 코드 변경 + (no-issue) 거부 (#637) ──────────────────────────────
+# `(no-issue)` 는 문서 레인(바뀐 파일이 전부 .md·.html)용 표기다. deploy-cycle 이 수집하는
+# 레포(deploy-wait 라벨 실재)에서 코드 PR 이 이 표기로 머지되면 배포 대기 이슈가 없어 그
+# 커밋에서 승격이 멈추고 뒤 커밋까지 함께 묶인다(BoDAT #7662 → 11-15 승격 정지). 문서 전용
+# 면제(아래 — Plans/·Docs/ 도 면제)보다 먼저 본다: 이 규칙의 "문서" 는 .md·.html 뿐이다.
+# 명시 통로: 본문 전용 줄 `배포 대기: 머지 뒤 발행` — 이 검사만 건너뛰고(CI 게이트는 그대로),
+# 머지 뒤 hooks/deploy-wait-after-merge.sh 가 발행 명령을 요구한다. 그 훅은 머지 명령 직후 한 번만
+# 돌아 나중의 머지를 못 보므로 `--auto` 와는 같이 쓸 수 없다(merge queue 로 OPEN 이 남는 경우는
+# 그 훅이 "머지가 끝나면 발행하라" 로 남긴다).
+# 라벨 조회는 코드 파일이 있을 때만 한다 — 문서만 바꾼 PR 은 라벨 API 상태와 무관하게 지금처럼 통과.
+# 판정 불가(파일 목록 없음·라벨 조회 비-404 실패·레포 미상)는 전부 거부 — fail-closed.
+body=$(printf '%s' "$pr_json" | jq -r '.body // empty' 2>/dev/null | tr -d '\r')
+if printf '%s\n' "$body" | grep -qF '(no-issue)'; then
+  pr_repo=$flag_repo
+  [ -z "$pr_repo" ] && pr_repo=$(printf '%s' "$pr_json" | jq -r '.url // empty' 2>/dev/null \
+    | sed -n -E 's#^https://[^/]+/([^/]+/[^/]+)/pull/[0-9]+.*#\1#p')
+  deny_noissue() {  # $1=사유
+    printf 'PR #%s 머지 거부 — %s\n코드 변경은 배포 대기 이슈가 필요하다 — 구현 이슈를 만들어 본문의 `(no-issue)` 를 `Closes #N` 으로 바꾸거나, 머지 직후 `deploy-wait-issue.sh` 로 발행할 것.\n후자는 본문에 전용 줄 `배포 대기: 머지 뒤 발행` 을 넣고(`--auto` 없이) 머지한 뒤 바로:\n  ~/.claude/skills/issue-runner/scripts/deploy-wait-issue.sh %s %s --sha <머지 SHA> --title <한 줄 요약> --summary-file <변경요약 파일> --items-file <항목 파일|없음>\n' \
+      "$pr_num" "$1" "${pr_repo:-<owner/repo>}" "$pr_num" >&2
+    exit 2
+  }
+  escape=0
+  printf '%s\n' "$body" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -qxF '배포 대기: 머지 뒤 발행' && escape=1
+  [ -z "$files" ] && deny_noissue '본문에 (no-issue) 가 있는데 변경 파일 목록을 조회하지 못해 판정 불가.'
+  nonweb=$(printf '%s\n' "$files" | grep -vE '\.(md|html)$' | head -1)
+  if [ -n "$nonweb" ]; then
+    [ -z "$pr_repo" ] && deny_noissue '본문에 (no-issue) 가 있는데 PR 의 레포를 확인하지 못해 판정 불가.'
+    # deploy-cycle 수집 레포 판정 — REST 정확 조회. 404 만 "수집 밖"(deploy-wait-issue.sh #570 과 같은 읽기).
+    lbl_err=$(gh api "repos/$pr_repo/labels/deploy-wait" 2>&1 >/dev/null); lbl_rc=$?
+    if [ "$lbl_rc" != 0 ] && printf '%s\n' "$lbl_err" | grep -q 'HTTP 404'; then
+      :  # deploy-wait 라벨 없는 레포 — deploy-cycle 이 안 보므로 이 규칙 밖
+    elif [ "$lbl_rc" != 0 ]; then
+      deny_noissue "본문에 (no-issue) 가 있는데 $pr_repo 의 deploy-wait 라벨 조회가 실패해 판정 불가($(printf '%s' "$lbl_err" | tail -1))."
+    elif [ "$escape" = 0 ]; then
+      deny_noissue "본문에 (no-issue) 가 있는데 코드 변경이 있다($nonweb)."
+    elif printf '%s' "$cmd" | grep -qE '(^|[[:space:]])--auto([[:space:]=]|$)'; then
+      deny_noissue '`배포 대기: 머지 뒤 발행` 통로는 `--auto` 와 같이 쓸 수 없다 — 머지 뒤 훅이 MERGED 를 못 봐 발행을 요구하지 못한다.'
+    fi
+  fi
+fi
+
 if [ -n "$files" ]; then
   nondoc=$(printf '%s\n' "$files" | grep -vE '^(Plans|Docs)/|\.md$' | head -1)
   if [ -z "$nondoc" ]; then
