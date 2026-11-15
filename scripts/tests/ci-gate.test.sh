@@ -154,7 +154,7 @@ URL='"url":"https://github.com/o/r/pull/5"'
 
 noissue_gate "{\"body\":\"고침\\r\\n(no-issue)\",\"files\":[{\"path\":\"README.md\"},{\"path\":\"script/x.rb\"}],$URL}"
 [ "$RC" = 2 ] && ok || bad "⑷ 코드+(no-issue) → exit $RC (기대 2 — 배포 대기 이슈 없이 머지된다)"
-case "$ERR" in *"배포 대기 이슈가 필요"*deploy-wait-issue.sh*) ok ;; *) bad "⑷ 거부 안내 문구 없음 err=[$ERR]" ;; esac
+case "$ERR" in *"배포 대기 이슈가 필요"*deploy-wait-issue.sh*--title*) ok ;; *) bad "⑷ 거부 안내 문구 없음 err=[$ERR]" ;; esac
 
 noissue_gate "{\"body\":\"(no-issue)\",\"files\":[{\"path\":\"README.md\"},{\"path\":\"Plans/x.html\"}],$URL}"
 [ "$RC" = 0 ] && ok || bad "⑷ 문서만(.md·.html)+(no-issue) → exit $RC (기대 0 — 문서 레인은 지금처럼 통과) err=[$ERR]"
@@ -184,8 +184,25 @@ out=$(printf '{"tool_input":{"command":"gh pr merge 5 --repo o/r --squash"}}' \
   | (cd "$tmp/cwd" && HOME="$tmp/home" ISSUE_RUNNER_SCRIPTS="$DIR" PATH="$tmp/stub:$PATH" bash "$POST") 2>"$tmp/err")
 ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)
 case "$ctx" in
-  *deploy-wait-issue.sh*"o/r 5 --sha c0ffee1234"*) ok ;;
-  *) bad "⑸ 마커 없는 머지 뒤 발행 요구 없음 out=[$out] err=[$(cat "$tmp/err")]" ;;
+  *deploy-wait-issue.sh*"o/r 5 --sha c0ffee1234"*--title*) ok ;;
+  *) bad "⑸ 마커 없는 머지 뒤 발행 요구 없음(또는 필수 --title 누락) out=[$out] err=[$(cat "$tmp/err")]" ;;
+esac
+
+# merge queue 는 `--auto` 없이도 PR 을 OPEN 으로 남긴다 — 그 뒤 머지를 볼 PostToolUse 가 없으니
+# 지금 말하지 않으면 발행 요구가 영영 사라진다.
+cat > "$tmp/stub/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *"pr view"*) printf '%s\n' '{"number":5,"state":"OPEN","url":"https://github.com/o/r/pull/5","mergeCommit":null,"body":"(no-issue)\n배포 대기: 머지 뒤 발행","comments":[]}' ;;
+  *) echo '' ;;
+esac
+STUB
+out=$(printf '{"tool_input":{"command":"gh pr merge 5 --repo o/r --squash"}}' \
+  | (cd "$tmp/cwd" && HOME="$tmp/home" ISSUE_RUNNER_SCRIPTS="$DIR" PATH="$tmp/stub:$PATH" bash "$POST") 2>"$tmp/err")
+ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)
+case "$ctx" in
+  *deploy-wait-issue.sh*"o/r 5"*) ok ;;
+  *) bad "⑸ 머지 큐 대기(OPEN)로 남은 통로 PR 에 발행 요구 없음 out=[$out]" ;;
 esac
 
 echo "ci-gate.test: pass=$pass fail=$fail"

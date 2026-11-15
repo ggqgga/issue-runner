@@ -74,8 +74,9 @@ files=$(printf '%s' "$pr_json" | jq -r '.files[].path // empty' 2>/dev/null)
 # 커밋에서 승격이 멈추고 뒤 커밋까지 함께 묶인다(BoDAT #7662 → 11-15 승격 정지). 문서 전용
 # 면제(아래 — Plans/·Docs/ 도 면제)보다 먼저 본다: 이 규칙의 "문서" 는 .md·.html 뿐이다.
 # 명시 통로: 본문 전용 줄 `배포 대기: 머지 뒤 발행` — 이 검사만 건너뛰고(CI 게이트는 그대로),
-# 머지 뒤 hooks/deploy-wait-after-merge.sh 가 발행 명령을 요구한다. 그 훅은 MERGED 만 보므로
-# `--auto` 와는 같이 쓸 수 없다(나중에 머지돼도 발행을 요구할 쪽이 없다).
+# 머지 뒤 hooks/deploy-wait-after-merge.sh 가 발행 명령을 요구한다. 그 훅은 머지 명령 직후 한 번만
+# 돌아 나중의 머지를 못 보므로 `--auto` 와는 같이 쓸 수 없다(merge queue 로 OPEN 이 남는 경우는
+# 그 훅이 "머지가 끝나면 발행하라" 로 남긴다).
 # 라벨 조회는 코드 파일이 있을 때만 한다 — 문서만 바꾼 PR 은 라벨 API 상태와 무관하게 지금처럼 통과.
 # 판정 불가(파일 목록 없음·라벨 조회 비-404 실패·레포 미상)는 전부 거부 — fail-closed.
 body=$(printf '%s' "$pr_json" | jq -r '.body // empty' 2>/dev/null | tr -d '\r')
@@ -84,7 +85,7 @@ if printf '%s\n' "$body" | grep -qF '(no-issue)'; then
   [ -z "$pr_repo" ] && pr_repo=$(printf '%s' "$pr_json" | jq -r '.url // empty' 2>/dev/null \
     | sed -n -E 's#^https://[^/]+/([^/]+/[^/]+)/pull/[0-9]+.*#\1#p')
   deny_noissue() {  # $1=사유
-    printf 'PR #%s 머지 거부 — %s\n코드 변경은 배포 대기 이슈가 필요하다 — 구현 이슈를 만들어 본문의 `(no-issue)` 를 `Closes #N` 으로 바꾸거나, 머지 직후 `deploy-wait-issue.sh` 로 발행할 것.\n후자는 본문에 전용 줄 `배포 대기: 머지 뒤 발행` 을 넣고(`--auto` 없이) 머지한 뒤 바로:\n  ~/.claude/skills/issue-runner/scripts/deploy-wait-issue.sh %s %s --sha <머지 SHA> --summary-file <변경요약 파일> --items-file <항목 파일|없음>\n' \
+    printf 'PR #%s 머지 거부 — %s\n코드 변경은 배포 대기 이슈가 필요하다 — 구현 이슈를 만들어 본문의 `(no-issue)` 를 `Closes #N` 으로 바꾸거나, 머지 직후 `deploy-wait-issue.sh` 로 발행할 것.\n후자는 본문에 전용 줄 `배포 대기: 머지 뒤 발행` 을 넣고(`--auto` 없이) 머지한 뒤 바로:\n  ~/.claude/skills/issue-runner/scripts/deploy-wait-issue.sh %s %s --sha <머지 SHA> --title <한 줄 요약> --summary-file <변경요약 파일> --items-file <항목 파일|없음>\n' \
       "$pr_num" "$1" "${pr_repo:-<owner/repo>}" "$pr_num" >&2
     exit 2
   }
