@@ -142,9 +142,9 @@ case "$*" in
 esac
 STUB
 chmod +x "$tmp/stub/gh"
-noissue_gate() {  # noissue_gate <PR JSON>
+noissue_gate() {  # noissue_gate <PR JSON> [추가 머지 플래그]
   RC=0
-  printf '{"tool_input":{"command":"gh pr merge 5 --repo o/r --squash"}}' \
+  printf '{"tool_input":{"command":"gh pr merge 5 --repo o/r --squash%s"}}' "${2:-}" \
     | (cd "$tmp/cwd" && HOME="$tmp/home" ISSUE_RUNNER_SCRIPTS="$DIR" PR_JSON="$1" \
         ISSUE_RUNNER_PROJECTS_ROOT="$tmp/proj" PATH="$tmp/stub:$PATH" \
         bash "$GATE") >/dev/null 2>"$tmp/err" || RC=$?
@@ -161,6 +161,10 @@ noissue_gate "{\"body\":\"(no-issue)\",\"files\":[{\"path\":\"README.md\"},{\"pa
 
 noissue_gate "{\"body\":\"(no-issue)\\r\\n배포 대기: 머지 뒤 발행\\r\\n\",\"files\":[{\"path\":\"script/x.rb\"}],$URL}"
 [ "$RC" = 0 ] && ok || bad "⑷ 코드+(no-issue)+'배포 대기: 머지 뒤 발행' 줄 → exit $RC (기대 0 — 명시 통로) err=[$ERR]"
+
+# 머지 뒤 훅은 MERGED 만 보므로 --auto(아직 미머지)로는 통로의 약속(발행 요구)이 끊긴다.
+noissue_gate "{\"body\":\"(no-issue)\\n배포 대기: 머지 뒤 발행\",\"files\":[{\"path\":\"script/x.rb\"}],$URL}" " --auto"
+[ "$RC" = 2 ] && ok || bad "⑷ 통로 줄 + --auto → exit $RC (기대 2 — 머지 뒤 발행 요구가 안 뜬다)"
 
 noissue_gate "{\"body\":\"(no-issue)\",\"files\":[],$URL}"
 [ "$RC" = 2 ] && ok || bad "⑷ 파일 목록 비어 판정 불가 → exit $RC (기대 2 — fail-closed)"
