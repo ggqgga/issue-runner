@@ -247,7 +247,8 @@ ln -s ~/Projects/refs/issue-runner/skills/closeout     ~/.claude/skills/closeout
 | hook | 발동 | 하는 일 |
 |---|---|---|
 | `local-ci.sh` | PostToolUse · `git push` | 그 HEAD 의 `bin/ci` 를 **박스 전역 FIFO**(`scripts/ci-queue.sh`)에 넣고, 결과 캐시·commit status 게시; 세션에는 백그라운드로 띄울 `wait` 명령을 알려 판정이 나면 깨어나게 한다 |
-| `ci-gate-before-pr-merge.sh` | PreToolUse · `gh pr merge` | 해당 HEAD 의 캐시된 CI 가 통과가 아니면 머지 차단 (fail-closed); 결과가 없으면 *실행 중 / 대기열 N번째 / 없음* 으로 구분해 안내 |
+| `ci-gate-before-pr-merge.sh` | PreToolUse · `gh pr merge` | 해당 HEAD 의 캐시된 CI 가 통과가 아니면 머지 차단 (fail-closed); 결과가 없으면 *실행 중 / 대기열 N번째 / 없음* 으로 구분해 안내. deploy-cycle 이 수집하는 레포(`deploy-wait` 라벨 실재)에선 `.md`·`.html` 밖 파일을 바꾼 `(no-issue)` PR 도 차단 — 코드는 배포 대기 이슈가 있어야 하고, 없으면 승격이 그 커밋에서 멈춘다(#637). 통로: 본문 전용 줄 `배포 대기: 머지 뒤 발행` · 파일·라벨 조회 실패는 차단 |
+| `deploy-wait-after-merge.sh` | PostToolUse · `gh pr merge` | 본문에 `배포 대기: 머지 뒤 발행` 이 있는 PR 이 머지됐는데 `배포 대기: #N` 마커 코멘트가 없으면 `deploy-wait-issue.sh <repo> <PR> --sha <머지 SHA> …` 를 지금 돌리라고 세션에 알린다(#637) |
 | `guard-ci-root.sh` | PreToolUse · Bash | 어떤 워크트리에서 `bin/ci` 가 도는 동안 **그** 워크트리를 겨냥한 테스트(`rails test`·`bin/ci`)·HEAD 를 움직이는 git(commit·reset·checkout·rebase 등)·`git worktree remove` 를 막고(exit 2) `wait` 명령을 알린다 — 이 겹침이 실행 중에 테스트 DB 를 비우거나 HEAD 를 바꾸거나 ROOT 를 지운다(#586). `ci-queue.sh busy <DIR>` 로 판정하고, 그 밖의 실패는 통과시킨다. CI 보다 먼저 시작된 테스트와 사람 터미널은 막지 못한다 |
 | `codex-review-on-pr-create.sh` | PostToolUse · `gh pr create` | Claude 가 독립적인 `codex:codex-rescue` diff 리뷰를 백그라운드로 스폰하도록 지시 |
 | `warn-on-main-branch.sh` | PreToolUse · `Write`/`Edit` | `main`/`master` 에서 편집할 때 비차단 경고 — 먼저 브랜치 |
@@ -271,7 +272,7 @@ scripts/ci-queue.sh busy <DIR>                                              # DI
 
 ```bash
 mkdir -p ~/.claude/hooks
-for h in local-ci ci-gate-before-pr-merge guard-ci-root codex-review-on-pr-create warn-on-main-branch require-issue-in-pr; do
+for h in local-ci ci-gate-before-pr-merge deploy-wait-after-merge guard-ci-root codex-review-on-pr-create warn-on-main-branch require-issue-in-pr; do
   ln -s ~/Projects/refs/issue-runner/hooks/$h.sh ~/.claude/hooks/
 done
 ```
@@ -296,7 +297,9 @@ done
         { "type": "command", "command": "~/.claude/hooks/local-ci.sh",
           "if": "Bash(git push*)", "timeout": 20 },
         { "type": "command", "command": "~/.claude/hooks/codex-review-on-pr-create.sh",
-          "if": "Bash(gh pr create*)", "timeout": 30 }
+          "if": "Bash(gh pr create*)", "timeout": 30 },
+        { "type": "command", "command": "~/.claude/hooks/deploy-wait-after-merge.sh",
+          "if": "Bash(gh pr merge*)", "timeout": 30 }
       ]}
     ]
   }

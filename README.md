@@ -250,7 +250,8 @@ Eligibility: `open + agent-ready + ¬agent:claimed + all blockers CLOSED`. Sort:
 | Hook | Fires on | What it does |
 |---|---|---|
 | `local-ci.sh` | PostToolUse · `git push` | enqueues `bin/ci` for that HEAD on the **box-wide FIFO** (`scripts/ci-queue.sh`), caches the result, posts a commit status; tells the session which `wait` command to run in the background so it is woken when the verdict lands |
-| `ci-gate-before-pr-merge.sh` | PreToolUse · `gh pr merge` | blocks the merge unless the cached CI for that HEAD passed (fail-closed); a missing result is reported as *running / queued Nth / absent* |
+| `ci-gate-before-pr-merge.sh` | PreToolUse · `gh pr merge` | blocks the merge unless the cached CI for that HEAD passed (fail-closed); a missing result is reported as *running / queued Nth / absent*. In repos that deploy-cycle collects (a `deploy-wait` label exists) it also blocks a `(no-issue)` PR that changes any file other than `.md`/`.html` — code needs a deploy-wait issue, or the promotion stalls at that commit (#637). Escape: a dedicated body line `배포 대기: 머지 뒤 발행`; a failed file/label lookup blocks |
+| `deploy-wait-after-merge.sh` | PostToolUse · `gh pr merge` | after a merged PR whose body has `배포 대기: 머지 뒤 발행` but no `배포 대기: #N` marker comment, tells the session to run `deploy-wait-issue.sh <repo> <PR> --sha <merge SHA> …` now (#637) |
 | `guard-ci-root.sh` | PreToolUse · Bash | while `bin/ci` runs for a worktree, blocks (exit 2) tests (`rails test`, `bin/ci`), HEAD-moving git (commit/reset/checkout/rebase/…) and `git worktree remove` aimed at **that** worktree, and prints the `wait` command — those overlaps clobber the test DB, change HEAD or delete ROOT mid-run (#586). Uses `ci-queue.sh busy <DIR>`; fails open otherwise. Can't stop a test that started before the CI, or a human terminal |
 | `codex-review-on-pr-create.sh` | PostToolUse · `gh pr create` | tells Claude to spawn an independent `codex:codex-rescue` diff review in the background |
 | `warn-on-main-branch.sh` | PreToolUse · `Write`/`Edit` | non-blocking warning when you edit on `main`/`master` — branch first |
@@ -274,7 +275,7 @@ scripts/ci-queue.sh busy <DIR>                                              # 0 
 
 ```bash
 mkdir -p ~/.claude/hooks
-for h in local-ci ci-gate-before-pr-merge guard-ci-root codex-review-on-pr-create warn-on-main-branch require-issue-in-pr; do
+for h in local-ci ci-gate-before-pr-merge deploy-wait-after-merge guard-ci-root codex-review-on-pr-create warn-on-main-branch require-issue-in-pr; do
   ln -s ~/Projects/refs/issue-runner/hooks/$h.sh ~/.claude/hooks/
 done
 ```
@@ -299,7 +300,9 @@ done
         { "type": "command", "command": "~/.claude/hooks/local-ci.sh",
           "if": "Bash(git push*)", "timeout": 20 },
         { "type": "command", "command": "~/.claude/hooks/codex-review-on-pr-create.sh",
-          "if": "Bash(gh pr create*)", "timeout": 30 }
+          "if": "Bash(gh pr create*)", "timeout": 30 },
+        { "type": "command", "command": "~/.claude/hooks/deploy-wait-after-merge.sh",
+          "if": "Bash(gh pr merge*)", "timeout": 30 }
       ]}
     ]
   }
