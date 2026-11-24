@@ -42,8 +42,6 @@ make_repo() {
   git -C "$r" init -q
   # 레포마다 내용이 달라야 SHA 가 갈린다(빈 커밋은 같은 초에 만들면 SHA 가 같다)
   printf '%s\n' "$1" > "$r/name"
-  git -C "$r" add name
-  git -C "$r" -c user.name=t -c user.email=t@t commit -q -m "init $1"
   cat > "$r/bin/ci" <<'CI'
 #!/bin/sh
 name=$(basename "$(pwd)")
@@ -53,6 +51,9 @@ echo "end $name $(date +%s)" >> "$CI_LOG"
 exit "${CI_RC:-0}"
 CI
   chmod +x "$r/bin/ci"
+  # bin/ci 도 커밋한다 — 미추적 파일이 있으면 run 이 폐기한다(#640)
+  git -C "$r" add name bin/ci
+  git -C "$r" -c user.name=t -c user.email=t@t commit -q -m "init $1"
   printf '%s' "$r"
 }
 slug_of() { printf '%s' "$(cd "$1" && pwd -P)" | sed 's#[/ ]#_#g; s#^_##'; }
@@ -113,6 +114,19 @@ rc=0; "$SUT" run "$R5" "$S5old" >/dev/null 2>&1 || rc=$?
 assert_eq "폐기 exit" "$rc" 2
 assert_nofile "폐기 result 없음" "$HOME/.claude/.local-ci/$SL5/$S5old.result"
 assert_eq "큐 비움(폐기 후)" "$(ls -A "$QDIR" 2>/dev/null | wc -l | tr -d ' ')" 0
+
+echo "[ci-queue] 5b) 미커밋 변경 폐기 — HEAD 가 SHA 여도 워킹트리가 더러우면 bin/ci 없이 exit 2 (#640)"
+for kind in tracked untracked; do
+  R=$(make_repo "r5$kind"); S=$(head_of "$R"); SL=$(slug_of "$R")
+  if [ "$kind" = tracked ]; then echo more >> "$R/name"; else touch "$R/new-file"; fi
+  rc=0; "$SUT" run "$R" "$S" >/dev/null 2>&1 || rc=$?
+  assert_eq "$kind 폐기 exit" "$rc" 2
+  assert_nofile "$kind 폐기 result 없음" "$HOME/.claude/.local-ci/$SL/$S.result"
+  assert_eq "$kind 폐기 bin/ci 미실행" "$(grep -c "start r5$kind" "$CI_LOG")" 0
+  assert_eq "$kind 폐기 status error" "$(grep -c "statuses/$S .*state=error.*커밋하지 않은 변경" "$GH_LOG")" 1
+done
+out=$(CI_QUEUE_WAIT_GRACE=1 "$SUT" wait "$S" 2>&1) || true
+case "$out" in *"커밋하지 않은 변경"*) ok ;; *) bad "wait 는 폐기 사유를 보여야 한다: $out" ;; esac
 
 echo "[ci-queue] 6) ROOT 부재 → exit 3"
 rc=0; "$SUT" run "$TMP/nope" "$S1" >/dev/null 2>&1 || rc=$?
@@ -312,7 +326,6 @@ echo "[run-local-ci.sh] 11h) 루프 헬퍼 — 큐 경유 pass=0 · 메인 슬�
 RL="$DIR/run-local-ci.sh"
 mkdir -p "$TMP/proj"; M=$(make_repo proj/r); WT="$M/.claude/worktrees/issue-5"; mkdir -p "$M/.claude/worktrees"
 git -C "$M" worktree add -q "$WT" -b agent/issue-5 >/dev/null 2>&1
-mkdir -p "$WT/bin" && cp "$M/bin/ci" "$WT/bin/ci"        # 가짜 bin/ci 는 미추적이라 워크트리에 따로 둔다
 export ISSUE_RUNNER_REPOS_CONF="$TMP/no-such-repos.conf"  # 머신의 repos.conf 에 안 걸리게
 git -C "$WT" -c user.name=t -c user.email=t@t commit -q --allow-empty -m wt
 WSHA=$(head_of "$WT"); MSLUG=$(slug_of "$M")
@@ -472,6 +485,7 @@ R17=$(make_repo r17); S17=$(head_of "$R17"); SL17=$(slug_of "$R17")
 R18=$(make_repo r18); S18=$(head_of "$R18"); SL18=$(slug_of "$R18")
 # 멈춘 잡 모양 — bin/ci 가 손자 프로세스를 띄우고 자기도 잠든다
 printf '#!/bin/sh\nsleep 30.71 &\nsleep 30.72\n' > "$R17/bin/ci"
+git -C "$R17" -c user.name=t -c user.email=t@t commit -q -am stuck; S17=$(head_of "$R17")   # 더러운 워킹트리는 폐기된다(#640)
 CI_RUN_TIMEOUT=2 "$SUT" run "$R17" "$S17" >/dev/null 2>&1 &
 p17=$!
 wait_status "$S17" running
