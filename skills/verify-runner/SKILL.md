@@ -128,7 +128,7 @@ no-op 로 통과한다). (근거: verify-runner-rationale §5)
 - `revalidate` → rebase 등으로 현재 HEAD 의 로컬 CI 캐시가 비었다. worktree 를 PR
   head 로 동기화하고(아래 1단계 worktree 확보에 이어) `$SCRIPTS/run-local-ci.sh
   <repo> <issue>` 로 캐시를 채운다. 비0(통합 깨짐)이면 ④ 재디스패치(`결정적 CI 실패
-  — rebase 통합`); 단 exit 2 는 폐기(HEAD 이동)라 현재 HEAD 로 한 번 재호출. 0이면 E2E 로 진행.
+  — rebase 통합`); 단 exit 2 는 폐기(HEAD 이동 또는 워킹트리 미커밋 변경 — #640)라 현재 HEAD 로 한 번 재호출(미커밋 변경이면 재호출도 폐기된다 — `git status` 로 원인부터 본다). 0이면 E2E 로 진행.
 - `pass` → 바로 E2E 로.
 
 **`fail` 원인 분류 — 코드 회귀 vs 인프라 자가체크.** `fail` 을 본 즉시 캐시 로그
