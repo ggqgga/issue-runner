@@ -358,10 +358,10 @@ cmd_run() {
   # 워킹트리 청결 — bin/ci 는 커밋이 아니라 워킹트리 파일을 돌린다. 미커밋 변경(추적 수정·gitignore 밖 새 파일)이
   # 있으면 판정 대상이 "SHA + 그 변경" 인데 결과는 SHA 이름으로 남아 머지 게이트를 속인다(#640 — 커밋에서 빠진
   # 두 줄이 워킹트리에만 있어 pass 로 머지된 BoDAT #8207). HEAD 이동과 같은 폐기다.
-  # --untracked-files=all: status.showUntrackedFiles=no 설정이 검사를 끄지 못하게 · --no-optional-locks: 읽기만(index.lock 안 잡음).
+  # --untracked-files=all · --ignore-submodules=none: 설정(showUntrackedFiles=no · 서브모듈 ignore=dirty)이 검사를 끄지 못하게 · --no-optional-locks: 읽기만(index.lock 안 잡음).
   # status 자체가 실패하면(index 손상·잠금) 빈 출력을 "깨끗함"으로 읽지 않는다 — HEAD 못 읽음과 같은 실행 불가(3).
   local dirty
-  if ! dirty=$(git --no-optional-locks -C "$ROOT" status --porcelain --untracked-files=all 2>/dev/null); then
+  if ! dirty=$(git --no-optional-locks -C "$ROOT" status --porcelain --untracked-files=all --ignore-submodules=none 2>/dev/null); then
     log "$short ROOT 에서 git status 실패(index 손상·잠금?): $ROOT — $(git -C "$ROOT" status --porcelain 2>&1 >/dev/null | head -1)"
     post_status error "로컬 CI 실행 불가 — 워킹트리 상태를 읽지 못함"
     return 3
