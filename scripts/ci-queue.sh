@@ -203,9 +203,10 @@ post_status() {  # <state> <description>
 # wait — 세션이 "멍하게" 폴링하지 않게 하는 통로. 세션은 이 명령을 **백그라운드 Bash**
 # (run_in_background) 로 띄운다 — 결과가 나오면 명령이 끝나고 Claude Code 가 세션을 깨운다.
 # CI_QUEUE_WAIT_GRACE: 큐에도 결과도 없는 상태를 몇 초 보고 2 로 끝낼지(훅의 nohup 등록 지연 흡수).
-# discard_reason <short> — queue.log 에 남은 그 SHA 의 마지막 폐기 사유(없으면 빈 문자열). wait 의 "큐 부재" 출력용.
+# discard_reason <short> — queue.log 에 남은 그 SHA 의 마지막 폐기 기록(시각 포함 — 같은 SHA 의 옛 폐기일 수 있어
+# 시각을 남긴다 · 없으면 빈 문자열). wait 의 "큐 부재" 출력용.
 discard_reason() {
-  grep -F "$1 폐기" "$CACHE/queue.log" 2>/dev/null | tail -1 | sed 's/^[^ ]* pid=[0-9]* //'
+  grep -F "$1 폐기" "$CACHE/queue.log" 2>/dev/null | tail -1 | sed 's/ pid=[0-9]* / /'
 }
 cmd_wait() {
   [ $# -ge 1 ] || usage
@@ -239,7 +240,7 @@ cmd_wait() {
       none_for=$((none_for + POLL))
       if [ "$none_for" -ge "$grace" ]; then
         printf 'ci-queue: %s 큐에 없고 결과도 없음(%s초 관찰) — push 훅이 안 떴거나 HEAD 이동으로 폐기됨.\n재등록: ci-queue.sh run <ROOT> %s\n' "$short" "$grace" "$sha"
-        st=$(discard_reason "$short"); [ -n "$st" ] && printf '폐기 사유: %s\n' "$st"
+        st=$(discard_reason "$short"); [ -n "$st" ] && printf '마지막 폐기 기록: %s\n' "$st"
         return 2
       fi
     else
@@ -249,7 +250,7 @@ cmd_wait() {
       # 타임아웃 시점에 큐에도 없으면 "큐 부재"(2)가 맞다 — 124 는 실행/대기 중인데 시간이 다한 경우만
       if [ "$st" = none ]; then
         printf 'ci-queue: %s 큐에 없고 결과도 없음(타임아웃 %s초) — push 훅이 안 떴거나 HEAD 이동으로 폐기됨.\n재등록: ci-queue.sh run <ROOT> %s\n' "$short" "$timeout" "$sha"
-        st=$(discard_reason "$short"); [ -n "$st" ] && printf '폐기 사유: %s\n' "$st"
+        st=$(discard_reason "$short"); [ -n "$st" ] && printf '마지막 폐기 기록: %s\n' "$st"
         return 2
       fi
       printf 'ci-queue: %s 타임아웃(%s초) — 큐 상태: %s\n' "$short" "$timeout" "$st"
@@ -357,13 +358,19 @@ cmd_run() {
   # 워킹트리 청결 — bin/ci 는 커밋이 아니라 워킹트리 파일을 돌린다. 미커밋 변경(추적 수정·gitignore 밖 새 파일)이
   # 있으면 판정 대상이 "SHA + 그 변경" 인데 결과는 SHA 이름으로 남아 머지 게이트를 속인다(#640 — 커밋에서 빠진
   # 두 줄이 워킹트리에만 있어 pass 로 머지된 BoDAT #8207). HEAD 이동과 같은 폐기다.
+  # --untracked-files=all: status.showUntrackedFiles=no 설정이 검사를 끄지 못하게 · --no-optional-locks: 읽기만(index.lock 안 잡음).
+  # status 자체가 실패하면(index 손상·잠금) 빈 출력을 "깨끗함"으로 읽지 않는다 — HEAD 못 읽음과 같은 실행 불가(3).
   local dirty
-  dirty=$(git -C "$ROOT" status --porcelain 2>/dev/null)
+  if ! dirty=$(git --no-optional-locks -C "$ROOT" status --porcelain --untracked-files=all 2>/dev/null); then
+    log "$short ROOT 에서 git status 실패(index 손상·잠금?): $ROOT — $(git -C "$ROOT" status --porcelain 2>&1 >/dev/null | head -1)"
+    post_status error "로컬 CI 실행 불가 — 워킹트리 상태를 읽지 못함"
+    return 3
+  fi
   if [ -n "$dirty" ]; then
     local n
     n=$(printf '%s\n' "$dirty" | wc -l | tr -d ' ')
     log "$short 폐기 — 워킹트리에 커밋하지 않은 변경 ${n}개: $(printf '%s\n' "$dirty" | head -3 | tr '\n' ' ')"
-    post_status error "로컬 CI 폐기 — 워킹트리에 커밋하지 않은 변경 ${n}개 (커밋하고 다시 push)"
+    post_status error "로컬 CI 폐기 — 워킹트리에 커밋하지 않은 변경 ${n}개 (커밋하거나 gitignore 뒤 다시 push)"
     return 2
   fi
 
