@@ -652,7 +652,9 @@ merged means it entered the promotion scope, and that fact must be visible to a 
   - **exit 65 (shape violation before issuance — the issue does not exist yet)** — it means `<LIVE_CHECKS>` is
     prose, or (BoDAT) a line has no owner mark, or a `[기계]`·`[칸 …]`·`[건님]` line lacks `(dev 불가: <reason>)`, or a line carries `[상원]`·`[지혜]` (rewrite it as `[기계]` + `(dev 불가: 운영 화면 — 담당자 확인)`) (stderr names the first one). Move background and rationale into `## 변경 요약`, leave only `없음` or `- [ ]` in the items slot,
     and **call it again**. **Do not end step 4 on exit 65** — if it is still 65 after one more call: for a **mark violation (BoDAT)** prefix the unmarked lines with `[dev]` and
-    call again (for a **reason violation**, either add a concrete `(dev 불가: <reason>)` or switch the line to `[dev]` (default) and call again — never drop the item) (never fall back to `--items-file 없음` — that silently drops verification items). Only for a **prose
+    call again (for a **reason violation**, either add a concrete `(dev 불가: <reason>)` or switch the line to `[dev]` (default) and call again — never drop the item)
+    (for an **owner-mark violation**, replace that line's `[상원]`·`[지혜]` with `[기계]` and add `(dev 불가: 운영 화면 — 담당자 확인)`, then call again —
+    prefixing `[dev]` still yields 65, and an `[x]` line carried with its verdict tag is no exception; never drop the item) (never fall back to `--items-file 없음` — that silently drops verification items). Only for a **prose
     violation** move the prose to `## 변경 요약` and **issue** with `--items-file 없음` (a `(승격만)` ticket). In that case also
     report `BLOCKED: 배포 대기 항목 형태 위반 — PR #<pr>` in ④ Report.
   - **exit 1 (no issue created)** — report `BLOCKED: 배포 대기 이슈 발행 실패 — PR #<pr>` in ④ Report.
