@@ -121,7 +121,7 @@ printf -- '- [ ] [dev] 표식 있는 줄\n- [ ] 표식 없는 줄\n' > "$tmp/unm
 run "$tmp/unmarked.md"
 { [ "$RC" = 65 ] && [ -z "$OUT" ] && [ -z "$CALLS" ]; } && ok \
   || bad "④b BoDAT 표식 없음 rc=$RC out=[$OUT] calls=[$CALLS] (기대 65·무출력·gh 0회)"
-printf '%s\n' "$ERR" | grep -qF '표식 없는 줄' && printf '%s\n' "$ERR" | grep -qF '[지혜]' && ok \
+printf '%s\n' "$ERR" | grep -qF '표식 없는 줄' && printf '%s\n' "$ERR" | grep -qF '[건님]' && ok \
   || bad "④b stderr 에 첫 위반 줄·허용 표식이 없다: [$ERR]"
 # ④c BoDAT + `[기계]` 이유 없음 → 발행 전 exit 65, gh 0회 (결정 18 — dev 불가 이유)
 printf -- '- [ ] [dev] 정상\n- [ ] [기계] 운영 DB 줄 수 확인\n' > "$tmp/noreason.md"
@@ -130,12 +130,19 @@ run "$tmp/noreason.md"
   || bad "④c [기계] 이유 없음 rc=$RC out=[$OUT] calls=[$CALLS] (기대 65·무출력·gh 0회)"
 printf '%s\n' "$ERR" | grep -qF '운영 DB 줄 수 확인' && printf '%s\n' "$ERR" | grep -qF 'dev 불가' && ok \
   || bad "④c stderr 에 첫 위반 줄·규칙이 없다: [$ERR]"
-# 이유 있는 [기계] · 이유 없는 [상원] · [칸 ③] [dev] 는 통과
-printf -- '- [ ] [기계] 운영 DB 줄 수 (dev 불가: 운영 DB 줄 수)\n- [ ] [상원] 화면 확인\n- [ ] [칸 ③] [dev] 복합\n' > "$tmp/reason-ok.md"
+# 이유 있는 [기계] · 운영 화면 줄의 새 형식(#643) · [칸 ③] [dev] 는 통과
+printf -- '- [ ] [기계] 운영 DB 줄 수 (dev 불가: 운영 DB 줄 수)\n- [ ] [기계] 배포 뒤 운영 프로필 화면(/profiles)에서 카드 확인 (dev 불가: 운영 화면 — 담당자 확인)\n- [ ] [칸 ③] [dev] 복합\n' > "$tmp/reason-ok.md"
 run "$tmp/reason-ok.md"
-[ "$RC" = 0 ] && ok || bad "④c 이유 있는 [기계]/[상원] rc=$RC err=[$ERR]"
+[ "$RC" = 0 ] && ok || bad "④c 이유 있는 [기계]·운영 화면 줄 rc=$RC err=[$ERR]"
+# ④d BoDAT + 담당자 표식 [상원] → 발행 전 exit 65, gh 0회, stderr 에 새 형식 안내 (#643 — 담당자 표식은 테스트 이슈에서만)
+printf -- '- [ ] [dev] 정상\n- [ ] [상원] 배포 뒤 운영 화면 확인\n' > "$tmp/person.md"
+run "$tmp/person.md"
+{ [ "$RC" = 65 ] && [ -z "$OUT" ] && [ -z "$CALLS" ]; } && ok \
+  || bad "④d [상원] 표식 rc=$RC out=[$OUT] calls=[$CALLS] (기대 65·무출력·gh 0회)"
+printf '%s\n' "$ERR" | grep -qF '배포 뒤 운영 화면 확인' && printf '%s\n' "$ERR" | grep -qF '(dev 불가: 운영 화면 — 담당자 확인)' && ok \
+  || bad "④d stderr 에 첫 위반 줄·새 형식 안내가 없다: [$ERR]"
 # 다른 표식이 앞에 와도 통과(`[칸 ③] [dev]`) · BoDAT 아닌 레포는 표식 없어도 통과
-printf -- '- [ ] [칸 ③] [dev] 복합 표식\n- [x] [상원] 밟힌 줄\n' > "$tmp/multi.md"
+printf -- '- [ ] [칸 ③] [dev] 복합 표식\n- [x] [dev] 밟힌 줄\n' > "$tmp/multi.md"
 run "$tmp/multi.md"
 [ "$RC" = 0 ] && ok || bad "④b 복합 표식 rc=$RC err=[$ERR]"
 : > "$tmp/calls.log"
@@ -143,6 +150,11 @@ OUT=$(DW_CALLS="$tmp/calls.log" DW_BODY="$tmp/body.out" DW_TITLE="$tmp/title.out
       PATH="$tmp/stub:$PATH" bash "$SUT" ggqgga/BoDAC 5300 --sha abc1234 --title "x" \
       --summary-file "$tmp/summary.md" --items-file "$tmp/unmarked.md" 2>/dev/null); RC=$?
 [ "$RC" = 0 ] && ok || bad "④b BoDAC 는 표식 없어도 통과해야 한다 rc=$RC"
+: > "$tmp/calls.log"
+OUT=$(DW_CALLS="$tmp/calls.log" DW_BODY="$tmp/body.out" DW_TITLE="$tmp/title.out" DW_PARENT="$tmp/parent.json" \
+      PATH="$tmp/stub:$PATH" bash "$SUT" ggqgga/BoDAC 5300 --sha abc1234 --title "x" \
+      --summary-file "$tmp/summary.md" --items-file "$tmp/person.md" 2>/dev/null); RC=$?
+[ "$RC" = 0 ] && ok || bad "④d BoDAC 는 [상원] 줄이 있어도 그대로 통과해야 한다 rc=$RC"
 
 echo "── 템플릿 치환(#484) ────────────────────────────────────────────"
 
